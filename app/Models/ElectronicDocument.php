@@ -1,0 +1,56 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class ElectronicDocument extends Model
+{
+    protected $fillable = [
+        'business_id',
+        'sale_id',
+        'provider',
+        'environment',
+        'document_type',
+        'status',
+        'uuid',
+        'series',
+        'number',
+        'certification_date',
+        'request_payload',
+        'response_payload',
+        'xml_base64',
+        'pdf_base64',
+        'html',
+        'error_message',
+        'cancelled_at',
+        'cancellation_request_payload',
+        'cancellation_response_payload',
+        'created_by',
+    ];
+
+    protected $casts = [
+        'certification_date' => 'datetime',
+        'request_payload' => 'array',
+        'response_payload' => 'array',
+        'cancelled_at' => 'datetime',
+        'cancellation_request_payload' => 'array',
+        'cancellation_response_payload' => 'array',
+    ];
+
+    public function business(): BelongsTo
+    {
+        return $this->belongsTo(Business::class);
+    }
+
+    public function sale(): BelongsTo
+    {
+        return $this->belongsTo(Sale::class);
+    }
+
+    public function createdBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+}
