@@ -1,4 +1,5 @@
 *.log
+*.backup
 .DS_Store
 .env
 .env.testing
