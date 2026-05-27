@@ -3,7 +3,7 @@ import { router, useForm } from '@inertiajs/react';
 import { FormEvent, useState } from 'react';
 
 type Business = { id: number; name: string };
-type Role = { id: number; key: string; name: string };
+type Role = { id: number; key: string; name: string; scope: string; business_name: string | null };
 type Permission = { id: number; key: string; name: string; group: string | null };
 type User = { id: number; name: string; email: string; roles: Role[]; direct_permissions: Permission[] };
 
@@ -21,13 +21,13 @@ export default function Assignments({
     permissions: Permission[];
 }) {
     const [selectedUser, setSelectedUser] = useState<User | null>(null);
-    const form = useForm({ roles: [] as string[], permissions: [] as string[] });
+    const form = useForm({ role_ids: [] as number[], permission_ids: [] as number[] });
 
     function selectUser(user: User) {
         setSelectedUser(user);
         form.setData({
-            roles: user.roles.map((role) => role.key),
-            permissions: user.direct_permissions.map((permission) => permission.key),
+            role_ids: user.roles.map((role) => role.id),
+            permission_ids: user.direct_permissions.map((permission) => permission.id),
         });
     }
 
@@ -40,10 +40,10 @@ export default function Assignments({
         });
     }
 
-    function toggle(key: string, field: 'roles' | 'permissions') {
-        form.setData(field, form.data[field].includes(key)
-            ? form.data[field].filter((item) => item !== key)
-            : [...form.data[field], key]);
+    function toggle(id: number, field: 'role_ids' | 'permission_ids') {
+        form.setData(field, form.data[field].includes(id)
+            ? form.data[field].filter((item) => item !== id)
+            : [...form.data[field], id]);
     }
 
     return (
@@ -82,17 +82,17 @@ export default function Assignments({
                             <h3 className="mt-4 text-sm font-bold uppercase text-slate-500">Roles</h3>
                             <div className="mt-2 grid gap-2 md:grid-cols-2">
                                 {roles.map((role) => (
-                                    <label key={role.key} className="flex items-center gap-2 text-sm">
-                                        <input type="checkbox" checked={form.data.roles.includes(role.key)} onChange={() => toggle(role.key, 'roles')} />
-                                        {role.name}
+                                    <label key={role.id} className="flex items-center gap-2 text-sm">
+                                        <input type="checkbox" checked={form.data.role_ids.includes(role.id)} onChange={() => toggle(role.id, 'role_ids')} />
+                                        <span>{role.name} <span className="text-xs text-slate-400">({role.scope === 'global' ? 'global' : role.business_name})</span></span>
                                     </label>
                                 ))}
                             </div>
                             <h3 className="mt-5 text-sm font-bold uppercase text-slate-500">Permisos directos</h3>
                             <div className="mt-2 grid max-h-[420px] gap-2 overflow-y-auto md:grid-cols-2">
                                 {permissions.map((permission) => (
-                                    <label key={permission.key} className="flex items-center gap-2 text-sm">
-                                        <input type="checkbox" checked={form.data.permissions.includes(permission.key)} onChange={() => toggle(permission.key, 'permissions')} />
+                                    <label key={permission.id} className="flex items-center gap-2 text-sm">
+                                        <input type="checkbox" checked={form.data.permission_ids.includes(permission.id)} onChange={() => toggle(permission.id, 'permission_ids')} />
                                         {permission.name}
                                     </label>
                                 ))}

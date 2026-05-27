@@ -52,6 +52,9 @@ Route::middleware(['auth', 'super.admin'])
         Route::put('/security/roles/{role}', [SuperAdminSecurityController::class, 'updateRole'])->name('security.roles.update');
         Route::delete('/security/roles/{role}', [SuperAdminSecurityController::class, 'destroyRole'])->name('security.roles.destroy');
         Route::get('/security/permissions', [SuperAdminSecurityController::class, 'permissions'])->name('security.permissions');
+        Route::post('/security/permissions', [SuperAdminSecurityController::class, 'storePermission'])->name('security.permissions.store');
+        Route::put('/security/permissions/{permission}', [SuperAdminSecurityController::class, 'updatePermission'])->name('security.permissions.update');
+        Route::delete('/security/permissions/{permission}', [SuperAdminSecurityController::class, 'destroyPermission'])->name('security.permissions.destroy');
         Route::get('/security/assignments', [SuperAdminSecurityController::class, 'assignments'])->name('security.assignments');
         Route::put('/security/assignments/{user}', [SuperAdminSecurityController::class, 'updateAssignment'])->name('security.assignments.update');
         Route::get('/tenants', [SuperAdminTenantController::class, 'index'])->name('tenants.index');
@@ -223,7 +226,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/users', [TenantUserController::class, 'index'])->middleware('permission:users.view')->name('users.index');
             Route::post('/users', [TenantUserController::class, 'store'])->middleware('permission:users.create,users.assign_roles')->name('users.store');
             Route::put('/users/{user}', [TenantUserController::class, 'update'])->middleware('permission:users.update,users.assign_roles')->name('users.update');
-            Route::patch('/users/{user}/toggle-active', [TenantUserController::class, 'toggleActive'])->middleware('permission:users.update')->name('users.toggle-active');
+            Route::patch('/users/{user}/toggle-active', [TenantUserController::class, 'toggleActive'])->middleware('permission:any:users.update|users.delete')->name('users.toggle-active');
             Route::put('/users/{user}/password', [TenantUserController::class, 'resetPassword'])->middleware('permission:users.update')->name('users.password');
         });
     });

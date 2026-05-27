@@ -14,10 +14,12 @@ class Role extends Model
         'key',
         'name',
         'is_system',
+        'is_active',
     ];
 
     protected $casts = [
         'is_system' => 'boolean',
+        'is_active' => 'boolean',
     ];
 
     public function business(): BelongsTo

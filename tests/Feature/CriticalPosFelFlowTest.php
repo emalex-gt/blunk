@@ -517,6 +517,121 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertTrue($user->roles()->where('key', 'cashier')->exists());
     }
 
+    public function test_super_admin_can_manage_security_roles_permissions_and_assignments(): void
+    {
+        [$business] = $this->tenant(role: 'cashier');
+        $superAdmin = User::factory()->create([
+            'business_id' => null,
+            'role' => 'super_admin',
+            'is_super_admin' => true,
+            'is_active' => true,
+        ]);
+
+        $permissionKey = 'custom.audit.'.uniqid();
+        $roleKey = 'custom_role_'.uniqid();
+
+        $this->actingAs($superAdmin)
+            ->get(route('super-admin.security.roles'))
+            ->assertOk();
+
+        $this->actingAs($superAdmin)
+            ->post(route('super-admin.security.permissions.store'), [
+                'key' => $permissionKey,
+                'name' => 'Permiso auditoria',
+                'group' => 'Auditoria',
+                'description' => 'Permiso temporal de prueba.',
+            ])
+            ->assertRedirect();
+
+        $permission = Permission::query()->where('key', $permissionKey)->firstOrFail();
+
+        $this->actingAs($superAdmin)
+            ->post(route('super-admin.security.roles.store'), [
+                'scope' => 'tenant',
+                'business_id' => $business->id,
+                'key' => $roleKey,
+                'name' => 'Rol Auditoria',
+                'is_active' => true,
+                'permissions' => [$permissionKey],
+            ])
+            ->assertRedirect();
+
+        $role = Role::query()->where('key', $roleKey)->where('business_id', $business->id)->firstOrFail();
+        $this->assertTrue($role->permissions()->where('key', $permissionKey)->exists());
+
+        $tenantUser = User::factory()->create([
+            'business_id' => $business->id,
+            'role' => 'cashier',
+            'is_active' => true,
+            'is_super_admin' => false,
+        ]);
+
+        $this->actingAs($superAdmin)
+            ->put(route('super-admin.security.assignments.update', $tenantUser), [
+                'role_ids' => [$role->id],
+                'permission_ids' => [],
+            ])
+            ->assertRedirect();
+
+        $this->assertTrue($tenantUser->fresh()->roles()->whereKey($role->id)->exists());
+        $this->assertTrue(Permissions::userHas($tenantUser->fresh(), $permissionKey));
+
+        $this->actingAs($superAdmin)
+            ->delete(route('super-admin.security.roles.destroy', $role))
+            ->assertStatus(422);
+    }
+
+    public function test_tenant_user_permissions_are_action_specific(): void
+    {
+        [$business, $user] = $this->tenant(role: 'cashier');
+        $user->roles()->detach();
+        Permissions::assignDirectPermissions($user, [Permissions::USERS_VIEW]);
+
+        $this->actingAs($user)
+            ->post(route('users.store'), [
+                'name' => 'Sin permiso',
+                'email' => 'blocked-'.uniqid().'@test.test',
+                'role' => 'cashier',
+                'password' => 'password',
+                'password_confirmation' => 'password',
+            ])
+            ->assertForbidden();
+
+        Permissions::assignDirectPermissions($user, [
+            Permissions::USERS_VIEW,
+            Permissions::USERS_CREATE,
+            Permissions::USERS_ASSIGN_ROLES,
+        ]);
+
+        $this->actingAs($user)
+            ->post(route('users.store'), [
+                'name' => 'Permitido',
+                'email' => 'allowed-'.uniqid().'@test.test',
+                'role' => 'cashier',
+                'password' => 'password',
+                'password_confirmation' => 'password',
+            ])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('users', [
+            'business_id' => $business->id,
+            'name' => 'Permitido',
+            'role' => 'cashier',
+        ]);
+    }
+
+    public function test_user_without_rbac_assignment_does_not_receive_legacy_role_permissions(): void
+    {
+        [, $user] = $this->tenant(role: 'owner');
+
+        $this->assertTrue(Permissions::userHas($user, Permissions::POS_SELL));
+
+        $user->roles()->detach();
+        $user->directPermissions()->detach();
+
+        $this->assertFalse(Permissions::userHas($user->fresh(), Permissions::POS_SELL));
+    }
+
     public function test_default_price_list_is_used_and_stored_when_multiple_price_lists_exist(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);

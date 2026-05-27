@@ -194,24 +194,36 @@ class Permissions
 
         $permissionIds = [];
         foreach (self::catalog() as $key => $meta) {
+            $permissionPayload = [
+                'name' => $meta['name'],
+                'group' => $meta['group'] ?? null,
+                'description' => $meta['description'] ?? null,
+            ];
+
+            if (Schema::hasColumn('permissions', 'is_system')) {
+                $permissionPayload['is_system'] = true;
+            }
+
             $permission = Permission::query()->updateOrCreate(
                 ['key' => $key],
-                [
-                    'name' => $meta['name'],
-                    'group' => $meta['group'] ?? null,
-                    'description' => $meta['description'] ?? null,
-                ],
+                $permissionPayload,
             );
             $permissionIds[$key] = $permission->id;
         }
 
         foreach (self::defaultRolePermissions() as $key => $permissions) {
+            $rolePayload = [
+                'name' => self::roleLabels()[$key] ?? ucfirst(str_replace('_', ' ', $key)),
+                'is_system' => true,
+            ];
+
+            if (Schema::hasColumn('roles', 'is_active')) {
+                $rolePayload['is_active'] = true;
+            }
+
             $role = Role::query()->updateOrCreate(
                 ['business_id' => null, 'key' => $key],
-                [
-                    'name' => self::roleLabels()[$key] ?? ucfirst(str_replace('_', ' ', $key)),
-                    'is_system' => true,
-                ],
+                $rolePayload,
             );
 
             $role->permissions()->sync(array_values(array_filter(
@@ -253,8 +265,16 @@ class Permissions
         }
 
         $role = Role::query()
-            ->whereNull('business_id')
             ->where('key', $roleKey)
+            ->where(function ($query) use ($user) {
+                $query->whereNull('business_id');
+
+                if ($user->business_id) {
+                    $query->orWhere('business_id', $user->business_id);
+                }
+            })
+            ->when(Schema::hasColumn('roles', 'is_active'), fn ($query) => $query->where('is_active', true))
+            ->orderByRaw('CASE WHEN business_id IS NULL THEN 1 ELSE 0 END')
             ->first();
 
         if (! $role) {
@@ -290,11 +310,12 @@ class Permissions
         }
 
         if (! Schema::hasTable('permissions') || ! Schema::hasTable('roles')) {
-            return self::legacyPermissions($user->role);
+            return [];
         }
 
         $rolePermissions = $user->roles()
             ->with('permissions:key')
+            ->when(Schema::hasColumn('roles', 'is_active'), fn ($query) => $query->where('is_active', true))
             ->get()
             ->flatMap(fn (Role $role) => $role->permissions->pluck('key'));
 
@@ -306,10 +327,6 @@ class Permissions
             ->unique()
             ->values()
             ->all();
-
-        if ($permissions === []) {
-            return self::legacyPermissions($user->role);
-        }
 
         return $permissions;
     }
@@ -346,11 +363,48 @@ class Permissions
 
     public static function assignableTenantRoles(): array
     {
-        return ['admin', 'cashier', 'stock_manager', 'purchases', 'reports'];
+        if (! Schema::hasTable('roles')) {
+            return [];
+        }
+
+        $businessId = function_exists('currentBusinessId') ? currentBusinessId() : null;
+
+        return Role::query()
+            ->where('key', '!=', 'super_admin')
+            ->where(function ($query) use ($businessId) {
+                $query->whereNull('business_id');
+
+                if ($businessId) {
+                    $query->orWhere('business_id', $businessId);
+                }
+            })
+            ->when(Schema::hasColumn('roles', 'is_active'), fn ($query) => $query->where('is_active', true))
+            ->orderByRaw('CASE WHEN business_id IS NULL THEN 0 ELSE 1 END')
+            ->orderBy('name')
+            ->pluck('key')
+            ->unique()
+            ->values()
+            ->all();
     }
 
-    private static function legacyPermissions(?string $role): array
+    public static function globalAndTenantRoles(?int $businessId)
     {
-        return self::defaultRolePermissions()[$role ?: 'cashier'] ?? [];
+        if (! Schema::hasTable('roles')) {
+            return collect();
+        }
+
+        return Role::query()
+            ->with('business:id,name')
+            ->where(function ($query) use ($businessId) {
+                $query->whereNull('business_id');
+
+                if ($businessId) {
+                    $query->orWhere('business_id', $businessId);
+                }
+            })
+            ->when(Schema::hasColumn('roles', 'is_active'), fn ($query) => $query->where('is_active', true))
+            ->orderByRaw('CASE WHEN business_id IS NULL THEN 0 ELSE 1 END')
+            ->orderBy('name')
+            ->get();
     }
 }

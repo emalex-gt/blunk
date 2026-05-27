@@ -13,6 +13,11 @@ class Permission extends Model
         'name',
         'group',
         'description',
+        'is_system',
+    ];
+
+    protected $casts = [
+        'is_system' => 'boolean',
     ];
 
     public function roles(): BelongsToMany

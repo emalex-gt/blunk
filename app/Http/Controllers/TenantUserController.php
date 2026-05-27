@@ -140,9 +140,10 @@ class TenantUserController extends Controller
 
     public function toggleActive(Request $request, User $user): RedirectResponse
     {
-        abort_unless(Permissions::userHas($request->user(), Permissions::USERS_UPDATE), 403);
-
         $this->authorizeTenantUser($request, $user);
+        $requiredPermission = $user->is_active ? Permissions::USERS_DELETE : Permissions::USERS_UPDATE;
+
+        abort_unless(Permissions::userHas($request->user(), $requiredPermission), 403);
 
         if ($user->id === $request->user()->id) {
             throw ValidationException::withMessages([

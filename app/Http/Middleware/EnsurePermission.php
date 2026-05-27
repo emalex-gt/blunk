@@ -32,6 +32,16 @@ class EnsurePermission
         abort_unless($user, 403);
 
         foreach ($required as $permission) {
+            if (str_starts_with($permission, 'any:')) {
+                $anyPermissions = array_filter(explode('|', substr($permission, 4)));
+                abort_unless(
+                    collect($anyPermissions)->contains(fn (string $anyPermission) => Permissions::userHas($user, $anyPermission)),
+                    403,
+                );
+
+                continue;
+            }
+
             abort_unless(Permissions::userHas($user, $permission), 403);
         }
 
