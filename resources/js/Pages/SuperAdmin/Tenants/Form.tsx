@@ -2,7 +2,7 @@ import InputError from '@/Components/InputError';
 import TextInput from '@/Components/TextInput';
 import SuperAdminLayout from '@/Layouts/SuperAdminLayout';
 import { Link, router, useForm } from '@inertiajs/react';
-import { FormEvent, ReactNode } from 'react';
+import { FormEvent, ReactNode, useState } from 'react';
 
 type Tenant = {
     id: number;
@@ -12,6 +12,7 @@ type Tenant = {
     currency: string;
     phone: string | null;
     email: string | null;
+    logo_url: string | null;
     is_active: boolean;
 };
 
@@ -73,14 +74,17 @@ export default function Form({
         products_shared_across_branches?: boolean;
         pricing_scope?: 'global' | 'branch';
         allow_manual_price?: boolean;
+        manual_price_min_margin_percent?: number | string;
         remember_last_customer_product_price?: boolean;
+        allow_receipts?: boolean;
+        allow_invoices?: boolean;
     };
     felSettings: FelSettings;
     availableModules: AvailableModule[];
     enabledModules: string[];
 }) {
     const editing = Boolean(tenant);
-    const { data, setData, post, put, processing, errors } = useForm({
+    const { data, setData, post, processing, errors } = useForm({
         name: tenant?.name ?? '',
         slug: tenant?.slug ?? '',
         country: tenant?.country ?? 'GT',
@@ -94,7 +98,10 @@ export default function Form({
         products_shared_across_branches: settings.products_shared_across_branches ?? true,
         pricing_scope: settings.pricing_scope ?? 'global',
         allow_manual_price: settings.allow_manual_price ?? false,
+        manual_price_min_margin_percent: settings.manual_price_min_margin_percent ?? 0,
         remember_last_customer_product_price: settings.remember_last_customer_product_price ?? false,
+        allow_receipts: settings.allow_receipts ?? true,
+        allow_invoices: settings.allow_invoices ?? false,
         owner_name: '',
         owner_email: '',
         owner_password: '',
@@ -116,17 +123,21 @@ export default function Form({
         fel_certifier_tax_id: felSettings.certifier_tax_id ?? '',
         fel_phrases: felSettings.phrases?.length ? felSettings.phrases : [defaultPhrase()],
         modules: enabledModules,
+        _method: tenant ? 'put' : 'post',
+        logo: null as File | null,
+        remove_logo: false,
     });
+    const [logoPreview, setLogoPreview] = useState<string | null>(tenant?.logo_url ?? null);
 
     function submit(event: FormEvent) {
         event.preventDefault();
 
         if (tenant) {
-            put(route('super-admin.tenants.update', tenant.id));
+            post(route('super-admin.tenants.update', tenant.id), { forceFormData: true });
             return;
         }
 
-        post(route('super-admin.tenants.store'));
+        post(route('super-admin.tenants.store'), { forceFormData: true });
     }
 
     function updatePhrase(index: number, field: keyof FelPhrase, value: string) {
@@ -256,6 +267,78 @@ export default function Form({
                             label="Imágenes de productos"
                         />
                     </div>
+
+                    <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="mb-3">
+                            <h3 className="text-base font-semibold text-gray-900">Logo del tenant</h3>
+                            <p className="mt-1 text-sm text-gray-500">
+                                Se usa en comprobantes y facturas impresas cuando la sucursal no tiene logo propio.
+                            </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-4">
+                            {logoPreview ? (
+                                <img src={logoPreview} alt="Logo" className="h-20 w-20 rounded-lg border border-slate-200 bg-white object-contain p-2" />
+                            ) : (
+                                <div className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white text-xs font-semibold text-slate-400">
+                                    Sin logo
+                                </div>
+                            )}
+                            <div className="space-y-2">
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(event) => {
+                                        const file = event.target.files?.[0] ?? null;
+                                        setData('logo', file);
+                                        setData('remove_logo', false);
+                                        setLogoPreview(file ? URL.createObjectURL(file) : tenant?.logo_url ?? null);
+                                    }}
+                                    className="block text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-indigo-700"
+                                />
+                                {logoPreview && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setData('logo', null);
+                                            setData('remove_logo', true);
+                                            setLogoPreview(null);
+                                        }}
+                                        className="text-sm font-semibold text-red-600 hover:text-red-700"
+                                    >
+                                        Quitar logo
+                                    </button>
+                                )}
+                                <InputError message={(errors as Record<string, string>).logo} />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="mb-4">
+                            <h3 className="text-base font-semibold text-gray-900">Documentos de venta</h3>
+                            <p className="mt-1 text-sm text-gray-500">
+                                Define los tipos de documento disponibles en POS. Debe quedar al menos uno habilitado.
+                            </p>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <Toggle
+                                checked={data.allow_receipts}
+                                onChange={(checked) => setData('allow_receipts', checked)}
+                                label="Permitir comprobantes"
+                            />
+                            <Toggle
+                                checked={data.allow_invoices}
+                                onChange={(checked) => setData('allow_invoices', checked)}
+                                label="Permitir facturas FEL"
+                            />
+                        </div>
+                        <InputError message={errors.allow_receipts || errors.allow_invoices} className="mt-2" />
+                        {data.allow_invoices && (
+                            <p className="mt-3 text-xs text-slate-500">
+                                Requiere Guatemala, módulo FEL Guatemala y configuración Digifact activa y completa.
+                            </p>
+                        )}
+                    </div>
                 </section>
 
                 <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -288,9 +371,9 @@ export default function Form({
                     {data.modules.includes('branches') && (
                         <div className="mt-6 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
                             <div className="mb-4">
-                                <h3 className="text-base font-semibold text-gray-900">ConfiguraciÃ³n de sucursales</h3>
+                                <h3 className="text-base font-semibold text-gray-900">Configuración de sucursales</h3>
                                 <p className="mt-1 text-sm text-gray-500">
-                                    Define si el tenant usa sucursales, comparte catÃ¡logo y maneja precios globales o por sucursal.
+                                    Define si el tenant usa sucursales, comparte catálogo y maneja precios globales o por sucursal.
                                 </p>
                             </div>
                             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -322,7 +405,7 @@ export default function Form({
                         <div className="mb-4">
                             <h3 className="text-base font-semibold text-gray-900">Precios en POS</h3>
                             <p className="mt-1 text-sm text-gray-500">
-                                Controla si se permiten precios manuales y si el POS recuerda el Ãºltimo precio por cliente y producto.
+                                Controla si se permiten precios manuales y si el POS recuerda el último precio por cliente y producto.
                             </p>
                         </div>
                         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -331,10 +414,20 @@ export default function Form({
                                 onChange={(checked) => setData('allow_manual_price', checked)}
                                 label="Permitir precio manual"
                             />
+                            <Field label="Margen mínimo sobre costo para precio manual" error={errors.manual_price_min_margin_percent}>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={data.manual_price_min_margin_percent}
+                                    onChange={(event) => setData('manual_price_min_margin_percent', event.target.value)}
+                                    className={inputClass}
+                                />
+                            </Field>
                             <Toggle
                                 checked={data.remember_last_customer_product_price}
                                 onChange={(checked) => setData('remember_last_customer_product_price', checked)}
-                                label="Recordar Ãºltimo precio por cliente y producto"
+                                label="Recordar último precio por cliente y producto"
                             />
                         </div>
                     </div>
@@ -349,10 +442,9 @@ export default function Form({
                                     Configuración Digifact por tenant. Las credenciales no son visibles para usuarios del tenant.
                                 </p>
                             </div>
-                            <Toggle
+                            <FelEnabledSwitch
                                 checked={data.fel_enabled}
                                 onChange={(checked) => setData('fel_enabled', checked)}
-                                label="Habilitar FEL"
                             />
                         </div>
 
@@ -539,6 +631,14 @@ export default function Form({
                     >
                         Volver
                     </Link>
+                    {tenant && (
+                        <Link
+                            href={route('super-admin.tenants.branches', tenant.id)}
+                            className="rounded-md border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
+                        >
+                            Gestionar sucursales
+                        </Link>
+                    )}
                 </div>
             </form>
         </SuperAdminLayout>
@@ -587,5 +687,42 @@ function Toggle({
             />
             {label}
         </label>
+    );
+}
+
+function FelEnabledSwitch({
+    checked,
+    onChange,
+}: {
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+}) {
+    return (
+        <div className="flex min-w-56 items-center justify-between gap-4 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+            <span>
+                <span className="block text-sm font-semibold text-gray-900">Habilitar FEL</span>
+                <span className="block text-xs text-gray-500">
+                    {checked ? 'Activo para este tenant' : 'Desactivado'}
+                </span>
+            </span>
+            <button
+                type="button"
+                role="switch"
+                aria-checked={checked}
+                aria-label="Habilitar FEL"
+                onClick={() => onChange(!checked)}
+                className={[
+                    'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2',
+                    checked ? 'bg-indigo-600' : 'bg-gray-300',
+                ].join(' ')}
+            >
+                <span
+                    className={[
+                        'mt-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform',
+                        checked ? 'translate-x-5' : 'translate-x-0.5',
+                    ].join(' ')}
+                />
+            </button>
+        </div>
     );
 }

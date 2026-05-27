@@ -4,6 +4,7 @@ import { Head, Link, usePage } from '@inertiajs/react';
 
 type Purchase = {
     id: number;
+    business_number: number | null;
     created_at: string;
     total: string;
     paid_from_cash: boolean;
@@ -55,6 +56,7 @@ export default function Index({ purchases }: { purchases: Paginated<Purchase> })
                                 <thead>
                                     <tr className="bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                                         <th className="px-4 py-3">Fecha</th>
+                                        <th className="px-4 py-3">Compra</th>
                                         <th className="px-4 py-3">Proveedor</th>
                                         <th className="px-4 py-3">Usuario</th>
                                         <th className="px-4 py-3">Caja</th>
@@ -65,7 +67,7 @@ export default function Index({ purchases }: { purchases: Paginated<Purchase> })
                                 <tbody className="divide-y divide-slate-100">
                                     {purchases.data.length === 0 ? (
                                         <tr>
-                                            <td colSpan={6} className="px-4 py-12 text-center text-slate-500">
+                                            <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
                                                 Sin compras registradas
                                             </td>
                                         </tr>
@@ -74,6 +76,9 @@ export default function Index({ purchases }: { purchases: Paginated<Purchase> })
                                             <tr key={purchase.id} className="transition-colors hover:bg-indigo-50/30">
                                                 <td className="px-4 py-3 text-slate-600">
                                                     {formatDate(purchase.created_at)}
+                                                </td>
+                                                <td className="px-4 py-3 font-semibold text-slate-950">
+                                                    {formatPurchaseNumber(purchase)}
                                                 </td>
                                                 <td className="px-4 py-3 font-semibold text-slate-950">
                                                     {purchase.supplier?.name ?? 'Sin proveedor'}
@@ -119,4 +124,8 @@ function formatDate(value: string) {
         dateStyle: 'short',
         timeStyle: 'short',
     }).format(new Date(value));
+}
+
+function formatPurchaseNumber(purchase: Purchase) {
+    return `C-${purchase.business_number ?? purchase.id}`;
 }

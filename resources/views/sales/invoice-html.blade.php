@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="utf-8">
-    <title>Factura {{ $sale->id }}</title>
+    <title>Factura {{ format_sale_number($sale) }}</title>
     <style>
         body { margin: 0; background: #f8fafc; color: #0f172a; font-family: Arial, sans-serif; }
         .toolbar { padding: 12px; background: #fff; border-bottom: 1px solid #e2e8f0; }

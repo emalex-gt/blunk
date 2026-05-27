@@ -201,8 +201,8 @@ export default function Company({
                                         className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                                     />
                                     <span>
-                                        <span className="block font-semibold text-slate-800">Recordar Ãºltimo precio por cliente y producto</span>
-                                        <span className="mt-1 block text-xs text-slate-500">Usa el Ãºltimo precio vendido al cliente cuando aplique.</span>
+                                        <span className="block font-semibold text-slate-800">Recordar último precio por cliente y producto</span>
+                                        <span className="mt-1 block text-xs text-slate-500">Usa el último precio vendido al cliente cuando aplique.</span>
                                     </span>
                                 </label>
                             </div>

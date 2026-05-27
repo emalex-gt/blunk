@@ -5,10 +5,14 @@ import { FormEvent, ReactNode, useState } from 'react';
 
 type Tenant = { id: number; name: string };
 type User = { id: number; name: string; email: string; role: string };
+type RoleOption = { key: string; name: string };
 
-const roles = ['owner', 'admin', 'cashier', 'stock_manager'];
-
-export default function Users({ tenant, users }: { tenant: Tenant; users: User[] }) {
+export default function Users({ tenant, users, roles = ['owner', 'admin', 'cashier', 'stock_manager'], roleOptions = [] }: {
+    tenant: Tenant;
+    users: User[];
+    roles?: string[];
+    roleOptions?: RoleOption[];
+}) {
     const [editing, setEditing] = useState<User | null>(null);
     const { data, setData, post, put, processing, reset } = useForm({
         name: '',
@@ -100,7 +104,7 @@ export default function Users({ tenant, users }: { tenant: Tenant; users: User[]
                         >
                             {roles.map((role) => (
                                 <option key={role} value={role}>
-                                    {role}
+                                    {roleOptions.find((option) => option.key === role)?.name ?? role}
                                 </option>
                             ))}
                         </select>
@@ -154,7 +158,7 @@ export default function Users({ tenant, users }: { tenant: Tenant; users: User[]
                                         <td className="px-4 py-3 text-gray-600">{user.email}</td>
                                         <td className="px-4 py-3">
                                             <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700">
-                                                {user.role}
+                                                {roleOptions.find((option) => option.key === user.role)?.name ?? user.role}
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 text-right">

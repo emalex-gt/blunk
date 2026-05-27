@@ -11,6 +11,11 @@ return [
     'password' => env('DIGIFACT_PASSWORD'),
     'token' => env('DIGIFACT_TOKEN'),
     'timeout' => (int) env('DIGIFACT_TIMEOUT', 10),
+    'connect_timeout' => (int) env('DIGIFACT_CONNECT_TIMEOUT', 5),
+    'token_timeout' => (int) env('DIGIFACT_TOKEN_TIMEOUT', 10),
+    'certification_timeout' => (int) env('DIGIFACT_CERTIFICATION_TIMEOUT', 20),
+    'document_timeout' => (int) env('DIGIFACT_DOCUMENT_TIMEOUT', 15),
+    'lookup_timeout' => (int) env('DIGIFACT_LOOKUP_TIMEOUT', 10),
     'endpoints' => [
         'token' => env('DIGIFACT_TOKEN_PATH', 'login/get_token'),
         'shared' => env('DIGIFACT_SHARED_PATH', 'Shared'),

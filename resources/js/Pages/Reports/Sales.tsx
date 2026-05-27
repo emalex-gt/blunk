@@ -5,6 +5,8 @@ import { FormEvent, ReactNode, useState } from 'react';
 
 type SaleRow = {
     id: number;
+    business_number: number | null;
+    display_number: string;
     created_at: string;
     status: 'completed' | 'cancelled';
     cancelled_at: string | null;
@@ -106,7 +108,7 @@ export default function Sales({
                                 <thead>
                                     <tr className="bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                                         <th className="px-4 py-3">Fecha</th>
-                                        <th className="px-4 py-3">Venta #</th>
+                                        <th className="px-4 py-3">Venta</th>
                                         <th className="px-4 py-3">Estado</th>
                                         <th className="px-4 py-3">Método de pago</th>
                                         <th className="px-4 py-3">Artículos</th>
@@ -132,7 +134,7 @@ export default function Sales({
                                                 ].join(' ')}
                                             >
                                                 <td className="px-4 py-3 text-slate-600">{sale.created_at}</td>
-                                                <td className="px-4 py-3 font-semibold text-slate-950">#{sale.id}</td>
+                                                <td className="px-4 py-3 font-semibold text-slate-950">{sale.display_number}</td>
                                                 <td className="px-4 py-3">
                                                     <StatusBadge status={sale.status} />
                                                     {sale.status === 'cancelled' && (

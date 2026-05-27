@@ -21,6 +21,16 @@ export default function SuperAdminLayout({ title, actions, children }: Props) {
             active: route().current('super-admin.tenants.*'),
         },
         {
+            label: 'Incidencias FEL',
+            href: route('super-admin.fel-incidents.index'),
+            active: route().current('super-admin.fel-incidents.*'),
+        },
+        {
+            label: 'Seguridad',
+            href: route('super-admin.security.roles'),
+            active: route().current('super-admin.security.*'),
+        },
+        {
             label: 'Usuarios',
             href: route('super-admin.tenants.index'),
             active: false,

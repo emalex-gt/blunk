@@ -15,24 +15,28 @@ use Throwable;
 
 class DigifactClient
 {
+    private string $lastTokenSource = 'unknown';
+    private array $timings = [];
+    private int $tokenRequestCount = 0;
+
     public function __construct(
         private readonly Business $business,
         private readonly TenantFelSetting $settings,
     ) {
     }
 
-    public static function forBusiness(Business $business): self
+    public static function forBusiness(Business $business, ?TenantFelSetting $settings = null): self
     {
-        $settings = TenantFelSetting::query()->firstOrCreate(
-            ['business_id' => $business->id],
-            [
-                'provider' => 'digifact',
-                'environment' => 'test',
-                'enabled' => false,
-                'test_base_url' => config('digifact.test_base_url'),
-                'production_base_url' => config('digifact.production_base_url'),
-            ],
-        );
+        $settings ??= TenantFelSetting::query()->firstOrCreate(
+                ['business_id' => $business->id],
+                [
+                    'provider' => 'digifact',
+                    'environment' => 'test',
+                    'enabled' => false,
+                    'test_base_url' => config('digifact.test_base_url'),
+                    'production_base_url' => config('digifact.production_base_url'),
+                ],
+            );
 
         $updates = [];
 
@@ -53,13 +57,28 @@ class DigifactClient
 
     public function getToken(?TenantFelSetting $settings = null): string
     {
+        $started = microtime(true);
         $settings ??= $this->settings;
         $this->ensureGuatemala();
         $this->ensureHasBaseUrl();
 
         if ($settings->token && $settings->token_expires_at?->gt(now()->addMinutes(2))) {
+            $this->lastTokenSource = 'cached';
+            $this->addTiming('token_ms', $this->elapsedMilliseconds($started));
+            $this->timings['token_source'] = $this->lastTokenSource;
+
+            Log::info('Digifact token reused', [
+                'business_id' => $this->business->id,
+                'environment' => $settings->environment,
+                'token_source' => $this->lastTokenSource,
+                'token_ms' => $this->timings['token_ms'],
+                'expires_at' => $settings->token_expires_at?->toIso8601String(),
+            ]);
+
             return $settings->token;
         }
+
+        $this->tokenRequestCount++;
 
         if (! $settings->issuer_tax_id || ! $settings->username || ! $settings->password) {
             throw new FelException('Configura NIT emisor, usuario y password de Digifact.');
@@ -68,26 +87,30 @@ class DigifactClient
         Log::info('Digifact token request start', [
             'business_id' => $this->business->id,
             'environment' => $settings->environment,
-            'base_url' => $settings->baseUrl(),
+            'base_url' => $this->baseUrl(),
             'endpoint' => $this->endpoint('token'),
+            'full_url' => $this->buildUrl($this->endpoint('token')),
             'issuer_tax_id' => DigifactNit::normalizeIssuerTaxId($settings->issuer_tax_id),
             'username_part' => $settings->username,
         ]);
 
-        $response = Http::baseUrl($this->baseUrl())
-            ->timeout((int) config('digifact.timeout', 10))
+        $response = Http::connectTimeout((int) config('digifact.connect_timeout', 5))
+            ->timeout((int) config('digifact.token_timeout', 10))
             ->acceptJson()
             ->asJson()
-            ->post($this->endpoint('token'), [
+            ->post($this->buildUrl($this->endpoint('token')), [
                 'Username' => $this->digifactUsername($settings),
                 'Password' => $settings->password,
             ]);
 
         if (! $response->successful()) {
+            $tokenMs = $this->elapsedMilliseconds($started);
+
             Log::warning('Digifact token request failed', [
                 'business_id' => $this->business->id,
-                'status' => $response->status(),
-                'raw_body' => $response->body(),
+                'http_status' => $response->status(),
+                'token_ms' => $tokenMs,
+                'body_preview' => mb_substr(trim(strip_tags($response->body())), 0, 500),
                 'parsed_json' => $this->decodedResponse($response, false),
             ]);
 
@@ -111,12 +134,33 @@ class DigifactClient
             'last_error' => null,
         ])->save();
 
+        $this->lastTokenSource = 'refreshed';
+        $this->addTiming('token_ms', $this->elapsedMilliseconds($started));
+        $this->timings['token_source'] = $this->lastTokenSource;
+
         Log::info('Digifact token request success', [
             'business_id' => $this->business->id,
+            'http_status' => $response->status(),
             'expires_at' => $settings->token_expires_at?->toIso8601String(),
+            'token_source' => $this->lastTokenSource,
+            'token_ms' => $this->timings['token_ms'],
         ]);
 
         return $token;
+    }
+
+    public function lastTokenSource(): string
+    {
+        return $this->lastTokenSource;
+    }
+
+    public function timingSummary(): array
+    {
+        return [
+            ...$this->timings,
+            'token_source' => $this->lastTokenSource,
+            'token_refresh_count' => $this->tokenRequestCount,
+        ];
     }
 
     public function lookupNit(string $nit): array
@@ -136,26 +180,31 @@ class DigifactClient
             'environment' => $this->settings->environment,
             'base_url' => $this->baseUrl(),
             'endpoint' => $this->endpoint('shared'),
+            'full_url' => $this->buildUrl($this->endpoint('shared')),
+            'method' => 'GET',
+            'query' => $query,
             'issuer_tax_id' => $this->issuerTaxId(),
             'username' => $this->settings->username,
             'nit_to_lookup' => $receiverNit,
             'has_token' => filled($token),
         ]);
 
-        $response = $this->authorizedRequest()
-            ->get($this->endpoint('shared'), $query);
+        $started = microtime(true);
+        $response = $this->authorizedRequest((int) config('digifact.lookup_timeout', 10))
+            ->get($this->buildUrl($this->endpoint('shared')), $query);
 
         if ($response->status() === 401) {
             $this->settings->forceFill(['token' => null, 'token_expires_at' => null])->save();
-            $response = $this->authorizedRequest()
-                ->get($this->endpoint('shared'), $query);
+            $response = $this->authorizedRequest((int) config('digifact.lookup_timeout', 10))
+                ->get($this->buildUrl($this->endpoint('shared')), $query);
         }
 
         Log::info('Digifact NIT lookup response', [
             'business_id' => $this->business->id,
             'status' => $response->status(),
-            'raw_body' => $response->body(),
-            'parsed_json' => $this->decodedResponse($response, false),
+            'lookup_ms' => $this->recordTiming('lookup_ms', $started),
+            'token_source' => $this->lastTokenSource(),
+            'parsed_json' => $this->safeLogPayload($this->decodedResponse($response, false)),
         ]);
 
         if (! $response->successful()) {
@@ -201,6 +250,8 @@ class DigifactClient
             'business_id' => $this->business->id,
             'environment' => $this->settings->environment,
             'endpoint' => $this->endpoint('certify_invoice'),
+            'full_url' => $this->buildUrl($this->endpoint('certify_invoice')),
+            'method' => 'POST',
             'issuer_tax_id' => $this->issuerTaxId(),
             'username_part' => $this->settings->username,
             'format' => $format,
@@ -210,7 +261,70 @@ class DigifactClient
             'TAXID' => $this->issuerTaxId(),
             'USERNAME' => $this->settings->username,
             'FORMAT' => $format,
+        ], (int) config('digifact.certification_timeout', 20), 'certification_ms');
+    }
+
+    public function findDocumentByInternalReference(
+        TenantFelSetting $settings,
+        string $internalReference,
+        Carbon|string $issuedAt,
+    ): array {
+        $this->ensureReadyForCalls();
+
+        $issuedDate = $issuedAt instanceof Carbon
+            ? $issuedAt->copy()->timezone('America/Guatemala')->format('Y-m-d\TH:i:s')
+            : trim($issuedAt);
+
+        $query = [
+            'COUNTRY' => 'GT',
+            'TAXID' => DigifactNit::padIssuerNitForApi($settings->issuer_tax_id),
+            'DATA1' => 'SHARED_GETDTEINFO_BY_INTERNALID',
+            'DATA2' => "REFERENCIA_INTERNA|{$internalReference}|ISSUEDDATE|{$issuedDate}",
+            'USERNAME' => $settings->username,
+        ];
+
+        Log::info('Digifact internal reference reconciliation request', [
+            'business_id' => $this->business->id,
+            'environment' => $settings->environment,
+            'endpoint' => $this->endpoint('shared'),
+            'full_url' => $this->buildUrl($this->endpoint('shared')),
+            'method' => 'GET',
+            'query' => $query,
+            'issuer_tax_id' => $query['TAXID'],
+            'username' => $settings->username,
+            'internal_reference' => $internalReference,
+            'issued_date' => $issuedDate,
         ]);
+
+        $response = $this->authorizedRequest((int) config('digifact.lookup_timeout', 10))->get($this->buildUrl($this->endpoint('shared')), $query);
+
+        if ($response->status() === 401) {
+            $this->settings->forceFill(['token' => null, 'token_expires_at' => null])->save();
+            $response = $this->authorizedRequest((int) config('digifact.lookup_timeout', 10))->get($this->buildUrl($this->endpoint('shared')), $query);
+        }
+
+        Log::info('Digifact internal reference reconciliation response', [
+            'business_id' => $this->business->id,
+            'status' => $response->status(),
+            'token_source' => $this->lastTokenSource(),
+            'parsed_json' => $this->safeLogPayload($this->decodedResponse($response, false)),
+        ]);
+
+        if (! $response->successful()) {
+            throw new FelException($this->readableError($response) ?: 'No se pudo consultar la referencia interna en Digifact.');
+        }
+
+        $payload = $this->decodedResponse($response);
+
+        if (! is_array($payload)) {
+            throw new FelException('La respuesta de Digifact no es valida.');
+        }
+
+        if (! $this->lookupResponseHasData($payload)) {
+            return [];
+        }
+
+        return $payload;
     }
 
     public function cancel(array $payload, string $format = 'XML'): array
@@ -221,6 +335,8 @@ class DigifactClient
             'business_id' => $this->business->id,
             'environment' => $this->settings->environment,
             'endpoint' => $this->endpoint('cancel_invoice'),
+            'full_url' => $this->buildUrl($this->endpoint('cancel_invoice')),
+            'method' => 'POST',
             'issuer_tax_id' => $this->issuerTaxId(),
             'username_part' => $this->settings->username,
         ]);
@@ -231,7 +347,7 @@ class DigifactClient
             'TAXID' => $this->issuerTaxId(),
             'USERNAME' => $this->settings->username,
             'FORMAT' => $format,
-        ]);
+        ], (int) config('digifact.certification_timeout', 20), 'cancellation_ms');
     }
 
     public function getDocument(ElectronicDocument|Sale $document, string $format): array|string
@@ -243,13 +359,19 @@ class DigifactClient
             'business_id' => $this->business->id,
             'environment' => $this->settings->environment,
             'endpoint' => $this->endpoint('get_document'),
+            'full_url' => $this->buildUrl($this->endpoint('get_document')),
+            'method' => 'GET',
             'issuer_tax_id' => $this->issuerTaxId(),
             'auth_number' => $authNumber,
-            'format' => strtoupper($format),
+            'format_requested' => strtoupper($format),
         ]);
 
-        $response = $this->authorizedDownloadRequest()
-            ->get($this->endpoint('get_document'), [
+        $started = microtime(true);
+        $timeout = strtoupper($format) === 'HTML'
+            ? (int) config('digifact.document_timeout', 15)
+            : (int) config('digifact.certification_timeout', 20);
+        $response = $this->authorizedDownloadRequest($timeout)
+            ->get($this->buildUrl($this->endpoint('get_document')), [
                 'AUTHNUMBER' => $authNumber,
                 'TAXID' => $this->issuerTaxId(),
                 'FORMAT' => strtoupper($format),
@@ -258,8 +380,8 @@ class DigifactClient
 
         if ($response->status() === 401) {
             $this->settings->forceFill(['token' => null, 'token_expires_at' => null])->save();
-            $response = $this->authorizedDownloadRequest()
-                ->get($this->endpoint('get_document'), [
+            $response = $this->authorizedDownloadRequest($timeout)
+                ->get($this->buildUrl($this->endpoint('get_document')), [
                     'AUTHNUMBER' => $authNumber,
                     'TAXID' => $this->issuerTaxId(),
                     'FORMAT' => strtoupper($format),
@@ -267,12 +389,26 @@ class DigifactClient
                 ]);
         }
 
+        $contentType = (string) $response->header('Content-Type', '');
+        $responseBody = ltrim($response->body());
+        $looksJson = str_contains(mb_strtolower($contentType), 'application/json')
+            || str_starts_with($responseBody, '{')
+            || str_starts_with($responseBody, '[');
+        $documentTimingKey = 'get_document_'.strtolower($format).'_ms';
+        $documentMs = $this->recordTiming($documentTimingKey, $started);
+        $this->timings['get_document_'.strtolower($format).'_http_status'] = $response->status();
+
         Log::info('Digifact GetDocument response received', [
             'business_id' => $this->business->id,
             'endpoint' => $this->endpoint('get_document'),
-            'status' => $response->status(),
-            'content_type' => $response->header('Content-Type'),
-            'body_preview' => mb_substr(trim(strip_tags($response->body())), 0, 500),
+            'http_status' => $response->status(),
+            'format_requested' => strtoupper($format),
+            'content_type' => $contentType,
+            'token_source' => $this->lastTokenSource(),
+            $documentTimingKey => $documentMs,
+            'response_kind' => $looksJson ? 'json' : 'document',
+            'parsed_json' => $looksJson ? $this->safeLogPayload($this->decodedResponse($response, false)) : null,
+            'error_body_preview' => $response->successful() ? null : mb_substr(trim(strip_tags($response->body())), 0, 500),
         ]);
 
         if (! $response->successful()) {
@@ -348,11 +484,11 @@ class DigifactClient
         $receiverNit = DigifactNit::cleanReceiverNit($nit);
         $query = $this->sharedLookupQuery($receiverNit);
 
-        $response = $this->authorizedRequest()->get($this->endpoint('shared'), $query);
+        $response = $this->authorizedRequest((int) config('digifact.lookup_timeout', 10))->get($this->buildUrl($this->endpoint('shared')), $query);
 
         if ($response->status() === 401) {
             $this->settings->forceFill(['token' => null, 'token_expires_at' => null])->save();
-            $response = $this->authorizedRequest()->get($this->endpoint('shared'), $query);
+            $response = $this->authorizedRequest((int) config('digifact.lookup_timeout', 10))->get($this->buildUrl($this->endpoint('shared')), $query);
         }
 
         $parsed = $this->decodedResponse($response);
@@ -372,7 +508,7 @@ class DigifactClient
                 'token_expires_at' => $this->settings->fresh()->token_expires_at?->toIso8601String(),
             ],
             'request' => [
-                'url' => $this->baseUrl().'/'.$this->endpoint('shared').'?'.http_build_query($query),
+                'url' => $this->buildUrl($this->endpoint('shared')).'?'.http_build_query($query),
                 'query' => $query,
             ],
             'response' => [
@@ -385,21 +521,31 @@ class DigifactClient
         ];
     }
 
-    private function postAuthenticatedWithRetry(string $endpoint, array $payload, array $query): array
+    private function postAuthenticatedWithRetry(string $endpoint, array $payload, array $query, int $timeout = 20, string $durationKey = 'request_ms'): array
     {
-        $response = $this->authorizedRequest()->post($endpoint.'?'.http_build_query($query), $payload);
+        $started = microtime(true);
+        $url = $this->buildUrl($endpoint);
+        $response = $this->authorizedRequest($timeout)->post($url.'?'.http_build_query($query), $payload);
 
         if ($response->status() === 401) {
             $this->settings->forceFill(['token' => null, 'token_expires_at' => null])->save();
-            $response = $this->authorizedRequest()->post($endpoint.'?'.http_build_query($query), $payload);
+            $response = $this->authorizedRequest($timeout)->post($url.'?'.http_build_query($query), $payload);
         }
+
+        $requestMs = $this->recordTiming($durationKey, $started);
+        $this->timings[str_replace('_ms', '_http_status', $durationKey)] = $response->status();
 
         Log::info('Digifact response received', [
             'business_id' => $this->business->id,
             'endpoint' => $endpoint,
-            'status' => $response->status(),
-            'raw_body' => $response->body(),
-            'parsed_json' => $this->decodedResponse($response, false),
+            'full_url' => $url,
+            'method' => 'POST',
+            'query' => $query,
+            'http_status' => $response->status(),
+            'format_requested' => $query['FORMAT'] ?? null,
+            'token_source' => $this->lastTokenSource(),
+            $durationKey => $requestMs,
+            'parsed_json' => $this->safeLogPayload($this->decodedResponse($response, false)),
         ]);
 
         if (! $response->successful()) {
@@ -427,10 +573,10 @@ class DigifactClient
         return $data;
     }
 
-    private function authorizedRequest()
+    private function authorizedRequest(int $timeout = 10)
     {
-        return Http::baseUrl($this->baseUrl())
-            ->timeout((int) config('digifact.timeout', 10))
+        return Http::connectTimeout((int) config('digifact.connect_timeout', 5))
+            ->timeout($timeout)
             ->acceptJson()
             ->asJson()
             ->withHeaders([
@@ -439,10 +585,10 @@ class DigifactClient
             ]);
     }
 
-    private function authorizedDownloadRequest()
+    private function authorizedDownloadRequest(int $timeout = 15)
     {
-        return Http::baseUrl($this->baseUrl())
-            ->timeout((int) config('digifact.timeout', 10))
+        return Http::connectTimeout((int) config('digifact.connect_timeout', 5))
+            ->timeout($timeout)
             ->accept('*/*')
             ->withHeaders([
                 'Authorization' => $this->getToken(),
@@ -468,6 +614,18 @@ class DigifactClient
     private function baseUrl(): string
     {
         return rtrim((string) $this->settings->baseUrl(), '/');
+    }
+
+    private function buildUrl(string $path): string
+    {
+        $base = $this->baseUrl();
+        $path = ltrim($path, '/');
+
+        if (str_ends_with($base, '/api') && str_starts_with($path, 'api/')) {
+            $path = substr($path, 4);
+        }
+
+        return $base.'/'.$path;
     }
 
     private function issuerTaxId(): string
@@ -530,7 +688,7 @@ class DigifactClient
         foreach (['Expiration', 'expiration', 'Expires', 'expires', 'expires_at'] as $key) {
             if (! empty($payload[$key]) && is_scalar($payload[$key])) {
                 try {
-                    return Carbon::parse((string) $payload[$key])->subMinutes(2);
+                    return Carbon::parse((string) $payload[$key]);
                 } catch (\Throwable) {
                     break;
                 }
@@ -538,6 +696,24 @@ class DigifactClient
         }
 
         return now()->addMinutes(50);
+    }
+
+    private function elapsedMilliseconds(float $started): float
+    {
+        return round((microtime(true) - $started) * 1000, 2);
+    }
+
+    private function addTiming(string $key, float $milliseconds): void
+    {
+        $this->timings[$key] = round((float) ($this->timings[$key] ?? 0) + $milliseconds, 2);
+    }
+
+    private function recordTiming(string $key, float $started): float
+    {
+        $duration = $this->elapsedMilliseconds($started);
+        $this->timings[$key] = $duration;
+
+        return $duration;
     }
 
     private function lookupResponseHasData(array $payload): bool
@@ -625,7 +801,7 @@ class DigifactClient
         }
 
         if ($response->status() === 404) {
-            return 'No se encontró el servicio de consulta de NIT. Verifica la URL configurada.';
+            return 'No se encontro el servicio de Digifact. Verifica URL, ambiente y endpoint configurado.';
         }
 
         if ($response->status() >= 500) {
@@ -686,6 +862,33 @@ class DigifactClient
         }
 
         return null;
+    }
+
+    private function safeLogPayload(array|string|null $payload): array|string|null
+    {
+        if (! is_array($payload)) {
+            return $payload;
+        }
+
+        return $this->removeResponseDataPayloads($payload);
+    }
+
+    private function removeResponseDataPayloads(array $payload): array
+    {
+        $clean = [];
+
+        foreach ($payload as $key => $value) {
+            $normalized = mb_strtolower((string) $key);
+
+            if (in_array($normalized, ['responsedata1', 'responsedata2', 'responsedata3', 'responsedata4'], true)) {
+                $clean["has_{$normalized}"] = filled($value);
+                continue;
+            }
+
+            $clean[$key] = is_array($value) ? $this->removeResponseDataPayloads($value) : $value;
+        }
+
+        return $clean;
     }
 
     private function decodedResponse(Response $response, bool $throwOnInvalid = true): array|string|null

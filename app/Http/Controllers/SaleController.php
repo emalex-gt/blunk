@@ -14,14 +14,20 @@ use App\Models\StockMovement;
 use App\Models\TenantSetting;
 use App\Models\TenantFelSetting;
 use App\Services\Fel\FelException;
+use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
+use App\Services\Fel\Providers\Digifact\DigifactNit;
 use App\Support\CashRegister;
 use App\Support\BranchInventory;
+use App\Support\BusinessCounter;
+use App\Support\BusinessLogo;
 use App\Support\Permissions;
 use App\Support\PriceLists;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
@@ -36,9 +42,13 @@ class SaleController extends Controller
         $felSettings = $business->country === 'GT'
             ? TenantFelSetting::query()->where('business_id', $businessId)->first()
             : null;
+        $felModuleEnabled = module_enabled('fel_gt', $businessId);
+        $felEnabled = $business->country === 'GT' && (bool) ($felSettings?->enabled);
+        $felConfigured = $business->country === 'GT' && (bool) ($felSettings?->isConfigured());
         $branchesEnabled = BranchInventory::branchesEnabled($businessId);
         $activeBranch = BranchInventory::activeBranch($businessId);
         $tenantSettings = TenantSetting::query()->where('business_id', $businessId)->first();
+        $availableDocumentTypes = $this->availableDocumentTypes($business, $tenantSettings, $felSettings, $felModuleEnabled);
         $priceTypes = PriceLists::active($businessId);
         $defaultPriceType = $priceTypes->firstWhere('is_default', true) ?: $priceTypes->first();
         $productsQuery = Product::query()
@@ -57,8 +67,10 @@ class SaleController extends Controller
 
         return Inertia::render('Sales/POS', [
             'fel' => [
-                'enabled' => module_enabled('fel_gt', $businessId) && $business->country === 'GT' && (bool) ($felSettings?->enabled),
-                'configured' => module_enabled('fel_gt', $businessId) && $business->country === 'GT' && (bool) ($felSettings?->isConfigured()),
+                'module_enabled' => $felModuleEnabled,
+                'enabled' => $felEnabled,
+                'configured' => $felConfigured,
+                'available' => in_array('invoice', $availableDocumentTypes, true),
                 'missing_fields' => $felSettings?->missingConfigurationFields() ?? [],
                 'provider' => $felSettings?->provider ?? 'digifact',
                 'environment' => $felSettings?->environment ?? 'test',
@@ -77,8 +89,11 @@ class SaleController extends Controller
             'default_price_type_id' => $defaultPriceType?->id,
             'price_settings' => [
                 'allow_manual_price' => (bool) ($tenantSettings?->allow_manual_price ?? false),
+                'manual_price_min_margin_percent' => (float) ($tenantSettings?->manual_price_min_margin_percent ?? 0),
+                'can_use_manual_price' => Permissions::canUseManualPrice(request()->user()),
                 'remember_last_customer_product_price' => (bool) ($tenantSettings?->remember_last_customer_product_price ?? false),
             ],
+            'available_document_types' => $availableDocumentTypes,
             'products' => $products,
             'categories' => Category::query()
                 ->where('business_id', $businessId)
@@ -94,8 +109,16 @@ class SaleController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        $saleRequestStarted = microtime(true);
+        abort_unless(module_enabled('pos'), 403, 'Este módulo no está habilitado para esta empresa.');
+
         $business = Business::query()->findOrFail(currentBusinessId());
+        $tenantSettings = TenantSetting::query()->where('business_id', $business->id)->first();
         $country = $business->country ?: 'GT';
+        $felSettings = $country === 'GT'
+            ? TenantFelSetting::query()->where('business_id', $business->id)->first()
+            : null;
+        $felModuleEnabled = $country === 'GT' && module_enabled('fel_gt', $business->id);
         $paymentMethods = ['cash', 'card', 'transfer', 'check'];
 
         if ($country === 'AR') {
@@ -104,7 +127,7 @@ class SaleController extends Controller
 
         $data = $request->validate([
             'note' => ['nullable', 'string', 'max:2000'],
-            'document_type' => ['required', 'in:invoice,receipt'],
+            'document_type' => ['nullable', 'in:invoice,receipt'],
             'payments' => ['required', 'array', 'min:1'],
             'payments.*.method' => ['required', 'in:'.implode(',', $paymentMethods)],
             'payments.*.amount' => ['required', 'numeric', 'gt:0'],
@@ -150,11 +173,40 @@ class SaleController extends Controller
             'discount.reason.required_with' => 'El motivo del descuento es obligatorio.',
         ]);
 
-        if (($data['document_type'] ?? null) === 'invoice') {
-            $this->validateInvoiceConfiguration($business, $data['customer'] ?? null);
+        $availableDocumentTypes = $this->availableDocumentTypes($business, $tenantSettings, $felSettings, $felModuleEnabled);
+
+        if ($availableDocumentTypes === []) {
+            throw ValidationException::withMessages([
+                'document_type' => 'No hay ningún tipo de documento habilitado para esta empresa.',
+            ]);
         }
 
-        $saleId = DB::transaction(function () use ($request, $data, $business) {
+        if (! filled($data['document_type'] ?? null)) {
+            if (count($availableDocumentTypes) === 1) {
+                $data['document_type'] = $availableDocumentTypes[0];
+            } else {
+                throw ValidationException::withMessages([
+                    'document_type' => 'Selecciona un tipo de documento.',
+                ]);
+            }
+        }
+
+        if (! in_array($data['document_type'], $availableDocumentTypes, true)) {
+            if ($data['document_type'] === 'invoice' && (bool) ($tenantSettings?->allow_invoices ?? false)) {
+                $this->validateInvoiceConfiguration($business, $data['customer'] ?? null, $felSettings, $felModuleEnabled);
+            }
+
+            throw ValidationException::withMessages([
+                'document_type' => 'El tipo de documento seleccionado no está habilitado.',
+            ]);
+        }
+
+        if (($data['document_type'] ?? null) === 'invoice') {
+            $this->validateInvoiceConfiguration($business, $data['customer'] ?? null, $felSettings, $felModuleEnabled);
+        }
+
+        $saleTransactionStarted = microtime(true);
+        $saleId = DB::transaction(function () use ($request, $data, $business, $felSettings) {
             $businessId = currentBusinessId();
             $branch = BranchInventory::activeBranch($businessId);
             $openSession = CashRegister::requireOpenSession(
@@ -167,6 +219,7 @@ class SaleController extends Controller
             $customerSnapshot = $this->saleCustomerSnapshot($customer, $data['customer'] ?? null);
             $sale = Sale::create([
                 'business_id' => $businessId,
+                'business_number' => BusinessCounter::next($businessId, 'sales'),
                 'branch_id' => $branch->id,
                 'customer_id' => $customer?->id,
                 ...$customerSnapshot,
@@ -233,6 +286,22 @@ class SaleController extends Controller
             );
             $lineDiscounts = $this->distributeDiscount($saleLines, $discount['amount'], round($subtotalBeforeDiscount, 2));
             $total = round($subtotalBeforeDiscount - $discount['amount'], 2);
+            $isCfInvoice = $this->isFinalConsumerSaleData($data['customer'] ?? null, $customer, $customerSnapshot);
+            $shouldBlockCfLimit = $business->country === 'GT'
+                && ($data['document_type'] ?? null) === 'invoice'
+                && $isCfInvoice
+                && round($total, 2) >= 2500;
+
+            if (($data['document_type'] ?? null) === 'invoice') {
+                Log::info('GT FEL CF limit validation before certification', [
+                    'business_id' => $businessId,
+                    'sale_total' => round($total, 2),
+                    'customer_doc_type' => $customerSnapshot['customer_doc_type'] ?? ($data['customer']['doc_type'] ?? null),
+                    'customer_doc_number' => $customerSnapshot['customer_doc_number'] ?? ($data['customer']['doc_number'] ?? null),
+                    'is_cf' => $isCfInvoice,
+                    'should_block_cf_limit' => $shouldBlockCfLimit,
+                ]);
+            }
 
             $paymentsTotal = collect($data['payments'])
                 ->sum(fn (array $payment) => (float) $payment['amount']);
@@ -243,12 +312,7 @@ class SaleController extends Controller
                 ]);
             }
 
-            if (
-                $business->country === 'GT'
-                && ($data['document_type'] ?? null) === 'invoice'
-                && $this->isFinalConsumerCustomer($data['customer'] ?? null)
-                && round($total, 2) >= 2500
-            ) {
+            if ($shouldBlockCfLimit) {
                 throw ValidationException::withMessages([
                     'customer.doc_number' => 'No se puede emitir factura a Consumidor Final por Q 2,500.00 o más. Debes ingresar un NIT válido.',
                     'document_type' => 'No se puede emitir factura a Consumidor Final por Q 2,500.00 o más. Debes ingresar un NIT válido.',
@@ -297,7 +361,7 @@ class SaleController extends Controller
                     'quantity' => -1 * $line['quantity'],
                     'previous_stock' => $previousStock,
                     'new_stock' => $newStock,
-                    'note' => stockMovementNote('sale', $sale->id),
+                    'note' => stockMovementNote('sale', $sale->business_number ?: $sale->id),
                     'created_by' => $request->user()->id,
                 ]);
             }
@@ -321,13 +385,12 @@ class SaleController extends Controller
                     $cashAmount,
                     'sale',
                     $sale->id,
-                    stockMovementNote('sale', $sale->id),
+                    stockMovementNote('sale', $sale->business_number ?: $sale->id),
                     $request->user()->id,
                 );
             }
 
             if (($data['document_type'] ?? null) === 'invoice') {
-                $felSettings = TenantFelSetting::query()->where('business_id', $businessId)->first();
                 $document = ElectronicDocument::query()->create([
                     'business_id' => $businessId,
                     'sale_id' => $sale->id,
@@ -346,6 +409,14 @@ class SaleController extends Controller
 
             return $sale->id;
         });
+        $saleTransactionMs = round((microtime(true) - $saleTransactionStarted) * 1000, 2);
+
+        Log::info('Sale transaction completed', [
+            'business_id' => $business->id,
+            'sale_id' => $saleId,
+            'document_type' => $data['document_type'],
+            'sale_transaction_ms' => $saleTransactionMs,
+        ]);
 
         $certifiedDocument = null;
 
@@ -353,10 +424,22 @@ class SaleController extends Controller
             $sale = Sale::query()
                 ->with(['business', 'customer', 'items.product', 'payments', 'electronicDocument'])
                 ->findOrFail($saleId);
+            $invoiceService = app(DigifactInvoiceService::class);
 
             try {
-                $certifiedDocument = app(DigifactInvoiceService::class)->certifySale($sale);
+                $certifiedDocument = $invoiceService->certifySale($sale, [
+                    'sale_transaction_ms' => $saleTransactionMs,
+                ]);
+                $invoiceService->recordSaleRequestTiming(
+                    $sale,
+                    round((microtime(true) - $saleRequestStarted) * 1000, 2),
+                );
             } catch (FelException $exception) {
+                $invoiceService->recordSaleRequestTiming(
+                    $sale,
+                    round((microtime(true) - $saleRequestStarted) * 1000, 2),
+                );
+
                 throw ValidationException::withMessages([
                     'document_type' => $exception->getMessage() ?: 'No se pudo certificar la factura.',
                 ]);
@@ -387,7 +470,60 @@ class SaleController extends Controller
                 ));
         }
 
+        if (($data['document_type'] ?? null) === 'receipt') {
+            Log::info('Sale request timing', [
+                'business_id' => $business->id,
+                'sale_id' => $saleId,
+                'document_type' => $data['document_type'],
+                'sale_transaction_ms' => $saleTransactionMs,
+                'total_sale_request_ms' => round((microtime(true) - $saleRequestStarted) * 1000, 2),
+            ]);
+        }
+
         return $redirect;
+    }
+
+    public function prewarmFelToken(): JsonResponse
+    {
+        $businessId = currentBusinessId();
+        $business = Business::query()->select('id', 'country')->findOrFail($businessId);
+
+        if ($business->country !== 'GT' || ! module_enabled('fel_gt', $businessId)) {
+            return response()->json(['prewarmed' => false]);
+        }
+
+        $settings = TenantFelSetting::query()->where('business_id', $businessId)->first();
+
+        if (! $settings?->enabled || ! $settings->isConfigured()) {
+            return response()->json(['prewarmed' => false]);
+        }
+
+        if ($settings->token && $settings->token_expires_at?->gt(now()->addMinutes(2))) {
+            return response()->json(['prewarmed' => false, 'token_source' => 'cached']);
+        }
+
+        try {
+            $client = DigifactClient::forBusiness($business, $settings);
+            $client->getToken($settings);
+            $timings = $client->timingSummary();
+
+            Log::info('Digifact token prewarmed for POS', [
+                'business_id' => $businessId,
+                'environment' => $settings->environment,
+                'token_source' => 'prewarmed',
+                'token_ms' => $timings['token_ms'] ?? null,
+            ]);
+        } catch (\Throwable $exception) {
+            Log::warning('Digifact POS token prewarm failed', [
+                'business_id' => $businessId,
+                'environment' => $settings->environment,
+                'message' => $exception->getMessage(),
+            ]);
+
+            return response()->json(['prewarmed' => false]);
+        }
+
+        return response()->json(['prewarmed' => true, 'token_source' => 'prewarmed']);
     }
 
     public function show(Request $request, Sale $sale): Response
@@ -408,6 +544,7 @@ class SaleController extends Controller
             'electronicDocument',
         ]);
         $canViewFelDocuments = $this->userCanViewFelDocuments($request);
+        $isSuperAdmin = (bool) $request->user()?->is_super_admin;
         $felResponseMetadata = is_array($sale->fel_raw_response)
             ? $sale->fel_raw_response
             : ($sale->electronicDocument?->response_payload ?? []);
@@ -415,6 +552,8 @@ class SaleController extends Controller
         return Inertia::render('Sales/Show', [
             'sale' => [
                 'id' => $sale->id,
+                'business_number' => $sale->business_number,
+                'display_number' => format_sale_number($sale),
                 'status' => $sale->status ?? 'completed',
                 'document_type' => $sale->document_type ?? 'receipt',
                 'created_at_local' => $sale->created_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
@@ -435,6 +574,8 @@ class SaleController extends Controller
                 'fel_uuid' => $sale->fel_uuid,
                 'fel_series' => $sale->fel_series,
                 'fel_number' => $sale->fel_number,
+                'fel_internal_reference' => $isSuperAdmin ? $sale->fel_internal_reference : null,
+                'fel_issued_at' => $isSuperAdmin ? $sale->fel_issued_at?->copy()->timezone($timezone)->format('Y-m-d H:i') : null,
                 'has_fel_xml' => (bool) ($felResponseMetadata['has_xml'] ?? false) || filled($sale->fel_xml_path),
                 'has_fel_html' => (bool) ($felResponseMetadata['has_html'] ?? false) || filled($sale->fel_html_path),
                 'has_fel_pdf' => (bool) ($felResponseMetadata['has_pdf'] ?? false) || filled($sale->fel_pdf_path) || filled($sale->fel_pdf_url),
@@ -479,6 +620,8 @@ class SaleController extends Controller
                     'uuid' => $sale->electronicDocument->uuid,
                     'series' => $sale->electronicDocument->series,
                     'number' => $sale->electronicDocument->number,
+                    'internal_reference' => $isSuperAdmin ? $sale->electronicDocument->internal_reference : null,
+                    'issued_at' => $isSuperAdmin ? $sale->electronicDocument->issued_at?->copy()->timezone($timezone)->format('Y-m-d H:i') : null,
                     'certification_date' => $sale->electronicDocument->certification_date?->copy()->timezone($timezone)->format('Y-m-d H:i'),
                     'error_message' => $sale->electronicDocument->error_message,
                     'cancelled_at' => $sale->electronicDocument->cancelled_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
@@ -491,11 +634,74 @@ class SaleController extends Controller
                         ? $sale->electronicDocument->response_payload
                         : null,
                 ] : null,
+                'fel_attempts' => $isSuperAdmin
+                    ? $sale->felCertificationAttempts()
+                        ->latest('started_at')
+                        ->limit(10)
+                        ->get()
+                        ->map(fn ($attempt) => [
+                            'id' => $attempt->id,
+                            'status' => $attempt->status,
+                            'internal_reference' => $attempt->internal_reference,
+                            'issued_at' => $attempt->issued_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
+                            'started_at' => $attempt->started_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
+                            'finished_at' => $attempt->finished_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
+                            'error_message' => $attempt->error_message,
+                        ])
+                    : [],
+                'fel_incidents' => $isSuperAdmin
+                    ? $sale->felIncidents()
+                        ->latest()
+                        ->limit(10)
+                        ->get()
+                        ->map(fn ($incident) => [
+                            'id' => $incident->id,
+                            'type' => $incident->type,
+                            'severity' => $incident->severity,
+                            'status' => $incident->status,
+                            'message' => $incident->message,
+                            'created_at' => $incident->created_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
+                        ])
+                    : [],
             ],
             'canViewFelDocuments' => $canViewFelDocuments,
             'canCancel' => $this->userCanCancelSale($request, $sale)
                 && ($sale->status ?? 'completed') !== 'cancelled',
         ]);
+    }
+
+    public function retryFelCertification(Request $request, Sale $sale): RedirectResponse
+    {
+        $this->ensureSaleBelongsToCurrentBusiness($sale);
+        abort_unless($sale->document_type === 'invoice', 404);
+
+        $sale->load('electronicDocument');
+        $status = $sale->certification_status ?: $sale->electronicDocument?->status;
+
+        abort_unless(in_array($status, ['unknown', 'failed'], true), 403);
+
+        try {
+            $document = app(DigifactInvoiceService::class)->retryCertification($sale);
+            $message = 'Factura FEL certificada correctamente.';
+
+            if (filled($document->series) || filled($document->number)) {
+                $message .= ' Serie '.($document->series ?: '-').' Número '.($document->number ?: '-').'.';
+            }
+
+            return back()
+                ->with('success', $message)
+                ->with('fel_success_message', $message)
+                ->with('fel_print_sale_id', $sale->id)
+                ->with('fel_print_url', URL::temporarySignedRoute(
+                    'sales.fel-document',
+                    now()->addMinutes(10),
+                    ['sale' => $sale->id],
+                ));
+        } catch (FelException $exception) {
+            return back()->withErrors([
+                'document_type' => $exception->getMessage() ?: 'No se pudo certificar la factura.',
+            ]);
+        }
     }
 
     public function cancel(Request $request, Sale $sale): RedirectResponse
@@ -569,7 +775,7 @@ class SaleController extends Controller
                     'quantity' => (float) $item->quantity,
                     'previous_stock' => $previousStock,
                     'new_stock' => $newStock,
-                    'note' => stockMovementNote('sale_cancel', $sale->id),
+                    'note' => stockMovementNote('sale_cancel', $sale->business_number ?: $sale->id),
                     'created_by' => $request->user()->id,
                 ]);
             }
@@ -589,7 +795,7 @@ class SaleController extends Controller
                     -1 * $cashAmount,
                     'sale',
                     $sale->id,
-                    stockMovementNote('sale_cancel', $sale->id),
+                    stockMovementNote('sale_cancel', $sale->business_number ?: $sale->id),
                     $request->user()->id,
                 );
             }
@@ -610,7 +816,7 @@ class SaleController extends Controller
         $this->ensureSaleBelongsToCurrentBusiness($sale);
 
         $businessId = currentBusinessId();
-        $business = \App\Models\Business::query()->select('id', 'name', 'country')->find($businessId);
+        $business = \App\Models\Business::query()->select('id', 'name', 'country', 'logo_url')->find($businessId);
         $timezone = tenantTimezone($business);
         $settings = TenantSetting::query()->where('business_id', $businessId)->first();
 
@@ -620,6 +826,7 @@ class SaleController extends Controller
             'cancelledBy:id,name',
             'items.product:id,code,barcode',
             'payments:id,sale_id,method,amount,reference,details',
+            'branch:id,business_id,name,logo_url',
         ]);
 
         $receiptFormat = $settings?->receipt_format === 'document' ? 'document' : 'ticket';
@@ -627,7 +834,7 @@ class SaleController extends Controller
         return view("sales.receipt-{$receiptFormat}", [
             'paperSize' => ($business?->country ?? 'GT') === 'AR' ? 'A4' : 'Letter',
             'company' => [
-                'logo_url' => $settings?->company_logo_url,
+                'logo_url' => $business ? BusinessLogo::forPrint($business, $sale->branch) : null,
                 'name' => $settings?->company_name ?: $business?->name,
                 'tax_id' => $settings?->company_tax_id,
                 'address' => $settings?->company_address,
@@ -644,33 +851,7 @@ class SaleController extends Controller
 
     public function invoiceDocument(Sale $sale)
     {
-        $this->authorizeFelDocumentAccess(request());
-        $this->ensureSaleBelongsToCurrentBusiness($sale);
-
-        $sale->load('electronicDocument');
-        $document = $sale->electronicDocument;
-
-        abort_unless($sale->document_type === 'invoice' && $document?->status === 'certified', 404);
-
-        if (filled($document->pdf_base64)) {
-            $pdf = base64_decode($document->pdf_base64, true);
-
-            if ($pdf !== false) {
-                return response($pdf, 200, [
-                    'Content-Type' => 'application/pdf',
-                    'Content-Disposition' => 'inline; filename="factura-'.$sale->id.'.pdf"',
-                ]);
-            }
-        }
-
-        if (filled($document->html)) {
-            return response()->view('sales.invoice-html', [
-                'html' => $document->html,
-                'sale' => $sale,
-            ]);
-        }
-
-        return response('No hay documento imprimible disponible.', 404);
+        return $this->felDocument(request(), $sale);
     }
 
     public function lastCustomerProductPrice(Request $request, Customer $customer, Product $product)
@@ -706,19 +887,76 @@ class SaleController extends Controller
 
         abort_unless($sale->document_type === 'invoice' && filled($sale->fel_uuid), 404);
 
-        $sale->load('electronicDocument');
+        $businessId = currentBusinessId();
+        $business = Business::query()
+            ->with(['tenantSetting', 'tenantFelSetting'])
+            ->findOrFail($businessId);
+        $settings = $business->tenantSetting;
+        $felSettings = $business->tenantFelSetting;
+        $timezone = tenantTimezone($business);
 
-        try {
-            $document = app(DigifactInvoiceService::class)->getDocumentContent($sale, 'HTML');
-            $html = $this->injectFelAutoPrintScript((string) $document['content']);
+        $sale->load([
+            'customer:id,name,doc_type,doc_number,address,phone',
+            'items.product:id,code,barcode',
+            'payments:id,sale_id,method,amount,reference,details',
+            'electronicDocument',
+            'branch:id,business_id,name,logo_url',
+        ]);
 
-            return response($html, 200, [
-                'Content-Type' => $document['content_type'],
-                'Content-Disposition' => 'inline; filename="fel-'.$this->safeFilename($sale->fel_uuid).'.html"',
-            ]);
-        } catch (FelException) {
-            return response('No se pudo obtener el documento imprimible desde Digifact.', 404);
-        }
+        $receiptFormat = $settings?->receipt_format === 'document' ? 'document' : 'ticket';
+        $issuerNit = DigifactNit::cleanIssuerNitForPayload($felSettings?->issuer_tax_id ?: $settings?->company_tax_id);
+        $receiverNit = DigifactNit::cleanReceiverNit($sale->customer_doc_number ?: $sale->customer?->doc_number ?: 'CF');
+        $subtotal = round((float) ($sale->subtotal_before_discount ?? $sale->total), 2);
+        $total = round((float) $sale->total, 2);
+        $taxable = round($total / 1.12, 2);
+        $iva = round($total - $taxable, 2);
+        $verificationUrl = 'https://felpub.c.sat.gob.gt/verificador-web/publico/vistas/verificacionDte.jsf'
+            .'?tipo=autorizacion|numero='.$sale->fel_uuid
+            .'|emisor='.$issuerNit
+            .'|receptor='.$receiverNit
+            .'|monto='.number_format($total, 2, '.', '');
+
+        return view("sales.fel-{$receiptFormat}", [
+            'paperSize' => 'Letter',
+            'company' => [
+                'logo_url' => BusinessLogo::forPrint($business, $sale->branch),
+                'name' => $settings?->company_name ?: $business->name,
+                'tax_id' => $issuerNit,
+                'address' => $felSettings?->establishment_address ?: $settings?->company_address,
+                'municipality' => $felSettings?->establishment_municipality,
+                'department' => $felSettings?->establishment_department,
+                'phone' => $settings?->company_phone,
+            ],
+            'business' => $business,
+            'sale' => $sale,
+            'items' => $sale->items,
+            'payments' => $sale->payments,
+            'customer' => [
+                'name' => $sale->customer_name ?: $sale->customer?->name ?: 'Consumidor Final',
+                'tax_id' => $receiverNit,
+                'address' => $sale->customer_address ?: $sale->customer?->address ?: 'Ciudad',
+                'municipality' => $sale->customer_municipality ?: $felSettings?->establishment_municipality,
+                'department' => $sale->customer_department ?: $felSettings?->establishment_department,
+            ],
+            'fel' => [
+                'uuid' => $sale->fel_uuid,
+                'series' => $sale->fel_series ?: $sale->electronicDocument?->series,
+                'number' => $sale->fel_number ?: $sale->electronicDocument?->number,
+                'certified_at' => ($sale->fel_certified_at ?: $sale->electronicDocument?->certification_date)
+                    ?->copy()->timezone($timezone)->format('Y-m-d H:i:s'),
+                'certifier_tax_id' => $felSettings?->certifier_tax_id ?: '-',
+                'certifier_name' => $felSettings?->provider === 'digifact'
+                    ? 'DIGIFACT SERVICIOS, SOCIEDAD ANONIMA'
+                    : strtoupper((string) ($felSettings?->provider ?: 'Certificador FEL')),
+                'qr_url' => 'https://felgtaws.digifact.com.gt/QRService/api/QR?data='
+                    .rawurlencode($verificationUrl).'&size=100x100',
+            ],
+            'subtotal' => $subtotal,
+            'discount' => round((float) ($sale->discount_amount ?? 0), 2),
+            'iva' => $iva,
+            'total' => $total,
+            'createdAtLocal' => $sale->created_at?->copy()->timezone($timezone)->format('Y-m-d H:i:s'),
+        ]);
     }
 
     public function felDownload(Request $request, Sale $sale, string $format)
@@ -760,7 +998,7 @@ class SaleController extends Controller
             abort(403, 'Este modulo no esta habilitado para esta empresa.');
         }
 
-        if (! Permissions::userHas($request->user(), Permissions::SALES_DISCOUNT_APPLY)) {
+        if (! Permissions::canApplyDiscounts($request->user())) {
             abort(403, 'No tienes permiso para aplicar descuentos.');
         }
 
@@ -833,11 +1071,25 @@ class SaleController extends Controller
                 abort(403, 'No tienes permiso para aplicar precio manual.');
             }
 
+            if (! Permissions::canUseManualPrice($request->user())) {
+                abort(403, 'No tienes permiso para aplicar precio manual.');
+            }
+
             $unitPrice = round((float) ($item['unit_price'] ?? 0), 2);
 
             if ($unitPrice <= 0) {
                 throw ValidationException::withMessages([
                     'items' => 'El precio manual debe ser mayor a 0.',
+                ]);
+            }
+
+            $minMarginPercent = max(0.0, (float) ($settings?->manual_price_min_margin_percent ?? 0));
+            $cost = round((float) ($product->cost_price ?? 0), 2);
+            $minimumPrice = round($cost * (1 + ($minMarginPercent / 100)), 2);
+
+            if ($minimumPrice > 0 && $unitPrice < $minimumPrice) {
+                throw ValidationException::withMessages([
+                    'items' => sprintf('El precio manual debe ser al menos %s%% mayor al costo.', rtrim(rtrim(number_format($minMarginPercent, 2, '.', ''), '0'), '.')),
                 ]);
             }
 
@@ -1099,21 +1351,59 @@ class SaleController extends Controller
         abort_unless((int) $sale->business_id === (int) currentBusinessId(), 403);
     }
 
-    private function validateInvoiceConfiguration(Business $business, ?array $customerData): void
-    {
-        if (! module_enabled('fel_gt', $business->id)) {
-            throw ValidationException::withMessages([
-                'document_type' => 'La facturacion electronica FEL no esta habilitada.',
-            ]);
+    private function availableDocumentTypes(
+        Business $business,
+        ?TenantSetting $tenantSettings = null,
+        ?TenantFelSetting $felSettings = null,
+        ?bool $felModuleEnabled = null,
+    ): array {
+        $tenantSettings ??= TenantSetting::query()->where('business_id', $business->id)->first();
+        $available = [];
+
+        if ((bool) ($tenantSettings?->allow_receipts ?? true)) {
+            $available[] = 'receipt';
         }
 
+        if (! (bool) ($tenantSettings?->allow_invoices ?? false) || $business->country !== 'GT') {
+            return $available;
+        }
+
+        $felModuleEnabled ??= module_enabled('fel_gt', $business->id);
+        $felSettings ??= TenantFelSetting::query()->where('business_id', $business->id)->first();
+
+        if ($felModuleEnabled && (bool) $felSettings?->enabled && (bool) $felSettings?->isConfigured()) {
+            $available[] = 'invoice';
+        }
+
+        return $available;
+    }
+
+    private function validateInvoiceConfiguration(
+        Business $business,
+        ?array $customerData,
+        ?TenantFelSetting $settings = null,
+        ?bool $felModuleEnabled = null,
+    ): void
+    {
         if ($business->country !== 'GT') {
             throw ValidationException::withMessages([
-                'document_type' => 'La facturacion electronica FEL esta disponible solo para Guatemala.',
+                'document_type' => 'La facturación electrónica FEL está disponible solo para Guatemala.',
             ]);
         }
 
-        $settings = TenantFelSetting::query()->where('business_id', $business->id)->first();
+        if (! ($felModuleEnabled ?? module_enabled('fel_gt', $business->id))) {
+            throw ValidationException::withMessages([
+                'document_type' => 'La facturación electrónica FEL no está habilitada.',
+            ]);
+        }
+
+        $settings ??= TenantFelSetting::query()->where('business_id', $business->id)->first();
+
+        if (! $settings || ! $settings->enabled) {
+            throw ValidationException::withMessages([
+                'document_type' => 'La facturación electrónica FEL no está habilitada.',
+            ]);
+        }
 
         if (! $settings || ! $settings->isConfigured()) {
             throw ValidationException::withMessages([
@@ -1180,6 +1470,27 @@ class SaleController extends Controller
             || $docNumber === 'CF';
     }
 
+    private function isFinalConsumerSaleData(?array $customerData, ?Customer $customer, array $snapshot = []): bool
+    {
+        $values = [
+            $customerData['doc_type'] ?? null,
+            $customerData['doc_number'] ?? null,
+            $snapshot['customer_doc_type'] ?? null,
+            $snapshot['customer_doc_number'] ?? null,
+            $customer?->doc_type,
+            $customer?->doc_number,
+        ];
+
+        foreach ($values as $value) {
+            if ($this->normalizeDocument($value) === 'CF') {
+                return true;
+            }
+        }
+
+        return (bool) ($customerData['consumidor_final'] ?? false)
+            || (bool) ($customer?->is_final_consumer);
+    }
+
     private function isFinalConsumerModel(Customer $customer): bool
     {
         return (bool) $customer->is_final_consumer
@@ -1196,7 +1507,7 @@ class SaleController extends Controller
             return false;
         }
 
-        if (! $user->is_super_admin && ! in_array($user->role, ['owner', 'admin'], true)) {
+        if (! Permissions::userHas($user, Permissions::SALES_CANCEL)) {
             return false;
         }
 
@@ -1205,7 +1516,7 @@ class SaleController extends Controller
 
     private function userCanViewFelDocuments(Request $request): bool
     {
-        return Permissions::userHas($request->user(), Permissions::FEL_DOCUMENTS_VIEW);
+        return Permissions::canViewFelDocuments($request->user());
     }
 
     private function authorizeFelDocumentAccess(Request $request, bool $allowSignedUrl = false): void
@@ -1280,22 +1591,4 @@ class SaleController extends Controller
         return $filename !== '' ? $filename : 'factura';
     }
 
-    private function injectFelAutoPrintScript(string $html): string
-    {
-        $script = <<<'HTML'
-<script>
-window.addEventListener('load', function () {
-  setTimeout(function () {
-    window.print();
-  }, 300);
-});
-</script>
-HTML;
-
-        if (stripos($html, '</body>') !== false) {
-            return preg_replace('/<\/body>/i', $script.'</body>', $html, 1) ?? ($html.$script);
-        }
-
-        return $html.$script;
-    }
 }

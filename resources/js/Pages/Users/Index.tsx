@@ -10,6 +10,14 @@ type User = {
     email: string;
     role: string;
     is_active: boolean;
+    current_branch_id: number | null;
+    current_branch: Branch | null;
+};
+
+type Branch = {
+    id: number;
+    name: string;
+    code: string | null;
 };
 
 type Limits = {
@@ -28,10 +36,16 @@ export default function Index({
     users,
     limits,
     roles,
+    role_options = [],
+    branches_enabled = false,
+    branches = [],
 }: {
     users: User[];
     limits: Limits;
     roles: string[];
+    role_options?: { key: string; name: string }[];
+    branches_enabled?: boolean;
+    branches?: Branch[];
 }) {
     const [editing, setEditing] = useState<User | null>(null);
     const [resetTarget, setResetTarget] = useState<User | null>(null);
@@ -45,6 +59,7 @@ export default function Index({
         is_active: true,
         password: '',
         password_confirmation: '',
+        current_branch_id: '',
     });
 
     const passwordForm = useForm({
@@ -58,6 +73,7 @@ export default function Index({
         form.reset();
         form.setData('role', 'cashier');
         form.setData('is_active', true);
+        form.setData('current_branch_id', '');
     }
 
     function startEdit(user: User) {
@@ -70,6 +86,7 @@ export default function Index({
             is_active: user.is_active,
             password: '',
             password_confirmation: '',
+            current_branch_id: user.current_branch_id ? String(user.current_branch_id) : '',
         });
     }
 
@@ -118,6 +135,9 @@ export default function Index({
     const availableRoles = editing && !roles.includes(editing.role)
         ? [editing.role, ...roles]
         : roles;
+    const roleName = (role: string) => role_options.find((option) => option.key === role)?.name
+        ?? roleLabels[role]
+        ?? role;
 
     return (
         <AuthenticatedLayout
@@ -193,11 +213,28 @@ export default function Index({
                                 >
                                     {availableRoles.map((role) => (
                                         <option key={role} value={role}>
-                                            {roleLabels[role] ?? role}
+                                            {roleName(role)}
                                         </option>
                                     ))}
                                 </select>
                             </Field>
+                            {branches_enabled && (
+                                <Field label="Sucursal asignada" error={form.errors.current_branch_id}>
+                                    <select
+                                        className={inputClass}
+                                        value={form.data.current_branch_id}
+                                        onChange={(e) => form.setData('current_branch_id', e.target.value)}
+                                    >
+                                        <option value="">Sucursal predeterminada</option>
+                                        {branches.map((branch) => (
+                                            <option key={branch.id} value={branch.id}>
+                                                {branch.name}
+                                                {branch.code ? ` (${branch.code})` : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </Field>
+                            )}
                             {!editing && (
                                 <>
                                     <Field label="Contraseña" error={form.errors.password}>
@@ -271,6 +308,7 @@ export default function Index({
                                     <th className="px-5 py-3">Nombre</th>
                                     <th className="px-5 py-3">Email</th>
                                     <th className="px-5 py-3">Rol</th>
+                                    {branches_enabled && <th className="px-5 py-3">Sucursal</th>}
                                     <th className="px-5 py-3">Estado</th>
                                     <th className="px-5 py-3 text-right">Acciones</th>
                                 </tr>
@@ -282,9 +320,14 @@ export default function Index({
                                         <td className="px-5 py-3 text-slate-600">{user.email}</td>
                                         <td className="px-5 py-3">
                                             <Badge className="border-indigo-100 bg-indigo-50 text-indigo-700">
-                                                {roleLabels[user.role] ?? user.role}
+                                                {roleName(user.role)}
                                             </Badge>
                                         </td>
+                                        {branches_enabled && (
+                                            <td className="px-5 py-3 text-slate-600">
+                                                {user.current_branch?.name ?? 'Sucursal predeterminada'}
+                                            </td>
+                                        )}
                                         <td className="px-5 py-3">
                                             <Badge
                                                 className={

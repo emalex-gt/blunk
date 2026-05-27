@@ -4,25 +4,24 @@ namespace App\Http\Controllers;
 
 use App\Models\Business;
 use App\Models\TenantSetting;
-use Cloudinary\Cloudinary;
+use App\Support\CloudinaryUploader;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 use Inertia\Response;
-use RuntimeException;
 
 class CompanySettingsController extends Controller
 {
     public function edit(Request $request): Response
     {
-        abort_unless(in_array($request->user()->role, ['owner', 'admin'], true), 403);
+        abort_unless((bool) $request->user()?->is_super_admin, 403);
 
         $settings = TenantSetting::query()->firstOrCreate(
             ['business_id' => currentBusinessId()],
             ['use_product_images' => true, 'max_users' => 1],
         );
         $business = Business::query()->select('id', 'name', 'country')->findOrFail(currentBusinessId());
+
         return Inertia::render('Settings/Company', [
             'business' => $business,
             'settings' => $settings->only([
@@ -41,7 +40,7 @@ class CompanySettingsController extends Controller
 
     public function update(Request $request): RedirectResponse
     {
-        abort_unless(in_array($request->user()->role, ['owner', 'admin'], true), 403);
+        abort_unless((bool) $request->user()?->is_super_admin, 403);
 
         $data = $request->validate([
             'company_name' => ['nullable', 'string', 'max:255'],
@@ -72,11 +71,14 @@ class CompanySettingsController extends Controller
         ];
 
         if ($request->hasFile('logo')) {
-            $logo = $this->uploadLogo($request);
+            $cloudinary = app(CloudinaryUploader::class);
+            $logo = $cloudinary->uploadImage(
+                $request->file('logo'),
+                'businesses/'.currentBusinessId().'/settings',
+                'company_logo',
+            );
 
-            if ($settings->company_logo_public_id) {
-                $this->cloudinaryClient()->uploadApi()->destroy($settings->company_logo_public_id);
-            }
+            $cloudinary->destroy($settings->company_logo_public_id);
 
             $payload['company_logo_url'] = $logo['secure_url'];
             $payload['company_logo_public_id'] = $logo['public_id'];
@@ -85,65 +87,5 @@ class CompanySettingsController extends Controller
         $settings->update($payload);
 
         return back()->with('success', 'Configuración guardada.');
-    }
-
-    private function cloudinaryClient(): Cloudinary
-    {
-        $cloudUrl = config('cloudinary.cloud_url') ?: env('CLOUDINARY_URL');
-
-        if (! $cloudUrl) {
-            throw new RuntimeException('CLOUDINARY_URL is not configured.');
-        }
-
-        return new Cloudinary($cloudUrl);
-    }
-
-    private function uploadLogo(Request $request): array
-    {
-        $file = $request->file('logo');
-        $businessId = currentBusinessId();
-
-        if (! $file || ! $file->isValid()) {
-            throw new RuntimeException('Invalid uploaded logo.');
-        }
-
-        $tempDir = storage_path('app/tmp/cloudinary');
-
-        if (! is_dir($tempDir)) {
-            mkdir($tempDir, 0775, true);
-        }
-
-        $extension = $file->getClientOriginalExtension() ?: 'jpg';
-        $tempFilePath = $tempDir.DIRECTORY_SEPARATOR.'logo_'.$businessId.'_'.uniqid('', true).'.'.$extension;
-
-        if (! copy($file->getPathname(), $tempFilePath)) {
-            throw new RuntimeException('Could not copy uploaded logo to temp folder.');
-        }
-
-        try {
-            Log::info('Uploading company logo to Cloudinary', [
-                'business_id' => $businessId,
-                'folder' => "businesses/{$businessId}/settings",
-                'size_bytes' => filesize($tempFilePath),
-            ]);
-
-            $result = $this->cloudinaryClient()->uploadApi()->upload($tempFilePath, [
-                'folder' => "businesses/{$businessId}/settings",
-                'resource_type' => 'image',
-            ]);
-
-            $secureUrl = $result['secure_url'] ?? null;
-            $publicId = $result['public_id'] ?? null;
-
-            if (! $secureUrl || ! $publicId) {
-                throw new RuntimeException('Cloudinary did not return secure_url or public_id.');
-            }
-
-            return ['secure_url' => $secureUrl, 'public_id' => $publicId];
-        } finally {
-            if (file_exists($tempFilePath)) {
-                @unlink($tempFilePath);
-            }
-        }
     }
 }

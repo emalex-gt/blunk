@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use App\Models\Business;
 use App\Support\BranchInventory;
+use App\Support\Permissions;
 use App\Models\TenantFelSetting;
 use App\Models\TenantSetting;
 use Illuminate\Http\Request;
@@ -102,14 +103,19 @@ class HandleInertiaRequests extends Middleware
                 $settings = TenantFelSetting::query()
                     ->where('business_id', $businessId)
                     ->first();
+                $moduleEnabled = module_enabled('fel_gt', $businessId);
+                $felEnabled = (bool) ($settings?->enabled);
+                $felConfigured = (bool) ($settings?->isConfigured());
 
-                return $settings ? [
-                    'provider' => $settings->provider,
-                    'environment' => $settings->environment,
-                    'enabled' => module_enabled('fel_gt', $businessId) && $settings->enabled,
-                    'configured' => module_enabled('fel_gt', $businessId) && $settings->isConfigured(),
-                    'missing_fields' => $settings->missingConfigurationFields(),
-                ] : null;
+                return [
+                    'provider' => $settings?->provider ?? 'digifact',
+                    'environment' => $settings?->environment ?? 'test',
+                    'module_enabled' => $moduleEnabled,
+                    'enabled' => $felEnabled,
+                    'configured' => $felConfigured,
+                    'available' => $moduleEnabled && $felConfigured,
+                    'missing_fields' => $settings?->missingConfigurationFields() ?? [],
+                ];
             },
 
             'currency_format' => function () use ($businessId) {
@@ -145,6 +151,22 @@ class HandleInertiaRequests extends Middleware
             'branches' => function () use ($businessId) {
                 if (! $businessId || ! BranchInventory::branchesEnabled($businessId)) {
                     return [];
+                }
+
+                $user = request()->user();
+
+                if (! Permissions::userHas($user, Permissions::BRANCHES_MANAGE)) {
+                    $branch = $user?->currentBranch;
+
+                    $branch = $branch && (int) $branch->business_id === (int) $businessId && $branch->is_active
+                        ? $branch
+                        : BranchInventory::activeBranch($businessId);
+
+                    return collect([[
+                        'id' => $branch->id,
+                        'name' => $branch->name,
+                        'code' => $branch->code,
+                    ]]);
                 }
 
                 return BranchInventory::branchOptions($businessId);

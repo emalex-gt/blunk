@@ -152,3 +152,33 @@ if (! function_exists('stockMovementNote')) {
         };
     }
 }
+
+if (! function_exists('format_sale_number')) {
+    function format_sale_number(array|object|null $sale): string
+    {
+        $number = is_array($sale)
+            ? ($sale['business_number'] ?? null)
+            : ($sale?->business_number ?? null);
+
+        $fallback = is_array($sale)
+            ? ($sale['id'] ?? null)
+            : ($sale?->id ?? null);
+
+        return 'V-'.($number ?: $fallback ?: '-');
+    }
+}
+
+if (! function_exists('format_purchase_number')) {
+    function format_purchase_number(array|object|null $purchase): string
+    {
+        $number = is_array($purchase)
+            ? ($purchase['business_number'] ?? null)
+            : ($purchase?->business_number ?? null);
+
+        $fallback = is_array($purchase)
+            ? ($purchase['id'] ?? null)
+            : ($purchase?->id ?? null);
+
+        return 'C-'.($number ?: $fallback ?: '-');
+    }
+}

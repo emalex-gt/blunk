@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Comprobante #{{ $sale->id }}</title>
+    <title>Comprobante {{ format_sale_number($sale) }}</title>
     <style>
         @page {
             size: {{ $paperSize }};
@@ -276,7 +276,7 @@
 
         <div class="title">
             <h2>Comprobante de venta</h2>
-            <p>Venta #{{ $sale->id }}</p>
+            <p>Venta {{ format_sale_number($sale) }}</p>
             <p class="small muted">Fecha: {{ $createdAtLocal ?? '-' }}</p>
         </div>
     </header>
@@ -386,7 +386,7 @@
     window.addEventListener('load', function () {
         window.setTimeout(function () {
             window.print();
-        }, 500);
+        }, 300);
     });
 </script>
 </body>

@@ -8,6 +8,7 @@ use App\Models\StockMovement;
 use App\Models\Supplier;
 use App\Support\CashRegister;
 use App\Support\BranchInventory;
+use App\Support\BusinessCounter;
 use App\Support\ProductSupplierCostHistory;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -114,6 +115,7 @@ class PurchaseController extends Controller
             );
             $purchase = Purchase::create([
                 'business_id' => $businessId,
+                'business_number' => BusinessCounter::next($businessId, 'purchases'),
                 'branch_id' => $branch->id,
                 'supplier_id' => $supplier?->id,
                 'status' => 'completed',
@@ -175,7 +177,7 @@ class PurchaseController extends Controller
                     'quantity' => $incomingQty,
                     'previous_stock' => $currentBranchStock,
                     'new_stock' => $newBranchStock,
-                    'note' => stockMovementNote('purchase', $purchase->id),
+                    'note' => stockMovementNote('purchase', $purchase->business_number ?: $purchase->id),
                     'created_by' => $request->user()->id,
                     'user_id' => $request->user()->id,
                 ]);
@@ -190,7 +192,7 @@ class PurchaseController extends Controller
                     -1 * $total,
                     'purchase',
                     $purchase->id,
-                    stockMovementNote('purchase', $purchase->id),
+                    stockMovementNote('purchase', $purchase->business_number ?: $purchase->id),
                     $request->user()->id,
                 );
             }

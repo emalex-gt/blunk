@@ -7,6 +7,8 @@ import { FormEvent, useState } from 'react';
 
 type SaleDetail = {
     id: number;
+    business_number: number | null;
+    display_number: string;
     status: 'completed' | 'cancelled';
     document_type: 'receipt' | 'invoice';
     created_at_local: string | null;
@@ -24,6 +26,8 @@ type SaleDetail = {
     fel_uuid: string | null;
     fel_series: string | null;
     fel_number: string | null;
+    fel_internal_reference: string | null;
+    fel_issued_at: string | null;
     fel_certified_at: string | null;
     has_fel_xml: boolean;
     has_fel_html: boolean;
@@ -64,12 +68,31 @@ type SaleDetail = {
         uuid: string | null;
         series: string | null;
         number: string | null;
+        internal_reference: string | null;
+        issued_at: string | null;
         certification_date: string | null;
         error_message: string | null;
         cancelled_at: string | null;
         has_printable_document: boolean;
         technical_response: Record<string, unknown> | null;
     } | null;
+    fel_attempts: {
+        id: number;
+        status: string;
+        internal_reference: string;
+        issued_at: string | null;
+        started_at: string | null;
+        finished_at: string | null;
+        error_message: string | null;
+    }[];
+    fel_incidents: {
+        id: number;
+        type: string;
+        severity: string;
+        status: string;
+        message: string;
+        created_at: string | null;
+    }[];
 };
 
 const paymentLabels: Record<string, string> = {
@@ -106,8 +129,11 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [showTechnicalModal, setShowTechnicalModal] = useState(false);
     const cancelForm = useForm({ reason: '' });
+    const retryForm = useForm({});
     const toast = useToast();
     const isCancelled = sale.status === 'cancelled';
+    const felStatus = sale.certification_status ?? sale.electronic_document?.status ?? null;
+    const canRetryFel = sale.document_type === 'invoice' && ['unknown', 'failed'].includes(felStatus ?? '');
     const canCancelSale =
         sale.status !== 'cancelled' &&
         (
@@ -158,9 +184,26 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
         });
     }
 
+    function retryFelCertification() {
+        retryForm.post(route('sales.fel.retry', sale.id), {
+            preserveScroll: true,
+            onSuccess: (page) => {
+                const flash = page.props.flash as { fel_print_url?: string | null; fel_success_message?: string | null } | undefined;
+                toast.success(flash?.fel_success_message ?? 'Factura FEL certificada correctamente.', { persistent: true });
+
+                if (flash?.fel_print_url) {
+                    window.open(flash.fel_print_url, '_blank');
+                }
+            },
+            onError: (errors) => {
+                toast.error(Object.values(errors)[0] ?? 'No se pudo certificar la factura.');
+            },
+        });
+    }
+
     return (
-        <AuthenticatedLayout header={<h2 className="text-xl font-semibold text-slate-950">Venta #{sale.id}</h2>}>
-            <Head title={`Venta #${sale.id}`} />
+        <AuthenticatedLayout header={<h2 className="text-xl font-semibold text-slate-950">Venta {sale.display_number}</h2>}>
+            <Head title={`Venta ${sale.display_number}`} />
             <Toast toasts={toast.toasts} onClose={toast.removeToast} />
 
             <div className="py-5">
@@ -169,7 +212,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                         <div className="flex flex-wrap items-start justify-between gap-4">
                             <div>
                                 <div className="flex flex-wrap items-center gap-3">
-                                    <h1 className="text-2xl font-bold text-slate-950">Venta #{sale.id}</h1>
+                                    <h1 className="text-2xl font-bold text-slate-950">Venta {sale.display_number}</h1>
                                     <StatusBadge status={sale.status} />
                                 </div>
                                 <div className="mt-2 space-y-1 text-sm text-slate-500">
@@ -265,6 +308,21 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                             </div>
                         )}
 
+                        {canRetryFel && (
+                            <div className="mt-5 rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm text-amber-900">
+                                <div className="font-semibold">No se pudo confirmar la certificación FEL.</div>
+                                <div className="mt-1">Puedes reintentar la certificación sin crear una factura duplicada.</div>
+                                <button
+                                    type="button"
+                                    disabled={retryForm.processing}
+                                    onClick={retryFelCertification}
+                                    className="mt-3 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                    {retryForm.processing ? 'Reintentando...' : 'Reintentar certificación'}
+                                </button>
+                            </div>
+                        )}
+
                         {canViewFelDocuments && sale.electronic_document && (
                             <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-900">
                                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -276,7 +334,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                                 onClick={printSale}
                                                 className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700"
                                             >
-                                                Ver factura FEL
+                                                Ver / imprimir factura FEL
                                             </button>
                                             {sale.has_fel_xml && (
                                                 <button
@@ -287,21 +345,12 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                                     Descargar XML
                                                 </button>
                                             )}
-                                            {sale.has_fel_pdf && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => window.open(route('sales.fel-download', [sale.id, 'pdf']), '_blank')}
-                                                    className="rounded-xl border border-indigo-200 bg-white px-3 py-2 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50"
-                                                >
-                                                    Descargar PDF
-                                                </button>
-                                            )}
                                             <button
                                                 type="button"
-                                                onClick={() => window.open(route('sales.fel-document', sale.id), '_blank')}
+                                                onClick={() => window.open(route('sales.fel-download', [sale.id, 'pdf']), '_blank')}
                                                 className="rounded-xl border border-indigo-200 bg-white px-3 py-2 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50"
                                             >
-                                                Obtener documento desde Digifact
+                                                Descargar PDF
                                             </button>
                                         </div>
                                     )}
@@ -309,6 +358,12 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                 <div className="mt-1 font-semibold">Estado FEL: {felStatusLabel(sale.electronic_document.status)}</div>
                                 <div className="mt-2 grid gap-2 md:grid-cols-2">
                                     <div>UUID: {sale.electronic_document.uuid ?? '-'}</div>
+                                    {auth.user?.is_super_admin && (
+                                        <>
+                                            <div>Referencia interna: {sale.electronic_document.internal_reference ?? sale.fel_internal_reference ?? '-'}</div>
+                                            <div>Fecha emisión FEL: {sale.electronic_document.issued_at ?? sale.fel_issued_at ?? '-'}</div>
+                                        </>
+                                    )}
                                     <div>Serie: {sale.electronic_document.series ?? '-'}</div>
                                     <div>Número: {sale.electronic_document.number ?? '-'}</div>
                                     <div>Fecha certificación: {sale.electronic_document.certification_date ?? '-'}</div>
@@ -332,6 +387,39 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                     >
                                         Ver respuesta técnica
                                     </button>
+                                )}
+                                {auth.user?.is_super_admin && (sale.fel_attempts.length > 0 || sale.fel_incidents.length > 0) && (
+                                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                                        <div className="rounded-xl border border-indigo-100 bg-white p-3">
+                                            <div className="font-semibold">Intentos FEL</div>
+                                            <div className="mt-2 space-y-2 text-xs">
+                                                {sale.fel_attempts.length === 0 ? (
+                                                    <div className="text-slate-500">Sin intentos registrados.</div>
+                                                ) : sale.fel_attempts.map((attempt) => (
+                                                    <div key={attempt.id} className="rounded-lg bg-slate-50 p-2">
+                                                        <div className="font-semibold">{attempt.status} · {attempt.internal_reference}</div>
+                                                        <div>Inicio: {attempt.started_at ?? '-'}</div>
+                                                        <div>Fin: {attempt.finished_at ?? '-'}</div>
+                                                        {attempt.error_message && <div className="text-red-600">{attempt.error_message}</div>}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="rounded-xl border border-indigo-100 bg-white p-3">
+                                            <div className="font-semibold">Incidencias internas</div>
+                                            <div className="mt-2 space-y-2 text-xs">
+                                                {sale.fel_incidents.length === 0 ? (
+                                                    <div className="text-slate-500">Sin incidencias.</div>
+                                                ) : sale.fel_incidents.map((incident) => (
+                                                    <div key={incident.id} className="rounded-lg bg-slate-50 p-2">
+                                                        <div className="font-semibold">{incident.status} · {incident.type}</div>
+                                                        <div>{incident.message}</div>
+                                                        <div>{incident.created_at ?? '-'}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
                                 )}
                             </div>
                         )}
@@ -544,6 +632,7 @@ function felStatusLabel(status: string): string {
         pending: 'Pendiente',
         certified: 'Certificada',
         failed: 'Error',
+        unknown: 'Sin confirmar',
         cancellation_pending: 'Anulación pendiente',
         cancelled: 'Anulada',
         cancellation_failed: 'Anulación fallida',

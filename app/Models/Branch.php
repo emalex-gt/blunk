@@ -14,6 +14,8 @@ class Branch extends Model
         'code',
         'address',
         'phone',
+        'logo_url',
+        'logo_public_id',
         'is_active',
     ];
 

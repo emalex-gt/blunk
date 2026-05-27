@@ -9,10 +9,12 @@ use App\Models\TenantFelSetting;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
+use App\Support\CloudinaryUploader;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -53,7 +55,10 @@ class TenantController extends Controller
                 'products_shared_across_branches' => true,
                 'pricing_scope' => 'global',
                 'allow_manual_price' => false,
+                'manual_price_min_margin_percent' => 0,
                 'remember_last_customer_product_price' => false,
+                'allow_receipts' => true,
+                'allow_invoices' => false,
             ],
             'felSettings' => $this->defaultFelSettings(),
             'availableModules' => $this->availableModulesPayload(),
@@ -65,8 +70,22 @@ class TenantController extends Controller
     {
         $data = $this->validated($request);
 
-        DB::transaction(function () use ($data) {
+        DB::transaction(function () use ($request, $data) {
             $business = Business::create($data['tenant']);
+
+            if ($request->hasFile('logo')) {
+                $logo = app(CloudinaryUploader::class)->uploadImage(
+                    $request->file('logo'),
+                    "businesses/{$business->id}/tenant",
+                    'tenant_logo',
+                );
+
+                $business->update([
+                    'logo_url' => $logo['secure_url'],
+                    'logo_public_id' => $logo['public_id'],
+                ]);
+            }
+
             $business->tenantSetting()->create($data['settings']);
             $this->syncModules($business, $data['modules']);
             $this->syncFelSettings($business, $data['fel'], $data['fel_phrases']);
@@ -103,7 +122,10 @@ class TenantController extends Controller
                 'products_shared_across_branches' => $business->tenantSetting?->products_shared_across_branches ?? true,
                 'pricing_scope' => $business->tenantSetting?->pricing_scope ?? 'global',
                 'allow_manual_price' => $business->tenantSetting?->allow_manual_price ?? false,
+                'manual_price_min_margin_percent' => $business->tenantSetting?->manual_price_min_margin_percent ?? 0,
                 'remember_last_customer_product_price' => $business->tenantSetting?->remember_last_customer_product_price ?? false,
+                'allow_receipts' => $business->tenantSetting?->allow_receipts ?? true,
+                'allow_invoices' => $business->tenantSetting?->allow_invoices ?? false,
             ],
             'felSettings' => $felSettings,
             'availableModules' => $this->availableModulesPayload(),
@@ -119,8 +141,34 @@ class TenantController extends Controller
     {
         $data = $this->validated($request, $business);
 
-        DB::transaction(function () use ($business, $data) {
+        DB::transaction(function () use ($request, $business, $data) {
             $business->update($data['tenant']);
+
+            $cloudinary = app(CloudinaryUploader::class);
+
+            if ($request->boolean('remove_logo')) {
+                $cloudinary->destroy($business->logo_public_id);
+                $business->update([
+                    'logo_url' => null,
+                    'logo_public_id' => null,
+                ]);
+            }
+
+            if ($request->hasFile('logo')) {
+                $oldPublicId = $business->logo_public_id;
+                $logo = $cloudinary->uploadImage(
+                    $request->file('logo'),
+                    "businesses/{$business->id}/tenant",
+                    'tenant_logo',
+                );
+
+                $cloudinary->destroy($oldPublicId);
+                $business->update([
+                    'logo_url' => $logo['secure_url'],
+                    'logo_public_id' => $logo['public_id'],
+                ]);
+            }
+
             TenantSetting::updateOrCreate(
                 ['business_id' => $business->id],
                 $data['settings'],
@@ -170,6 +218,8 @@ class TenantController extends Controller
             'country' => ['nullable', Rule::in(['AR', 'GT'])],
             'phone' => ['nullable', 'string', 'max:255'],
             'email' => ['nullable', 'email', 'max:255'],
+            'logo' => ['nullable', 'image', 'max:5120'],
+            'remove_logo' => ['nullable', 'boolean'],
             'is_active' => ['boolean'],
             'use_product_images' => ['boolean'],
             'max_users' => ['required', 'integer', 'min:1'],
@@ -178,7 +228,10 @@ class TenantController extends Controller
             'products_shared_across_branches' => ['nullable', 'boolean'],
             'pricing_scope' => ['nullable', Rule::in(['global', 'branch'])],
             'allow_manual_price' => ['nullable', 'boolean'],
+            'manual_price_min_margin_percent' => ['nullable', 'numeric', 'min:0', 'max:999.99'],
             'remember_last_customer_product_price' => ['nullable', 'boolean'],
+            'allow_receipts' => ['nullable', 'boolean'],
+            'allow_invoices' => ['nullable', 'boolean'],
             'owner_name' => ['nullable', 'string', 'max:255'],
             'owner_email' => ['nullable', 'email', 'max:255', 'unique:users,email'],
             'owner_password' => ['nullable', 'string', 'min:8'],
@@ -206,12 +259,14 @@ class TenantController extends Controller
             'fel_phrases.*.resolution_date' => ['nullable', 'date'],
             'modules' => ['nullable', 'array'],
             'modules.*' => ['string', Rule::in(array_keys(config('blunk_modules')))],
+        ], [
+            'logo.max' => 'El logo no debe superar los 5MB.',
         ]);
 
         $modules = $validated['modules'] ?? $this->defaultEnabledModules();
         $branchesModuleEnabled = in_array('branches', $modules, true);
 
-        return [
+        $payload = [
             'tenant' => [
                 'name' => $validated['name'],
                 'slug' => $validated['slug'] ?? null,
@@ -229,7 +284,10 @@ class TenantController extends Controller
                 'products_shared_across_branches' => (bool) ($validated['products_shared_across_branches'] ?? true),
                 'pricing_scope' => $branchesModuleEnabled && ($validated['pricing_scope'] ?? 'global') === 'branch' ? 'branch' : 'global',
                 'allow_manual_price' => (bool) ($validated['allow_manual_price'] ?? false),
+                'manual_price_min_margin_percent' => round((float) ($validated['manual_price_min_margin_percent'] ?? 0), 2),
                 'remember_last_customer_product_price' => (bool) ($validated['remember_last_customer_product_price'] ?? false),
+                'allow_receipts' => (bool) ($validated['allow_receipts'] ?? true),
+                'allow_invoices' => (bool) ($validated['allow_invoices'] ?? false),
             ],
             'owner' => [
                 'name' => $validated['owner_name'] ?? null,
@@ -262,6 +320,48 @@ class TenantController extends Controller
             'fel_phrases' => $validated['fel_phrases'] ?? [],
             'modules' => $modules,
         ];
+
+        $this->validateDocumentAvailability($payload, $business);
+
+        return $payload;
+    }
+
+    private function validateDocumentAvailability(array $data, ?Business $business): void
+    {
+        $allowReceipts = (bool) $data['settings']['allow_receipts'];
+        $allowInvoices = (bool) $data['settings']['allow_invoices'];
+
+        if (! $allowReceipts && ! $allowInvoices) {
+            throw ValidationException::withMessages([
+                'allow_receipts' => 'Debe habilitar al menos un tipo de documento de venta.',
+            ]);
+        }
+
+        if (! $allowInvoices) {
+            return;
+        }
+
+        $fel = $data['fel'];
+        $existingFel = $business?->tenantFelSetting()->first();
+        $activeBaseUrl = ($fel['environment'] ?? 'test') === 'production'
+            ? ($fel['production_base_url'] ?? null)
+            : ($fel['test_base_url'] ?? null);
+        $hasPassword = filled($fel['password'] ?? null) || filled($existingFel?->password);
+        $ready = $data['tenant']['country'] === 'GT'
+            && in_array('fel_gt', $data['modules'], true)
+            && (bool) ($fel['enabled'] ?? false)
+            && filled($fel['issuer_tax_id'] ?? null)
+            && filled($fel['username'] ?? null)
+            && $hasPassword
+            && filled($activeBaseUrl)
+            && filled($fel['establishment_code'] ?? null)
+            && filled($fel['affiliate_type'] ?? null);
+
+        if (! $ready) {
+            throw ValidationException::withMessages([
+                'allow_invoices' => 'Para habilitar facturas FEL primero completa la configuración FEL.',
+            ]);
+        }
     }
 
     private function syncModules(Business $business, array $enabledModules): void

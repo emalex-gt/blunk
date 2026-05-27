@@ -6,6 +6,7 @@ use App\Models\Category;
 use App\Models\Product;
 use App\Models\StockMovement;
 use App\Support\BranchInventory;
+use App\Support\PriceLists;
 use App\Support\ProductSupplierCostHistory;
 use Cloudinary\Cloudinary;
 use Illuminate\Http\RedirectResponse;
@@ -26,7 +27,13 @@ class ProductController extends Controller
 
         $products = Product::query()
             ->where('business_id', $businessId)
-            ->with('category:id,name')
+            ->with([
+                'category:id,name',
+                'prices' => fn ($query) => $query
+                    ->where('business_id', $businessId)
+                    ->where('is_active', true)
+                    ->select(['id', 'business_id', 'product_id', 'price_type_id', 'price']),
+            ])
             ->when($search, function ($query) use ($search) {
                 $query->where(function ($query) use ($search) {
                     $query->where('name', 'ilike', "%{$search}%")
@@ -52,6 +59,7 @@ class ProductController extends Controller
 
         return Inertia::render('Products/Index', [
             'products' => $products,
+            'priceTypes' => PriceLists::active($businessId)->values(),
             'categories' => Category::query()
                 ->where('business_id', $businessId)
                 ->orderBy('name')
@@ -82,7 +90,11 @@ class ProductController extends Controller
                 ];
             }
 
+            $prices = $data['prices'] ?? [];
+            unset($data['prices']);
+
             $product = Product::create($data);
+            $this->syncProductPrices($product, $prices);
             $branch = BranchInventory::activeBranch($businessId);
             BranchInventory::adjust($product, $branch->id, (float) $product->stock);
 
@@ -109,8 +121,9 @@ class ProductController extends Controller
 
         DB::transaction(function () use ($request, $product, $useProductImages) {
             $data = $this->validatedProduct($request);
+            $prices = $data['prices'] ?? [];
             $categoryName = $data['category_name'] ?? null;
-            unset($data['category_name'], $data['image']);
+            unset($data['category_name'], $data['image'], $data['prices']);
             $branch = BranchInventory::activeBranch(currentBusinessId());
             $oldStock = (float) (BranchInventory::stockMap(currentBusinessId(), [$product->id], $branch->id)[$product->id] ?? 0);
             $oldImagePublicId = $product->image_public_id;
@@ -129,6 +142,7 @@ class ProductController extends Controller
             $targetStock = (float) ($data['stock'] ?? $oldStock);
             unset($data['stock']);
             $product->update($data);
+            $this->syncProductPrices($product, $prices);
             [$previousStock, $newStock] = BranchInventory::adjust($product, $branch->id, $targetStock);
 
             if ($useProductImages && $request->hasFile('image') && $oldImagePublicId) {
@@ -202,6 +216,8 @@ class ProductController extends Controller
             'location' => ['nullable', 'string', 'max:255'],
             'is_active' => ['boolean'],
             'category_name' => ['nullable', 'string', 'max:255'],
+            'prices' => ['nullable', 'array'],
+            'prices.*' => ['nullable', 'numeric', 'min:0'],
         ];
 
         if (tenantSetting('use_product_images', true)) {
@@ -211,6 +227,14 @@ class ProductController extends Controller
         return $request->validate($rules, [
             'image.max' => 'La imagen no debe superar los 5MB después de comprimirse.',
         ]);
+    }
+
+    private function syncProductPrices(Product $product, array $prices): void
+    {
+        $default = PriceLists::ensureDefaultPriceType((int) $product->business_id);
+        $prices[$default->id] = $prices[$default->id] ?? $product->sale_price;
+
+        PriceLists::updatePricesForProduct($product, $prices);
     }
 
     private function resolveCategoryId(int $businessId, ?string $categoryName): ?int

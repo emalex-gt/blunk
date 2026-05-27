@@ -15,6 +15,7 @@ type PurchaseItem = {
 
 type Purchase = {
     id: number;
+    business_number: number | null;
     created_at: string;
     total: string;
     note: string | null;
@@ -28,6 +29,7 @@ type Purchase = {
 export default function Show({ purchase }: { purchase: Purchase }) {
     const business = usePage().props.business as { country?: string | null } | null;
     const country = business?.country ?? 'GT';
+    const purchaseNumber = `C-${purchase.business_number ?? purchase.id}`;
 
     return (
         <AuthenticatedLayout
@@ -43,13 +45,13 @@ export default function Show({ purchase }: { purchase: Purchase }) {
                 </div>
             }
         >
-            <Head title={`Compra #${purchase.id}`} />
+            <Head title={`Compra ${purchaseNumber}`} />
 
             <div className="py-5">
                 <div className="mx-auto max-w-[1800px] space-y-5 px-5 sm:px-6">
                     <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
                         <div className="grid gap-4 md:grid-cols-4">
-                            <Summary label="Compra" value={`#${purchase.id}`} />
+                            <Summary label="Compra" value={purchaseNumber} />
                             <Summary label="Proveedor" value={purchase.supplier?.name ?? 'Sin proveedor'} />
                             <Summary label="Usuario" value={purchase.created_by?.name ?? '-'} />
                             <Summary label="Total" value={formatCurrency(purchase.total, country)} />

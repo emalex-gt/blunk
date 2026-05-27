@@ -10,6 +10,7 @@ class Sale extends Model
 {
     protected $fillable = [
         'business_id',
+        'business_number',
         'branch_id',
         'customer_id',
         'customer_name',
@@ -41,6 +42,7 @@ class Sale extends Model
         'fel_certified_at',
         'fel_issued_at',
         'fel_status',
+        'fel_internal_reference',
         'fel_raw_response',
         'status',
         'note',
@@ -59,6 +61,7 @@ class Sale extends Model
         'fel_certified_at' => 'datetime',
         'fel_issued_at' => 'datetime',
         'fel_raw_response' => 'array',
+        'business_number' => 'integer',
     ];
 
     public function business(): BelongsTo
@@ -89,6 +92,16 @@ class Sale extends Model
     public function electronicDocument(): BelongsTo
     {
         return $this->belongsTo(ElectronicDocument::class);
+    }
+
+    public function felCertificationAttempts(): HasMany
+    {
+        return $this->hasMany(FelCertificationAttempt::class);
+    }
+
+    public function felIncidents(): HasMany
+    {
+        return $this->hasMany(FelIncident::class);
     }
 
     public function createdBy(): BelongsTo

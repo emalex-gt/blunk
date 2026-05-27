@@ -249,6 +249,16 @@ function normalizeQuantity(value: number | string | null | undefined) {
     return String(value ?? '').trim();
 }
 
+function sanitizeQuantityInput(value: number | string | null | undefined): string | null {
+    const raw = String(value ?? '');
+
+    if (/[.,]/.test(raw)) {
+        return null;
+    }
+
+    return raw.replace(/\D/g, '');
+}
+
 function quantityError(value: number | string | null | undefined) {
     return /^[1-9]\d*$/.test(normalizeQuantity(value)) ? null : integerQuantityMessage;
 }
@@ -289,7 +299,7 @@ function priceFromList(product: Product, priceTypeId: number | null, defaultPric
         price: String(defaultPrice?.price ?? product.sale_price ?? '0'),
         priceTypeId: defaultPrice?.price_type_id ?? priceTypeId ?? defaultPriceTypeId,
         warning: selectedPrice === undefined && priceTypeId && priceTypeId !== defaultPriceTypeId
-            ? 'Sin precio en esta lista, usando precio por defecto'
+            ? 'Usando precio de lista predeterminada.'
             : null,
     };
 }
@@ -297,9 +307,43 @@ function priceFromList(product: Product, priceTypeId: number | null, defaultPric
 function priceSourceLabel(source: CartItem['price_source']) {
     return {
         price_list: 'Lista',
-        last_customer_price: 'Ãšltimo cliente',
+        last_customer_price: 'Último cliente',
         manual: 'Manual',
     }[source];
+}
+
+function productCost(product: Product) {
+    const cost = Number(product.cost_price ?? 0);
+
+    return Number.isFinite(cost) ? cost : 0;
+}
+
+function minimumManualPrice(product: Product, minMarginPercent: number) {
+    return roundMoney(productCost(product) * (1 + Math.max(0, minMarginPercent) / 100));
+}
+
+function formatPercent(value: number) {
+    return Number(value).toFixed(2).replace(/\.?0+$/, '');
+}
+
+function manualPriceError(item: CartItem, minMarginPercent: number) {
+    if (!item.manual_price) {
+        return null;
+    }
+
+    const price = Number(item.unit_price);
+
+    if (!Number.isFinite(price) || price <= 0) {
+        return 'El precio manual debe ser mayor a 0.';
+    }
+
+    const minimum = minimumManualPrice(item.product, minMarginPercent);
+
+    if (minimum > 0 && price < minimum) {
+        return `El precio manual debe ser al menos ${formatPercent(minMarginPercent)}% mayor al costo.`;
+    }
+
+    return null;
 }
 
 function calculateDiscountAmount(discount: SaleDiscount | null, subtotal: number) {
@@ -353,6 +397,7 @@ export default function POS({
     price_types = [],
     default_price_type_id = null,
     price_settings = { allow_manual_price: false, remember_last_customer_product_price: false },
+    available_document_types = ['receipt'],
     use_product_images = true,
 }: {
     products: Product[];
@@ -363,11 +408,16 @@ export default function POS({
     default_price_type_id?: number | null;
     price_settings?: {
         allow_manual_price: boolean;
+        manual_price_min_margin_percent?: number;
+        can_use_manual_price?: boolean;
         remember_last_customer_product_price: boolean;
     };
+    available_document_types?: ('invoice' | 'receipt')[];
     fel?: {
+        module_enabled: boolean;
         enabled: boolean;
         configured: boolean;
+        available: boolean;
         provider: string;
         environment: string;
     };
@@ -389,6 +439,11 @@ export default function POS({
     const canApplyDiscount = (pageProps.enabled_modules ?? []).includes('discounts')
         && (Boolean(pageProps.auth?.user?.is_super_admin)
             || (pageProps.auth?.permissions ?? []).includes('sales.discount.apply'));
+    const canUseManualPrice = Boolean(price_settings.allow_manual_price)
+        && (Boolean(price_settings.can_use_manual_price)
+            || Boolean(pageProps.auth?.user?.is_super_admin)
+            || (pageProps.auth?.permissions ?? []).includes('pos.manual_price'));
+    const manualPriceMinMargin = Number(price_settings.manual_price_min_margin_percent ?? 0);
     const country = business?.country ?? 'GT';
     const draftKey = useMemo(() => makeDraftKey('pos', businessId), [businessId]);
     const [search, setSearch] = useState('');
@@ -402,6 +457,7 @@ export default function POS({
     const [splitPayment, setSplitPayment] = useState(false);
     const [mainPaymentMethod, setMainPaymentMethod] = useState('cash');
     const [documentType, setDocumentType] = useState<'invoice' | 'receipt'>('receipt');
+    const [openingFelPrint, setOpeningFelPrint] = useState(false);
     const [nitLookupLoading, setNitLookupLoading] = useState(false);
     const [nitLookupMessage, setNitLookupMessage] = useState('');
     const [payments, setPayments] = useState<PaymentLine[]>([
@@ -422,6 +478,7 @@ export default function POS({
     const searchInputRef = useRef<HTMLInputElement>(null);
     const cartRef = useRef<CartItem[]>([]);
     const messageTimerRef = useRef<number | null>(null);
+    const tokenPrewarmStartedRef = useRef(false);
 
     const { data, setData, post, processing, reset, transform, errors } = useForm<{
         note: string;
@@ -438,6 +495,42 @@ export default function POS({
         items: [] as { product_id: number; quantity: number }[],
         discount: null,
     });
+    const availableDocumentTypesKey = available_document_types.join('|');
+    const singleDocumentType = available_document_types.length === 1 ? available_document_types[0] : null;
+    const effectiveDocumentType = singleDocumentType ?? documentType;
+    const noAvailableDocumentTypes = available_document_types.length === 0;
+
+    useEffect(() => {
+        if (singleDocumentType) {
+            setDocumentType(singleDocumentType);
+            return;
+        }
+
+        if (available_document_types.length > 0 && !available_document_types.includes(documentType)) {
+            setDocumentType(available_document_types[0]);
+        }
+    }, [availableDocumentTypesKey, documentType, singleDocumentType]);
+
+    useEffect(() => {
+        if (tokenPrewarmStartedRef.current || country !== 'GT' || !fel?.module_enabled || !fel?.enabled) {
+            return;
+        }
+
+        tokenPrewarmStartedRef.current = true;
+        const csrfToken = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '';
+
+        void fetch(route('sales.fel.prewarm-token'), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: '{}',
+        }).catch(() => undefined);
+    }, [country, fel?.enabled, fel?.module_enabled]);
 
     const paymentMethods = useMemo(
         () =>
@@ -544,15 +637,24 @@ export default function POS({
     }
 
     function validateCartPrices() {
-        const invalid = cart.some((item) => item.manual_price && Number(item.unit_price) <= 0);
+        if (cart.some((item) => item.manual_price) && !canUseManualPrice) {
+            const message = 'No tienes permiso para aplicar precio manual.';
+            showError(message);
+            toast.error(message);
 
-        if (!invalid) {
+            return false;
+        }
+
+        const error = cart
+            .map((item) => manualPriceError(item, manualPriceMinMargin))
+            .find(Boolean);
+
+        if (!error) {
             return true;
         }
 
-        const message = 'El precio manual debe ser mayor a 0.';
-        showError(message);
-        toast.error(message);
+        showError(error);
+        toast.error(error);
 
         return false;
     }
@@ -595,7 +697,7 @@ export default function POS({
             customer: data.customer,
             note: data.note,
             payments,
-            document_type: documentType,
+            document_type: effectiveDocumentType,
             selected_category_id: selectedCategoryId,
             main_payment_method: mainPaymentMethod,
             split_payment: splitPayment,
@@ -652,7 +754,9 @@ export default function POS({
             reference: payment.reference ?? '',
             details: { ...emptyPaymentDetails(), ...(payment.details ?? {}) },
         })) : [paymentLine('cash', total.toFixed(2))]);
-        setDocumentType(draft.document_type ?? 'receipt');
+        setDocumentType(singleDocumentType ?? (
+            available_document_types.includes(draft.document_type) ? draft.document_type : (available_document_types[0] ?? 'receipt')
+        ));
         setSelectedCategoryId(draft.selected_category_id ?? null);
         setMainPaymentMethod(draft.main_payment_method ?? 'cash');
         setSplitPayment(Boolean(draft.split_payment));
@@ -671,7 +775,7 @@ export default function POS({
         setData('customer', emptyCustomer(country));
         setShowCheckoutModal(false);
         setSplitPayment(false);
-        setDocumentType('receipt');
+        setDocumentType(singleDocumentType ?? (available_document_types[0] ?? 'receipt'));
         setPayments([paymentLine(mainPaymentMethod, '0.00')]);
         setDiscount(null);
     }
@@ -936,18 +1040,26 @@ export default function POS({
     }
 
     function updateQuantity(productId: number, quantity: number | string) {
+        const sanitizedQuantity = sanitizeQuantityInput(quantity);
+
+        if (sanitizedQuantity === null) {
+            showError(integerQuantityMessage);
+            toast.error(integerQuantityMessage);
+            return;
+        }
+
         setCart((items) =>
             items.map((item) => {
                 if (item.product.id !== productId) {
                     return item;
                 }
 
-                if (quantityError(quantity)) {
+                if (quantityError(sanitizedQuantity)) {
                     showError(integerQuantityMessage);
-                    return { ...item, quantity: normalizeQuantity(quantity) };
+                    return { ...item, quantity: sanitizedQuantity };
                 }
 
-                const nextQuantity = Number(normalizeQuantity(quantity));
+                const nextQuantity = Number(sanitizedQuantity);
 
                 const availableStock = Math.floor(item.product.stock);
 
@@ -1000,6 +1112,24 @@ export default function POS({
                 ? { ...item, unit_price: value, price_source: 'manual', manual_price: true, price_warning: null }
                 : item
         )));
+    }
+
+    function applyCostMarkup(productId: number, percent: number) {
+        setCart((items) => items.map((item) => {
+            if (item.product.id !== productId) {
+                return item;
+            }
+
+            const unitPrice = minimumManualPrice(item.product, percent).toFixed(2);
+
+            return {
+                ...item,
+                unit_price: unitPrice,
+                price_source: 'manual',
+                manual_price: true,
+                price_warning: null,
+            };
+        }));
     }
 
     function changeQuantity(productId: number, difference: number) {
@@ -1142,6 +1272,13 @@ export default function POS({
             return;
         }
 
+        if (noAvailableDocumentTypes) {
+            const error = 'No hay ningún tipo de documento habilitado para esta empresa.';
+            showError(error);
+            toast.error(error);
+            return;
+        }
+
         setSplitPayment(false);
         setPayments([paymentLine(mainPaymentMethod, total.toFixed(2))]);
         setShowCheckoutModal(true);
@@ -1181,10 +1318,14 @@ export default function POS({
             ? payments
             : [payments[0] ?? paymentLine(mainPaymentMethod, total.toFixed(2))];
 
+        if (effectiveDocumentType === 'invoice') {
+            showMessage('Certificando factura FEL...');
+        }
+
         transform(() => ({
             note: data.note,
             customer: data.customer,
-            document_type: documentType,
+            document_type: effectiveDocumentType,
             payments: finalPayments.map((payment) => ({
                 method: payment.method,
                 amount: Number(payment.amount || 0),
@@ -1223,26 +1364,39 @@ export default function POS({
                 setErrorMessage('');
                 setShowCheckoutModal(false);
                 setSplitPayment(false);
-                setDocumentType('receipt');
+                setDocumentType(singleDocumentType ?? (available_document_types[0] ?? 'receipt'));
                 setDiscount(null);
                 setPayments([paymentLine(mainPaymentMethod, '0.00')]);
                 clearDraft(draftKey);
-                const successMessage = documentType === 'invoice'
+                const successMessage = effectiveDocumentType === 'invoice'
                     ? (flash?.fel_success_message ?? 'Factura FEL certificada correctamente.')
                     : 'Venta guardada correctamente.';
-                showMessage(successMessage);
-                toast.success(successMessage, { persistent: true });
                 reset();
                 setData('customer', emptyCustomer(country));
                 focusSearch();
 
-                if (documentType === 'receipt' && receiptSaleId) {
+                if (effectiveDocumentType === 'receipt' && receiptSaleId) {
+                    showMessage(successMessage);
+                    toast.success(successMessage, { persistent: true });
                     window.open(route('sales.receipt', receiptSaleId), '_blank');
+                    return;
                 }
 
-                if (documentType === 'invoice' && felPrintSaleId) {
-                    window.open(flash?.fel_print_url ?? route('sales.fel-document', felPrintSaleId), '_blank');
+                if (effectiveDocumentType === 'invoice' && felPrintSaleId) {
+                    setOpeningFelPrint(true);
+                    showMessage('Factura certificada. Abriendo impresión...');
+
+                    window.setTimeout(() => {
+                        window.open(flash?.fel_print_url ?? route('sales.fel-document', felPrintSaleId), '_blank');
+                        setOpeningFelPrint(false);
+                        showMessage(successMessage);
+                        toast.success(successMessage, { persistent: true });
+                    }, 50);
+                    return;
                 }
+
+                showMessage(successMessage);
+                toast.success(successMessage, { persistent: true });
             },
             onError: (errors) => {
                 const firstError = Object.values(errors)[0] ?? 'No se pudo completar la venta. Revisa los datos.';
@@ -1437,17 +1591,17 @@ export default function POS({
         .filter(([key]) => key === 'payments' || key.startsWith('payments.'))
         .map(([, value]) => value);
     const documentError = typedErrors.document_type;
-    const invoiceAvailable = country === 'GT' && Boolean(fel?.configured);
     const invoiceNitNeedsVerification =
-        documentType === 'invoice' &&
+        effectiveDocumentType === 'invoice' &&
         country === 'GT' &&
         !data.customer.consumidor_final &&
         data.customer.doc_type === 'NIT' &&
         !data.customer.tax_lookup_verified_at;
     const invoiceCuiDisabled =
-        documentType === 'invoice' &&
+        effectiveDocumentType === 'invoice' &&
         country === 'GT' &&
         data.customer.doc_type === 'CUI';
+    const isFelProcessing = processing && effectiveDocumentType === 'invoice';
     const checkoutHasErrors =
         customerModalErrors.length > 0 ||
         paymentModalErrors.length > 0 ||
@@ -1829,7 +1983,7 @@ export default function POS({
                                         <button
                                             key={product.id}
                                             type="button"
-                                            disabled={outOfStock}
+                                            disabled={outOfStock || processing}
                                             onClick={() => addProduct(product)}
                                             className="flex items-stretch gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-70"
                                         >
@@ -1953,8 +2107,9 @@ export default function POS({
                                             <div className="flex items-center">
                                                 <button
                                                     type="button"
+                                                    disabled={processing}
                                                     onClick={() => changeQuantity(item.product.id, -1)}
-                                                    className="h-9 w-9 rounded-l-md border border-slate-300 text-base font-semibold text-slate-700 hover:bg-slate-100"
+                                                    className="h-9 w-9 rounded-l-md border border-slate-300 text-base font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                                                 >
                                                     -
                                                 </button>
@@ -1972,14 +2127,16 @@ export default function POS({
                                                             event.target.value,
                                                         )
                                                     }
+                                                    onWheel={(event) => event.currentTarget.blur()}
                                                     className={`h-9 w-20 border-y bg-white text-center text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 ${
                                                         quantityError(item.quantity) ? 'border-red-300 text-red-700' : 'border-slate-300'
                                                     }`}
                                                 />
                                                 <button
                                                     type="button"
+                                                    disabled={processing}
                                                     onClick={() => changeQuantity(item.product.id, 1)}
-                                                    className="h-9 w-9 rounded-r-md border border-slate-300 text-base font-semibold text-slate-700 hover:bg-slate-100"
+                                                    className="h-9 w-9 rounded-r-md border border-slate-300 text-base font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                                                 >
                                                     +
                                                 </button>
@@ -2027,7 +2184,50 @@ export default function POS({
                                             {item.price_warning && (
                                                 <p className="text-[11px] font-semibold text-amber-600">{item.price_warning}</p>
                                             )}
-                                            {price_settings.allow_manual_price && !item.manual_price && (
+                                            {item.manual_price && (
+                                                <div className="space-y-1 rounded-lg bg-slate-50 p-2">
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {[10, 15, 20, 25, 30, 50].map((percent) => {
+                                                            const disabled = percent < manualPriceMinMargin;
+
+                                                            return (
+                                                                <button
+                                                                    key={percent}
+                                                                    type="button"
+                                                                    disabled={disabled || processing}
+                                                                    onClick={() => applyCostMarkup(item.product.id, percent)}
+                                                                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                                                >
+                                                                    +{percent}%
+                                                                </button>
+                                                            );
+                                                        })}
+                                                        <input
+                                                            type="number"
+                                                            min={manualPriceMinMargin}
+                                                            step="0.01"
+                                                            placeholder="Otro %"
+                                                            disabled={processing}
+                                                            onChange={(event) => {
+                                                                const percent = Number(event.target.value);
+                                                                if (Number.isFinite(percent) && percent >= manualPriceMinMargin) {
+                                                                    applyCostMarkup(item.product.id, percent);
+                                                                }
+                                                            }}
+                                                            className="h-7 w-20 rounded-md border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-700 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                                                        />
+                                                    </div>
+                                                    <p className="text-[11px] text-slate-500">
+                                                        Costo: {formatCurrency(productCost(item.product), country)} · Mínimo permitido: {formatCurrency(minimumManualPrice(item.product, manualPriceMinMargin), country)}
+                                                    </p>
+                                                    {manualPriceError(item, manualPriceMinMargin) && (
+                                                        <p className="text-[11px] font-semibold text-red-600">
+                                                            {manualPriceError(item, manualPriceMinMargin)}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            )}
+                                            {canUseManualPrice && !item.manual_price && (
                                                 <button
                                                     type="button"
                                                     onClick={() => enableManualPrice(item.product.id)}
@@ -2046,8 +2246,9 @@ export default function POS({
                                             type="button"
                                             title={t('actions.remove')}
                                             aria-label={t('actions.remove')}
+                                            disabled={processing}
                                             onClick={() => removeProduct(item.product.id)}
-                                            className="shrink-0 rounded-md px-2 py-1 text-base text-red-500 hover:bg-red-50 hover:text-red-700"
+                                            className="shrink-0 rounded-md px-2 py-1 text-base text-red-500 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                                         >
                                             🗑
                                         </button>
@@ -2113,15 +2314,27 @@ export default function POS({
 
                             <button
                                 type="submit"
-                                disabled={cart.length === 0 || processing || !hasOpenCashRegister || hasInvalidCartQuantities}
+                                disabled={cart.length === 0 || processing || !hasOpenCashRegister || hasInvalidCartQuantities || noAvailableDocumentTypes}
                                 className="mt-4 h-14 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-lg font-semibold text-white shadow-lg shadow-indigo-200 transition-all duration-200 hover:-translate-y-0.5 hover:from-indigo-700 hover:to-violet-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
-                                {processing ? t('pos.finalizing') : t('pos.finalize_sale')}
+                                {isFelProcessing ? 'Certificando FEL...' : (processing ? t('pos.finalizing') : t('pos.finalize_sale'))}
                             </button>
                         </footer>
                     </form>
                 </div>
             </div>
+
+            {(isFelProcessing || openingFelPrint) && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
+                    <div className="w-full max-w-sm rounded-2xl border border-indigo-100 bg-white px-6 py-7 text-center shadow-2xl">
+                        <div className="mx-auto h-9 w-9 animate-spin rounded-full border-4 border-indigo-100 border-t-indigo-600" />
+                        <div className="mt-4 text-lg font-semibold text-slate-950">
+                            {openingFelPrint ? 'Factura certificada. Abriendo impresión...' : 'Certificando factura FEL...'}
+                        </div>
+                        {!openingFelPrint && <div className="mt-2 text-sm text-slate-600">No cierres esta ventana.</div>}
+                    </div>
+                </div>
+            )}
 
             {showCheckoutModal && (
                 <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
@@ -2142,6 +2355,13 @@ export default function POS({
                             {checkoutHasErrors && (
                                 <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
                                     {cashRegisterError || 'No se pudo completar la venta. Revisa los datos ingresados.'}
+                                </div>
+                            )}
+
+                            {isFelProcessing && (
+                                <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+                                    <div className="font-semibold">Certificando factura FEL...</div>
+                                    <div className="mt-1">No cierres esta ventana.</div>
                                 </div>
                             )}
 
@@ -2301,46 +2521,44 @@ export default function POS({
                                 <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
                                     Documento
                                 </h3>
-                                <div className="grid gap-3 sm:grid-cols-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => setDocumentType('receipt')}
-                                        className={`rounded-2xl border px-4 py-3 text-left transition ${
-                                            documentType === 'receipt'
-                                                ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm'
-                                                : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50'
-                                        }`}
-                                    >
-                                        <div className="font-semibold">Comprobante</div>
-                                        <div className="mt-1 text-xs text-slate-500">Genera impresión al finalizar.</div>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            if (invoiceAvailable) {
-                                                setDocumentType('invoice');
-                                            }
-                                        }}
-                                        disabled={!invoiceAvailable}
-                                        className={`rounded-2xl border px-4 py-3 text-left transition ${
-                                            documentType === 'invoice'
-                                                ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm'
-                                                : invoiceAvailable
-                                                  ? 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50'
-                                                  : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
-                                        }`}
-                                    >
-                                        <div className="font-semibold">Factura</div>
-                                        {!invoiceAvailable && (
-                                            <div className="mt-1 text-xs font-semibold text-amber-600">
-                                                La facturación electrónica FEL no está habilitada.
-                                            </div>
-                                        )}
-                                        {invoiceAvailable && (
+                                {available_document_types.length > 1 && (
+                                    <div className="grid gap-3 sm:grid-cols-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setDocumentType('receipt')}
+                                            className={`rounded-2xl border px-4 py-3 text-left transition ${
+                                                documentType === 'receipt'
+                                                    ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm'
+                                                    : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50'
+                                            }`}
+                                        >
+                                            <div className="font-semibold">Comprobante</div>
+                                            <div className="mt-1 text-xs text-slate-500">Genera impresión al finalizar.</div>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setDocumentType('invoice')}
+                                            className={`rounded-2xl border px-4 py-3 text-left transition ${
+                                                documentType === 'invoice'
+                                                    ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm'
+                                                    : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50'
+                                            }`}
+                                        >
+                                            <div className="font-semibold">Factura</div>
                                             <div className="mt-1 text-xs text-slate-500">Certifica FEL con Digifact.</div>
-                                        )}
-                                    </button>
-                                </div>
+                                        </button>
+                                    </div>
+                                )}
+                                {singleDocumentType && (
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+                                        Documento: {singleDocumentType === 'invoice' ? 'Factura FEL' : 'Comprobante'}
+                                    </div>
+                                )}
+                                {noAvailableDocumentTypes && (
+                                    <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                                        No hay ningún tipo de documento habilitado para esta empresa.
+                                    </div>
+                                )}
                                 {documentError && (
                                     <div className="mt-2 text-sm font-semibold text-red-600">
                                         {documentError}
@@ -2397,6 +2615,7 @@ export default function POS({
                             <button
                                 type="button"
                                 onClick={() => setShowCheckoutModal(false)}
+                                disabled={processing}
                                 className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                             >
                                 Cancelar
@@ -2404,10 +2623,10 @@ export default function POS({
                             <button
                                 type="button"
                                 onClick={submitSale}
-                                disabled={cart.length === 0 || processing || !paymentIsBalanced || invoiceNitNeedsVerification || invoiceCuiDisabled || hasInvalidCartQuantities}
+                                disabled={cart.length === 0 || processing || !paymentIsBalanced || invoiceNitNeedsVerification || invoiceCuiDisabled || hasInvalidCartQuantities || noAvailableDocumentTypes}
                                 className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-200 hover:from-indigo-700 hover:to-violet-700 disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
-                                {processing ? 'Confirmando...' : 'Confirmar venta'}
+                                {isFelProcessing ? 'Certificando FEL...' : (processing ? 'Confirmando...' : 'Confirmar venta')}
                             </button>
                         </div>
                     </div>

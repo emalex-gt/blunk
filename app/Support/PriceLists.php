@@ -39,6 +39,114 @@ class PriceLists
             ->firstOrFail();
     }
 
+    public static function getDefaultPriceType(int $businessId): PriceType
+    {
+        return self::default($businessId);
+    }
+
+    public static function ensureDefaultPriceType(int $businessId): PriceType
+    {
+        self::ensureDefault($businessId);
+
+        return self::default($businessId);
+    }
+
+    public static function setDefault(int $businessId, int $priceTypeId): PriceType
+    {
+        return DB::transaction(function () use ($businessId, $priceTypeId) {
+            $priceType = PriceType::query()
+                ->where('business_id', $businessId)
+                ->where('is_active', true)
+                ->findOrFail($priceTypeId);
+
+            PriceType::query()
+                ->where('business_id', $businessId)
+                ->update(['is_default' => false]);
+
+            $priceType->update([
+                'is_default' => true,
+                'is_active' => true,
+            ]);
+
+            return $priceType->refresh();
+        });
+    }
+
+    public static function getProductPrice(int $productId, int $priceTypeId): ?float
+    {
+        $price = ProductPrice::query()
+            ->where('product_id', $productId)
+            ->where('price_type_id', $priceTypeId)
+            ->where('is_active', true)
+            ->value('price');
+
+        return $price === null ? null : round((float) $price, 2);
+    }
+
+    public static function updateProductPrices(int $priceTypeId, array $prices): void
+    {
+        $priceType = PriceType::query()->findOrFail($priceTypeId);
+        $businessId = (int) $priceType->business_id;
+
+        DB::transaction(function () use ($prices, $priceType, $businessId) {
+            foreach ($prices as $row) {
+                $productId = (int) ($row['product_id'] ?? 0);
+
+                if ($productId <= 0) {
+                    continue;
+                }
+
+                $product = Product::query()
+                    ->where('business_id', $businessId)
+                    ->findOrFail($productId);
+
+                $price = round((float) ($row['price'] ?? 0), 2);
+
+                ProductPrice::query()->updateOrCreate(
+                    [
+                        'business_id' => $businessId,
+                        'product_id' => $product->id,
+                        'price_type_id' => $priceType->id,
+                    ],
+                    [
+                        'price' => $price,
+                        'is_active' => true,
+                    ],
+                );
+            }
+        });
+    }
+
+    public static function updatePricesForProduct(Product $product, array $prices): void
+    {
+        $businessId = (int) $product->business_id;
+
+        DB::transaction(function () use ($product, $prices, $businessId) {
+            foreach ($prices as $priceTypeId => $price) {
+                $priceType = PriceType::query()
+                    ->where('business_id', $businessId)
+                    ->where('is_active', true)
+                    ->find($priceTypeId);
+
+                if (! $priceType || $price === null || $price === '') {
+                    continue;
+                }
+
+                ProductPrice::query()->updateOrCreate(
+                    [
+                        'business_id' => $businessId,
+                        'product_id' => $product->id,
+                        'price_type_id' => $priceType->id,
+                    ],
+                    [
+                        'price' => round((float) $price, 2),
+                        'is_active' => true,
+                    ],
+                );
+            }
+        });
+    }
+
     public static function ensureDefault(int $businessId): void
     {
         $active = PriceType::query()
@@ -58,14 +166,19 @@ class PriceLists
             return;
         }
 
-        $default = $active->firstWhere('is_default', true);
+        $defaults = $active->where('is_default', true);
 
-        if ($active->count() === 1 || ! $default) {
+        if ($active->count() === 1 || $defaults->count() !== 1) {
+            $default = $defaults->first() ?: $active->first();
+
             PriceType::query()
                 ->where('business_id', $businessId)
                 ->update(['is_default' => false]);
 
-            $active->first()->update(['is_default' => true]);
+            PriceType::query()->whereKey($default->id)->update([
+                'is_default' => true,
+                'is_active' => true,
+            ]);
         }
     }
 

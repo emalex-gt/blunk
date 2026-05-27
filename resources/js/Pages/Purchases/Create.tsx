@@ -84,6 +84,14 @@ function quantityError(value: string): string | null {
     return null;
 }
 
+function sanitizeQuantityInput(value: string): string | null {
+    if (/[.,]/.test(value)) {
+        return null;
+    }
+
+    return value.replace(/\D/g, '');
+}
+
 export default function Create({
     products,
     suppliers,
@@ -213,6 +221,18 @@ export default function Create({
     }
 
     function updateItem(productId: number, field: 'quantity' | 'unit_cost', value: string) {
+        if (field === 'quantity') {
+            const sanitized = sanitizeQuantityInput(value);
+
+            if (sanitized === null) {
+                setMessage('La cantidad debe ser un número entero.');
+                toast.error('La cantidad debe ser un número entero.');
+                return;
+            }
+
+            value = sanitized;
+        }
+
         setCart((items) =>
             items.map((item) =>
                 item.product.id === productId ? { ...item, [field]: value } : item,
@@ -707,6 +727,7 @@ export default function Create({
                                                     pattern="[0-9]*"
                                                     value={item.quantity}
                                                     onChange={(event) => updateItem(item.product.id, 'quantity', event.target.value)}
+                                                    onWheel={(event) => event.currentTarget.blur()}
                                                     className={[
                                                         'h-10 w-full rounded-xl text-center text-sm font-semibold text-slate-900 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100',
                                                         quantityMessage ? 'border-red-300' : 'border-slate-200',

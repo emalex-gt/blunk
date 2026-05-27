@@ -10,6 +10,7 @@ class Purchase extends Model
 {
     protected $fillable = [
         'business_id',
+        'business_number',
         'branch_id',
         'supplier_id',
         'purchase_number',
@@ -24,6 +25,7 @@ class Purchase extends Model
     protected $casts = [
         'total' => 'decimal:2',
         'paid_from_cash' => 'boolean',
+        'business_number' => 'integer',
     ];
 
     public function business(): BelongsTo

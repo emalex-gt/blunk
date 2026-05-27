@@ -18,6 +18,8 @@ class Business extends Model
         'country',
         'phone',
         'email',
+        'logo_url',
+        'logo_public_id',
         'is_active',
     ];
 
@@ -43,6 +45,11 @@ class Business extends Model
     public function sales(): HasMany
     {
         return $this->hasMany(Sale::class);
+    }
+
+    public function felIncidents(): HasMany
+    {
+        return $this->hasMany(FelIncident::class);
     }
 
     public function customers(): HasMany

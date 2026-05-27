@@ -22,7 +22,10 @@ class TenantSetting extends Model
         'products_shared_across_branches',
         'pricing_scope',
         'allow_manual_price',
+        'manual_price_min_margin_percent',
         'remember_last_customer_product_price',
+        'allow_receipts',
+        'allow_invoices',
     ];
 
     protected $casts = [
@@ -30,7 +33,10 @@ class TenantSetting extends Model
         'use_branches' => 'boolean',
         'products_shared_across_branches' => 'boolean',
         'allow_manual_price' => 'boolean',
+        'manual_price_min_margin_percent' => 'decimal:2',
         'remember_last_customer_product_price' => 'boolean',
+        'allow_receipts' => 'boolean',
+        'allow_invoices' => 'boolean',
         'max_users' => 'integer',
     ];
 

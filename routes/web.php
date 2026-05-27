@@ -2,18 +2,21 @@
 
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProductController;
+use App\Http\Controllers\PriceListController;
 use App\Http\Controllers\PurchaseController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\BranchController;
 use App\Http\Controllers\CashRegisterController;
-use App\Http\Controllers\CompanySettingsController;
 use App\Http\Controllers\InventoryTransferController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\TenantUserController;
 use App\Http\Controllers\SuperAdmin\DashboardController as SuperAdminDashboardController;
+use App\Http\Controllers\SuperAdmin\FelIncidentController as SuperAdminFelIncidentController;
+use App\Http\Controllers\SuperAdmin\SecurityController as SuperAdminSecurityController;
 use App\Http\Controllers\SuperAdmin\TenantController as SuperAdminTenantController;
+use App\Http\Controllers\SuperAdmin\TenantBranchController as SuperAdminTenantBranchController;
 use App\Http\Controllers\SuperAdmin\TenantSubscriptionController as SuperAdminTenantSubscriptionController;
 use App\Http\Controllers\SuperAdmin\TenantUserController as SuperAdminTenantUserController;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
@@ -33,7 +36,7 @@ Route::get('/', function () {
 });
 
 Route::get('/dashboard', [ReportController::class, 'dashboard'])
-    ->middleware(['auth', 'verified', 'tenant.active'])
+    ->middleware(['auth', 'verified', 'tenant.active', 'permission:pos.view'])
     ->name('dashboard');
 
 Route::middleware(['auth', 'super.admin'])
@@ -41,6 +44,16 @@ Route::middleware(['auth', 'super.admin'])
     ->name('super-admin.')
     ->group(function () {
         Route::get('/', SuperAdminDashboardController::class)->name('dashboard');
+        Route::get('/fel-incidents', [SuperAdminFelIncidentController::class, 'index'])->name('fel-incidents.index');
+        Route::post('/fel-incidents/{incident}/review', [SuperAdminFelIncidentController::class, 'review'])->name('fel-incidents.review');
+        Route::post('/fel-incidents/{incident}/resolve', [SuperAdminFelIncidentController::class, 'resolve'])->name('fel-incidents.resolve');
+        Route::get('/security/roles', [SuperAdminSecurityController::class, 'roles'])->name('security.roles');
+        Route::post('/security/roles', [SuperAdminSecurityController::class, 'storeRole'])->name('security.roles.store');
+        Route::put('/security/roles/{role}', [SuperAdminSecurityController::class, 'updateRole'])->name('security.roles.update');
+        Route::delete('/security/roles/{role}', [SuperAdminSecurityController::class, 'destroyRole'])->name('security.roles.destroy');
+        Route::get('/security/permissions', [SuperAdminSecurityController::class, 'permissions'])->name('security.permissions');
+        Route::get('/security/assignments', [SuperAdminSecurityController::class, 'assignments'])->name('security.assignments');
+        Route::put('/security/assignments/{user}', [SuperAdminSecurityController::class, 'updateAssignment'])->name('security.assignments.update');
         Route::get('/tenants', [SuperAdminTenantController::class, 'index'])->name('tenants.index');
         Route::get('/tenants/create', [SuperAdminTenantController::class, 'create'])->name('tenants.create');
         Route::post('/tenants', [SuperAdminTenantController::class, 'store'])->name('tenants.store');
@@ -51,6 +64,10 @@ Route::middleware(['auth', 'super.admin'])
         Route::post('/tenants/{business}/users', [SuperAdminTenantUserController::class, 'store'])->name('tenants.users.store');
         Route::put('/tenants/{business}/users/{user}', [SuperAdminTenantUserController::class, 'update'])->name('tenants.users.update');
         Route::delete('/tenants/{business}/users/{user}', [SuperAdminTenantUserController::class, 'destroy'])->name('tenants.users.destroy');
+        Route::get('/tenants/{business}/branches', [SuperAdminTenantBranchController::class, 'index'])->name('tenants.branches');
+        Route::post('/tenants/{business}/branches', [SuperAdminTenantBranchController::class, 'store'])->name('tenants.branches.store');
+        Route::put('/tenants/{business}/branches/{branch}', [SuperAdminTenantBranchController::class, 'update'])->name('tenants.branches.update');
+        Route::delete('/tenants/{business}/branches/{branch}', [SuperAdminTenantBranchController::class, 'destroy'])->name('tenants.branches.destroy');
         Route::get('/tenants/{business}/subscription', [SuperAdminTenantSubscriptionController::class, 'edit'])->name('tenants.subscription');
         Route::put('/tenants/{business}/subscription', [SuperAdminTenantSubscriptionController::class, 'update'])->name('tenants.subscription.update');
         Route::post('/tenants/{business}/subscription/{status}', [SuperAdminTenantSubscriptionController::class, 'setStatus'])->name('tenants.subscription.status');
@@ -74,28 +91,31 @@ Route::middleware('auth')->group(function () {
     })->name('tenant.switch');
 
     Route::middleware('tenant.active')->group(function () {
-        Route::get('/pos', [SaleController::class, 'create'])->middleware('module:pos')->name('sales.create');
-        Route::post('/sales', [SaleController::class, 'store'])->middleware('module:pos')->name('sales.store');
+        Route::get('/pos', [SaleController::class, 'create'])->middleware(['module:pos', 'permission:pos.view'])->name('sales.create');
+        Route::post('/pos/fel/prewarm-token', [SaleController::class, 'prewarmFelToken'])
+            ->middleware(['module:pos', 'module:fel_gt', 'permission:pos.view'])
+            ->name('sales.fel.prewarm-token');
+        Route::post('/sales', [SaleController::class, 'store'])->middleware(['module:pos', 'permission:pos.sell'])->name('sales.store');
         Route::get('/sales/cancelled', fn () => redirect()->route('reports.sales', ['status' => 'cancelled']))
+            ->middleware(['module:reports', 'permission:reports.sales.view'])
             ->name('sales.cancelled');
-        Route::get('/sales/{sale}', [SaleController::class, 'show'])->name('sales.show');
-        Route::post('/sales/{sale}/cancel', [SaleController::class, 'cancel'])->name('sales.cancel');
-        Route::get('/sales/{sale}/receipt', [SaleController::class, 'receipt'])->name('sales.receipt');
-        Route::get('/sales/{sale}/fel-document', [SaleController::class, 'felDocument'])->middleware('module:fel_gt')->name('sales.fel-document');
+        Route::get('/sales/{sale}', [SaleController::class, 'show'])->middleware(['module:pos', 'permission:sales.view'])->name('sales.show');
+        Route::post('/sales/{sale}/cancel', [SaleController::class, 'cancel'])->middleware(['module:pos', 'permission:sales.cancel'])->name('sales.cancel');
+        Route::get('/sales/{sale}/receipt', [SaleController::class, 'receipt'])->middleware(['module:pos', 'permission:sales.print'])->name('sales.receipt');
+        Route::post('/sales/{sale}/fel/retry', [SaleController::class, 'retryFelCertification'])->middleware(['module:fel_gt', 'permission:fel.certify'])->name('sales.fel.retry');
+        Route::get('/sales/{sale}/fel-document', [SaleController::class, 'felDocument'])->middleware(['module:fel_gt', 'permission:fel.documents.view,signed'])->name('sales.fel-document');
         Route::get('/sales/{sale}/fel-download/{format}', [SaleController::class, 'felDownload'])
-            ->middleware('module:fel_gt')
+            ->middleware(['module:fel_gt', 'permission:fel.documents.view'])
             ->whereIn('format', ['xml', 'pdf'])
             ->name('sales.fel-download');
-        Route::get('/sales/{sale}/fel-print', [SaleController::class, 'felPrint'])->middleware('module:fel_gt')->name('sales.fel-print');
-        Route::get('/sales/{sale}/invoice-document', [SaleController::class, 'invoiceDocument'])->middleware('module:fel_gt')->name('sales.invoice-document');
-        Route::get('/customers/lookup/nit', [CustomerController::class, 'lookupNit'])->middleware('module:customers')->name('customers.lookup.nit');
-        Route::get('/customers/gt/nit-lookup', [CustomerController::class, 'lookupGuatemalaNit'])->middleware('module:fel_gt')->name('customers.gt.nit-lookup');
+        Route::get('/sales/{sale}/fel-print', [SaleController::class, 'felPrint'])->middleware(['module:fel_gt', 'permission:fel.documents.view,signed'])->name('sales.fel-print');
+        Route::get('/sales/{sale}/invoice-document', [SaleController::class, 'invoiceDocument'])->middleware(['module:fel_gt', 'permission:fel.documents.view,signed'])->name('sales.invoice-document');
+        Route::get('/customers/lookup/nit', [CustomerController::class, 'lookupNit'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.lookup.nit');
+        Route::get('/customers/gt/nit-lookup', [CustomerController::class, 'lookupGuatemalaNit'])->middleware(['module:fel_gt', 'permission:customers.view'])->name('customers.gt.nit-lookup');
         Route::get('/customers/{customer}/products/{product}/last-price', [SaleController::class, 'lastCustomerProductPrice'])
-            ->middleware('module:pos')
+            ->middleware(['module:pos', 'permission:sales.view'])
             ->name('customers.products.last-price');
 
-        Route::get('/settings/company', [CompanySettingsController::class, 'edit'])->name('settings.company.edit');
-        Route::post('/settings/company', [CompanySettingsController::class, 'update'])->name('settings.company.update');
         Route::match(['get', 'patch'], '/settings/fel', fn () => abort(403));
         Route::post('/settings/fel/test-connection', fn () => abort(403));
         Route::get('/debug/digifact/nit/{nit}', function (Request $request, string $nit) {
@@ -140,64 +160,71 @@ Route::middleware('auth')->group(function () {
         })->name('debug.digifact.last-response');
 
         Route::middleware('module:inventory')->group(function () {
-            Route::get('/products', [ProductController::class, 'index'])->name('products.index');
-            Route::post('/products', [ProductController::class, 'store'])->name('products.store');
-            Route::get('/products/{product}/stock-history', [ProductController::class, 'stockHistory'])->name('products.stock-history');
-            Route::put('/products/{product}', [ProductController::class, 'update'])->name('products.update');
+            Route::get('/products', [ProductController::class, 'index'])->middleware('permission:products.view')->name('products.index');
+            Route::post('/products', [ProductController::class, 'store'])->middleware('permission:products.create')->name('products.store');
+            Route::get('/products/{product}/stock-history', [ProductController::class, 'stockHistory'])->middleware('permission:products.view')->name('products.stock-history');
+            Route::put('/products/{product}', [ProductController::class, 'update'])->middleware('permission:products.update')->name('products.update');
 
-            Route::get('/stock', [StockController::class, 'index'])->name('stock.index');
-            Route::post('/stock', [StockController::class, 'store'])->name('stock.store');
-            Route::get('/stock/quick', [StockController::class, 'quick'])->name('stock.quick');
-            Route::post('/stock/quick', [StockController::class, 'quickStore'])->name('stock.quick.store');
+            Route::get('/stock', [StockController::class, 'index'])->middleware('permission:inventory.view')->name('stock.index');
+            Route::post('/stock', [StockController::class, 'store'])->middleware('permission:inventory.adjust')->name('stock.store');
+            Route::get('/stock/quick', [StockController::class, 'quick'])->middleware('permission:inventory.view')->name('stock.quick');
+            Route::post('/stock/quick', [StockController::class, 'quickStore'])->middleware('permission:inventory.adjust')->name('stock.quick.store');
+        });
+
+        Route::middleware('module:inventory')->group(function () {
+            Route::get('/price-lists', [PriceListController::class, 'index'])->middleware('permission:price_lists.view')->name('price-lists.index');
+            Route::get('/price-lists/create', [PriceListController::class, 'create'])->middleware('permission:price_lists.manage')->name('price-lists.create');
+            Route::post('/price-lists', [PriceListController::class, 'store'])->middleware('permission:price_lists.manage')->name('price-lists.store');
+            Route::get('/price-lists/{priceType}/edit', [PriceListController::class, 'edit'])->middleware('permission:price_lists.manage')->name('price-lists.edit');
+            Route::patch('/price-lists/{priceType}', [PriceListController::class, 'update'])->middleware('permission:price_lists.manage')->name('price-lists.update');
+            Route::delete('/price-lists/{priceType}', [PriceListController::class, 'destroy'])->middleware('permission:price_lists.manage')->name('price-lists.destroy');
+            Route::post('/price-lists/{priceType}/set-default', [PriceListController::class, 'setDefault'])->middleware('permission:price_lists.manage')->name('price-lists.set-default');
+            Route::get('/price-lists/{priceType}/prices', [PriceListController::class, 'prices'])->middleware('permission:price_lists.manage')->name('price-lists.prices');
+            Route::patch('/price-lists/{priceType}/prices', [PriceListController::class, 'updatePrices'])->middleware('permission:price_lists.manage')->name('price-lists.prices.update');
         });
 
         Route::middleware(['module:branches'])->group(function () {
             Route::post('/branches/active', [BranchController::class, 'activate'])->name('branches.active');
-            Route::get('/branches', [BranchController::class, 'index'])->name('branches.index');
-            Route::get('/branches/create', [BranchController::class, 'create'])->name('branches.create');
-            Route::post('/branches', [BranchController::class, 'store'])->name('branches.store');
-            Route::get('/branches/{branch}/edit', [BranchController::class, 'edit'])->name('branches.edit');
-            Route::put('/branches/{branch}', [BranchController::class, 'update'])->name('branches.update');
 
-            Route::get('/inventory/transfers', [InventoryTransferController::class, 'index'])->name('inventory.transfers.index');
-            Route::get('/inventory/transfers/create', [InventoryTransferController::class, 'create'])->name('inventory.transfers.create');
-            Route::post('/inventory/transfers', [InventoryTransferController::class, 'store'])->name('inventory.transfers.store');
-            Route::get('/inventory/transfers/{transfer}', [InventoryTransferController::class, 'show'])->name('inventory.transfers.show');
+            Route::get('/inventory/transfers', [InventoryTransferController::class, 'index'])->middleware('permission:inventory.transfers.view')->name('inventory.transfers.index');
+            Route::get('/inventory/transfers/create', [InventoryTransferController::class, 'create'])->middleware('permission:inventory.transfers.create')->name('inventory.transfers.create');
+            Route::post('/inventory/transfers', [InventoryTransferController::class, 'store'])->middleware('permission:inventory.transfers.create')->name('inventory.transfers.store');
+            Route::get('/inventory/transfers/{transfer}', [InventoryTransferController::class, 'show'])->middleware('permission:inventory.transfers.view')->name('inventory.transfers.show');
         });
 
         Route::middleware('module:cash_register')->group(function () {
-            Route::get('/cash-register', [CashRegisterController::class, 'index'])->name('cash-register.index');
-            Route::post('/cash-register/open', [CashRegisterController::class, 'open'])->name('cash-register.open');
-            Route::post('/cash-register/expenses', [CashRegisterController::class, 'expense'])->name('cash-register.expenses.store');
-            Route::post('/cash-register/close', [CashRegisterController::class, 'close'])->name('cash-register.close');
-            Route::get('/cash-register/closings', [CashRegisterController::class, 'closings'])->name('cash-register.closings.index');
-            Route::get('/cash-register/closings/{session}', [CashRegisterController::class, 'closingShow'])->name('cash-register.closings.show');
-            Route::get('/cash-register/closings/{session}/print', [CashRegisterController::class, 'closingPrint'])->name('cash-register.closings.print');
+            Route::get('/cash-register', [CashRegisterController::class, 'index'])->middleware('permission:cash_register.view')->name('cash-register.index');
+            Route::post('/cash-register/open', [CashRegisterController::class, 'open'])->middleware('permission:cash_register.open')->name('cash-register.open');
+            Route::post('/cash-register/expenses', [CashRegisterController::class, 'expense'])->middleware('permission:cash_register.expenses')->name('cash-register.expenses.store');
+            Route::post('/cash-register/close', [CashRegisterController::class, 'close'])->middleware('permission:cash_register.close')->name('cash-register.close');
+            Route::get('/cash-register/closings', [CashRegisterController::class, 'closings'])->middleware('permission:cash_register.view')->name('cash-register.closings.index');
+            Route::get('/cash-register/closings/{session}', [CashRegisterController::class, 'closingShow'])->middleware('permission:cash_register.view')->name('cash-register.closings.show');
+            Route::get('/cash-register/closings/{session}/print', [CashRegisterController::class, 'closingPrint'])->middleware('permission:cash_register.view')->name('cash-register.closings.print');
         });
 
         Route::middleware('module:purchases')->group(function () {
-            Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.index');
-            Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create');
-            Route::post('/purchases', [PurchaseController::class, 'store'])->name('purchases.store');
-            Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->name('purchases.show');
+            Route::get('/purchases', [PurchaseController::class, 'index'])->middleware('permission:purchases.view')->name('purchases.index');
+            Route::get('/purchases/create', [PurchaseController::class, 'create'])->middleware('permission:purchases.create')->name('purchases.create');
+            Route::post('/purchases', [PurchaseController::class, 'store'])->middleware('permission:purchases.create')->name('purchases.store');
+            Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->middleware('permission:purchases.view')->name('purchases.show');
         });
 
         Route::middleware('module:reports')->group(function () {
-            Route::get('/reports/sales', [ReportController::class, 'sales'])->name('reports.sales');
-            Route::get('/reports/sales/export/excel', [ReportController::class, 'salesExportExcel'])->name('reports.sales.export.excel');
-            Route::get('/reports/sales/export/pdf', [ReportController::class, 'salesExportPdf'])->name('reports.sales.export.pdf');
-            Route::get('/reports/low-stock', [ReportController::class, 'lowStock'])->name('reports.low-stock');
-            Route::get('/reports/low-stock/export/excel', [ReportController::class, 'lowStockExportExcel'])->name('reports.low-stock.export.excel');
-            Route::get('/reports/top-products', [ReportController::class, 'topProducts'])->name('reports.top-products');
-            Route::get('/reports/top-products/export/excel', [ReportController::class, 'topProductsExportExcel'])->name('reports.top-products.export.excel');
+            Route::get('/reports/sales', [ReportController::class, 'sales'])->middleware('permission:reports.sales.view')->name('reports.sales');
+            Route::get('/reports/sales/export/excel', [ReportController::class, 'salesExportExcel'])->middleware('permission:reports.sales.view')->name('reports.sales.export.excel');
+            Route::get('/reports/sales/export/pdf', [ReportController::class, 'salesExportPdf'])->middleware('permission:reports.sales.view')->name('reports.sales.export.pdf');
+            Route::get('/reports/low-stock', [ReportController::class, 'lowStock'])->middleware('permission:reports.stock.view')->name('reports.low-stock');
+            Route::get('/reports/low-stock/export/excel', [ReportController::class, 'lowStockExportExcel'])->middleware('permission:reports.stock.view')->name('reports.low-stock.export.excel');
+            Route::get('/reports/top-products', [ReportController::class, 'topProducts'])->middleware('permission:reports.top_products.view')->name('reports.top-products');
+            Route::get('/reports/top-products/export/excel', [ReportController::class, 'topProductsExportExcel'])->middleware('permission:reports.top_products.view')->name('reports.top-products.export.excel');
         });
 
         Route::middleware('tenant.users')->group(function () {
-            Route::get('/users', [TenantUserController::class, 'index'])->name('users.index');
-            Route::post('/users', [TenantUserController::class, 'store'])->name('users.store');
-            Route::put('/users/{user}', [TenantUserController::class, 'update'])->name('users.update');
-            Route::patch('/users/{user}/toggle-active', [TenantUserController::class, 'toggleActive'])->name('users.toggle-active');
-            Route::put('/users/{user}/password', [TenantUserController::class, 'resetPassword'])->name('users.password');
+            Route::get('/users', [TenantUserController::class, 'index'])->middleware('permission:users.view')->name('users.index');
+            Route::post('/users', [TenantUserController::class, 'store'])->middleware('permission:users.create,users.assign_roles')->name('users.store');
+            Route::put('/users/{user}', [TenantUserController::class, 'update'])->middleware('permission:users.update,users.assign_roles')->name('users.update');
+            Route::patch('/users/{user}/toggle-active', [TenantUserController::class, 'toggleActive'])->middleware('permission:users.update')->name('users.toggle-active');
+            Route::put('/users/{user}/password', [TenantUserController::class, 'resetPassword'])->middleware('permission:users.update')->name('users.password');
         });
     });
 

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ElectronicDocument extends Model
 {
@@ -13,11 +14,13 @@ class ElectronicDocument extends Model
         'provider',
         'environment',
         'document_type',
+        'internal_reference',
         'status',
         'uuid',
         'series',
         'number',
         'certification_date',
+        'issued_at',
         'request_payload',
         'response_payload',
         'xml_base64',
@@ -32,6 +35,7 @@ class ElectronicDocument extends Model
 
     protected $casts = [
         'certification_date' => 'datetime',
+        'issued_at' => 'datetime',
         'request_payload' => 'array',
         'response_payload' => 'array',
         'cancelled_at' => 'datetime',
@@ -52,5 +56,10 @@ class ElectronicDocument extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function attempts(): HasMany
+    {
+        return $this->hasMany(FelCertificationAttempt::class);
     }
 }

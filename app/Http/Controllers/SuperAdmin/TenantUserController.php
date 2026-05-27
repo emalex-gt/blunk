@@ -5,6 +5,7 @@ namespace App\Http\Controllers\SuperAdmin;
 use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\User;
+use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -18,6 +19,10 @@ class TenantUserController extends Controller
         return Inertia::render('SuperAdmin/Tenants/Users', [
             'tenant' => $business,
             'users' => $business->users()->orderBy('name')->get(['id', 'name', 'email', 'role', 'is_active']),
+            'roles' => ['owner', ...Permissions::assignableTenantRoles()],
+            'roleOptions' => collect(['owner', ...Permissions::assignableTenantRoles()])
+                ->map(fn (string $key) => ['key' => $key, 'name' => Permissions::roleLabels()[$key] ?? $key])
+                ->values(),
         ]);
     }
 
@@ -27,14 +32,15 @@ class TenantUserController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'password' => ['required', 'string', 'min:8'],
-            'role' => ['required', Rule::in(['owner', 'admin', 'cashier', 'stock_manager'])],
+            'role' => ['required', Rule::in(['owner', ...Permissions::assignableTenantRoles()])],
         ]);
 
-        $business->users()->create([
+        $user = $business->users()->create([
             ...$data,
             'is_super_admin' => false,
             'is_active' => true,
         ]);
+        Permissions::assignRole($user, $data['role']);
 
         return back();
     }
@@ -46,7 +52,7 @@ class TenantUserController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user)],
-            'role' => ['required', Rule::in(['owner', 'admin', 'cashier', 'stock_manager'])],
+            'role' => ['required', Rule::in(['owner', ...Permissions::assignableTenantRoles()])],
             'password' => ['nullable', 'string', 'min:8'],
         ]);
 
@@ -55,6 +61,7 @@ class TenantUserController extends Controller
         }
 
         $user->update($data);
+        Permissions::assignRole($user, $data['role']);
 
         return back();
     }

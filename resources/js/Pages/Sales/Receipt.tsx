@@ -4,6 +4,8 @@ import { useEffect } from 'react';
 
 type ReceiptSale = {
     id: number;
+    business_number?: number | null;
+    display_number?: string;
     created_at_local: string | null;
     total: number;
     created_by: string | null;
@@ -41,6 +43,7 @@ export default function Receipt({
 }) {
     const business = usePage().props.business as { country?: string | null } | null;
     const country = business?.country ?? 'GT';
+    const saleNumber = sale.display_number ?? `V-${sale.business_number ?? sale.id}`;
 
     useEffect(() => {
         const timer = window.setTimeout(() => window.print(), 350);
@@ -50,7 +53,7 @@ export default function Receipt({
 
     return (
         <>
-            <Head title={`Comprobante #${sale.id}`} />
+            <Head title={`Comprobante ${saleNumber}`} />
             <style>{`
                 @page { size: ${paperSize}; margin: 14mm; }
                 @media print {
@@ -93,7 +96,7 @@ export default function Receipt({
                         </div>
                         <div className="text-right">
                             <div className="text-xl font-bold uppercase">Comprobante de venta</div>
-                            <div className="mt-2 text-sm">Venta #{sale.id}</div>
+                            <div className="mt-2 text-sm">Venta {saleNumber}</div>
                             <div className="text-sm">Fecha: {sale.created_at_local ?? '-'}</div>
                         </div>
                     </header>

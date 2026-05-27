@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Ticket #{{ $sale->id }}</title>
+    <title>Ticket {{ format_sale_number($sale) }}</title>
     <style>
         @page {
             size: 80mm auto;
@@ -224,7 +224,7 @@
     <section>
         <div class="row">
             <strong>Comprobante</strong>
-            <span>#{{ $sale->id }}</span>
+            <span>{{ format_sale_number($sale) }}</span>
         </div>
         <div class="row">
             <span>Fecha</span>
@@ -315,7 +315,7 @@
     window.addEventListener('load', function () {
         window.setTimeout(function () {
             window.print();
-        }, 500);
+        }, 300);
     });
 </script>
 </body>

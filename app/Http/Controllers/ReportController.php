@@ -114,6 +114,8 @@ class ReportController extends Controller
 
         $rows = $sales->map(fn (Sale $sale) => [
             'id' => $sale->id,
+            'business_number' => $sale->business_number,
+            'display_number' => format_sale_number($sale),
             'created_at' => $sale->created_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
             'created_at_local' => $sale->created_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
             'created_at_local_date' => $sale->created_at?->copy()->timezone($timezone)->format('Y-m-d'),

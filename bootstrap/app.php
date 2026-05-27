@@ -21,6 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'tenant.active' => \App\Http\Middleware\EnsureTenantAccessIsActive::class,
             'tenant.users' => \App\Http\Middleware\EnsureTenantUserCanManageUsers::class,
             'module' => \App\Http\Middleware\EnsureModuleEnabled::class,
+            'permission' => \App\Http\Middleware\EnsurePermission::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

@@ -15,6 +15,7 @@ class DigifactNucJsonBuilder
     {
         $sale->loadMissing(['business.tenantSetting', 'customer', 'items.product']);
         $settings->loadMissing('phrases');
+        $internalReference = $sale->fel_internal_reference ?: $this->internalReference($sale);
         $companySettings = $sale->business?->tenantSetting
             ?: TenantSetting::query()->where('business_id', $sale->business_id)->first();
         $customer = $sale->customer;
@@ -126,18 +127,20 @@ class DigifactNucJsonBuilder
             $grandTotal += $lineTotal;
             $grandTax += $tax;
 
-            Log::info('DIGIFACT FEL item payload values', [
-                'business_id' => $sale->business_id,
-                'sale_id' => $sale->id,
-                'product' => $item->product_name,
-                'qty' => $quantity,
-                'unit_price' => $unitPrice,
-                'line_subtotal' => $lineSubtotal,
-                'line_discount' => $lineDiscount,
-                'line_total' => $lineTotal,
-                'payload_price' => $unitPrice,
-                'payload_total_item' => $lineTotal,
-            ]);
+            if (config('app.debug') && app()->environment('local')) {
+                Log::debug('DIGIFACT FEL item payload values', [
+                    'business_id' => $sale->business_id,
+                    'sale_id' => $sale->id,
+                    'product' => $item->product_name,
+                    'qty' => $quantity,
+                    'unit_price' => $unitPrice,
+                    'line_subtotal' => $lineSubtotal,
+                    'line_discount' => $lineDiscount,
+                    'line_total' => $lineTotal,
+                    'payload_price' => $unitPrice,
+                    'payload_total_item' => $lineTotal,
+                ]);
+            }
 
             $items[] = [
                 'NumberLine' => $index + 1,
@@ -221,11 +224,22 @@ class DigifactNucJsonBuilder
                 ],
             ],
             'AdditionalDocumentInfo' => [
-                'AdditionalInfo' => [],
+                'AdditionalInfo' => [
+                    [
+                        'Name' => 'NoReferencia',
+                        'Data' => null,
+                        'Value' => $internalReference,
+                    ],
+                ],
             ],
         ];
 
         return $payload;
+    }
+
+    public function internalReference(Sale $sale): string
+    {
+        return 'BLUNK-'.$sale->business_id.'-'.$sale->id;
     }
 
     private function buildSellerAdditionlInfo(TenantFelSetting $settings): array

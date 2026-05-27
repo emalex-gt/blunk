@@ -6,6 +6,7 @@ namespace App\Models;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -27,6 +28,7 @@ class User extends Authenticatable
         'is_super_admin',
         'is_active',
         'current_branch_id',
+        'email_verified_at',
     ];
 
     public function business(): BelongsTo
@@ -47,6 +49,16 @@ class User extends Authenticatable
     public function currentBranch(): BelongsTo
     {
         return $this->belongsTo(Branch::class, 'current_branch_id');
+    }
+
+    public function roles(): MorphToMany
+    {
+        return $this->morphToMany(Role::class, 'model', 'model_has_roles');
+    }
+
+    public function directPermissions(): MorphToMany
+    {
+        return $this->morphToMany(Permission::class, 'model', 'model_has_permissions');
     }
 
     public function permissions(): array

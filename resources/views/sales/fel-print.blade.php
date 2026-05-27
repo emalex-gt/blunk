@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="utf-8">
-    <title>Factura FEL #{{ $sale->id }}</title>
+    <title>Factura FEL {{ format_sale_number($sale) }}</title>
     <style>
         @page { size: A4; margin: 12mm; }
         * { box-sizing: border-box; }
@@ -170,7 +170,7 @@
             <div class="fel-box">
                 <div class="fel-title">Documento Tributario Electrónico</div>
                 <div class="label" style="margin-top: 8px;">Factura FEL</div>
-                <div>Venta #{{ $sale->id }}</div>
+                <div>Venta {{ format_sale_number($sale) }}</div>
             </div>
         </section>
 

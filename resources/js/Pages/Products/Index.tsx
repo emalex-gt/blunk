@@ -33,6 +33,20 @@ type Product = {
     category_id: number | null;
     category: Category | null;
     supplier_cost_history: SupplierCostHistory[];
+    prices: ProductPrice[];
+};
+
+type PriceType = {
+    id: number;
+    name: string;
+    is_default: boolean;
+    is_active: boolean;
+};
+
+type ProductPrice = {
+    id: number;
+    price_type_id: number;
+    price: string | number;
 };
 
 type SupplierCostHistory = {
@@ -61,6 +75,7 @@ type ProductForm = {
     is_active: boolean;
     image: File | null;
     category_name: string;
+    prices: Record<string, string>;
 };
 
 const emptyForm: ProductForm = {
@@ -75,15 +90,18 @@ const emptyForm: ProductForm = {
     is_active: true,
     image: null,
     category_name: '',
+    prices: {},
 };
 
 export default function ProductIndex({
     products,
+    priceTypes,
     categories,
     filters,
     use_product_images = true,
 }: {
     products: Product[];
+    priceTypes: PriceType[];
     categories: Category[];
     filters: { search: string };
     use_product_images?: boolean;
@@ -143,6 +161,12 @@ export default function ProductIndex({
             is_active: product.is_active,
             image: null,
             category_name: product.category?.name ?? '',
+            prices: priceTypes.reduce<Record<string, string>>((values, priceType) => {
+                const existing = product.prices?.find((price) => Number(price.price_type_id) === Number(priceType.id));
+                values[String(priceType.id)] = existing ? String(existing.price) : '';
+
+                return values;
+            }, {}),
         });
         clearImagePreview();
     }
@@ -355,6 +379,34 @@ export default function ProductIndex({
                             <TextInput id="sale_price" type="number" step="0.01" className="mt-1 block w-full" value={data.sale_price} onChange={(e) => setData('sale_price', e.target.value)} />
                         </div>
                     </div>
+
+                    {priceTypes.length > 1 && (
+                        <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                            <h4 className="text-sm font-semibold text-slate-900">Precios por lista</h4>
+                            <div className="mt-3 space-y-2">
+                                {priceTypes.map((priceType) => (
+                                    <label key={priceType.id} className="grid grid-cols-[1fr_140px] items-center gap-3 text-sm">
+                                        <span className="font-medium text-slate-700">
+                                            {priceType.name}
+                                            {priceType.is_default && <span className="ml-2 text-xs text-indigo-600">Predeterminada</span>}
+                                        </span>
+                                        <TextInput
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            value={data.prices[String(priceType.id)] ?? ''}
+                                            onChange={(event) => setData('prices', {
+                                                ...data.prices,
+                                                [String(priceType.id)]: event.target.value,
+                                            })}
+                                            placeholder={data.sale_price}
+                                            className="w-full"
+                                        />
+                                    </label>
+                                ))}
+                            </div>
+                        </section>
+                    )}
 
                     <div className="grid grid-cols-2 gap-3">
                         <div>

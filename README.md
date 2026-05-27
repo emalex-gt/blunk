@@ -21,6 +21,19 @@ Laravel is a web application framework with expressive, elegant syntax. We belie
 
 Laravel is accessible, powerful, and provides tools required for large, robust applications.
 
+## PostgreSQL Feature Tests
+
+Blunk uses PostgreSQL-specific migrations and SQL, so critical POS/FEL tests should run against PostgreSQL.
+
+```bash
+createdb blunk_test
+cp .env.testing.example .env.testing
+php artisan key:generate --env=testing
+composer test:pgsql
+```
+
+Do not commit real database passwords in `.env.testing`.
+
 ## Learning Laravel
 
 Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
