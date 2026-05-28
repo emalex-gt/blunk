@@ -12,6 +12,8 @@ type Product = {
     name: string;
     code: string | null;
     stock: number;
+    reserved_stock?: number;
+    available_stock?: number;
     location: string | null;
 };
 
@@ -54,6 +56,8 @@ export default function StockIndex({ products }: { products: Product[] }) {
                     {selectedProduct && (
                         <div className="rounded-md bg-gray-50 p-3 text-sm text-gray-700">
                             {t('stock.current_stock')}: <span className="font-semibold">{selectedProduct.stock}</span>
+                            <span className="ml-3">Reservado: <span className="font-semibold">{selectedProduct.reserved_stock ?? 0}</span></span>
+                            <span className="ml-3">Disponible: <span className="font-semibold">{selectedProduct.available_stock ?? selectedProduct.stock}</span></span>
                             {selectedProduct.location && <span> | {t('common.location')}: {selectedProduct.location}</span>}
                         </div>
                     )}

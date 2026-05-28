@@ -10,6 +10,8 @@ type Product = {
     code: string | null;
     barcode: string | null;
     stock: number;
+    reserved_stock?: number;
+    available_stock?: number;
     min_stock: number;
     location: string | null;
     image_url: string | null;
@@ -220,9 +222,11 @@ export default function StockQuick({
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                                 {filteredProducts.map((product) => {
                                     const isSelected = selectedProduct?.id === product.id;
-                                    const outOfStock = product.stock <= 0;
+                                    const availableStock = Math.floor(product.available_stock ?? product.stock);
+                                    const reservedStock = Math.floor(product.reserved_stock ?? 0);
+                                    const outOfStock = availableStock <= 0;
                                     const lowStock =
-                                        product.stock > 0 && product.stock <= product.min_stock;
+                                        availableStock > 0 && availableStock <= product.min_stock;
 
                                     return (
                                         <button
@@ -267,9 +271,12 @@ export default function StockQuick({
                                                         {outOfStock
                                                             ? 'Sin stock'
                                                             : lowStock
-                                                              ? `Stock bajo (${product.stock})`
-                                                              : `Stock ${product.stock}`}
+                                                              ? `Stock bajo (${availableStock})`
+                                                              : `Disponible ${availableStock}`}
                                                     </span>
+                                                    {reservedStock > 0 && (
+                                                        <span className="text-xs text-slate-500">Reservado {reservedStock}</span>
+                                                    )}
                                                     {product.location && (
                                                         <span className="truncate text-slate-500">
                                                             {product.location}
@@ -309,6 +316,8 @@ export default function StockQuick({
                                         </div>
                                         <div className="mt-1 text-6xl font-bold text-gray-900">
                                             {selectedProduct.stock}
+                                            <span className="ml-3 text-sm text-slate-500">Reservado {selectedProduct.reserved_stock ?? 0}</span>
+                                            <span className="ml-3 text-sm text-slate-500">Disponible {selectedProduct.available_stock ?? selectedProduct.stock}</span>
                                         </div>
                                     </div>
                                 </div>

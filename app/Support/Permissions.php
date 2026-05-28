@@ -53,6 +53,14 @@ class Permissions
     public const PRICE_LISTS_VIEW = 'price_lists.view';
     public const PRICE_LISTS_MANAGE = 'price_lists.manage';
 
+    public const CREDITS_VIEW = 'credits.view';
+    public const CREDITS_CREATE = 'credits.create';
+    public const CREDITS_INVOICE = 'credits.invoice';
+    public const CREDITS_TRANSFER_CUSTOMER = 'credits.transfer_customer';
+    public const CREDITS_CANCEL_LINES = 'credits.cancel_lines';
+    public const CREDITS_PRINT = 'credits.print';
+    public const CREDITS_MANAGE = 'credits.manage';
+
     public const USERS_VIEW = 'users.view';
     public const USERS_CREATE = 'users.create';
     public const USERS_UPDATE = 'users.update';
@@ -109,6 +117,13 @@ class Permissions
             self::FEL_TECHNICAL_VIEW => ['name' => 'Ver respuesta técnica FEL', 'group' => 'FEL'],
             self::PRICE_LISTS_VIEW => ['name' => 'Ver listas de precios', 'group' => 'Precios'],
             self::PRICE_LISTS_MANAGE => ['name' => 'Gestionar listas de precios', 'group' => 'Precios'],
+            self::CREDITS_VIEW => ['name' => 'Ver créditos', 'group' => 'Créditos'],
+            self::CREDITS_CREATE => ['name' => 'Crear créditos', 'group' => 'Créditos'],
+            self::CREDITS_INVOICE => ['name' => 'Facturar créditos', 'group' => 'Créditos'],
+            self::CREDITS_TRANSFER_CUSTOMER => ['name' => 'Transferir deuda de créditos', 'group' => 'Créditos'],
+            self::CREDITS_CANCEL_LINES => ['name' => 'Cancelar líneas de crédito', 'group' => 'Créditos'],
+            self::CREDITS_PRINT => ['name' => 'Imprimir créditos', 'group' => 'Créditos'],
+            self::CREDITS_MANAGE => ['name' => 'Gestionar créditos', 'group' => 'Créditos'],
             self::USERS_VIEW => ['name' => 'Ver usuarios', 'group' => 'Usuarios'],
             self::USERS_CREATE => ['name' => 'Crear usuarios', 'group' => 'Usuarios'],
             self::USERS_UPDATE => ['name' => 'Editar usuarios', 'group' => 'Usuarios'],
@@ -148,6 +163,8 @@ class Permissions
                 self::SALES_PRINT,
                 self::CUSTOMERS_VIEW,
                 self::CUSTOMERS_CREATE,
+                self::CREDITS_CREATE,
+                self::CREDITS_PRINT,
             ],
             'stock_manager' => [
                 self::PRODUCTS_VIEW,
@@ -169,6 +186,7 @@ class Permissions
                 self::REPORTS_SALES_VIEW,
                 self::REPORTS_STOCK_VIEW,
                 self::REPORTS_TOP_PRODUCTS_VIEW,
+                self::CREDITS_VIEW,
             ],
         ];
     }

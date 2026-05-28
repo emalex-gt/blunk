@@ -5,7 +5,7 @@ import { useToast } from '@/hooks/useToast';
 import { t } from '@/lib/i18n';
 import { clearDraft, loadDraft, makeDraftKey, saveDraft } from '@/lib/draftStorage';
 import { formatCurrency } from '@/utils/currency';
-import { Head, Link, useForm, usePage } from '@inertiajs/react';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import {
     FormEvent,
     KeyboardEvent,
@@ -24,6 +24,8 @@ type Product = {
     cost_price: string;
     sale_price: string;
     stock: number;
+    reserved_stock?: number;
+    available_stock?: number;
     min_stock: number;
     location: string | null;
     image_url: string | null;
@@ -101,6 +103,25 @@ type CartItem = {
     price_source: 'price_list' | 'last_customer_price' | 'manual';
     manual_price: boolean;
     price_warning: string | null;
+    credit_line_id?: number | null;
+    max_quantity?: number | null;
+    credit_receipt_number?: string | null;
+    locked_credit_line?: boolean;
+};
+
+type CheckoutType = 'invoice' | 'receipt' | 'credit';
+
+type CreditInvoicePayload = {
+    source: 'credit';
+    customer: CustomerForm;
+    lines: {
+        credit_line_id: number;
+        product_id: number;
+        quantity: number;
+        max_quantity: number;
+        unit_price: number;
+        receipt_number: string;
+    }[];
 };
 
 type SaleDiscount = {
@@ -398,6 +419,8 @@ export default function POS({
     default_price_type_id = null,
     price_settings = { allow_manual_price: false, remember_last_customer_product_price: false },
     available_document_types = ['receipt'],
+    credit_available = false,
+    credit_invoice = null,
     use_product_images = true,
 }: {
     products: Product[];
@@ -413,6 +436,8 @@ export default function POS({
         remember_last_customer_product_price: boolean;
     };
     available_document_types?: ('invoice' | 'receipt')[];
+    credit_available?: boolean;
+    credit_invoice?: CreditInvoicePayload | null;
     fel?: {
         module_enabled: boolean;
         enabled: boolean;
@@ -456,7 +481,8 @@ export default function POS({
     const [showCheckoutModal, setShowCheckoutModal] = useState(false);
     const [splitPayment, setSplitPayment] = useState(false);
     const [mainPaymentMethod, setMainPaymentMethod] = useState('cash');
-    const [documentType, setDocumentType] = useState<'invoice' | 'receipt'>('receipt');
+    const [documentType, setDocumentType] = useState<CheckoutType>('receipt');
+    const [creditProcessing, setCreditProcessing] = useState(false);
     const [openingFelPrint, setOpeningFelPrint] = useState(false);
     const [nitLookupLoading, setNitLookupLoading] = useState(false);
     const [nitLookupMessage, setNitLookupMessage] = useState('');
@@ -479,26 +505,40 @@ export default function POS({
     const cartRef = useRef<CartItem[]>([]);
     const messageTimerRef = useRef<number | null>(null);
     const tokenPrewarmStartedRef = useRef(false);
+    const creditInvoiceLoadedRef = useRef(false);
 
     const { data, setData, post, processing, reset, transform, errors } = useForm<{
         note: string;
         customer: CustomerForm;
         document_type: 'invoice' | 'receipt';
         payments: { method: string; amount: number; reference: string | null; details: Partial<PaymentDetails> }[];
-        items: { product_id: number; quantity: number }[];
+        items: {
+            product_id: number;
+            quantity: number;
+            price_type_id?: number | null;
+            unit_price?: number;
+            price_source?: 'price_list' | 'last_customer_price' | 'manual';
+            manual_price?: boolean;
+            credit_line_id?: number | null;
+        }[];
         discount: { type: 'fixed' | 'percent'; value: number; reason: string } | null;
     }>({
         note: '',
         customer: emptyCustomer(country),
         document_type: 'receipt',
         payments: [],
-        items: [] as { product_id: number; quantity: number }[],
+        items: [],
         discount: null,
     });
-    const availableDocumentTypesKey = available_document_types.join('|');
-    const singleDocumentType = available_document_types.length === 1 ? available_document_types[0] : null;
-    const effectiveDocumentType = singleDocumentType ?? documentType;
-    const noAvailableDocumentTypes = available_document_types.length === 0;
+    const availableCheckoutTypes = useMemo<CheckoutType[]>(
+        () => [...available_document_types, ...(credit_available ? ['credit' as const] : [])],
+        [available_document_types, credit_available],
+    );
+    const availableDocumentTypesKey = availableCheckoutTypes.join('|');
+    const singleDocumentType = availableCheckoutTypes.length === 1 ? availableCheckoutTypes[0] : null;
+    const effectiveCheckoutType = singleDocumentType ?? documentType;
+    const effectiveDocumentType: 'invoice' | 'receipt' = effectiveCheckoutType === 'credit' ? 'receipt' : effectiveCheckoutType;
+    const noAvailableDocumentTypes = availableCheckoutTypes.length === 0;
 
     useEffect(() => {
         if (singleDocumentType) {
@@ -506,10 +546,10 @@ export default function POS({
             return;
         }
 
-        if (available_document_types.length > 0 && !available_document_types.includes(documentType)) {
-            setDocumentType(available_document_types[0]);
+        if (availableCheckoutTypes.length > 0 && !availableCheckoutTypes.includes(documentType)) {
+            setDocumentType(availableCheckoutTypes[0]);
         }
-    }, [availableDocumentTypesKey, documentType, singleDocumentType]);
+    }, [availableCheckoutTypes, availableDocumentTypesKey, documentType, singleDocumentType]);
 
     useEffect(() => {
         if (tokenPrewarmStartedRef.current || country !== 'GT' || !fel?.module_enabled || !fel?.enabled) {
@@ -572,6 +612,49 @@ export default function POS({
                 .slice(0, 8),
         [productsById, recentProducts],
     );
+
+    useEffect(() => {
+        if (!credit_invoice || creditInvoiceLoadedRef.current || productsById.size === 0) {
+            return;
+        }
+
+        const creditItems = credit_invoice.lines
+            .map((line) => {
+                const product = productsById.get(line.product_id);
+
+                if (!product) {
+                    return null;
+                }
+
+                return {
+                    product,
+                    quantity: String(line.quantity),
+                    unit_price: String(line.unit_price),
+                    original_price: String(line.unit_price),
+                    price_type_id: null,
+                    price_source: 'price_list' as const,
+                    manual_price: false,
+                    price_warning: null,
+                    credit_line_id: line.credit_line_id,
+                    max_quantity: line.max_quantity,
+                    credit_receipt_number: line.receipt_number,
+                    locked_credit_line: true,
+                };
+            })
+            .filter(Boolean) as CartItem[];
+
+        if (creditItems.length === 0) {
+            return;
+        }
+
+        creditInvoiceLoadedRef.current = true;
+        setCart(creditItems);
+        cartRef.current = creditItems;
+        setData('customer', credit_invoice.customer);
+        setDiscount(null);
+        setDocumentType(singleDocumentType ?? (available_document_types[0] ?? 'receipt'));
+        showMessage('Facturando productos a crédito.');
+    }, [available_document_types, credit_invoice, productsById, setData, singleDocumentType]);
 
     const customerMatches = useMemo(() => {
         const value = [
@@ -664,6 +747,13 @@ export default function POS({
             return true;
         }
 
+        if (cart.some((item) => item.credit_line_id)) {
+            const error = 'No se puede aplicar descuento general al facturar productos a crédito.';
+            showError(error);
+            toast.error(error);
+            return false;
+        }
+
         const error = discountError(discount, subtotalBeforeDiscount);
 
         if (!error) {
@@ -697,7 +787,7 @@ export default function POS({
             customer: data.customer,
             note: data.note,
             payments,
-            document_type: effectiveDocumentType,
+            document_type: effectiveCheckoutType === 'credit' ? 'receipt' : effectiveDocumentType,
             selected_category_id: selectedCategoryId,
             main_payment_method: mainPaymentMethod,
             split_payment: splitPayment,
@@ -755,7 +845,7 @@ export default function POS({
             details: { ...emptyPaymentDetails(), ...(payment.details ?? {}) },
         })) : [paymentLine('cash', total.toFixed(2))]);
         setDocumentType(singleDocumentType ?? (
-            available_document_types.includes(draft.document_type) ? draft.document_type : (available_document_types[0] ?? 'receipt')
+            availableCheckoutTypes.includes(draft.document_type) ? draft.document_type : (availableCheckoutTypes[0] ?? 'receipt')
         ));
         setSelectedCategoryId(draft.selected_category_id ?? null);
         setMainPaymentMethod(draft.main_payment_method ?? 'cash');
@@ -775,7 +865,7 @@ export default function POS({
         setData('customer', emptyCustomer(country));
         setShowCheckoutModal(false);
         setSplitPayment(false);
-        setDocumentType(singleDocumentType ?? (available_document_types[0] ?? 'receipt'));
+        setDocumentType(singleDocumentType ?? (availableCheckoutTypes[0] ?? 'receipt'));
         setPayments([paymentLine(mainPaymentMethod, '0.00')]);
         setDiscount(null);
     }
@@ -962,6 +1052,10 @@ export default function POS({
             price_source: 'price_list',
             manual_price: false,
             price_warning: price.warning,
+            credit_line_id: null,
+            max_quantity: null,
+            credit_receipt_number: null,
+            locked_credit_line: false,
         };
     }
 
@@ -998,7 +1092,9 @@ export default function POS({
     }
 
     function addProduct(product: Product): boolean {
-        if (product.stock < 1) {
+        const availableStock = Math.floor(product.available_stock ?? product.stock);
+
+        if (availableStock < 1) {
             showError(`${product.name}: ${t('pos.out_of_stock_for')}`);
             return false;
         }
@@ -1006,8 +1102,6 @@ export default function POS({
         const items = cartRef.current;
         const existing = items.find((item) => item.product.id === product.id);
         const existingQuantity = existing ? quantityNumber(existing.quantity) : 0;
-        const availableStock = Math.floor(product.stock);
-
         if (existing && existingQuantity >= availableStock) {
             showError(
                 `${product.name}: ${t('pos.stock_insufficient')} ${availableStock}.`,
@@ -1061,7 +1155,7 @@ export default function POS({
 
                 const nextQuantity = Number(sanitizedQuantity);
 
-                const availableStock = Math.floor(item.product.stock);
+                const availableStock = Math.floor(item.max_quantity ?? item.product.available_stock ?? item.product.stock);
 
                 if (nextQuantity > availableStock) {
                     showError(
@@ -1249,7 +1343,7 @@ export default function POS({
     function openCheckout(event?: FormEvent) {
         event?.preventDefault();
 
-        if (cart.length === 0 || processing) {
+        if (cart.length === 0 || processing || creditProcessing) {
             focusSearch();
             return;
         }
@@ -1266,7 +1360,7 @@ export default function POS({
             return;
         }
 
-        if (!hasOpenCashRegister) {
+        if (!hasOpenCashRegister && !credit_available) {
             showError('No hay caja abierta. Abre caja para registrar ventas.');
             toast.error('No hay caja abierta. Abre caja para registrar ventas.');
             return;
@@ -1285,7 +1379,7 @@ export default function POS({
     }
 
     function submitSale() {
-        if (cart.length === 0 || processing) {
+        if (cart.length === 0 || processing || creditProcessing) {
             return;
         }
 
@@ -1294,6 +1388,77 @@ export default function POS({
         }
 
         if (!validateDiscount()) {
+            return;
+        }
+
+        if (effectiveCheckoutType === 'credit') {
+            if (discount) {
+                const message = 'El crédito no admite descuento general. Ajusta los precios antes de registrar el crédito.';
+                showError(message);
+                toast.error(message);
+                return;
+            }
+
+            const docType = data.customer.doc_type.trim().toUpperCase();
+            const docNumber = data.customer.doc_number.trim().toUpperCase();
+
+            if (data.customer.consumidor_final || docType === 'CF' || docNumber === 'CF' || docType !== 'NIT' || !docNumber) {
+                const message = 'Para crédito debes ingresar un NIT válido. CF no está permitido.';
+                showError(message);
+                toast.error(message);
+                return;
+            }
+
+            setCreditProcessing(true);
+            router.post(route('credits.receipts.store'), {
+                note: data.note,
+                customer: data.customer,
+                items: cart.map((item) => ({
+                    product_id: item.product.id,
+                    quantity: quantityNumber(item.quantity),
+                    unit_price: Number(item.unit_price),
+                })),
+            }, {
+                preserveScroll: true,
+                onSuccess: (page) => {
+                    const flash = page.props.flash as {
+                        credit_print_url?: string | null;
+                    } | undefined;
+                    const successMessage = 'Crédito registrado correctamente.';
+
+                    setCart([]);
+                    setSearch('');
+                    setErrorMessage('');
+                    setShowCheckoutModal(false);
+                    setSplitPayment(false);
+                    setDiscount(null);
+                    setPayments([paymentLine(mainPaymentMethod, '0.00')]);
+                    clearDraft(draftKey);
+                    reset();
+                    setData('customer', emptyCustomer(country));
+                    focusSearch();
+
+                    if (flash?.credit_print_url) {
+                        window.open(flash.credit_print_url, '_blank');
+                    }
+
+                    showMessage(successMessage);
+                    toast.success(successMessage, { persistent: true });
+                },
+                onError: (errors) => {
+                    const firstError = Object.values(errors)[0] ?? 'No se pudo registrar el crédito.';
+
+                    showError(firstError);
+                    toast.error(firstError);
+                },
+                onFinish: () => setCreditProcessing(false),
+            });
+            return;
+        }
+
+        if (!hasOpenCashRegister) {
+            showError('No hay caja abierta. Abre caja para registrar ventas.');
+            toast.error('No hay caja abierta. Abre caja para registrar ventas.');
             return;
         }
 
@@ -1339,6 +1504,7 @@ export default function POS({
                 unit_price: Number(item.unit_price),
                 price_source: item.price_source,
                 manual_price: item.manual_price,
+                credit_line_id: item.credit_line_id ?? null,
             })),
             discount: discount ? {
                 type: discount.type,
@@ -1364,7 +1530,7 @@ export default function POS({
                 setErrorMessage('');
                 setShowCheckoutModal(false);
                 setSplitPayment(false);
-                setDocumentType(singleDocumentType ?? (available_document_types[0] ?? 'receipt'));
+                setDocumentType(singleDocumentType ?? (availableCheckoutTypes[0] ?? 'receipt'));
                 setDiscount(null);
                 setPayments([paymentLine(mainPaymentMethod, '0.00')]);
                 clearDraft(draftKey);
@@ -1620,6 +1786,11 @@ export default function POS({
                 <div className="mx-auto grid h-full max-w-[1800px] gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_620px] xl:grid-cols-[minmax(0,1fr)_680px]">
                     <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
                         <div className="border-b border-slate-200 p-4">
+                            {credit_invoice && (
+                                <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700">
+                                    Facturando productos a crédito.
+                                </div>
+                            )}
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div>
                                     <h1 className="text-2xl font-semibold text-slate-900">
@@ -1975,9 +2146,11 @@ export default function POS({
 
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                                 {productsToShow.map((product) => {
-                                    const outOfStock = product.stock <= 0;
+                                    const availableStock = Math.floor(product.available_stock ?? product.stock);
+                                    const reservedStock = Math.floor(product.reserved_stock ?? 0);
+                                    const outOfStock = availableStock <= 0;
                                     const lowStock =
-                                        product.stock > 0 && product.stock <= product.min_stock;
+                                        availableStock > 0 && availableStock <= product.min_stock;
 
                                     return (
                                         <button
@@ -2023,9 +2196,12 @@ export default function POS({
                                                         {outOfStock
                                                             ? t('stock_warning.out_of_stock')
                                                             : lowStock
-                                                              ? `${t('stock_warning.low_stock')} (${product.stock})`
-                                                              : `${t('stock.stock')} ${product.stock}`}
+                                                              ? `${t('stock_warning.low_stock')} (${availableStock})`
+                                                              : `Disponible ${availableStock}`}
                                                     </span>
+                                                    {reservedStock > 0 && (
+                                                        <span className="text-slate-500">Reservado {reservedStock}</span>
+                                                    )}
                                                     {product.location && (
                                                         <span className="truncate text-slate-500">
                                                             {product.location}
@@ -2101,6 +2277,11 @@ export default function POS({
                                             <span className="truncate font-semibold text-slate-900">
                                                 {item.product.name}
                                             </span>
+                                            {item.credit_receipt_number && (
+                                                <span className="ml-2 shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                                                    {item.credit_receipt_number}
+                                                </span>
+                                            )}
                                         </div>
 
                                         <div className="flex shrink-0 flex-col">
@@ -2116,7 +2297,7 @@ export default function POS({
                                                 <input
                                                     type="text"
                                                     min="1"
-                                                    max={Math.floor(item.product.stock)}
+                                                    max={Math.floor(item.max_quantity ?? item.product.available_stock ?? item.product.stock)}
                                                     step="1"
                                                     inputMode="numeric"
                                                     pattern="[0-9]*"
@@ -2149,7 +2330,7 @@ export default function POS({
                                         </div>
 
                                         <div className="flex min-w-0 flex-col gap-1">
-                                            {price_types.length > 1 && (
+                                            {price_types.length > 1 && !item.locked_credit_line && (
                                                 <select
                                                     value={item.price_type_id ?? ''}
                                                     onChange={(event) => changeLinePriceType(item.product.id, Number(event.target.value))}
@@ -2184,7 +2365,7 @@ export default function POS({
                                             {item.price_warning && (
                                                 <p className="text-[11px] font-semibold text-amber-600">{item.price_warning}</p>
                                             )}
-                                            {item.manual_price && (
+                                            {item.manual_price && !item.locked_credit_line && (
                                                 <div className="space-y-1 rounded-lg bg-slate-50 p-2">
                                                     <div className="flex flex-wrap gap-1">
                                                         {[10, 15, 20, 25, 30, 50].map((percent) => {
@@ -2227,7 +2408,7 @@ export default function POS({
                                                     )}
                                                 </div>
                                             )}
-                                            {canUseManualPrice && !item.manual_price && (
+                                            {canUseManualPrice && !item.manual_price && !item.locked_credit_line && (
                                                 <button
                                                     type="button"
                                                     onClick={() => enableManualPrice(item.product.id)}
@@ -2314,7 +2495,7 @@ export default function POS({
 
                             <button
                                 type="submit"
-                                disabled={cart.length === 0 || processing || !hasOpenCashRegister || hasInvalidCartQuantities || noAvailableDocumentTypes}
+                                disabled={cart.length === 0 || processing || (!hasOpenCashRegister && !credit_available) || hasInvalidCartQuantities || noAvailableDocumentTypes}
                                 className="mt-4 h-14 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-lg font-semibold text-white shadow-lg shadow-indigo-200 transition-all duration-200 hover:-translate-y-0.5 hover:from-indigo-700 hover:to-violet-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : (processing ? t('pos.finalizing') : t('pos.finalize_sale'))}
@@ -2521,8 +2702,8 @@ export default function POS({
                                 <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
                                     Documento
                                 </h3>
-                                {available_document_types.length > 1 && (
-                                    <div className="grid gap-3 sm:grid-cols-2">
+                                {availableCheckoutTypes.length > 1 && (
+                                    <div className="grid gap-3 sm:grid-cols-3">
                                         <button
                                             type="button"
                                             onClick={() => setDocumentType('receipt')}
@@ -2547,11 +2728,25 @@ export default function POS({
                                             <div className="font-semibold">Factura</div>
                                             <div className="mt-1 text-xs text-slate-500">Certifica FEL con Digifact.</div>
                                         </button>
+                                        {credit_available && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setDocumentType('credit')}
+                                                className={`rounded-2xl border px-4 py-3 text-left transition ${
+                                                    documentType === 'credit'
+                                                        ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm'
+                                                        : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50'
+                                                }`}
+                                            >
+                                                <div className="font-semibold">Crédito</div>
+                                                <div className="mt-1 text-xs text-slate-500">Reserva productos sin facturar.</div>
+                                            </button>
+                                        )}
                                     </div>
                                 )}
                                 {singleDocumentType && (
                                     <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
-                                        Documento: {singleDocumentType === 'invoice' ? 'Factura FEL' : 'Comprobante'}
+                                        Documento: {singleDocumentType === 'invoice' ? 'Factura FEL' : (singleDocumentType === 'credit' ? 'Crédito' : 'Comprobante')}
                                     </div>
                                 )}
                                 {noAvailableDocumentTypes && (
@@ -2623,10 +2818,10 @@ export default function POS({
                             <button
                                 type="button"
                                 onClick={submitSale}
-                                disabled={cart.length === 0 || processing || !paymentIsBalanced || invoiceNitNeedsVerification || invoiceCuiDisabled || hasInvalidCartQuantities || noAvailableDocumentTypes}
+                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && !paymentIsBalanced) || invoiceNitNeedsVerification || invoiceCuiDisabled || hasInvalidCartQuantities || noAvailableDocumentTypes}
                                 className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-200 hover:from-indigo-700 hover:to-violet-700 disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
-                                {isFelProcessing ? 'Certificando FEL...' : (processing ? 'Confirmando...' : 'Confirmar venta')}
+                                {isFelProcessing ? 'Certificando FEL...' : ((processing || creditProcessing) ? 'Confirmando...' : (effectiveCheckoutType === 'credit' ? 'Confirmar crédito' : 'Confirmar venta'))}
                             </button>
                         </div>
                     </div>

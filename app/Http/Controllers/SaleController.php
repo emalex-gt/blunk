@@ -8,6 +8,8 @@ use App\Models\Sale;
 use App\Models\Business;
 use App\Models\CashRegisterSession;
 use App\Models\Category;
+use App\Models\CreditReceiptLine;
+use App\Models\CreditReceiptLineInvoice;
 use App\Models\Customer;
 use App\Models\ElectronicDocument;
 use App\Models\StockMovement;
@@ -21,8 +23,10 @@ use App\Support\CashRegister;
 use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\BusinessLogo;
+use App\Support\Credits;
 use App\Support\Permissions;
 use App\Support\PriceLists;
+use App\Support\StockAvailability;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -64,6 +68,12 @@ class SaleController extends Controller
             ->get(['id', 'category_id', 'name', 'code', 'barcode', 'cost_price', 'sale_price', 'stock', 'min_stock', 'location', 'image_url']);
         BranchInventory::applyBranchStockAndPrices($products, $businessId, $activeBranch->id);
         $this->applyBranchPriceListPayload($products, $businessId, $activeBranch->id);
+        $products->each(function (Product $product) use ($activeBranch) {
+            $reserved = StockAvailability::reservedStock($product, null, $activeBranch->id);
+            $product->setAttribute('reserved_stock', $reserved);
+            $product->setAttribute('available_stock', max(0, (float) $product->stock - $reserved));
+        });
+        $creditInvoice = $this->creditInvoicePayload($request, $businessId);
 
         return Inertia::render('Sales/POS', [
             'fel' => [
@@ -94,6 +104,8 @@ class SaleController extends Controller
                 'remember_last_customer_product_price' => (bool) ($tenantSettings?->remember_last_customer_product_price ?? false),
             ],
             'available_document_types' => $availableDocumentTypes,
+            'credit_available' => Credits::enabled($businessId) && Permissions::userHas($request->user(), Permissions::CREDITS_CREATE),
+            'credit_invoice' => $creditInvoice,
             'products' => $products,
             'categories' => Category::query()
                 ->where('business_id', $businessId)
@@ -157,6 +169,7 @@ class SaleController extends Controller
             'items.*.unit_price' => ['nullable', 'numeric', 'gt:0'],
             'items.*.price_source' => ['nullable', 'in:price_list,last_customer_price,manual'],
             'items.*.manual_price' => ['nullable', 'boolean'],
+            'items.*.credit_line_id' => ['nullable', 'integer', 'exists:credit_receipt_lines,id'],
             'discount' => ['nullable', 'array'],
             'discount.type' => ['required_with:discount', 'in:fixed,percent'],
             'discount.value' => ['required_with:discount', 'numeric', 'gt:0'],
@@ -205,6 +218,22 @@ class SaleController extends Controller
             $this->validateInvoiceConfiguration($business, $data['customer'] ?? null, $felSettings, $felModuleEnabled);
         }
 
+        if (! empty($data['discount']) && collect($data['items'])->contains(fn (array $item) => filled($item['credit_line_id'] ?? null))) {
+            throw ValidationException::withMessages([
+                'discount' => 'No se puede aplicar descuento general al facturar productos a crédito.',
+            ]);
+        }
+
+        if (collect($data['items'])->contains(fn (array $item) => filled($item['credit_line_id'] ?? null))
+            && ! Permissions::userHas($request->user(), Permissions::CREDITS_INVOICE)) {
+            abort(403, 'No tienes permiso para facturar créditos.');
+        }
+
+        if (collect($data['items'])->contains(fn (array $item) => filled($item['credit_line_id'] ?? null))
+            && ! Credits::enabled($business->id)) {
+            abort(403, 'El módulo de créditos no está habilitado.');
+        }
+
         $saleTransactionStarted = microtime(true);
         $saleId = DB::transaction(function () use ($request, $data, $business, $felSettings) {
             $businessId = currentBusinessId();
@@ -236,6 +265,7 @@ class SaleController extends Controller
 
             foreach ($data['items'] as $item) {
                 $quantity = (int) $item['quantity'];
+                $creditLine = null;
                 $product = Product::query()
                     ->where('business_id', $businessId)
                     ->where('is_active', true)
@@ -249,11 +279,29 @@ class SaleController extends Controller
                 }
 
                 BranchInventory::ensureProductInBranch($product, $branch->id);
-                $branchStock = (float) (BranchInventory::stockMap($businessId, [$product->id], $branch->id)[$product->id] ?? 0);
+                $availableStock = StockAvailability::availableStock($product, null, $branch->id);
 
-                if ($branchStock < $quantity) {
+                if (isset($item['credit_line_id'])) {
+                    $creditLine = CreditReceiptLine::query()
+                        ->where('business_id', $businessId)
+                        ->where('branch_id', $branch->id)
+                        ->where('product_id', $product->id)
+                        ->whereIn('status', ['pending', 'partially_invoiced'])
+                        ->lockForUpdate()
+                        ->find($item['credit_line_id']);
+
+                    if (! $creditLine || $quantity > (int) $creditLine->qty_pending) {
+                        throw ValidationException::withMessages([
+                            'items' => 'La línea de crédito seleccionada ya no está disponible.',
+                        ]);
+                    }
+
+                    $availableStock += $quantity;
+                }
+
+                if ($availableStock < $quantity) {
                     throw ValidationException::withMessages([
-                        'items' => "Stock insuficiente para {$product->name}. Disponible: {$branchStock}.",
+                        'items' => "Stock insuficiente para {$product->name}. Disponible: {$availableStock}.",
                     ]);
                 }
 
@@ -264,6 +312,17 @@ class SaleController extends Controller
                     $customer,
                     $branch->id,
                 );
+
+                if ($creditLine) {
+                    $resolvedPrice = [
+                        'unit_price' => round((float) $creditLine->unit_price, 2),
+                        'original_price' => round((float) $creditLine->unit_price, 2),
+                        'price_type_id' => null,
+                        'price_source' => PriceLists::SOURCE_PRICE_LIST,
+                        'manual_price' => false,
+                    ];
+                }
+
                 $unitPrice = $resolvedPrice['unit_price'];
                 $lineTotal = round($unitPrice * $quantity, 2);
                 $subtotalBeforeDiscount += $lineTotal;
@@ -276,6 +335,7 @@ class SaleController extends Controller
                     'price_source' => $resolvedPrice['price_source'],
                     'manual_price' => $resolvedPrice['manual_price'],
                     'line_total' => $lineTotal,
+                    'credit_line' => $creditLine,
                 ];
             }
 
@@ -334,7 +394,7 @@ class SaleController extends Controller
                 $lineDiscount = $lineDiscounts[$index] ?? 0.0;
                 $lineTotalAfterDiscount = round($line['line_total'] - $lineDiscount, 2);
 
-                $sale->items()->create([
+                $saleItem = $sale->items()->create([
                     'business_id' => $businessId,
                     'product_id' => $product->id,
                     'product_name' => $product->name,
@@ -364,6 +424,23 @@ class SaleController extends Controller
                     'note' => stockMovementNote('sale', $sale->business_number ?: $sale->id),
                     'created_by' => $request->user()->id,
                 ]);
+
+                if ($line['credit_line']) {
+                    /** @var CreditReceiptLine $creditLine */
+                    $creditLine = $line['credit_line'];
+                    $creditLine->increment('qty_invoiced', (int) $line['quantity']);
+                    $creditLine = Credits::refreshLine($creditLine->refresh());
+                    Credits::refreshReceipt($creditLine->receipt);
+
+                    CreditReceiptLineInvoice::query()->create([
+                        'business_id' => $businessId,
+                        'credit_receipt_line_id' => $creditLine->id,
+                        'sale_id' => $sale->id,
+                        'sale_line_id' => $saleItem->id,
+                        'quantity' => (int) $line['quantity'],
+                        'amount' => $lineTotalAfterDiscount,
+                    ]);
+                }
             }
 
             foreach ($data['payments'] as $payment) {
@@ -1174,6 +1251,55 @@ class SaleController extends Controller
 
             $product->setRelation('prices', $prices->values());
         });
+    }
+
+    private function creditInvoicePayload(Request $request, int $businessId): ?array
+    {
+        $lineIds = array_values(array_filter(array_map('intval', (array) $request->session()->pull('credit_invoice_line_ids', []))));
+
+        if ($lineIds === []) {
+            return null;
+        }
+
+        $lines = CreditReceiptLine::query()
+            ->with(['receipt.customer', 'product'])
+            ->where('business_id', $businessId)
+            ->whereIn('id', $lineIds)
+            ->where('qty_pending', '>', 0)
+            ->orderBy('id')
+            ->get();
+
+        if ($lines->isEmpty()) {
+            return null;
+        }
+
+        $receipt = $lines->first()->receipt;
+        $customer = $receipt->customer;
+
+        return [
+            'source' => 'credit',
+            'customer' => [
+                'id' => $customer?->id,
+                'consumidor_final' => false,
+                'doc_type' => $receipt->customer_doc_type ?: 'NIT',
+                'doc_number' => $receipt->customer_doc_number,
+                'tax_condition' => $customer?->tax_condition ?? '',
+                'name' => $receipt->customer_name,
+                'address' => $receipt->customer_address ?: ($customer?->address ?? ''),
+                'phone' => $customer?->phone ?? '',
+                'country' => $customer?->country ?? 'GT',
+                'name_locked' => true,
+                'tax_lookup_verified_at' => $customer?->tax_lookup_verified_at?->toIso8601String(),
+            ],
+            'lines' => $lines->map(fn (CreditReceiptLine $line) => [
+                'credit_line_id' => $line->id,
+                'product_id' => $line->product_id,
+                'quantity' => $line->qty_pending,
+                'max_quantity' => $line->qty_pending,
+                'unit_price' => (float) $line->unit_price,
+                'receipt_number' => Credits::formatNumber($line->receipt),
+            ])->values(),
+        ];
     }
 
     private function saleCustomerSnapshot(?Customer $customer, ?array $customerData): array

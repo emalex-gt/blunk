@@ -49,6 +49,12 @@ return [
         'group' => 'Premium',
         'plan_hint' => 'premium',
     ],
+    'credits' => [
+        'name' => 'Créditos',
+        'description' => 'Permite reservar productos a crédito y facturarlos posteriormente.',
+        'group' => 'Premium',
+        'plan_hint' => 'premium',
+    ],
     'branches' => [
         'name' => 'Sucursales',
         'description' => 'Permite manejar múltiples sucursales, traslados y precios por sucursal.',

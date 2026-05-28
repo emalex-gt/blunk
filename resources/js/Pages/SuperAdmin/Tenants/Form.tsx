@@ -76,6 +76,7 @@ export default function Form({
         allow_manual_price?: boolean;
         manual_price_min_margin_percent?: number | string;
         remember_last_customer_product_price?: boolean;
+        enable_credit_sales?: boolean;
         allow_receipts?: boolean;
         allow_invoices?: boolean;
     };
@@ -100,6 +101,7 @@ export default function Form({
         allow_manual_price: settings.allow_manual_price ?? false,
         manual_price_min_margin_percent: settings.manual_price_min_margin_percent ?? 0,
         remember_last_customer_product_price: settings.remember_last_customer_product_price ?? false,
+        enable_credit_sales: settings.enable_credit_sales ?? false,
         allow_receipts: settings.allow_receipts ?? true,
         allow_invoices: settings.allow_invoices ?? false,
         owner_name: '',
@@ -367,6 +369,22 @@ export default function Form({
                         ))}
                     </div>
                     <InputError message={formErrors.modules} className="mt-2" />
+
+                    {data.modules.includes('credits') && (
+                        <div className="mt-6 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+                            <div className="mb-4">
+                                <h3 className="text-base font-semibold text-gray-900">Configuración de créditos</h3>
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Activa la reserva de productos a crédito en POS para este tenant.
+                                </p>
+                            </div>
+                            <Toggle
+                                checked={data.enable_credit_sales}
+                                onChange={(checked) => setData('enable_credit_sales', checked)}
+                                label="Habilitar ventas a crédito"
+                            />
+                        </div>
+                    )}
 
                     {data.modules.includes('branches') && (
                         <div className="mt-6 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">

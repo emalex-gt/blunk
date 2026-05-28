@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Product;
 use App\Models\StockMovement;
 use App\Support\BranchInventory;
+use App\Support\StockAvailability;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -24,6 +25,7 @@ class StockController extends Controller
             ->orderBy('name')
             ->get(['id', 'name', 'code', 'barcode', 'stock', 'min_stock', 'location', 'image_url']);
         BranchInventory::applyBranchStockAndPrices($products, $businessId, $activeBranch->id);
+        $this->applyReservedStock($products, $activeBranch->id);
 
         return Inertia::render('Stock/Quick', [
             'products' => $products,
@@ -42,6 +44,7 @@ class StockController extends Controller
             ->orderBy('name')
             ->get(['id', 'name', 'code', 'stock', 'location']);
         BranchInventory::applyBranchStockAndPrices($products, $businessId, $activeBranch->id);
+        $this->applyReservedStock($products, $activeBranch->id);
 
         return Inertia::render('Stock/Index', [
             'products' => $products,
@@ -150,5 +153,14 @@ class StockController extends Controller
         });
 
         return back()->with('success', 'Stock actualizado');
+    }
+
+    private function applyReservedStock($products, int $branchId): void
+    {
+        $products->each(function (Product $product) use ($branchId) {
+            $reserved = StockAvailability::reservedStock($product, null, $branchId);
+            $product->setAttribute('reserved_stock', $reserved);
+            $product->setAttribute('available_stock', max(0, (float) $product->stock - $reserved));
+        });
     }
 }

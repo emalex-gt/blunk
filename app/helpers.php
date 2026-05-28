@@ -182,3 +182,18 @@ if (! function_exists('format_purchase_number')) {
         return 'C-'.($number ?: $fallback ?: '-');
     }
 }
+
+if (! function_exists('format_credit_receipt_number')) {
+    function format_credit_receipt_number(array|object|null $receipt): string
+    {
+        $number = is_array($receipt)
+            ? ($receipt['receipt_number'] ?? null)
+            : ($receipt?->receipt_number ?? null);
+
+        $fallback = is_array($receipt)
+            ? ($receipt['id'] ?? null)
+            : ($receipt?->id ?? null);
+
+        return 'CR-'.($number ?: $fallback ?: '-');
+    }
+}

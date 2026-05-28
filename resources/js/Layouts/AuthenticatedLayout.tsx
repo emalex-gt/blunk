@@ -24,6 +24,7 @@ export default function Authenticated({
     children,
 }: PropsWithChildren<{ header?: ReactNode }>) {
     const user = usePage().props.auth.user;
+    const permissions = ((usePage().props.auth as { permissions?: string[] })?.permissions ?? []);
     const enabledModules = (usePage().props.enabled_modules as string[] | undefined) ?? [];
     const currentBusinessId = usePage().props.current_business_id as number | null;
     const availableBusinesses = usePage().props.available_businesses as { id: number; name: string }[] | null;
@@ -34,6 +35,7 @@ export default function Authenticated({
     const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
     const navRef = useRef<HTMLDivElement>(null);
     const canManageUsers = Boolean(user?.is_super_admin) || ['owner', 'admin'].includes(user?.role ?? '');
+    const canViewCredits = Boolean(user?.is_super_admin) || permissions.includes('credits.view');
     const hasModule = (module: string) => enabledModules.includes(module);
     const settingsVisible = false;
     const administrationVisible = canManageUsers;
@@ -42,7 +44,8 @@ export default function Authenticated({
         (hasModule('inventory') && (route().current('products.*') || route().current('stock.*') || route().current('price-lists.*'))) ||
         (hasModule('branches') && route().current('inventory.transfers.*')) ||
         (hasModule('purchases') && route().current('purchases.*')) ||
-        (hasModule('cash_register') && route().current('cash-register.*'));
+        (hasModule('cash_register') && route().current('cash-register.*')) ||
+        (hasModule('credits') && route().current('credits.*'));
     const settingsActive = false;
     const administrationActive = canManageUsers && route().current('users.*');
     const reportsActive = route().current('reports.*');
@@ -54,6 +57,7 @@ export default function Authenticated({
         hasModule('inventory') ? { label: t('nav.stock'), href: route('stock.quick'), active: route().current('stock.*') } : null,
         hasModule('branches') ? { label: 'Traslados', href: route('inventory.transfers.index'), active: route().current('inventory.transfers.*') } : null,
         hasModule('cash_register') ? { label: 'Caja', href: route('cash-register.index'), active: route().current('cash-register.*') } : null,
+        hasModule('credits') && canViewCredits ? { label: 'Créditos', href: route('credits.index'), active: route().current('credits.*') } : null,
     ].filter(Boolean) as NavItem[];
 
     const reportItems: NavItem[] = [

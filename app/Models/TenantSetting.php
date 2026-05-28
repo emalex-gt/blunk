@@ -26,6 +26,7 @@ class TenantSetting extends Model
         'remember_last_customer_product_price',
         'allow_receipts',
         'allow_invoices',
+        'enable_credit_sales',
     ];
 
     protected $casts = [
@@ -37,6 +38,7 @@ class TenantSetting extends Model
         'remember_last_customer_product_price' => 'boolean',
         'allow_receipts' => 'boolean',
         'allow_invoices' => 'boolean',
+        'enable_credit_sales' => 'boolean',
         'max_users' => 'integer',
     ];
 

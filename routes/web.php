@@ -7,6 +7,7 @@ use App\Http\Controllers\PurchaseController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\BranchController;
 use App\Http\Controllers\CashRegisterController;
+use App\Http\Controllers\CreditReceiptController;
 use App\Http\Controllers\InventoryTransferController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SaleController;
@@ -118,6 +119,33 @@ Route::middleware('auth')->group(function () {
         Route::get('/customers/{customer}/products/{product}/last-price', [SaleController::class, 'lastCustomerProductPrice'])
             ->middleware(['module:pos', 'permission:sales.view'])
             ->name('customers.products.last-price');
+
+        Route::middleware('module:credits')->group(function () {
+            Route::get('/credits', [CreditReceiptController::class, 'index'])
+                ->middleware('permission:credits.view')
+                ->name('credits.index');
+            Route::post('/credits/receipts', [CreditReceiptController::class, 'store'])
+                ->middleware('permission:credits.create')
+                ->name('credits.receipts.store');
+            Route::get('/credits/customers/{customer}', [CreditReceiptController::class, 'customer'])
+                ->middleware('permission:credits.view')
+                ->name('credits.customers.show');
+            Route::get('/credits/receipts/{creditReceipt}', [CreditReceiptController::class, 'show'])
+                ->middleware('permission:credits.view')
+                ->name('credits.receipts.show');
+            Route::get('/credits/receipts/{creditReceipt}/print', [CreditReceiptController::class, 'print'])
+                ->middleware('permission:credits.print,signed')
+                ->name('credits.receipts.print');
+            Route::post('/credits/customers/{customer}/transfer', [CreditReceiptController::class, 'transfer'])
+                ->middleware('permission:credits.transfer_customer')
+                ->name('credits.customers.transfer');
+            Route::post('/credits/invoice-selection', [CreditReceiptController::class, 'invoiceSelection'])
+                ->middleware('permission:credits.invoice')
+                ->name('credits.invoice-selection');
+            Route::delete('/credits/lines/{line}', [CreditReceiptController::class, 'cancelLine'])
+                ->middleware('permission:credits.cancel_lines')
+                ->name('credits.lines.cancel');
+        });
 
         Route::match(['get', 'patch'], '/settings/fel', fn () => abort(403));
         Route::post('/settings/fel/test-connection', fn () => abort(403));
