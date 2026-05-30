@@ -139,6 +139,7 @@ class SaleController extends Controller
 
         $data = $request->validate([
             'note' => ['nullable', 'string', 'max:2000'],
+            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'document_type' => ['nullable', 'in:invoice,receipt'],
             'payments' => ['required', 'array', 'min:1'],
             'payments.*.method' => ['required', 'in:'.implode(',', $paymentMethods)],
@@ -187,6 +188,13 @@ class SaleController extends Controller
         ]);
 
         $availableDocumentTypes = $this->availableDocumentTypes($business, $tenantSettings, $felSettings, $felModuleEnabled);
+        $activeBranch = BranchInventory::activeBranch($business->id);
+
+        if (filled($data['branch_id'] ?? null) && (int) $data['branch_id'] !== (int) $activeBranch->id) {
+            throw ValidationException::withMessages([
+                'branch_id' => 'La sucursal de la venta no coincide con la sucursal activa.',
+            ]);
+        }
 
         if ($availableDocumentTypes === []) {
             throw ValidationException::withMessages([
@@ -235,9 +243,9 @@ class SaleController extends Controller
         }
 
         $saleTransactionStarted = microtime(true);
-        $saleId = DB::transaction(function () use ($request, $data, $business, $felSettings) {
+        $saleId = DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch) {
             $businessId = currentBusinessId();
-            $branch = BranchInventory::activeBranch($businessId);
+            $branch = $activeBranch;
             $openSession = CashRegister::requireOpenSession(
                 $businessId,
                 'Debes abrir caja antes de registrar ventas.',

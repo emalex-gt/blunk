@@ -131,11 +131,16 @@ type SaleDiscount = {
 };
 
 type HeldSale = {
+    branch_id?: number | string | null;
     cart: CartItem[];
     customer: CustomerForm;
 };
 
 type PosDraft = {
+    business_id?: number | string | null;
+    user_id?: number | string | null;
+    branch_id?: number | string | null;
+    checkout_type?: CheckoutType;
     cart: {
         product_id: number;
         quantity: number | string;
@@ -144,6 +149,10 @@ type PosDraft = {
         price_type_id?: number | null;
         price_source?: 'price_list' | 'last_customer_price' | 'manual';
         manual_price?: boolean;
+        credit_line_id?: number | null;
+        max_quantity?: number | null;
+        credit_receipt_number?: string | null;
+        locked_credit_line?: boolean;
     }[];
     customer: CustomerForm;
     note: string;
@@ -158,7 +167,6 @@ type PosDraft = {
 };
 
 const recentProductsKey = 'pos_recent_products';
-const heldSaleKey = 'pos_held_sale';
 
 const basePaymentMethods = [
     { value: 'cash', label: 'Efectivo' },
@@ -448,7 +456,7 @@ export default function POS({
         business?: { id?: number | null; country?: string | null } | null;
         current_business_id?: number | null;
         auth?: {
-            user?: { is_super_admin?: boolean | null } | null;
+            user?: { id?: number | null; is_super_admin?: boolean | null } | null;
             permissions?: string[];
         };
         enabled_modules?: string[];
@@ -457,6 +465,8 @@ export default function POS({
     };
     const business = pageProps.business ?? null;
     const businessId = pageProps.current_business_id ?? business?.id ?? null;
+    const userId = pageProps.auth?.user?.id ?? null;
+    const activeBranchId = pageProps.active_branch?.id ?? null;
     const canApplyDiscount = (pageProps.enabled_modules ?? []).includes('discounts')
         && (Boolean(pageProps.auth?.user?.is_super_admin)
             || (pageProps.auth?.permissions ?? []).includes('sales.discount.apply'));
@@ -466,7 +476,9 @@ export default function POS({
             || (pageProps.auth?.permissions ?? []).includes('pos.manual_price'));
     const manualPriceMinMargin = Number(price_settings.manual_price_min_margin_percent ?? 0);
     const country = business?.country ?? 'GT';
-    const draftKey = useMemo(() => makeDraftKey('pos', businessId), [businessId]);
+    const draftKey = useMemo(() => makeDraftKey('pos', businessId, userId, activeBranchId), [activeBranchId, businessId, userId]);
+    const heldSaleKey = useMemo(() => `${draftKey}_held`, [draftKey]);
+    const draftBranchId = activeBranchId ?? 'default';
     const [search, setSearch] = useState('');
     const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
     const [cart, setCart] = useState<CartItem[]>([]);
@@ -503,9 +515,12 @@ export default function POS({
     const messageTimerRef = useRef<number | null>(null);
     const tokenPrewarmStartedRef = useRef(false);
     const creditInvoiceLoadedRef = useRef(false);
+    const draftLoadInitializedRef = useRef(false);
+    const latestDraftRef = useRef<PosDraft | null>(null);
 
     const { data, setData, post, processing, reset, transform, errors } = useForm<{
         note: string;
+        branch_id: number | string | null;
         customer: CustomerForm;
         document_type: 'invoice' | 'receipt';
         payments: { method: string; amount: number; reference: string | null; details: Partial<PaymentDetails> }[];
@@ -521,6 +536,7 @@ export default function POS({
         discount: { type: 'fixed' | 'percent'; value: number; reason: string } | null;
     }>({
         note: '',
+        branch_id: activeBranchId,
         customer: emptyCustomer(country),
         document_type: 'receipt',
         payments: [],
@@ -793,6 +809,10 @@ export default function POS({
 
     function buildDraft(): PosDraft {
         return {
+            business_id: businessId,
+            user_id: userId,
+            branch_id: draftBranchId,
+            checkout_type: effectiveCheckoutType,
             cart: cart.map((item) => ({
                 product_id: item.product.id,
                 quantity: item.quantity,
@@ -801,11 +821,15 @@ export default function POS({
                 price_type_id: item.price_type_id,
                 price_source: item.price_source,
                 manual_price: item.manual_price,
+                credit_line_id: item.credit_line_id ?? null,
+                max_quantity: item.max_quantity ?? null,
+                credit_receipt_number: item.credit_receipt_number ?? null,
+                locked_credit_line: item.locked_credit_line ?? false,
             })),
             customer: data.customer,
             note: data.note,
             payments,
-            document_type: effectiveCheckoutType === 'credit' ? 'receipt' : effectiveDocumentType,
+            document_type: effectiveDocumentType,
             selected_category_id: selectedCategoryId,
             main_payment_method: mainPaymentMethod,
             split_payment: splitPayment,
@@ -816,31 +840,52 @@ export default function POS({
     }
 
     function restorePosDraft(draft: PosDraft) {
-        let discardedInvalidQuantity = false;
+        let discardedInvalidLines = false;
+
+        if (String(draft.branch_id ?? 'default') !== String(draftBranchId)) {
+            toast.warning('Se descartaron productos inválidos del borrador.');
+            return;
+        }
         const restoredCart = draft.cart
-            .map((item) => {
+            .map<CartItem | null>((item) => {
                 const product = productsById.get(item.product_id);
 
                 if (!product) {
+                    discardedInvalidLines = true;
                     return null;
                 }
 
                 if (quantityError(item.quantity)) {
-                    discardedInvalidQuantity = true;
+                    discardedInvalidLines = true;
+                    return null;
+                }
+
+                const quantity = Number(normalizeQuantity(item.quantity));
+                const availableStock = Number(product.available_stock ?? product.stock ?? 0);
+
+                if (!item.credit_line_id && quantity > availableStock) {
+                    discardedInvalidLines = true;
                     return null;
                 }
 
                 const price = priceFromList(product, item.price_type_id ?? default_price_type_id, default_price_type_id);
+                const manualPrice = Boolean(item.manual_price);
+                const unitPrice = manualPrice ? (item.unit_price ?? price.price) : price.price;
+                const originalPrice = manualPrice ? (item.original_price ?? price.price) : price.price;
 
                 return {
                     product,
-                    quantity: normalizeQuantity(item.quantity),
-                    unit_price: item.unit_price ?? price.price,
-                    original_price: item.original_price ?? price.price,
+                    quantity: String(quantity),
+                    unit_price: unitPrice,
+                    original_price: originalPrice,
                     price_type_id: item.price_type_id ?? price.priceTypeId ?? null,
                     price_source: item.price_source ?? 'price_list',
-                    manual_price: Boolean(item.manual_price),
+                    manual_price: manualPrice,
                     price_warning: price.warning,
+                    credit_line_id: item.credit_line_id ?? null,
+                    max_quantity: item.max_quantity ?? null,
+                    credit_receipt_number: item.credit_receipt_number ?? null,
+                    locked_credit_line: item.locked_credit_line ?? false,
                 };
             })
             .filter((item): item is CartItem => Boolean(item));
@@ -862,15 +907,16 @@ export default function POS({
             reference: payment.reference ?? '',
             details: { ...emptyPaymentDetails(), ...(payment.details ?? {}) },
         })) : [paymentLine('cash', total.toFixed(2))]);
+        const restoredCheckoutType = draft.checkout_type ?? draft.document_type;
         setDocumentType(singleDocumentType ?? (
-            availableCheckoutTypes.includes(draft.document_type) ? draft.document_type : (availableCheckoutTypes[0] ?? 'receipt')
+            availableCheckoutTypes.includes(restoredCheckoutType) ? restoredCheckoutType : (availableCheckoutTypes[0] ?? 'receipt')
         ));
         setSelectedCategoryId(draft.selected_category_id ?? null);
         setMainPaymentMethod(draft.main_payment_method ?? 'cash');
         setSplitPayment(Boolean(draft.split_payment));
 
-        if (discardedInvalidQuantity) {
-            toast.warning('Se descartaron cantidades inválidas del borrador.');
+        if (discardedInvalidLines) {
+            toast.warning('Se descartaron productos inválidos del borrador.');
         }
     }
 
@@ -880,6 +926,7 @@ export default function POS({
         setErrorMessage('');
         setMessage('');
         setData('note', '');
+        setData('branch_id', activeBranchId);
         setData('customer', emptyCustomer(country));
         setShowCheckoutModal(false);
         setSplitPayment(false);
@@ -891,6 +938,7 @@ export default function POS({
     function clearPosDraftAndState() {
         clearSaleState();
         clearDraft(draftKey);
+        latestDraftRef.current = null;
         focusSearch();
     }
 
@@ -1271,6 +1319,7 @@ export default function POS({
         }
 
         const payload: HeldSale = {
+            branch_id: draftBranchId,
             cart,
             customer: data.customer,
         };
@@ -1290,6 +1339,12 @@ export default function POS({
             return;
         }
 
+        if (String(heldSale.branch_id ?? 'default') !== String(draftBranchId)) {
+            showError('La venta pendiente pertenece a otra sucursal.');
+            focusSearch();
+            return;
+        }
+
         setCart(
             (heldSale.cart ?? [])
                 .map((item) => {
@@ -1299,23 +1354,26 @@ export default function POS({
                         return null;
                     }
 
-                    if (quantityError(item.quantity) || Math.floor(currentProduct.stock) < 1) {
+                    const availableStock = Math.floor(Number(currentProduct.available_stock ?? currentProduct.stock ?? 0));
+
+                    if (quantityError(item.quantity) || availableStock < 1) {
                         return null;
                     }
 
                     const price = priceFromList(currentProduct, item.price_type_id ?? default_price_type_id, default_price_type_id);
+                    const manualPrice = Boolean(item.manual_price);
 
                     return {
                         product: currentProduct,
                         quantity: String(Math.max(
                             1,
-                            Math.min(quantityNumber(item.quantity), Math.floor(currentProduct.stock)),
+                            Math.min(quantityNumber(item.quantity), availableStock),
                         )),
-                        unit_price: item.unit_price ?? price.price,
-                        original_price: item.original_price ?? price.price,
+                        unit_price: manualPrice ? (item.unit_price ?? price.price) : price.price,
+                        original_price: manualPrice ? (item.original_price ?? price.price) : price.price,
                         price_type_id: item.price_type_id ?? price.priceTypeId ?? null,
                         price_source: item.price_source ?? 'price_list',
-                        manual_price: Boolean(item.manual_price),
+                        manual_price: manualPrice,
                         price_warning: price.warning,
                     };
                 })
@@ -1430,6 +1488,7 @@ export default function POS({
             setCreditProcessing(true);
             router.post(route('credits.receipts.store'), {
                 note: data.note,
+                branch_id: activeBranchId,
                 customer: data.customer,
                 items: cart.map((item) => ({
                     product_id: item.product.id,
@@ -1452,7 +1511,9 @@ export default function POS({
                     setDiscount(null);
                     setPayments([paymentLine(mainPaymentMethod, '0.00')]);
                     clearDraft(draftKey);
+                    latestDraftRef.current = null;
                     reset();
+                    setData('branch_id', activeBranchId);
                     setData('customer', emptyCustomer(country));
                     focusSearch();
 
@@ -1507,6 +1568,7 @@ export default function POS({
 
         transform(() => ({
             note: data.note,
+            branch_id: activeBranchId,
             customer: data.customer,
             document_type: effectiveDocumentType,
             payments: finalPayments.map((payment) => ({
@@ -1552,10 +1614,12 @@ export default function POS({
                 setDiscount(null);
                 setPayments([paymentLine(mainPaymentMethod, '0.00')]);
                 clearDraft(draftKey);
+                latestDraftRef.current = null;
                 const successMessage = effectiveDocumentType === 'invoice'
                     ? (flash?.fel_success_message ?? 'Factura FEL certificada correctamente.')
                     : 'Venta guardada correctamente.';
                 reset();
+                setData('branch_id', activeBranchId);
                 setData('customer', emptyCustomer(country));
                 focusSearch();
 
@@ -1594,16 +1658,39 @@ export default function POS({
     useEffect(() => {
         setRecentProducts(loadJson<Product[]>(recentProductsKey, []));
         setHasHeldSale(Boolean(localStorage.getItem(heldSaleKey)));
+    }, [heldSaleKey]);
+
+    useEffect(() => {
+        setData('branch_id', activeBranchId);
+    }, [activeBranchId, setData]);
+
+    useEffect(() => {
+        const isBranchChange = draftLoadInitializedRef.current;
+        setRestoreDraft(null);
+        setDraftReady(false);
         const draft = loadDraft<PosDraft>(draftKey);
 
         if (draft && isMeaningfulPosDraft(draft)) {
-            setRestoreDraft(draft);
+            if (isBranchChange) {
+                restorePosDraft(draft);
+                setDraftReady(true);
+                showMessage('Sucursal cambiada. Se cargó el borrador de esta sucursal.');
+                toast.success('Sucursal cambiada. Se cargó el borrador de esta sucursal.');
+            } else {
+                setRestoreDraft(draft);
+            }
         } else {
+            clearSaleState();
             setDraftReady(true);
+            if (isBranchChange) {
+                showMessage('Sucursal cambiada. Nueva venta iniciada.');
+                toast.success('Sucursal cambiada. Nueva venta iniciada.');
+            }
         }
 
+        draftLoadInitializedRef.current = true;
         focusSearch();
-    }, [draftKey]);
+    }, [draftKey, productsById]);
 
     useEffect(() => {
         if (!draftReady || restoreDraft) {
@@ -1611,19 +1698,23 @@ export default function POS({
         }
 
         const draft = buildDraft();
+        latestDraftRef.current = draft;
         const timer = window.setTimeout(() => {
             if (isMeaningfulPosDraft(draft)) {
                 saveDraft(draftKey, draft);
             } else {
                 clearDraft(draftKey);
+                latestDraftRef.current = null;
             }
         }, 500);
 
         return () => window.clearTimeout(timer);
     }, [
         cart,
+        businessId,
         data.customer,
         data.note,
+        draftBranchId,
         discount,
         documentType,
         draftKey,
@@ -1633,7 +1724,18 @@ export default function POS({
         restoreDraft,
         selectedCategoryId,
         splitPayment,
+        userId,
     ]);
+
+    useEffect(() => {
+        return () => {
+            const draft = latestDraftRef.current;
+
+            if (draft && isMeaningfulPosDraft(draft)) {
+                saveDraft(draftKey, draft);
+            }
+        };
+    }, [draftKey]);
 
     useEffect(() => {
         cartRef.current = cart;
@@ -2921,6 +3023,7 @@ export default function POS({
                                 type="button"
                                 onClick={() => {
                                     clearDraft(draftKey);
+                                    latestDraftRef.current = null;
                                     setRestoreDraft(null);
                                     setDraftReady(true);
                                     focusSearch();

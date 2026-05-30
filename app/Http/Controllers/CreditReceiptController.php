@@ -91,6 +91,7 @@ class CreditReceiptController extends Controller
         $this->ensureCreditsAvailable($request, Permissions::CREDITS_CREATE);
 
         $data = $request->validate([
+            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'customer' => ['required', 'array'],
             'customer.id' => ['nullable', 'integer', 'exists:customers,id'],
             'customer.name' => ['required', 'string', 'max:255'],
@@ -107,6 +108,13 @@ class CreditReceiptController extends Controller
 
         $docType = strtoupper(trim((string) $data['customer']['doc_type']));
         $docNumber = strtoupper(trim((string) $data['customer']['doc_number']));
+        $activeBranch = BranchInventory::activeBranch($businessId);
+
+        if (filled($data['branch_id'] ?? null) && (int) $data['branch_id'] !== (int) $activeBranch->id) {
+            throw ValidationException::withMessages([
+                'branch_id' => 'La sucursal de la venta no coincide con la sucursal activa.',
+            ]);
+        }
 
         if ($docType === 'CF' || $docNumber === 'CF') {
             throw ValidationException::withMessages([
@@ -114,8 +122,8 @@ class CreditReceiptController extends Controller
             ]);
         }
 
-        $receipt = DB::transaction(function () use ($request, $businessId, $data, $docType, $docNumber) {
-            $branch = BranchInventory::activeBranch($businessId);
+        $receipt = DB::transaction(function () use ($request, $businessId, $data, $docType, $docNumber, $activeBranch) {
+            $branch = $activeBranch;
             $customer = $this->resolveCustomer($data['customer']);
             $subtotal = 0.0;
             $preparedLines = [];

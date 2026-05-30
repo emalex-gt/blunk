@@ -7,8 +7,16 @@ type DraftEnvelope<T> = {
     data: T;
 };
 
-export function makeDraftKey(type: 'pos' | 'purchase', businessId: number | string | null | undefined) {
-    return `blunk_${type}_draft_business_${businessId ?? 'unknown'}`;
+export function makeDraftKey(
+    type: 'pos' | 'purchase',
+    businessId: number | string | null | undefined,
+    userId?: number | string | null,
+    branchId?: number | string | null,
+) {
+    const userScope = userId === undefined ? '' : `_user_${userId ?? 'unknown'}`;
+    const branchScope = branchId === undefined ? '' : `_branch_${branchId ?? 'default'}`;
+
+    return `blunk_${type}_draft_business_${businessId ?? 'unknown'}${userScope}${branchScope}`;
 }
 
 export function saveDraft<T>(key: string, data: T) {
