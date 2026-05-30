@@ -46,6 +46,7 @@ class ProductController extends Controller
             ->get();
         $activeBranch = BranchInventory::activeBranch($businessId);
         BranchInventory::applyBranchStockAndPrices($products, $businessId, $activeBranch->id);
+        PriceLists::applyBranchPricesToProducts($products, $businessId, $activeBranch->id);
         $supplierCostHistory = ProductSupplierCostHistory::forProducts(
             $businessId,
             $products->pluck('id')->all(),
@@ -61,6 +62,11 @@ class ProductController extends Controller
         return Inertia::render('Products/Index', [
             'products' => $products,
             'priceTypes' => PriceLists::active($businessId)->values(),
+            'pricingScope' => BranchInventory::pricingScope($businessId),
+            'activeBranch' => BranchInventory::pricingScope($businessId) === 'branch' ? [
+                'id' => $activeBranch->id,
+                'name' => $activeBranch->name,
+            ] : null,
             'categories' => Category::query()
                 ->where('business_id', $businessId)
                 ->orderBy('name')
@@ -95,8 +101,8 @@ class ProductController extends Controller
             unset($data['prices']);
 
             $product = Product::create($data);
-            $this->syncProductPrices($product, $prices);
             $branch = BranchInventory::activeBranch($businessId);
+            $this->syncProductPrices($product, $prices, (float) $product->sale_price, $branch->id);
             BranchInventory::adjust($product, $branch->id, (float) $product->stock);
 
             if ($product->stock > 0) {
@@ -141,9 +147,13 @@ class ProductController extends Controller
             }
 
             $targetStock = (float) ($data['stock'] ?? $oldStock);
+            $salePrice = (float) ($data['sale_price'] ?? $product->sale_price);
             unset($data['stock']);
+            if (BranchInventory::pricingScope(currentBusinessId()) === 'branch') {
+                unset($data['sale_price']);
+            }
             $product->update($data);
-            $this->syncProductPrices($product, $prices);
+            $this->syncProductPrices($product, $prices, $salePrice, $branch->id);
             [$previousStock, $newStock] = BranchInventory::adjust($product, $branch->id, $targetStock);
 
             if ($useProductImages && $request->hasFile('image') && $oldImagePublicId) {
@@ -243,12 +253,12 @@ class ProductController extends Controller
         ]);
     }
 
-    private function syncProductPrices(Product $product, array $prices): void
+    private function syncProductPrices(Product $product, array $prices, ?float $defaultSalePrice = null, ?int $branchId = null): void
     {
         $default = PriceLists::ensureDefaultPriceType((int) $product->business_id);
-        $prices[$default->id] = $prices[$default->id] ?? $product->sale_price;
+        $prices[$default->id] = $prices[$default->id] ?? ($defaultSalePrice ?? $product->sale_price);
 
-        PriceLists::updatePricesForProduct($product, $prices);
+        PriceLists::updatePricesForProduct($product, $prices, $branchId);
     }
 
     private function resolveCategoryId(int $businessId, ?string $categoryName): ?int

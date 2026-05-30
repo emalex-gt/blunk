@@ -98,12 +98,16 @@ export default function ProductIndex({
     priceTypes,
     categories,
     filters,
+    pricingScope = 'global',
+    activeBranch = null,
     use_product_images = true,
 }: {
     products: Product[];
     priceTypes: PriceType[];
     categories: Category[];
     filters: { search: string };
+    pricingScope?: 'global' | 'branch';
+    activeBranch?: { id: number; name: string } | null;
     use_product_images?: boolean;
 }) {
     const business = usePage().props.business as { country?: string | null } | null;
@@ -375,14 +379,19 @@ export default function ProductIndex({
                             <TextInput id="cost_price" type="number" step="0.01" className="mt-1 block w-full" value={data.cost_price} onChange={(e) => setData('cost_price', e.target.value)} />
                         </div>
                         <div>
-                            <InputLabel htmlFor="sale_price" value={t('products.sale_price')} />
+                            <InputLabel
+                                htmlFor="sale_price"
+                                value={pricingScope === 'branch' && activeBranch ? `Precio de sucursal: ${activeBranch.name}` : t('products.sale_price')}
+                            />
                             <TextInput id="sale_price" type="number" step="0.01" className="mt-1 block w-full" value={data.sale_price} onChange={(e) => setData('sale_price', e.target.value)} />
                         </div>
                     </div>
 
                     {priceTypes.length > 1 && (
                         <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-                            <h4 className="text-sm font-semibold text-slate-900">Precios por lista</h4>
+                            <h4 className="text-sm font-semibold text-slate-900">
+                                {pricingScope === 'branch' && activeBranch ? `Precios de sucursal: ${activeBranch.name}` : 'Precios por lista'}
+                            </h4>
                             <div className="mt-3 space-y-2">
                                 {priceTypes.map((priceType) => (
                                     <label key={priceType.id} className="grid grid-cols-[1fr_140px] items-center gap-3 text-sm">

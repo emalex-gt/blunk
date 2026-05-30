@@ -34,10 +34,14 @@ export default function Prices({
     priceType,
     products,
     filters,
+    pricingScope = 'global',
+    activeBranch = null,
 }: {
     priceType: PriceType;
     products: Paginated<Product>;
     filters: { search: string };
+    pricingScope?: 'global' | 'branch';
+    activeBranch?: { id: number; name: string } | null;
 }) {
     const business = usePage().props.business as { country?: string | null } | null;
     const country = business?.country ?? 'GT';
@@ -83,6 +87,11 @@ export default function Prices({
                     <div>
                         <h1 className="text-2xl font-bold text-slate-950">Asignar precios</h1>
                         <p className="mt-1 text-sm text-slate-500">Lista: {priceType.name}</p>
+                        {pricingScope === 'branch' && activeBranch && (
+                            <p className="mt-1 text-sm font-semibold text-indigo-700">
+                                Precios de sucursal: {activeBranch.name}
+                            </p>
+                        )}
                     </div>
                     <Link href={route('price-lists.index')}>
                         <SecondaryButton type="button">Volver</SecondaryButton>
@@ -100,7 +109,7 @@ export default function Prices({
                             <tr>
                                 <th className="px-4 py-3">Producto</th>
                                 <th className="px-4 py-3">SKU / código</th>
-                                <th className="px-4 py-3 text-right">Precio actual</th>
+                                <th className="px-4 py-3 text-right">{pricingScope === 'branch' ? 'Precio actual sucursal' : 'Precio actual'}</th>
                                 <th className="px-4 py-3 text-right">Nuevo precio</th>
                             </tr>
                         </thead>

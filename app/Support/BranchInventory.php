@@ -140,11 +140,17 @@ class BranchInventory
             return collect();
         }
 
+        $defaultPriceTypeId = DB::table('price_types')
+            ->where('business_id', $businessId)
+            ->where('is_active', true)
+            ->where('is_default', true)
+            ->value('id');
+
         return BranchProductPrice::query()
             ->where('business_id', $businessId)
             ->where('branch_id', $branchId)
             ->where('is_active', true)
-            ->whereNull('price_type_id')
+            ->when($defaultPriceTypeId, fn ($query) => $query->where('price_type_id', $defaultPriceTypeId), fn ($query) => $query->whereNull('price_type_id'))
             ->whereIn('product_id', $productIds)
             ->pluck('price', 'product_id');
     }

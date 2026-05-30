@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\PriceType;
 use App\Models\Product;
+use App\Support\BranchInventory;
 use App\Support\PriceLists;
 use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
@@ -159,6 +160,8 @@ class PriceListController extends Controller
     {
         $this->authorizePriceType($request, $priceType);
         $businessId = currentBusinessId();
+        $activeBranch = BranchInventory::activeBranch($businessId);
+        $pricingScope = BranchInventory::pricingScope($businessId);
         $search = $request->string('search')->toString();
 
         $products = Product::query()
@@ -176,11 +179,17 @@ class PriceListController extends Controller
             ->orderBy('name')
             ->paginate(50)
             ->withQueryString();
+        PriceLists::applyBranchPricesToProducts($products->getCollection(), $businessId, $activeBranch->id, $priceType->id);
 
         return Inertia::render('PriceLists/Prices', [
             'priceType' => $priceType,
             'products' => $products,
             'filters' => ['search' => $search],
+            'pricingScope' => $pricingScope,
+            'activeBranch' => $pricingScope === 'branch' ? [
+                'id' => $activeBranch->id,
+                'name' => $activeBranch->name,
+            ] : null,
         ]);
     }
 
@@ -197,7 +206,11 @@ class PriceListController extends Controller
             'prices.*.price' => ['required', 'numeric', 'min:0'],
         ]);
 
-        PriceLists::updateProductPrices($priceType->id, $data['prices']);
+        $branchId = BranchInventory::pricingScope(currentBusinessId()) === 'branch'
+            ? BranchInventory::activeBranch(currentBusinessId())->id
+            : null;
+
+        PriceLists::updateProductPrices($priceType->id, $data['prices'], $branchId);
 
         return back()->with('success', 'Precios actualizados.');
     }

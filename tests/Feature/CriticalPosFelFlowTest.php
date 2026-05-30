@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Business;
 use App\Models\Branch;
+use App\Models\BranchProductPrice;
 use App\Models\CashMovement;
 use App\Models\CashRegisterSession;
 use App\Models\CreditCustomerTransfer;
@@ -822,6 +823,124 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('price_list', $line->price_source);
     }
 
+    public function test_branch_pricing_uses_active_branch_price_in_pos(): void
+    {
+        [$business, $user] = $this->tenant(
+            modules: ['pos', 'cash_register', 'branches'],
+            role: 'owner',
+            pricingScope: 'branch',
+        );
+        $product = $this->product($business, stock: 10, salePrice: 80);
+        $default = PriceType::query()->where('business_id', $business->id)->where('is_default', true)->firstOrFail();
+        $branchA = BranchInventory::defaultBranch($business->id);
+        $branchB = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal B',
+            'code' => 'B',
+            'is_active' => true,
+        ]);
+
+        BranchProductPrice::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branchA->id,
+            'product_id' => $product->id,
+            'price_type_id' => $default->id,
+            'price' => 100,
+            'is_active' => true,
+        ]);
+        BranchProductPrice::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branchB->id,
+            'product_id' => $product->id,
+            'price_type_id' => $default->id,
+            'price' => 150,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->withSession(['active_branch_id' => $branchA->id])
+            ->get(route('sales.create'))
+            ->assertInertia(fn (Assert $page) => $page->where('products.0.sale_price', '100.00'));
+
+        $this->actingAs($user)
+            ->withSession(['active_branch_id' => $branchB->id])
+            ->get(route('sales.create'))
+            ->assertInertia(fn (Assert $page) => $page->where('products.0.sale_price', '150.00'));
+    }
+
+    public function test_product_edit_in_branch_pricing_does_not_change_other_branch_or_global_price(): void
+    {
+        [$business, $user] = $this->tenant(
+            modules: ['inventory', 'branches'],
+            role: 'owner',
+            pricingScope: 'branch',
+        );
+        $product = $this->product($business, stock: 10, salePrice: 80);
+        $default = PriceType::query()->where('business_id', $business->id)->where('is_default', true)->firstOrFail();
+        $branchA = BranchInventory::defaultBranch($business->id);
+        $branchB = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal B',
+            'code' => 'B',
+            'is_active' => true,
+        ]);
+
+        ProductPrice::query()->where('business_id', $business->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->update(['price' => 80]);
+        BranchProductPrice::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branchB->id,
+            'product_id' => $product->id,
+            'price_type_id' => $default->id,
+            'price' => 150,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->withSession(['active_branch_id' => $branchA->id])
+            ->put(route('products.update', $product), [
+                'name' => $product->name,
+                'code' => $product->code,
+                'barcode' => $product->barcode,
+                'cost_price' => (string) $product->cost_price,
+                'sale_price' => 120,
+                'stock' => 10,
+                'min_stock' => 0,
+                'location' => $product->location,
+                'is_active' => true,
+                'category_name' => null,
+                'prices' => [],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('80.00', (string) ProductPrice::query()->where('business_id', $business->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
+        $this->assertSame('120.00', (string) BranchProductPrice::query()->where('business_id', $business->id)->where('branch_id', $branchA->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
+        $this->assertSame('150.00', (string) BranchProductPrice::query()->where('business_id', $business->id)->where('branch_id', $branchB->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
+    }
+
+    public function test_price_list_mass_update_in_branch_pricing_saves_branch_price_only(): void
+    {
+        [$business, $user] = $this->tenant(
+            modules: ['inventory', 'branches'],
+            role: 'owner',
+            pricingScope: 'branch',
+        );
+        $product = $this->product($business, stock: 10, salePrice: 80);
+        $default = PriceType::query()->where('business_id', $business->id)->where('is_default', true)->firstOrFail();
+        $branch = BranchInventory::defaultBranch($business->id);
+
+        $this->actingAs($user)
+            ->withSession(['active_branch_id' => $branch->id])
+            ->patch(route('price-lists.prices.update', $default), [
+                'prices' => [
+                    ['product_id' => $product->id, 'price' => 175],
+                ],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('80.00', (string) ProductPrice::query()->where('business_id', $business->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
+        $this->assertSame('175.00', (string) BranchProductPrice::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
+    }
+
     public function test_sales_receive_business_correlatives_per_business(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);
@@ -1461,6 +1580,7 @@ class CriticalPosFelFlowTest extends TestCase
         bool $allowReceipts = true,
         bool $allowInvoices = false,
         bool $enableCredits = false,
+        string $pricingScope = 'global',
     ): array
     {
         $business = Business::create([
@@ -1477,7 +1597,7 @@ class CriticalPosFelFlowTest extends TestCase
             'max_users' => 10,
             'use_branches' => false,
             'products_shared_across_branches' => true,
-            'pricing_scope' => 'global',
+            'pricing_scope' => $pricingScope,
             'allow_manual_price' => $allowManualPrice,
             'remember_last_customer_product_price' => false,
             'enable_credit_sales' => $enableCredits,
