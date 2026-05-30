@@ -532,6 +532,27 @@ export default function POS({
         [available_document_types, credit_available],
     );
     const availableDocumentTypesKey = availableCheckoutTypes.join('|');
+    const documentOptions = useMemo(() => {
+        const labels: Record<CheckoutType, { title: string; description: string }> = {
+            receipt: {
+                title: 'Comprobante',
+                description: 'Genera impresión al finalizar.',
+            },
+            invoice: {
+                title: 'Factura',
+                description: 'Certifica FEL con Digifact.',
+            },
+            credit: {
+                title: 'Crédito',
+                description: 'Reserva productos sin facturar.',
+            },
+        };
+
+        return availableCheckoutTypes.map((type) => ({
+            type,
+            ...labels[type],
+        }));
+    }, [availableDocumentTypesKey]);
     const singleDocumentType = availableCheckoutTypes.length === 1 ? availableCheckoutTypes[0] : null;
     const effectiveCheckoutType = singleDocumentType ?? documentType;
     const effectiveDocumentType: 'invoice' | 'receipt' = effectiveCheckoutType === 'credit' ? 'receipt' : effectiveCheckoutType;
@@ -2756,8 +2777,9 @@ export default function POS({
                                 <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
                                     Documento
                                 </h3>
-                                {availableCheckoutTypes.length > 1 && (
+                                {documentOptions.length > 1 && (
                                     <div className="grid gap-3 sm:grid-cols-3">
+                                        {availableCheckoutTypes.includes('receipt') && (
                                         <button
                                             type="button"
                                             onClick={() => setDocumentType('receipt')}
@@ -2770,6 +2792,8 @@ export default function POS({
                                             <div className="font-semibold">Comprobante</div>
                                             <div className="mt-1 text-xs text-slate-500">Genera impresión al finalizar.</div>
                                         </button>
+                                        )}
+                                        {availableCheckoutTypes.includes('invoice') && (
                                         <button
                                             type="button"
                                             onClick={() => setDocumentType('invoice')}
@@ -2782,6 +2806,7 @@ export default function POS({
                                             <div className="font-semibold">Factura</div>
                                             <div className="mt-1 text-xs text-slate-500">Certifica FEL con Digifact.</div>
                                         </button>
+                                        )}
                                         {credit_available && (
                                             <button
                                                 type="button"

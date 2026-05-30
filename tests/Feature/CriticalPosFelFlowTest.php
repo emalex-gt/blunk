@@ -33,6 +33,7 @@ use App\Support\StockAvailability;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Inertia\Testing\AssertableInertia as Assert;
 use Mockery;
 use Tests\TestCase;
 
@@ -330,6 +331,86 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('invoice', Sale::query()->firstOrFail()->document_type);
     }
 
+    public function test_receipt_disabled_is_not_exposed_as_available_pos_document_type(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'fel_gt'],
+            allowReceipts: false,
+            allowInvoices: true,
+        );
+        $this->felSettings($business);
+
+        $this->actingAs($user)
+            ->get(route('sales.create'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Sales/POS')
+                ->where('available_document_types', ['invoice'])
+                ->where('credit_available', false)
+            );
+    }
+
+    public function test_pos_exposes_only_invoice_and_credit_when_receipt_is_disabled(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'fel_gt', 'credits'],
+            allowReceipts: false,
+            allowInvoices: true,
+            enableCredits: true,
+        );
+        $this->felSettings($business);
+
+        $this->actingAs($user)
+            ->get(route('sales.create'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Sales/POS')
+                ->where('available_document_types', ['invoice'])
+                ->where('credit_available', true)
+            );
+    }
+
+    public function test_only_invoice_enabled_exposes_one_pos_document_type(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'fel_gt'],
+            allowReceipts: false,
+            allowInvoices: true,
+        );
+        $this->felSettings($business);
+
+        $this->actingAs($user)
+            ->get(route('sales.create'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Sales/POS')
+                ->where('available_document_types', ['invoice'])
+                ->where('credit_available', false)
+            );
+    }
+
+    public function test_only_credit_enabled_exposes_credit_without_sale_document_types(): void
+    {
+        [, $user] = $this->tenant(
+            modules: ['pos', 'credits'],
+            allowReceipts: false,
+            allowInvoices: false,
+            enableCredits: true,
+        );
+
+        $this->actingAs($user)
+            ->get(route('sales.create'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Sales/POS')
+                ->where('available_document_types', [])
+                ->where('credit_available', true)
+            );
+    }
+
     public function test_invoice_disabled_rejects_invoice_request(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);
@@ -362,6 +443,37 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertSessionHasErrors([
                 'document_type' => 'El tipo de documento seleccionado no está habilitado.',
             ]);
+
+        $this->assertDatabaseCount('sales', 0);
+    }
+
+    public function test_credit_receipt_creation_is_rejected_without_credit_create_permission(): void
+    {
+        [$business, $user] = $this->tenant(
+            modules: ['pos', 'credits'],
+            role: 'reports',
+            enableCredits: true,
+        );
+        $product = $this->product($business);
+
+        $this->actingAs($user)
+            ->post(route('credits.receipts.store'), $this->creditPayload($product, 1))
+            ->assertForbidden();
+    }
+
+    public function test_invoice_request_is_rejected_when_fel_is_not_configured(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'cash_register', 'fel_gt'],
+            allowInvoices: true,
+        );
+        $product = $this->product($business);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 100, documentType: 'invoice'))
+            ->assertSessionHasErrors(['document_type']);
 
         $this->assertDatabaseCount('sales', 0);
     }
