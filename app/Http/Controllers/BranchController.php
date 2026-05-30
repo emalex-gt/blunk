@@ -23,7 +23,7 @@ class BranchController extends Controller
             ],
         ]);
 
-        if (! (bool) $request->user()?->is_super_admin) {
+        if (! BranchInventory::canSwitchBranches($request->user())) {
             abort_unless((int) $request->user()?->current_branch_id === (int) $data['branch_id'], 403);
         }
 

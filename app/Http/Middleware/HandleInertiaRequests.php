@@ -135,6 +135,7 @@ class HandleInertiaRequests extends Middleware
                 : null,
             'enabled_modules' => fn () => $businessId ? enabled_modules($businessId) : [],
             'branches_enabled' => fn () => $businessId ? BranchInventory::branchesEnabled($businessId) : false,
+            'branch_can_switch' => fn () => $businessId ? BranchInventory::canSwitchBranches($user) : false,
             'active_branch' => function () use ($businessId) {
                 if (! $businessId || ! BranchInventory::branchesEnabled($businessId)) {
                     return null;
@@ -155,7 +156,7 @@ class HandleInertiaRequests extends Middleware
 
                 $user = request()->user();
 
-                if (! Permissions::userHas($user, Permissions::BRANCHES_MANAGE)) {
+                if (! BranchInventory::canSwitchBranches($user)) {
                     $branch = $user?->currentBranch;
 
                     $branch = $branch && (int) $branch->business_id === (int) $businessId && $branch->is_active

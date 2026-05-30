@@ -51,7 +51,7 @@ class BranchInventory
         $user = auth()->user();
         $branchId = null;
 
-        if ($user?->id === 1 && session('active_branch_id')) {
+        if ($user && self::canSwitchBranches($user) && session('active_branch_id')) {
             $branchId = (int) session('active_branch_id');
         } elseif ($user?->current_branch_id) {
             $branchId = (int) $user->current_branch_id;
@@ -68,7 +68,13 @@ class BranchInventory
             }
         }
 
-        return self::defaultBranch($businessId);
+        $default = self::defaultBranch($businessId);
+
+        if ($user && ! $user->is_super_admin && ! $user->current_branch_id && (int) $user->business_id === $businessId) {
+            $user->forceFill(['current_branch_id' => $default->id])->save();
+        }
+
+        return $default;
     }
 
     public static function setActiveBranch(int $businessId, int $branchId): Branch
@@ -80,13 +86,26 @@ class BranchInventory
 
         $user = auth()->user();
 
-        if ($user?->id === 1) {
+        if ($user && self::canSwitchBranches($user)) {
             session(['active_branch_id' => $branch->id]);
         } elseif ($user) {
-            $user->forceFill(['current_branch_id' => $branch->id])->save();
+            if ((int) $user->current_branch_id !== (int) $branch->id) {
+                throw ValidationException::withMessages([
+                    'branch_id' => 'No tienes permiso para cambiar de sucursal.',
+                ]);
+            }
+
+            session(['active_branch_id' => $branch->id]);
         }
 
         return $branch;
+    }
+
+    public static function canSwitchBranches($user = null): bool
+    {
+        $user ??= auth()->user();
+
+        return (bool) ($user?->is_super_admin) || Permissions::userHas($user, Permissions::BRANCHES_SWITCH);
     }
 
     public static function branchOptions(int $businessId): Collection

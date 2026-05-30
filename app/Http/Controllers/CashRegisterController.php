@@ -7,6 +7,7 @@ use App\Models\CashExpense;
 use App\Models\CashExpenseCategory;
 use App\Models\CashRegisterSession;
 use App\Models\TenantSetting;
+use App\Support\BranchInventory;
 use App\Support\CashRegister;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -47,10 +48,12 @@ class CashRegisterController extends Controller
 
         DB::transaction(function () use ($request, $data) {
             $businessId = currentBusinessId();
+            $branch = BranchInventory::activeBranch($businessId);
             CashRegister::ensureNoOpenSession($businessId);
 
             $session = CashRegisterSession::create([
                 'business_id' => $businessId,
+                'branch_id' => $branch->id,
                 'opened_by' => $request->user()->id,
                 'status' => 'open',
                 'opening_amount' => round((float) $data['opening_amount'], 2),
@@ -99,6 +102,7 @@ class CashRegisterController extends Controller
 
             $expense = CashExpense::create([
                 'business_id' => $businessId,
+                'branch_id' => $session->branch_id,
                 'cash_register_session_id' => $session->id,
                 'cash_expense_category_id' => $category?->id,
                 'category' => $category?->name,
@@ -165,6 +169,7 @@ class CashRegisterController extends Controller
         return Inertia::render('CashRegister/Closings/Index', [
             'sessions' => CashRegisterSession::query()
                 ->where('business_id', $businessId)
+                ->when(BranchInventory::branchesEnabled($businessId), fn ($query) => $query->where('branch_id', BranchInventory::activeBranch($businessId)->id))
                 ->where('status', 'closed')
                 ->with(['openedBy:id,name', 'closedBy:id,name'])
                 ->latest('closed_at')
@@ -177,6 +182,7 @@ class CashRegisterController extends Controller
     {
         $this->authorizeCashRegister($request);
         $this->ensureSessionBelongsToCurrentBusiness($session);
+        $this->ensureSessionBelongsToActiveBranch($request, $session);
 
         $timezone = tenantTimezone($session->business_id);
         $session->load(['openedBy:id,name', 'closedBy:id,name']);
@@ -190,6 +196,7 @@ class CashRegisterController extends Controller
     {
         $this->authorizeCashRegister($request);
         $this->ensureSessionBelongsToCurrentBusiness($session);
+        $this->ensureSessionBelongsToActiveBranch($request, $session);
 
         $business = Business::query()->select('id', 'name', 'country')->find(currentBusinessId());
         $timezone = tenantTimezone($business);
@@ -320,5 +327,15 @@ class CashRegisterController extends Controller
     private function ensureSessionBelongsToCurrentBusiness(CashRegisterSession $session): void
     {
         abort_unless((int) $session->business_id === (int) currentBusinessId(), 403);
+    }
+
+    private function ensureSessionBelongsToActiveBranch(Request $request, CashRegisterSession $session): void
+    {
+        abort_unless(
+            ! BranchInventory::branchesEnabled(currentBusinessId())
+            || BranchInventory::canSwitchBranches($request->user())
+            || (int) $session->branch_id === (int) BranchInventory::activeBranch(currentBusinessId())->id,
+            403,
+        );
     }
 }

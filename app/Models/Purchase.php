@@ -17,6 +17,7 @@ class Purchase extends Model
         'status',
         'total',
         'note',
+        'payment_method',
         'paid_from_cash',
         'cash_register_session_id',
         'created_by',

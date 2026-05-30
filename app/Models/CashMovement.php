@@ -9,6 +9,7 @@ class CashMovement extends Model
 {
     protected $fillable = [
         'business_id',
+        'branch_id',
         'cash_register_session_id',
         'type',
         'amount',
@@ -25,6 +26,11 @@ class CashMovement extends Model
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
+    }
+
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class);
     }
 
     public function session(): BelongsTo

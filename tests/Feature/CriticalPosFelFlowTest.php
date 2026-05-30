@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\Business;
+use App\Models\Branch;
+use App\Models\CashMovement;
 use App\Models\CashRegisterSession;
 use App\Models\CreditCustomerTransfer;
 use App\Models\CreditReceipt;
@@ -18,6 +20,7 @@ use App\Models\Role;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\SalePayment;
+use App\Models\StockMovement;
 use App\Models\TenantFelPhrase;
 use App\Models\TenantFelSetting;
 use App\Models\TenantModule;
@@ -472,6 +475,35 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('60.00', (string) SaleItem::query()->firstOrFail()->unit_price);
     }
 
+    public function test_manual_price_error_does_not_expose_cost_or_margin(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register'], role: 'cashier', allowManualPrice: true);
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'manual_price_min_margin_percent' => 20,
+        ]);
+        Permissions::assignDirectPermissions($user, [Permissions::POS_MANUAL_PRICE]);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $response = $this
+            ->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 55,
+                itemOverrides: [
+                    'manual_price' => true,
+                    'price_source' => 'manual',
+                    'unit_price' => 55,
+                ],
+            ));
+
+        $response->assertSessionHasErrors(['items' => 'Este precio no está permitido.']);
+        $this->assertStringNotContainsString('costo', mb_strtolower(session('errors')->first('items')));
+        $this->assertStringNotContainsString('margen', mb_strtolower(session('errors')->first('items')));
+    }
+
     public function test_role_permission_and_super_admin_bypass_permission_checks(): void
     {
         [$business, $user] = $this->tenant(role: 'cashier');
@@ -711,6 +743,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->actingAs($user)
             ->post(route('purchases.store'), [
                 'supplier' => ['name' => 'Proveedor test'],
+                'payment_method' => 'cash',
                 'paid_from_cash' => false,
                 'items' => [[
                     'product_id' => $product->id,
@@ -726,6 +759,187 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame(1, $sale->business_number);
         $this->assertSame(1, $purchase->business_number);
         $this->assertSame('C-1', format_purchase_number($purchase));
+    }
+
+    public function test_branch_switch_permission_controls_active_branch_switching(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['branches'], role: 'cashier');
+        TenantSetting::query()->where('business_id', $business->id)->update(['use_branches' => true]);
+        $main = BranchInventory::defaultBranch($business->id);
+        $other = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal B',
+            'code' => 'B',
+            'is_active' => true,
+        ]);
+        $user->forceFill(['current_branch_id' => $main->id])->save();
+
+        $this->actingAs($user)
+            ->post(route('branches.active'), ['branch_id' => $other->id])
+            ->assertForbidden();
+
+        Permissions::assignDirectPermissions($user->refresh(), [Permissions::BRANCHES_SWITCH]);
+
+        $this->actingAs($user)
+            ->post(route('branches.active'), ['branch_id' => $other->id])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame($other->id, session('active_branch_id'));
+    }
+
+    public function test_product_cardex_only_shows_active_branch_movements(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['branches', 'inventory'], role: 'owner');
+        TenantSetting::query()->where('business_id', $business->id)->update(['use_branches' => true]);
+        $main = BranchInventory::defaultBranch($business->id);
+        $other = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal B',
+            'code' => 'B',
+            'is_active' => true,
+        ]);
+        $user->forceFill(['current_branch_id' => $main->id])->save();
+        $product = $this->product($business, stock: 10, salePrice: 100);
+
+        StockMovement::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $main->id,
+            'product_id' => $product->id,
+            'type' => 'manual',
+            'quantity' => 1,
+            'note' => 'Movimiento branch A',
+            'created_by' => $user->id,
+        ]);
+        StockMovement::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $other->id,
+            'product_id' => $product->id,
+            'type' => 'manual',
+            'quantity' => 1,
+            'note' => 'Movimiento branch B',
+            'created_by' => $user->id,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('products.stock-history', $product))
+            ->assertOk()
+            ->assertSee('Movimiento branch A')
+            ->assertDontSee('Movimiento branch B');
+
+        $this->actingAs($user)
+            ->post(route('branches.active'), ['branch_id' => $other->id])
+            ->assertSessionHasNoErrors();
+
+        $this->actingAs($user)
+            ->get(route('products.stock-history', $product))
+            ->assertOk()
+            ->assertSee('Movimiento branch B')
+            ->assertDontSee('Movimiento branch A');
+    }
+
+    public function test_transfer_validates_available_stock_after_reservations(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['branches', 'inventory', 'credits'], role: 'owner', enableCredits: true);
+        TenantSetting::query()->where('business_id', $business->id)->update(['use_branches' => true]);
+        $main = BranchInventory::defaultBranch($business->id);
+        $other = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal B',
+            'code' => 'B',
+            'is_active' => true,
+        ]);
+        $user->forceFill(['current_branch_id' => $main->id])->save();
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente',
+            'doc_type' => 'NIT',
+            'doc_number' => '123',
+        ]);
+        $receipt = CreditReceipt::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $main->id,
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'customer_doc_type' => 'NIT',
+            'customer_doc_number' => '123',
+            'receipt_number' => 1,
+            'status' => 'pending',
+            'subtotal' => 300,
+            'total' => 300,
+            'pending_total' => 300,
+        ]);
+        CreditReceiptLine::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $main->id,
+            'credit_receipt_id' => $receipt->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 3,
+            'qty_reserved' => 3,
+            'qty_pending' => 3,
+            'unit_price' => 100,
+            'line_total' => 300,
+            'pending_total' => 300,
+            'status' => 'pending',
+        ]);
+
+        $this->actingAs($user)
+            ->from(route('inventory.transfers.create'))
+            ->post(route('inventory.transfers.store'), [
+                'from_branch_id' => $main->id,
+                'to_branch_id' => $other->id,
+                'items' => [[
+                    'product_id' => $product->id,
+                    'quantity' => 3,
+                ]],
+            ])
+            ->assertSessionHasErrors(['items' => 'No hay suficiente disponible para trasladar.']);
+    }
+
+    public function test_purchase_payment_method_controls_cash_register_usage(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['purchases', 'cash_register'], role: 'owner');
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->post(route('purchases.store'), [
+                'supplier' => ['name' => 'Proveedor test'],
+                'payment_method' => 'bank_transfer',
+                'paid_from_cash' => true,
+                'items' => [[
+                    'product_id' => $product->id,
+                    'quantity' => 1,
+                    'unit_cost' => 50,
+                ]],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $purchase = Purchase::query()->where('business_id', $business->id)->firstOrFail();
+        $this->assertSame('bank_transfer', $purchase->payment_method);
+        $this->assertFalse((bool) $purchase->paid_from_cash);
+        $this->assertDatabaseMissing('cash_movements', ['type' => 'purchase_cash', 'reference_id' => $purchase->id]);
+    }
+
+    public function test_purchase_cash_from_register_requires_open_cash_register(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['purchases', 'cash_register'], role: 'owner');
+        $product = $this->product($business, stock: 10, salePrice: 100);
+
+        $this->actingAs($user)
+            ->from(route('purchases.create'))
+            ->post(route('purchases.store'), [
+                'supplier' => ['name' => 'Proveedor test'],
+                'payment_method' => 'cash',
+                'paid_from_cash' => true,
+                'items' => [[
+                    'product_id' => $product->id,
+                    'quantity' => 1,
+                    'unit_cost' => 50,
+                ]],
+            ])
+            ->assertSessionHasErrors('cash_register');
     }
 
     public function test_fel_print_uses_internal_receipt_format_without_fetching_digifact_document(): void
@@ -1220,6 +1434,7 @@ class CriticalPosFelFlowTest extends TestCase
     {
         CashRegisterSession::create([
             'business_id' => $business->id,
+            'branch_id' => BranchInventory::activeBranch($business->id)->id,
             'opened_by' => $user->id,
             'status' => 'open',
             'opening_amount' => 0,

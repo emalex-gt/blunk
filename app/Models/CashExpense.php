@@ -9,6 +9,7 @@ class CashExpense extends Model
 {
     protected $fillable = [
         'business_id',
+        'branch_id',
         'cash_register_session_id',
         'cash_expense_category_id',
         'category',
@@ -24,6 +25,11 @@ class CashExpense extends Model
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
+    }
+
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class);
     }
 
     public function session(): BelongsTo

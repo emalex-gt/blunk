@@ -343,10 +343,6 @@ function minimumManualPrice(product: Product, minMarginPercent: number) {
     return roundMoney(productCost(product) * (1 + Math.max(0, minMarginPercent) / 100));
 }
 
-function formatPercent(value: number) {
-    return Number(value).toFixed(2).replace(/\.?0+$/, '');
-}
-
 function manualPriceError(item: CartItem, minMarginPercent: number) {
     if (!item.manual_price) {
         return null;
@@ -355,13 +351,13 @@ function manualPriceError(item: CartItem, minMarginPercent: number) {
     const price = Number(item.unit_price);
 
     if (!Number.isFinite(price) || price <= 0) {
-        return 'El precio manual debe ser mayor a 0.';
+        return 'Este precio no está permitido.';
     }
 
     const minimum = minimumManualPrice(item.product, minMarginPercent);
 
     if (minimum > 0 && price < minimum) {
-        return `El precio manual debe ser al menos ${formatPercent(minMarginPercent)}% mayor al costo.`;
+        return 'Este precio no está permitido.';
     }
 
     return null;
@@ -493,6 +489,7 @@ export default function POS({
     const [draftReady, setDraftReady] = useState(false);
     const [showClearSaleModal, setShowClearSaleModal] = useState(false);
     const [showDiscountModal, setShowDiscountModal] = useState(false);
+    const [manualPriceProductId, setManualPriceProductId] = useState<number | null>(null);
     const [discount, setDiscount] = useState<SaleDiscount | null>(null);
     const [discountForm, setDiscountForm] = useState<SaleDiscount>({
         type: 'fixed',
@@ -2365,56 +2362,18 @@ export default function POS({
                                             {item.price_warning && (
                                                 <p className="text-[11px] font-semibold text-amber-600">{item.price_warning}</p>
                                             )}
-                                            {item.manual_price && !item.locked_credit_line && (
-                                                <div className="space-y-1 rounded-lg bg-slate-50 p-2">
-                                                    <div className="flex flex-wrap gap-1">
-                                                        {[10, 15, 20, 25, 30, 50].map((percent) => {
-                                                            const disabled = percent < manualPriceMinMargin;
-
-                                                            return (
-                                                                <button
-                                                                    key={percent}
-                                                                    type="button"
-                                                                    disabled={disabled || processing}
-                                                                    onClick={() => applyCostMarkup(item.product.id, percent)}
-                                                                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-40"
-                                                                >
-                                                                    +{percent}%
-                                                                </button>
-                                                            );
-                                                        })}
-                                                        <input
-                                                            type="number"
-                                                            min={manualPriceMinMargin}
-                                                            step="0.01"
-                                                            placeholder="Otro %"
-                                                            disabled={processing}
-                                                            onChange={(event) => {
-                                                                const percent = Number(event.target.value);
-                                                                if (Number.isFinite(percent) && percent >= manualPriceMinMargin) {
-                                                                    applyCostMarkup(item.product.id, percent);
-                                                                }
-                                                            }}
-                                                            className="h-7 w-20 rounded-md border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-700 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-                                                        />
-                                                    </div>
-                                                    <p className="text-[11px] text-slate-500">
-                                                        Costo: {formatCurrency(productCost(item.product), country)} · Mínimo permitido: {formatCurrency(minimumManualPrice(item.product, manualPriceMinMargin), country)}
-                                                    </p>
-                                                    {manualPriceError(item, manualPriceMinMargin) && (
-                                                        <p className="text-[11px] font-semibold text-red-600">
-                                                            {manualPriceError(item, manualPriceMinMargin)}
-                                                        </p>
-                                                    )}
-                                                </div>
+                                            {item.manual_price && manualPriceError(item, manualPriceMinMargin) && (
+                                                <p className="text-[11px] font-semibold text-red-600">
+                                                    {manualPriceError(item, manualPriceMinMargin)}
+                                                </p>
                                             )}
-                                            {canUseManualPrice && !item.manual_price && !item.locked_credit_line && (
+                                            {canUseManualPrice && !item.locked_credit_line && (
                                                 <button
                                                     type="button"
-                                                    onClick={() => enableManualPrice(item.product.id)}
+                                                    onClick={() => setManualPriceProductId(item.product.id)}
                                                     className="self-start text-[11px] font-semibold text-indigo-600 hover:text-indigo-700"
                                                 >
-                                                    Precio manual
+                                                    {item.manual_price ? 'Editar precio manual' : 'Precio manual'}
                                                 </button>
                                             )}
                                         </div>
@@ -2504,6 +2463,101 @@ export default function POS({
                     </form>
                 </div>
             </div>
+
+            {manualPriceProductId && (() => {
+                const item = cart.find((cartItem) => cartItem.product.id === manualPriceProductId);
+
+                if (!item) {
+                    return null;
+                }
+
+                return (
+                    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/50 p-4 backdrop-blur-sm sm:items-center">
+                        <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+                            <div className="flex items-start justify-between gap-4">
+                                <div className="min-w-0">
+                                    <h2 className="text-lg font-semibold text-slate-950">Precio manual</h2>
+                                    <p className="mt-1 truncate text-sm text-slate-500">{item.product.name}</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setManualPriceProductId(null)}
+                                    className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                                >
+                                    Cerrar
+                                </button>
+                            </div>
+
+                            <div className="mt-5 space-y-4">
+                                <div>
+                                    <div className="mb-2 text-xs font-semibold uppercase text-slate-500">Porcentaje</div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {[10, 15, 20, 25, 30, 50]
+                                            .filter((percent) => percent >= manualPriceMinMargin)
+                                            .map((percent) => (
+                                                <button
+                                                    key={percent}
+                                                    type="button"
+                                                    disabled={processing}
+                                                    onClick={() => applyCostMarkup(item.product.id, percent)}
+                                                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                >
+                                                    +{percent}%
+                                                </button>
+                                            ))}
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            placeholder="Otro %"
+                                            disabled={processing}
+                                            onChange={(event) => {
+                                                const percent = Number(event.target.value);
+
+                                                if (Number.isFinite(percent) && percent >= manualPriceMinMargin) {
+                                                    applyCostMarkup(item.product.id, percent);
+                                                }
+                                            }}
+                                            className="h-10 w-28 rounded-xl border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                                        />
+                                    </div>
+                                </div>
+
+                                <label className="block">
+                                    <span className="text-sm font-medium text-slate-700">Precio unitario</span>
+                                    <input
+                                        type="number"
+                                        min="0.01"
+                                        step="0.01"
+                                        value={item.unit_price}
+                                        disabled={processing}
+                                        onChange={(event) => updateManualPrice(item.product.id, event.target.value)}
+                                        className="mt-1 h-12 w-full rounded-xl border-slate-200 text-lg font-semibold text-slate-950 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                    />
+                                </label>
+
+                                {manualPriceError(item, manualPriceMinMargin) && (
+                                    <p className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+                                        {manualPriceError(item, manualPriceMinMargin)}
+                                    </p>
+                                )}
+
+                                <button
+                                    type="button"
+                                    disabled={Boolean(manualPriceError(item, manualPriceMinMargin))}
+                                    onClick={() => {
+                                        enableManualPrice(item.product.id);
+                                        setManualPriceProductId(null);
+                                    }}
+                                    className="h-12 w-full rounded-xl bg-indigo-600 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                >
+                                    Aplicar
+                                </button>
+                            </div>
+                        </section>
+                    </div>
+                );
+            })()}
 
             {(isFelProcessing || openingFelPrint) && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">

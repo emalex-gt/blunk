@@ -4,17 +4,23 @@ namespace App\Support;
 
 use App\Models\CashMovement;
 use App\Models\CashRegisterSession;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 class CashRegister
 {
-    public static function currentOpenSession(int $businessId, bool $lock = false): ?CashRegisterSession
+    public static function currentOpenSession(int $businessId, bool $lock = false, ?int $branchId = null): ?CashRegisterSession
     {
         $query = CashRegisterSession::query()
             ->where('business_id', $businessId)
             ->where('status', 'open')
             ->latest('opened_at');
+
+        if (Schema::hasColumn('cash_register_sessions', 'branch_id')) {
+            $branchId ??= BranchInventory::activeBranch($businessId)->id;
+            $query->where('branch_id', $branchId);
+        }
 
         if ($lock) {
             $query->lockForUpdate();
@@ -23,9 +29,9 @@ class CashRegister
         return $query->first();
     }
 
-    public static function requireOpenSession(int $businessId, ?string $message = null, bool $lock = false): CashRegisterSession
+    public static function requireOpenSession(int $businessId, ?string $message = null, bool $lock = false, ?int $branchId = null): CashRegisterSession
     {
-        $session = self::currentOpenSession($businessId, $lock);
+        $session = self::currentOpenSession($businessId, $lock, $branchId);
 
         if (! $session) {
             throw ValidationException::withMessages([
@@ -56,6 +62,7 @@ class CashRegister
     ): CashMovement {
         $movement = CashMovement::create([
             'business_id' => $session->business_id,
+            'branch_id' => $session->branch_id,
             'cash_register_session_id' => $session->id,
             'type' => $type,
             'amount' => round($amount, 2),

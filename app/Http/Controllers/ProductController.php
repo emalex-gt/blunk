@@ -8,6 +8,7 @@ use App\Models\StockMovement;
 use App\Support\BranchInventory;
 use App\Support\PriceLists;
 use App\Support\ProductSupplierCostHistory;
+use App\Support\StockAvailability;
 use Cloudinary\Cloudinary;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -180,9 +181,14 @@ class ProductController extends Controller
     public function stockHistory(Request $request, Product $product): Response
     {
         abort_unless($product->business_id === currentBusinessId(), 403);
+        $businessId = currentBusinessId();
+        $activeBranch = BranchInventory::activeBranch($businessId);
+        $stock = (float) (BranchInventory::stockMap($businessId, [$product->id], $activeBranch->id)[$product->id] ?? 0);
+        $reserved = StockAvailability::reservedStock($product, null, $activeBranch->id);
 
         $movements = StockMovement::query()
-            ->where('business_id', currentBusinessId())
+            ->where('business_id', $businessId)
+            ->where('branch_id', $activeBranch->id)
             ->where('product_id', $product->id)
             ->with(['createdBy:id,name', 'user:id,name'])
             ->latest()
@@ -190,15 +196,23 @@ class ProductController extends Controller
             ->withQueryString();
 
         return Inertia::render('Products/StockHistory', [
-            'product' => $product->only([
+            'product' => [
+                ...$product->only([
                 'id',
                 'name',
                 'code',
                 'barcode',
-                'stock',
                 'location',
                 'image_url',
-            ]),
+                ]),
+                'stock' => $stock,
+                'reserved_stock' => $reserved,
+                'available_stock' => max(0, $stock - $reserved),
+                'branch' => [
+                    'id' => $activeBranch->id,
+                    'name' => $activeBranch->name,
+                ],
+            ],
             'movements' => $movements,
         ]);
     }

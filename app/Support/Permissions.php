@@ -69,6 +69,7 @@ class Permissions
 
     public const BRANCHES_VIEW = 'branches.view';
     public const BRANCHES_MANAGE = 'branches.manage';
+    public const BRANCHES_SWITCH = 'branches.switch';
     public const INVENTORY_TRANSFERS_VIEW = 'inventory.transfers.view';
     public const INVENTORY_TRANSFERS_CREATE = 'inventory.transfers.create';
 
@@ -131,6 +132,7 @@ class Permissions
             self::USERS_DELETE => ['name' => 'Eliminar usuarios', 'group' => 'Usuarios'],
             self::BRANCHES_VIEW => ['name' => 'Ver sucursales', 'group' => 'Sucursales'],
             self::BRANCHES_MANAGE => ['name' => 'Gestionar sucursales', 'group' => 'Sucursales'],
+            self::BRANCHES_SWITCH => ['name' => 'Cambiar sucursal activa', 'group' => 'Sucursales'],
             self::INVENTORY_TRANSFERS_VIEW => ['name' => 'Ver traslados', 'group' => 'Sucursales'],
             self::INVENTORY_TRANSFERS_CREATE => ['name' => 'Crear traslados', 'group' => 'Sucursales'],
             self::TENANT_SETTINGS_VIEW => ['name' => 'Ver configuración tenant', 'group' => 'Configuración'],

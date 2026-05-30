@@ -63,6 +63,7 @@ type PurchaseDraft = {
     supplier_name: string;
     selected_supplier_id: number | null;
     note: string;
+    payment_method: string;
     paid_from_cash: boolean;
     branch_id: number | null;
 };
@@ -72,7 +73,8 @@ function isMeaningfulPurchaseDraft(draft: PurchaseDraft) {
         (draft.items?.length ?? 0) > 0 ||
         (draft.supplier_name ?? '').trim() !== '' ||
         (draft.note ?? '').trim() !== '' ||
-        Boolean(draft.paid_from_cash)
+        Boolean(draft.paid_from_cash) ||
+        (draft.payment_method ?? 'cash') !== 'cash'
     );
 }
 
@@ -118,6 +120,7 @@ export default function Create({
     const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
     const [note, setNote] = useState('');
     const [branchId, setBranchId] = useState<number | null>(active_branch?.id ?? null);
+    const [paymentMethod, setPaymentMethod] = useState('cash');
     const [paidFromCash, setPaidFromCash] = useState(false);
     const [cart, setCart] = useState<CartItem[]>([]);
     const [message, setMessage] = useState('');
@@ -254,6 +257,7 @@ export default function Create({
             supplier_name: supplierName,
             selected_supplier_id: selectedSupplier?.id ?? null,
             note,
+            payment_method: paymentMethod,
             paid_from_cash: paidFromCash,
             branch_id: branchId,
         };
@@ -282,7 +286,8 @@ export default function Create({
                 : null,
         );
         setNote(draft.note ?? '');
-        setPaidFromCash(Boolean(draft.paid_from_cash && hasOpenCashRegister));
+        setPaymentMethod(draft.payment_method ?? 'cash');
+        setPaidFromCash(Boolean((draft.payment_method ?? 'cash') === 'cash' && draft.paid_from_cash && hasOpenCashRegister));
         setBranchId(draft.branch_id ?? active_branch?.id ?? null);
     }
 
@@ -291,6 +296,7 @@ export default function Create({
         setSupplierName('');
         setSelectedSupplier(null);
         setNote('');
+        setPaymentMethod('cash');
         setPaidFromCash(false);
         setBranchId(active_branch?.id ?? null);
         setCart([]);
@@ -393,7 +399,8 @@ export default function Create({
             supplier_id: supplier?.id ?? null,
             supplier_name: newSupplier?.name || cleanSupplierName || null,
             supplier: newSupplier,
-            paid_from_cash: paidFromCash,
+            payment_method: paymentMethod,
+            paid_from_cash: paymentMethod === 'cash' && paidFromCash,
             branch_id: branchId,
             note,
             items: cart.map((item) => ({
@@ -477,14 +484,22 @@ export default function Create({
         return () => window.clearTimeout(timer);
     }, [
         cart,
+        branchId,
         draftKey,
         draftReady,
         note,
         paidFromCash,
+        paymentMethod,
         restoreDraft,
         selectedSupplier,
         supplierName,
     ]);
+
+    useEffect(() => {
+        if (paymentMethod !== 'cash' && paidFromCash) {
+            setPaidFromCash(false);
+        }
+    }, [paymentMethod, paidFromCash]);
 
     return (
         <AuthenticatedLayout header={<h2 className="text-xl font-semibold text-slate-950">Compras</h2>}>
@@ -578,6 +593,21 @@ export default function Create({
                                         className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                                     />
                                 </div>
+                                <div>
+                                    <label className="text-sm font-medium text-slate-700">Forma de pago</label>
+                                    <select
+                                        value={paymentMethod}
+                                        onChange={(event) => setPaymentMethod(event.target.value)}
+                                        className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                    >
+                                        <option value="cash">Efectivo</option>
+                                        <option value="card">Tarjeta</option>
+                                        <option value="bank_transfer">Transferencia</option>
+                                        <option value="check">Cheque</option>
+                                        <option value="credit">Crédito</option>
+                                        <option value="other">Otro</option>
+                                    </select>
+                                </div>
                                 {branches_enabled && branches.length > 0 && (
                                     <div>
                                         <label className="text-sm font-medium text-slate-700">Sucursal destino</label>
@@ -600,7 +630,7 @@ export default function Create({
                                 <input
                                     type="checkbox"
                                     checked={paidFromCash}
-                                    disabled={!hasOpenCashRegister}
+                                    disabled={!hasOpenCashRegister || paymentMethod !== 'cash'}
                                     onChange={(event) => setPaidFromCash(event.target.checked)}
                                     className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
                                 />
@@ -608,7 +638,7 @@ export default function Create({
                                     <span className="block font-semibold text-slate-800">¿Pagar desde caja?</span>
                                     <span className="block text-xs text-slate-500">
                                         {hasOpenCashRegister
-                                            ? 'La compra reducirá el efectivo esperado de caja.'
+                                            ? (paymentMethod === 'cash' ? 'La compra reducirá el efectivo esperado de caja.' : 'Solo aplica para pagos en efectivo.')
                                             : 'No hay caja abierta'}
                                     </span>
                                 </span>

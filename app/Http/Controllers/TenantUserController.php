@@ -79,7 +79,7 @@ class TenantUserController extends Controller
             'password' => $data['password'],
             'is_super_admin' => false,
             'is_active' => true,
-            'current_branch_id' => $branchesEnabled ? ($data['current_branch_id'] ?? null) : null,
+            'current_branch_id' => $branchesEnabled ? ($data['current_branch_id'] ?? BranchInventory::defaultBranch($businessId)->id) : null,
         ]);
         Permissions::assignRole($user, $data['role']);
 
@@ -131,7 +131,7 @@ class TenantUserController extends Controller
             'name' => $data['name'],
             'role' => $data['role'],
             'is_active' => $data['is_active'],
-            'current_branch_id' => $branchesEnabled ? ($data['current_branch_id'] ?? null) : null,
+            'current_branch_id' => $branchesEnabled ? ($data['current_branch_id'] ?? BranchInventory::defaultBranch($businessId)->id) : null,
         ]);
         Permissions::assignRole($user, $data['role']);
 

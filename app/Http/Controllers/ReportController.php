@@ -30,6 +30,7 @@ class ReportController extends Controller
 
         $todaySales = Sale::query()
             ->where('business_id', $businessId)
+            ->when(BranchInventory::branchesEnabled($businessId), fn ($query) => $query->where('branch_id', BranchInventory::activeBranch($businessId)->id))
             ->where(fn ($query) => $query->where('status', 'completed')->orWhereNull('status'))
             ->whereBetween('created_at', [$start, $end]);
 
@@ -37,6 +38,7 @@ class ReportController extends Controller
             ->join('sales', 'sale_items.sale_id', '=', 'sales.id')
             ->where('sale_items.business_id', $businessId)
             ->where('sales.business_id', $businessId)
+            ->when(BranchInventory::branchesEnabled($businessId), fn ($query) => $query->where('sales.branch_id', BranchInventory::activeBranch($businessId)->id))
             ->where(fn ($query) => $query->where('sales.status', 'completed')->orWhereNull('sales.status'))
             ->whereBetween('sales.created_at', [$start, $end])
             ->groupBy('sale_items.product_id', 'sale_items.product_name')
@@ -53,6 +55,7 @@ class ReportController extends Controller
             ->count();
         $lastSale = Sale::query()
             ->where('business_id', $businessId)
+            ->when(BranchInventory::branchesEnabled($businessId), fn ($query) => $query->where('branch_id', BranchInventory::activeBranch($businessId)->id))
             ->where(fn ($query) => $query->where('status', 'completed')->orWhereNull('status'))
             ->whereBetween('created_at', [$start, $end])
             ->latest()
@@ -240,8 +243,12 @@ class ReportController extends Controller
 
         $branchId = $request->integer('branch_id');
 
+        if (! BranchInventory::canSwitchBranches($request->user())) {
+            return BranchInventory::activeBranch($businessId)->id;
+        }
+
         if (! $branchId) {
-            return null;
+            return BranchInventory::activeBranch($businessId)->id;
         }
 
         return \App\Models\Branch::query()

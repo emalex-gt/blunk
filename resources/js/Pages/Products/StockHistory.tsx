@@ -8,6 +8,9 @@ type Product = {
     code: string | null;
     barcode: string | null;
     stock: number;
+    reserved_stock?: number;
+    available_stock?: number;
+    branch?: { id: number; name: string } | null;
     location: string | null;
     image_url: string | null;
 };
@@ -121,10 +124,12 @@ export default function StockHistory({
 
                         <div className="rounded-lg bg-gray-50 px-5 py-4 text-right">
                             <div className="text-sm font-semibold text-gray-500">
-                                Stock actual
+                                {product.branch ? `Sucursal: ${product.branch.name}` : 'Stock actual'}
                             </div>
-                            <div className="text-4xl font-bold text-gray-900">
-                                {product.stock}
+                            <div className="mt-1 space-y-1 text-sm font-semibold text-gray-700">
+                                <div>Existencia: {product.stock}</div>
+                                <div>Reservado: {product.reserved_stock ?? 0}</div>
+                                <div>Disponible: {product.available_stock ?? product.stock}</div>
                             </div>
                         </div>
                     </div>

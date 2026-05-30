@@ -24,6 +24,7 @@ class PurchaseController extends Controller
         return Inertia::render('Purchases/Index', [
             'purchases' => Purchase::query()
                 ->where('business_id', currentBusinessId())
+                ->when(BranchInventory::branchesEnabled(currentBusinessId()), fn ($query) => $query->where('branch_id', BranchInventory::activeBranch(currentBusinessId())->id))
                 ->with(['supplier:id,name', 'createdBy:id,name'])
                 ->latest()
                 ->paginate(25)
@@ -78,6 +79,7 @@ class PurchaseController extends Controller
             'supplier.email' => ['nullable', 'email', 'max:255'],
             'supplier.phone' => ['nullable', 'string', 'max:50'],
             'supplier.contact_person' => ['nullable', 'string', 'max:255'],
+            'payment_method' => ['required', 'string', 'in:cash,card,bank_transfer,check,credit,other'],
             'paid_from_cash' => ['nullable', 'boolean'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'note' => ['nullable', 'string', 'max:2000'],
@@ -99,12 +101,20 @@ class PurchaseController extends Controller
                     ->where('is_active', true)
                     ->findOrFail((int) $data['branch_id'])
                 : BranchInventory::activeBranch($businessId);
-            $paidFromCash = (bool) ($data['paid_from_cash'] ?? false);
+
+            if (! BranchInventory::canSwitchBranches($request->user()) && (int) $branch->id !== (int) BranchInventory::activeBranch($businessId)->id) {
+                throw ValidationException::withMessages([
+                    'branch_id' => 'No tienes permiso para comprar en otra sucursal.',
+                ]);
+            }
+            $paymentMethod = $data['payment_method'];
+            $paidFromCash = $paymentMethod === 'cash' && (bool) ($data['paid_from_cash'] ?? false);
             $cashSession = $paidFromCash
                 ? CashRegister::requireOpenSession(
                     $businessId,
                     'Debes abrir caja antes de pagar compras desde caja.',
                     true,
+                    $branch->id,
                 )
                 : null;
             $supplier = $this->resolveSupplier(
@@ -121,6 +131,7 @@ class PurchaseController extends Controller
                 'status' => 'completed',
                 'total' => 0,
                 'note' => $data['note'] ?? null,
+                'payment_method' => $paymentMethod,
                 'paid_from_cash' => $paidFromCash,
                 'cash_register_session_id' => $cashSession?->id,
                 'created_by' => $request->user()->id,
@@ -206,6 +217,12 @@ class PurchaseController extends Controller
     public function show(Request $request, Purchase $purchase): Response
     {
         abort_unless($purchase->business_id === currentBusinessId(), 403);
+        abort_unless(
+            ! BranchInventory::branchesEnabled(currentBusinessId())
+            || BranchInventory::canSwitchBranches($request->user())
+            || (int) $purchase->branch_id === (int) BranchInventory::activeBranch(currentBusinessId())->id,
+            403,
+        );
 
         return Inertia::render('Purchases/Show', [
             'purchase' => $purchase->load([

@@ -242,6 +242,7 @@ class SaleController extends Controller
                 $businessId,
                 'Debes abrir caja antes de registrar ventas.',
                 true,
+                $branch->id,
             );
             $cashAmount = CashRegister::cashAmountFromPayments($data['payments']);
             $customer = $this->resolveCustomer($request, $data['customer'] ?? null);
@@ -608,6 +609,12 @@ class SaleController extends Controller
         $this->ensureSaleBelongsToCurrentBusiness($sale);
 
         $businessId = currentBusinessId();
+        abort_unless(
+            ! BranchInventory::branchesEnabled($businessId)
+            || BranchInventory::canSwitchBranches($request->user())
+            || (int) $sale->branch_id === (int) BranchInventory::activeBranch($businessId)->id,
+            403,
+        );
         $timezone = tenantTimezone($businessId);
 
         $sale->load([
@@ -796,6 +803,7 @@ class SaleController extends Controller
                 currentBusinessId(),
                 'Debes abrir caja antes de anular una venta con pago en efectivo.',
                 true,
+                (int) ($sale->branch_id ?: BranchInventory::defaultBranch(currentBusinessId())->id),
             );
         }
 
@@ -864,6 +872,7 @@ class SaleController extends Controller
                     $businessId,
                     'Debes abrir caja antes de anular una venta con pago en efectivo.',
                     true,
+                    (int) ($sale->branch_id ?: BranchInventory::defaultBranch($businessId)->id),
                 );
 
                 CashRegister::recordMovement(
@@ -893,6 +902,12 @@ class SaleController extends Controller
         $this->ensureSaleBelongsToCurrentBusiness($sale);
 
         $businessId = currentBusinessId();
+        abort_unless(
+            ! BranchInventory::branchesEnabled($businessId)
+            || BranchInventory::canSwitchBranches(request()->user())
+            || (int) $sale->branch_id === (int) BranchInventory::activeBranch($businessId)->id,
+            403,
+        );
         $business = \App\Models\Business::query()->select('id', 'name', 'country', 'logo_url')->find($businessId);
         $timezone = tenantTimezone($business);
         $settings = TenantSetting::query()->where('business_id', $businessId)->first();
@@ -1156,7 +1171,7 @@ class SaleController extends Controller
 
             if ($unitPrice <= 0) {
                 throw ValidationException::withMessages([
-                    'items' => 'El precio manual debe ser mayor a 0.',
+                    'items' => 'Este precio no está permitido.',
                 ]);
             }
 
@@ -1166,7 +1181,7 @@ class SaleController extends Controller
 
             if ($minimumPrice > 0 && $unitPrice < $minimumPrice) {
                 throw ValidationException::withMessages([
-                    'items' => sprintf('El precio manual debe ser al menos %s%% mayor al costo.', rtrim(rtrim(number_format($minMarginPercent, 2, '.', ''), '0'), '.')),
+                    'items' => 'Este precio no está permitido.',
                 ]);
             }
 

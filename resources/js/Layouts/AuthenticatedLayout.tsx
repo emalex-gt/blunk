@@ -29,6 +29,7 @@ export default function Authenticated({
     const currentBusinessId = usePage().props.current_business_id as number | null;
     const availableBusinesses = usePage().props.available_businesses as { id: number; name: string }[] | null;
     const branchesEnabled = Boolean(usePage().props.branches_enabled);
+    const branchCanSwitch = Boolean(usePage().props.branch_can_switch);
     const activeBranch = usePage().props.active_branch as BranchOption | null;
     const branches = (usePage().props.branches as BranchOption[] | undefined) ?? [];
     const [showingNavigationDropdown, setShowingNavigationDropdown] = useState(false);
@@ -189,6 +190,7 @@ export default function Authenticated({
                                     Sucursal activa
                                     <select
                                         value={activeBranch?.id ?? ''}
+                                        disabled={!branchCanSwitch}
                                         onChange={(event) =>
                                             router.post(
                                                 route('branches.active'),
@@ -196,7 +198,7 @@ export default function Authenticated({
                                                 { preserveScroll: true },
                                             )
                                         }
-                                        className="h-10 max-w-48 rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                        className="h-10 max-w-48 rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
                                     >
                                         {branches.map((branch) => (
                                             <option key={branch.id} value={branch.id}>
@@ -356,6 +358,7 @@ export default function Authenticated({
                                 </label>
                                 <select
                                     value={activeBranch?.id ?? ''}
+                                    disabled={!branchCanSwitch}
                                     onChange={(event) =>
                                         router.post(
                                             route('branches.active'),
@@ -363,7 +366,7 @@ export default function Authenticated({
                                             { preserveScroll: true },
                                         )
                                     }
-                                    className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                    className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
                                 >
                                     {branches.map((branch) => (
                                         <option key={branch.id} value={branch.id}>
