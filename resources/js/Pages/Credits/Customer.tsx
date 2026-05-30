@@ -10,6 +10,12 @@ type Customer = {
     address: string | null;
 };
 
+type ResolvedTransferCustomer = {
+    id: number;
+    name: string;
+    doc_number: string;
+};
+
 type CreditLine = {
     id: number;
     credit_receipt_id: number;
@@ -53,8 +59,10 @@ export default function CustomerCredit({
     const canTransfer = isSuperAdmin || permissions.includes('credits.transfer_customer');
     const [selected, setSelected] = useState<number[]>([]);
     const [transferNit, setTransferNit] = useState('');
-    const [transferName, setTransferName] = useState('');
     const [transferReason, setTransferReason] = useState('');
+    const [resolvedTransferCustomer, setResolvedTransferCustomer] = useState<ResolvedTransferCustomer | null>(null);
+    const [transferLookupLoading, setTransferLookupLoading] = useState(false);
+    const [transferLookupError, setTransferLookupError] = useState('');
 
     function toggleLine(id: number, checked: boolean) {
         setSelected((items) => checked ? Array.from(new Set([...items, id])) : items.filter((item) => item !== id));
@@ -78,14 +86,42 @@ export default function CustomerCredit({
         router.delete(route('credits.lines.cancel', line.id), { data: { reason } });
     }
 
+    async function lookupTransferNit() {
+        const nit = transferNit.trim();
+        setResolvedTransferCustomer(null);
+        setTransferLookupError('');
+
+        if (!nit) {
+            return;
+        }
+
+        setTransferLookupLoading(true);
+
+        try {
+            const response = await fetch(`${route('credits.resolve-nit')}?nit=${encodeURIComponent(nit)}`, {
+                headers: { Accept: 'application/json' },
+            });
+            const payload = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                throw new Error(payload?.message || 'No se pudo validar el NIT. Verifica el número e inténtalo nuevamente.');
+            }
+
+            setResolvedTransferCustomer(payload.customer);
+        } catch (error) {
+            setTransferLookupError(error instanceof Error ? error.message : 'No se pudo validar el NIT. Verifica el número e inténtalo nuevamente.');
+        } finally {
+            setTransferLookupLoading(false);
+        }
+    }
+
     function transferDebt() {
-        if (!transferNit.trim() || !transferReason.trim()) {
+        if (!resolvedTransferCustomer || !transferReason.trim()) {
             return;
         }
 
         router.post(route('credits.customers.transfer', customer.id), {
             to_customer_doc_number: transferNit.trim(),
-            to_customer_name: transferName.trim(),
             reason: transferReason,
         });
     }
@@ -225,19 +261,36 @@ export default function CustomerCredit({
                     {canTransfer && (
                         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                             <h2 className="text-lg font-semibold text-slate-950">Asignar deuda a otro NIT</h2>
-                            <div className="mt-4 grid gap-3 md:grid-cols-[180px_1fr_1fr_auto]">
-                                <input
-                                    value={transferNit}
-                                    onChange={(event) => setTransferNit(event.target.value)}
-                                    placeholder="NIT destino"
-                                    className="rounded-lg border-slate-300 text-sm"
-                                />
-                                <input
-                                    value={transferName}
-                                    onChange={(event) => setTransferName(event.target.value)}
-                                    placeholder="Nombre si es nuevo"
-                                    className="rounded-lg border-slate-300 text-sm"
-                                />
+                            <div className="mt-4 grid gap-3 md:grid-cols-[220px_1fr_1fr_auto]">
+                                <div>
+                                    <input
+                                        value={transferNit}
+                                        onChange={(event) => {
+                                            setTransferNit(event.target.value);
+                                            setResolvedTransferCustomer(null);
+                                            setTransferLookupError('');
+                                        }}
+                                        onBlur={lookupTransferNit}
+                                        placeholder="NIT destino"
+                                        className="w-full rounded-lg border-slate-300 text-sm"
+                                    />
+                                    {transferLookupLoading && (
+                                        <p className="mt-1 text-xs font-semibold text-indigo-600">Consultando NIT...</p>
+                                    )}
+                                    {transferLookupError && (
+                                        <p className="mt-1 text-xs font-semibold text-red-600">{transferLookupError}</p>
+                                    )}
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                                    {resolvedTransferCustomer ? (
+                                        <>
+                                            <div className="font-semibold text-slate-900">{resolvedTransferCustomer.name}</div>
+                                            <div className="text-xs text-slate-500">NIT {resolvedTransferCustomer.doc_number}</div>
+                                        </>
+                                    ) : (
+                                        <span className="text-slate-500">Valida el NIT para continuar.</span>
+                                    )}
+                                </div>
                                 <input
                                     value={transferReason}
                                     onChange={(event) => setTransferReason(event.target.value)}
@@ -247,6 +300,7 @@ export default function CustomerCredit({
                                 <button
                                     type="button"
                                     onClick={transferDebt}
+                                    disabled={!resolvedTransferCustomer || !transferReason.trim() || transferLookupLoading}
                                     className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
                                 >
                                     Transferir

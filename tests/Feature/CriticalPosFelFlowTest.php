@@ -4,8 +4,10 @@ namespace Tests\Feature;
 
 use App\Models\Business;
 use App\Models\CashRegisterSession;
+use App\Models\CreditCustomerTransfer;
 use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
+use App\Models\Customer;
 use App\Models\PriceType;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
@@ -1004,6 +1006,124 @@ class CriticalPosFelFlowTest extends TestCase
 
         $this->actingAs($owner)
             ->post(route('credits.invoice-selection'), ['line_ids' => [$line->id]])
+            ->assertForbidden();
+    }
+
+    public function test_credit_transfer_to_existing_nit_does_not_call_digifact(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->actingAs($user)->post(route('credits.receipts.store'), $this->creditPayload($product, 1))->assertRedirect();
+        $from = Customer::query()->where('business_id', $business->id)->where('doc_number', '57289085')->firstOrFail();
+        $to = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente existente',
+            'doc_type' => 'NIT',
+            'doc_number' => '999999',
+            'country' => 'GT',
+        ]);
+
+        Http::fake();
+
+        $this->actingAs($user)
+            ->post(route('credits.customers.transfer', $from), [
+                'to_customer_doc_number' => '999-999',
+                'reason' => 'Cambio de NIT',
+            ])
+            ->assertRedirect(route('credits.customers.show', $to));
+
+        Http::assertNothingSent();
+        $this->assertDatabaseHas('credit_receipts', [
+            'business_id' => $business->id,
+            'customer_id' => $to->id,
+            'customer_name' => 'Cliente existente',
+        ]);
+        $this->assertSame('existing', CreditCustomerTransfer::query()->firstOrFail()->metadata['target_customer_source']);
+    }
+
+    public function test_credit_transfer_to_new_valid_nit_uses_digifact_and_creates_customer(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits', 'fel_gt'], role: 'owner', enableCredits: true);
+        $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->actingAs($user)->post(route('credits.receipts.store'), $this->creditPayload($product, 1))->assertRedirect();
+        $from = Customer::query()->where('business_id', $business->id)->where('doc_number', '57289085')->firstOrFail();
+
+        Http::fake([
+            '*login/get_token' => Http::response(['Token' => 'test-token'], 200),
+            '*Shared*' => Http::response([
+                'REQUEST_DATA' => [['Respuesta' => 1, 'Codigo' => 1]],
+                'RESPONSE' => [[
+                    'NIT' => '1234567',
+                    'NOMBRE' => 'CLIENTE DIGIFACT',
+                    'Direccion' => 'ZONA 1',
+                    'DEPARTAMENTO' => 'GUATEMALA',
+                    'MUNICIPIO' => 'GUATEMALA',
+                ]],
+            ], 200),
+        ]);
+
+        $this->actingAs($user)
+            ->post(route('credits.customers.transfer', $from), [
+                'to_customer_doc_number' => '1234567',
+                'reason' => 'Cambio validado',
+            ])
+            ->assertRedirect();
+
+        $to = Customer::query()->where('business_id', $business->id)->where('doc_number', '1234567')->firstOrFail();
+        $this->assertSame('CLIENTE DIGIFACT', $to->name);
+        $this->assertSame('ZONA 1', $to->address);
+        $this->assertSame('GUATEMALA', $to->department);
+        $this->assertSame('GUATEMALA', $to->municipality);
+        $this->assertDatabaseHas('credit_receipts', ['customer_id' => $to->id]);
+        $this->assertSame('digifact_created', CreditCustomerTransfer::query()->firstOrFail()->metadata['target_customer_source']);
+    }
+
+    public function test_credit_transfer_blocks_cf_and_unresolved_nit_with_readable_error(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits', 'fel_gt'], role: 'owner', enableCredits: true);
+        $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->actingAs($user)->post(route('credits.receipts.store'), $this->creditPayload($product, 1))->assertRedirect();
+        $from = Customer::query()->where('business_id', $business->id)->where('doc_number', '57289085')->firstOrFail();
+
+        $this->actingAs($user)
+            ->from(route('credits.customers.show', $from))
+            ->post(route('credits.customers.transfer', $from), [
+                'to_customer_doc_number' => 'CF',
+                'reason' => 'No permitido',
+            ])
+            ->assertSessionHasErrors('to_customer_doc_number');
+
+        Http::fake([
+            '*login/get_token' => Http::response(['Token' => 'test-token'], 200),
+            '*Shared*' => Http::response(['REQUEST_DATA' => [['Codigo' => 0, 'Mensaje' => 'No encontrado']], 'RESPONSE' => []], 200),
+        ]);
+
+        $this->actingAs($user)
+            ->from(route('credits.customers.show', $from))
+            ->post(route('credits.customers.transfer', $from), [
+                'to_customer_doc_number' => '1111111',
+                'reason' => 'No encontrado',
+            ])
+            ->assertSessionHasErrors(['to_customer_doc_number' => 'No se pudo validar el NIT. Verifica el número e inténtalo nuevamente.']);
+    }
+
+    public function test_user_without_credit_transfer_permission_gets_403(): void
+    {
+        [$business, $owner] = $this->tenant(modules: ['pos', 'credits'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->actingAs($owner)->post(route('credits.receipts.store'), $this->creditPayload($product, 1))->assertRedirect();
+        $from = Customer::query()->where('business_id', $business->id)->where('doc_number', '57289085')->firstOrFail();
+
+        $owner->roles()->detach();
+        Permissions::assignRole($owner->refresh(), 'cashier');
+
+        $this->actingAs($owner)
+            ->post(route('credits.customers.transfer', $from), [
+                'to_customer_doc_number' => '999999',
+                'reason' => 'Sin permiso',
+            ])
             ->assertForbidden();
     }
 

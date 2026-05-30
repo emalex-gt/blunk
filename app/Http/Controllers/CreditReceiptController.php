@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Business;
 use App\Models\CreditCustomerTransfer;
 use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
@@ -11,8 +12,10 @@ use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\BusinessLogo;
 use App\Support\Credits;
+use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\Permissions;
 use App\Support\StockAvailability;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -256,49 +259,55 @@ class CreditReceiptController extends Controller
             ->with('credit_invoice_line_ids', array_values(array_unique($data['line_ids'])));
     }
 
+    public function resolveNit(Request $request): JsonResponse
+    {
+        $this->ensureCreditsAvailable($request, Permissions::CREDITS_TRANSFER_CUSTOMER);
+        $business = Business::query()->findOrFail(currentBusinessId());
+
+        try {
+            $resolved = GuatemalaNitCustomerResolver::resolve($business, (string) $request->query('nit'), allowCache: false);
+            /** @var Customer $customer */
+            $customer = $resolved['customer'];
+
+            return response()->json([
+                'customer' => [
+                    'id' => $customer->id,
+                    'name' => $customer->name,
+                    'doc_type' => $customer->doc_type,
+                    'doc_number' => $customer->doc_number,
+                    'address' => $customer->address,
+                    'tax_lookup_verified_at' => $customer->tax_lookup_verified_at?->toIso8601String(),
+                ],
+                'source' => $resolved['source'],
+            ]);
+        } catch (ValidationException $exception) {
+            $message = $exception->errors()['to_customer_doc_number'][0]
+                ?? $exception->errors()['nit'][0]
+                ?? GuatemalaNitCustomerResolver::LOOKUP_ERROR_MESSAGE;
+
+            return response()->json([
+                'message' => $message,
+                'errors' => ['nit' => [$message]],
+            ], 422);
+        }
+    }
+
     public function transfer(Request $request, Customer $customer): RedirectResponse
     {
         $this->ensureCreditsAvailable($request, Permissions::CREDITS_TRANSFER_CUSTOMER);
         abort_unless((int) $customer->business_id === (int) currentBusinessId(), 403);
 
         $data = $request->validate([
-            'to_customer_id' => ['nullable', 'integer', 'exists:customers,id'],
-            'to_customer_doc_number' => ['nullable', 'string', 'max:50'],
-            'to_customer_name' => ['nullable', 'string', 'max:255'],
+            'to_customer_doc_number' => ['required', 'string', 'max:50'],
             'reason' => ['required', 'string', 'max:1000'],
         ]);
 
-        $to = isset($data['to_customer_id'])
-            ? Customer::query()->where('business_id', currentBusinessId())->findOrFail($data['to_customer_id'])
-            : null;
+        $business = Business::query()->findOrFail(currentBusinessId());
+        $resolved = GuatemalaNitCustomerResolver::resolve($business, $data['to_customer_doc_number'], allowCache: false);
+        /** @var Customer $to */
+        $to = $resolved['customer'];
 
-        if (! $to) {
-            $docNumber = strtoupper(trim((string) ($data['to_customer_doc_number'] ?? '')));
-
-            if ($docNumber === '' || $docNumber === 'CF') {
-                throw ValidationException::withMessages([
-                    'to_customer_doc_number' => 'Debes ingresar un NIT válido para transferir la deuda.',
-                ]);
-            }
-
-            $to = Customer::query()
-                ->where('business_id', currentBusinessId())
-                ->whereRaw('UPPER(doc_number) = ?', [$docNumber])
-                ->first();
-
-            if (! $to) {
-                $to = Customer::query()->create([
-                    'business_id' => currentBusinessId(),
-                    'name' => trim((string) ($data['to_customer_name'] ?? '')) ?: 'Cliente '.$docNumber,
-                    'doc_type' => 'NIT',
-                    'doc_number' => $docNumber,
-                    'country' => 'GT',
-                    'is_final_consumer' => false,
-                ]);
-            }
-        }
-
-        DB::transaction(function () use ($request, $customer, $to, $data) {
+        DB::transaction(function () use ($request, $customer, $to, $data, $resolved) {
             $receipts = CreditReceipt::query()
                 ->where('business_id', currentBusinessId())
                 ->where('customer_id', $customer->id)
@@ -324,6 +333,10 @@ class CreditReceiptController extends Controller
                 'metadata' => [
                     'receipt_ids' => $receipts->pluck('id')->all(),
                     'pending_total' => round((float) $receipts->sum('pending_total'), 2),
+                    'target_nit_entered' => GuatemalaNitCustomerResolver::normalize($data['to_customer_doc_number']),
+                    'target_customer_source' => $resolved['source'],
+                    'target_customer_name' => $to->name,
+                    'resolved_at' => now()->toIso8601String(),
                 ],
             ]);
         });

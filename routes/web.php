@@ -139,6 +139,9 @@ Route::middleware('auth')->group(function () {
             Route::post('/credits/customers/{customer}/transfer', [CreditReceiptController::class, 'transfer'])
                 ->middleware('permission:credits.transfer_customer')
                 ->name('credits.customers.transfer');
+            Route::get('/credits/resolve-nit', [CreditReceiptController::class, 'resolveNit'])
+                ->middleware('permission:credits.transfer_customer')
+                ->name('credits.resolve-nit');
             Route::post('/credits/invoice-selection', [CreditReceiptController::class, 'invoiceSelection'])
                 ->middleware('permission:credits.invoice')
                 ->name('credits.invoice-selection');
