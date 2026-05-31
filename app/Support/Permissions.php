@@ -40,6 +40,16 @@ class Permissions
     public const REPORTS_SALES_VIEW = 'reports.sales.view';
     public const REPORTS_STOCK_VIEW = 'reports.stock.view';
     public const REPORTS_TOP_PRODUCTS_VIEW = 'reports.top_products.view';
+    public const REPORTS_INVENTORY_VIEW = 'reports.inventory.view';
+    public const REPORTS_DAILY_VIEW = 'reports.daily.view';
+    public const REPORTS_PROFIT_VIEW = 'reports.profit.view';
+    public const REPORTS_WAREHOUSE_MONEY_VIEW = 'reports.warehouse_money.view';
+    public const REPORTS_SALES_BY_SELLER_VIEW = 'reports.sales_by_seller.view';
+    public const REPORTS_SALES_BY_DATE_VIEW = 'reports.sales_by_date.view';
+    public const REPORTS_SALES_BY_CUSTOMER_VIEW = 'reports.sales_by_customer.view';
+    public const REPORTS_SALES_DETAILED_VIEW = 'reports.sales_detailed.view';
+    public const REPORTS_PRODUCTS_SOLD_DETAILED_VIEW = 'reports.products_sold_detailed.view';
+    public const REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW = 'reports.products_sold_summary.view';
 
     public const CUSTOMERS_VIEW = 'customers.view';
     public const CUSTOMERS_CREATE = 'customers.create';
@@ -109,6 +119,16 @@ class Permissions
             self::REPORTS_SALES_VIEW => ['name' => 'Ver reporte de ventas', 'group' => 'Reportes'],
             self::REPORTS_STOCK_VIEW => ['name' => 'Ver reporte de stock', 'group' => 'Reportes'],
             self::REPORTS_TOP_PRODUCTS_VIEW => ['name' => 'Ver productos más vendidos', 'group' => 'Reportes'],
+            self::REPORTS_INVENTORY_VIEW => ['name' => 'Ver reporte de inventario', 'group' => 'Reportes'],
+            self::REPORTS_DAILY_VIEW => ['name' => 'Ver reporte diario', 'group' => 'Reportes'],
+            self::REPORTS_PROFIT_VIEW => ['name' => 'Ver reporte de utilidades', 'group' => 'Reportes'],
+            self::REPORTS_WAREHOUSE_MONEY_VIEW => ['name' => 'Ver dinero en bodega', 'group' => 'Reportes'],
+            self::REPORTS_SALES_BY_SELLER_VIEW => ['name' => 'Ver ventas por vendedor', 'group' => 'Reportes'],
+            self::REPORTS_SALES_BY_DATE_VIEW => ['name' => 'Ver ventas por fecha', 'group' => 'Reportes'],
+            self::REPORTS_SALES_BY_CUSTOMER_VIEW => ['name' => 'Ver ventas por cliente', 'group' => 'Reportes'],
+            self::REPORTS_SALES_DETAILED_VIEW => ['name' => 'Ver ventas detalladas', 'group' => 'Reportes'],
+            self::REPORTS_PRODUCTS_SOLD_DETAILED_VIEW => ['name' => 'Ver productos vendidos detallado', 'group' => 'Reportes'],
+            self::REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW => ['name' => 'Ver productos vendidos resumido', 'group' => 'Reportes'],
             self::CUSTOMERS_VIEW => ['name' => 'Ver clientes', 'group' => 'Clientes'],
             self::CUSTOMERS_CREATE => ['name' => 'Crear clientes', 'group' => 'Clientes'],
             self::CUSTOMERS_UPDATE => ['name' => 'Editar clientes', 'group' => 'Clientes'],
@@ -188,6 +208,16 @@ class Permissions
                 self::REPORTS_SALES_VIEW,
                 self::REPORTS_STOCK_VIEW,
                 self::REPORTS_TOP_PRODUCTS_VIEW,
+                self::REPORTS_INVENTORY_VIEW,
+                self::REPORTS_DAILY_VIEW,
+                self::REPORTS_PROFIT_VIEW,
+                self::REPORTS_WAREHOUSE_MONEY_VIEW,
+                self::REPORTS_SALES_BY_SELLER_VIEW,
+                self::REPORTS_SALES_BY_DATE_VIEW,
+                self::REPORTS_SALES_BY_CUSTOMER_VIEW,
+                self::REPORTS_SALES_DETAILED_VIEW,
+                self::REPORTS_PRODUCTS_SOLD_DETAILED_VIEW,
+                self::REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW,
                 self::CREDITS_VIEW,
             ],
         ];

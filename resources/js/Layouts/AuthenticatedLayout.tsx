@@ -40,6 +40,7 @@ export default function Authenticated({
     const hasModule = (module: string) => enabledModules.includes(module);
     const settingsVisible = false;
     const administrationVisible = canManageUsers;
+    const can = (permission: string) => Boolean(user?.is_super_admin) || permissions.includes(permission);
 
     const managementActive =
         (hasModule('inventory') && (route().current('products.*') || route().current('stock.*') || route().current('price-lists.*'))) ||
@@ -62,9 +63,16 @@ export default function Authenticated({
     ].filter(Boolean) as NavItem[];
 
     const reportItems: NavItem[] = [
-        hasModule('reports') ? { label: 'Ventas', href: route('reports.sales'), active: route().current('reports.sales') } : null,
-        hasModule('reports') ? { label: 'Stock bajo', href: route('reports.low-stock'), active: route().current('reports.low-stock') } : null,
-        hasModule('reports') ? { label: 'Top productos', href: route('reports.top-products'), active: route().current('reports.top-products') } : null,
+        hasModule('reports') && can('reports.inventory.view') ? { label: 'Inventario', href: route('reports.inventory'), active: route().current('reports.inventory') } : null,
+        hasModule('reports') && can('reports.daily.view') ? { label: 'Diario', href: route('reports.daily'), active: route().current('reports.daily') } : null,
+        hasModule('reports') && can('reports.profit.view') ? { label: 'Utilidades', href: route('reports.profit'), active: route().current('reports.profit') } : null,
+        hasModule('reports') && can('reports.warehouse_money.view') ? { label: 'Dinero en bodega', href: route('reports.warehouse-money'), active: route().current('reports.warehouse-money') } : null,
+        hasModule('reports') && can('reports.sales_by_seller.view') ? { label: 'Ventas por vendedor', href: route('reports.sales-by-seller'), active: route().current('reports.sales-by-seller') } : null,
+        hasModule('reports') && can('reports.sales_by_date.view') ? { label: 'Ventas por fecha', href: route('reports.sales-by-date'), active: route().current('reports.sales-by-date') } : null,
+        hasModule('reports') && can('reports.sales_by_customer.view') ? { label: 'Ventas por cliente', href: route('reports.sales-by-customer'), active: route().current('reports.sales-by-customer') } : null,
+        hasModule('reports') && can('reports.sales_detailed.view') ? { label: 'Ventas detalladas', href: route('reports.sales-detailed'), active: route().current('reports.sales-detailed') } : null,
+        hasModule('reports') && can('reports.products_sold_detailed.view') ? { label: 'Productos vendidos detallado', href: route('reports.products-sold-detailed'), active: route().current('reports.products-sold-detailed') } : null,
+        hasModule('reports') && can('reports.products_sold_summary.view') ? { label: 'Productos vendidos resumido', href: route('reports.products-sold-summary'), active: route().current('reports.products-sold-summary') } : null,
     ].filter(Boolean) as NavItem[];
 
     const settingsItems: NavItem[] = [];

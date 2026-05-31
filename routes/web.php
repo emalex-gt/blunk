@@ -244,12 +244,22 @@ Route::middleware('auth')->group(function () {
         });
 
         Route::middleware('module:reports')->group(function () {
-            Route::get('/reports/sales', [ReportController::class, 'sales'])->middleware('permission:reports.sales.view')->name('reports.sales');
+            Route::get('/reports/inventory', [ReportController::class, 'inventory'])->middleware('permission:reports.inventory.view')->name('reports.inventory');
+            Route::get('/reports/daily', [ReportController::class, 'daily'])->middleware('permission:reports.daily.view')->name('reports.daily');
+            Route::get('/reports/profit', [ReportController::class, 'profit'])->middleware('permission:reports.profit.view')->name('reports.profit');
+            Route::get('/reports/warehouse-money', [ReportController::class, 'warehouseMoney'])->middleware('permission:reports.warehouse_money.view')->name('reports.warehouse-money');
+            Route::get('/reports/sales-by-seller', [ReportController::class, 'salesBySeller'])->middleware('permission:reports.sales_by_seller.view')->name('reports.sales-by-seller');
+            Route::get('/reports/sales-by-date', [ReportController::class, 'salesByDate'])->middleware('permission:reports.sales_by_date.view')->name('reports.sales-by-date');
+            Route::get('/reports/sales-by-customer', [ReportController::class, 'salesByCustomer'])->middleware('permission:reports.sales_by_customer.view')->name('reports.sales-by-customer');
+            Route::get('/reports/sales-detailed', [ReportController::class, 'salesDetailed'])->middleware('permission:reports.sales_detailed.view')->name('reports.sales-detailed');
+            Route::get('/reports/products-sold-detailed', [ReportController::class, 'productsSoldDetailed'])->middleware('permission:reports.products_sold_detailed.view')->name('reports.products-sold-detailed');
+            Route::get('/reports/products-sold-summary', [ReportController::class, 'productsSoldSummary'])->middleware('permission:reports.products_sold_summary.view')->name('reports.products-sold-summary');
+            Route::redirect('/reports/sales', '/reports/sales-detailed')->middleware('permission:reports.sales.view')->name('reports.sales');
             Route::get('/reports/sales/export/excel', [ReportController::class, 'salesExportExcel'])->middleware('permission:reports.sales.view')->name('reports.sales.export.excel');
             Route::get('/reports/sales/export/pdf', [ReportController::class, 'salesExportPdf'])->middleware('permission:reports.sales.view')->name('reports.sales.export.pdf');
-            Route::get('/reports/low-stock', [ReportController::class, 'lowStock'])->middleware('permission:reports.stock.view')->name('reports.low-stock');
+            Route::redirect('/reports/low-stock', '/reports/inventory')->middleware('permission:reports.stock.view')->name('reports.low-stock');
             Route::get('/reports/low-stock/export/excel', [ReportController::class, 'lowStockExportExcel'])->middleware('permission:reports.stock.view')->name('reports.low-stock.export.excel');
-            Route::get('/reports/top-products', [ReportController::class, 'topProducts'])->middleware('permission:reports.top_products.view')->name('reports.top-products');
+            Route::redirect('/reports/top-products', '/reports/products-sold-summary')->middleware('permission:reports.top_products.view')->name('reports.top-products');
             Route::get('/reports/top-products/export/excel', [ReportController::class, 'topProductsExportExcel'])->middleware('permission:reports.top_products.view')->name('reports.top-products.export.excel');
         });
 

@@ -412,6 +412,8 @@ class SaleController extends Controller
                 $product = $line['product'];
                 $lineDiscount = $lineDiscounts[$index] ?? 0.0;
                 $lineTotalAfterDiscount = round($line['line_total'] - $lineDiscount, 2);
+                $unitCost = round((float) $product->cost_price, 4);
+                $totalCost = round($unitCost * (int) $line['quantity'], 2);
 
                 $saleItem = $sale->items()->create([
                     'business_id' => $businessId,
@@ -423,7 +425,9 @@ class SaleController extends Controller
                     'original_price' => $line['original_price'],
                     'price_source' => $line['price_source'],
                     'manual_price' => $line['manual_price'],
-                    'unit_cost' => $product->cost_price,
+                    'unit_cost' => $unitCost,
+                    'total_cost' => $totalCost,
+                    'profit_amount' => round($lineTotalAfterDiscount - $totalCost, 2),
                     'total' => $lineTotalAfterDiscount,
                     'discount_amount' => $lineDiscount,
                     'total_before_discount' => $line['line_total'],
