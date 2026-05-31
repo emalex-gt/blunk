@@ -231,6 +231,7 @@ Route::middleware('auth')->group(function () {
             Route::post('/branches/active', [BranchController::class, 'activate'])->name('branches.active');
 
             Route::get('/inventory/transfers', [InventoryTransferController::class, 'index'])->middleware('permission:inventory.transfers.view')->name('inventory.transfers.index');
+            Route::get('/inventory/transfers/export/{format}', [InventoryTransferController::class, 'export'])->middleware('permission:inventory.transfers.export')->name('inventory.transfers.export');
             Route::get('/inventory/transfers/create', [InventoryTransferController::class, 'create'])->middleware('permission:inventory.transfers.create')->name('inventory.transfers.create');
             Route::post('/inventory/transfers', [InventoryTransferController::class, 'store'])->middleware('permission:inventory.transfers.create')->name('inventory.transfers.store');
             Route::get('/inventory/transfers/{transfer}', [InventoryTransferController::class, 'show'])->middleware('permission:inventory.transfers.view')->name('inventory.transfers.show');
@@ -248,6 +249,7 @@ Route::middleware('auth')->group(function () {
 
         Route::middleware('module:purchases')->group(function () {
             Route::get('/purchases', [PurchaseController::class, 'index'])->middleware('permission:purchases.view')->name('purchases.index');
+            Route::get('/purchases/export/{format}', [PurchaseController::class, 'export'])->middleware('permission:purchases.export')->name('purchases.export');
             Route::get('/purchases/create', [PurchaseController::class, 'create'])->middleware('permission:purchases.create')->name('purchases.create');
             Route::post('/purchases', [PurchaseController::class, 'store'])->middleware('permission:purchases.create')->name('purchases.store');
             Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->middleware('permission:purchases.view')->name('purchases.show');
@@ -264,13 +266,16 @@ Route::middleware('auth')->group(function () {
             Route::get('/reports/sales-detailed', [ReportController::class, 'salesDetailed'])->middleware('permission:reports.sales_detailed.view')->name('reports.sales-detailed');
             Route::get('/reports/products-sold-detailed', [ReportController::class, 'productsSoldDetailed'])->middleware('permission:reports.products_sold_detailed.view')->name('reports.products-sold-detailed');
             Route::get('/reports/products-sold-summary', [ReportController::class, 'productsSoldSummary'])->middleware('permission:reports.products_sold_summary.view')->name('reports.products-sold-summary');
+            Route::get('/reports/{report}/export/{format}', [ReportController::class, 'export'])->middleware('permission:reports.export')->name('reports.export');
             Route::get('/reports/sales', [ReportController::class, 'sales'])->middleware('permission:reports.sales.view')->name('reports.sales');
-            Route::get('/reports/sales/export/excel', [ReportController::class, 'salesExportExcel'])->middleware('permission:reports.sales.view')->name('reports.sales.export.excel');
-            Route::get('/reports/sales/export/pdf', [ReportController::class, 'salesExportPdf'])->middleware('permission:reports.sales.view')->name('reports.sales.export.pdf');
+            Route::get('/reports/sales/export/excel', [ReportController::class, 'salesExportExcel'])->middleware(['permission:reports.sales.view', 'permission:reports.export'])->name('reports.sales.export.excel');
+            Route::get('/reports/sales/export/pdf', [ReportController::class, 'salesExportPdf'])->middleware(['permission:reports.sales.view', 'permission:reports.export'])->name('reports.sales.export.pdf');
             Route::get('/reports/low-stock', [ReportController::class, 'lowStock'])->middleware('permission:reports.low_stock.view')->name('reports.low-stock');
-            Route::get('/reports/low-stock/export/excel', [ReportController::class, 'lowStockExportExcel'])->middleware('permission:reports.low_stock.view')->name('reports.low-stock.export.excel');
+            Route::get('/reports/low-stock/export/excel', [ReportController::class, 'lowStockExportExcel'])->middleware(['permission:reports.low_stock.view', 'permission:reports.export'])->name('reports.low-stock.export.excel');
+            Route::get('/reports/low-stock/export/pdf', [ReportController::class, 'lowStockExportPdf'])->middleware(['permission:reports.low_stock.view', 'permission:reports.export'])->name('reports.low-stock.export.pdf');
             Route::get('/reports/top-products', [ReportController::class, 'topProducts'])->middleware('permission:reports.top_products.view')->name('reports.top-products');
-            Route::get('/reports/top-products/export/excel', [ReportController::class, 'topProductsExportExcel'])->middleware('permission:reports.top_products.view')->name('reports.top-products.export.excel');
+            Route::get('/reports/top-products/export/excel', [ReportController::class, 'topProductsExportExcel'])->middleware(['permission:reports.top_products.view', 'permission:reports.export'])->name('reports.top-products.export.excel');
+            Route::get('/reports/top-products/export/pdf', [ReportController::class, 'topProductsExportPdf'])->middleware(['permission:reports.top_products.view', 'permission:reports.export'])->name('reports.top-products.export.pdf');
         });
 
         Route::middleware('tenant.users')->group(function () {

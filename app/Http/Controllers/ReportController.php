@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exports\ArrayTableExport;
 use App\Models\Business;
 use App\Models\CashExpense;
 use App\Models\CashRegisterSession;
@@ -13,6 +14,8 @@ use App\Models\Sale;
 use App\Models\User;
 use App\Support\CashRegister;
 use App\Support\BranchInventory;
+use App\Support\Exports\TableExporter;
+use App\Support\Permissions;
 use App\Support\PriceLists;
 use App\Support\Reports\BranchReportScope;
 use App\Support\Reports\ReportDateRange;
@@ -21,11 +24,33 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Maatwebsite\Excel\Facades\Excel;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Inertia\Inertia;
 use Inertia\Response;
+use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class ReportController extends Controller
 {
+    private const EXPORT_LIMIT = 5000;
+
+    private const REPORT_EXPORTS = [
+        'sales' => ['method' => 'sales', 'permission' => Permissions::REPORTS_SALES_VIEW, 'title' => 'Ventas'],
+        'inventory' => ['method' => 'inventory', 'permission' => Permissions::REPORTS_INVENTORY_VIEW, 'title' => 'Inventario'],
+        'daily' => ['method' => 'daily', 'permission' => Permissions::REPORTS_DAILY_VIEW, 'title' => 'Diario'],
+        'profit' => ['method' => 'profit', 'permission' => Permissions::REPORTS_PROFIT_VIEW, 'title' => 'Utilidades'],
+        'warehouse-money' => ['method' => 'warehouseMoney', 'permission' => Permissions::REPORTS_WAREHOUSE_MONEY_VIEW, 'title' => 'Dinero en bodega'],
+        'sales-by-seller' => ['method' => 'salesBySeller', 'permission' => Permissions::REPORTS_SALES_BY_SELLER_VIEW, 'title' => 'Ventas por vendedor'],
+        'sales-by-date' => ['method' => 'salesByDate', 'permission' => Permissions::REPORTS_SALES_BY_DATE_VIEW, 'title' => 'Ventas por fecha'],
+        'sales-by-customer' => ['method' => 'salesByCustomer', 'permission' => Permissions::REPORTS_SALES_BY_CUSTOMER_VIEW, 'title' => 'Ventas por cliente'],
+        'sales-detailed' => ['method' => 'salesDetailed', 'permission' => Permissions::REPORTS_SALES_DETAILED_VIEW, 'title' => 'Ventas detalladas'],
+        'products-sold-detailed' => ['method' => 'productsSoldDetailed', 'permission' => Permissions::REPORTS_PRODUCTS_SOLD_DETAILED_VIEW, 'title' => 'Productos vendidos detallado'],
+        'products-sold-summary' => ['method' => 'productsSoldSummary', 'permission' => Permissions::REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW, 'title' => 'Productos vendidos resumido'],
+        'low-stock' => ['method' => 'lowStock', 'permission' => Permissions::REPORTS_LOW_STOCK_VIEW, 'title' => 'Stock bajo'],
+        'top-products' => ['method' => 'topProducts', 'permission' => Permissions::REPORTS_TOP_PRODUCTS_VIEW, 'title' => 'Productos más vendidos'],
+    ];
+
     public function dashboard(Request $request): Response|RedirectResponse
     {
         if ($request->user()->is_super_admin && ! currentBusinessId()) {
@@ -172,7 +197,7 @@ class ReportController extends Controller
 
         $rows = $query
             ->latest('sales.created_at')
-            ->paginate(25)
+            ->paginate($this->reportPerPage($request))
             ->withQueryString()
             ->through(fn (Sale $sale) => [
                 'created_at' => $sale->created_at?->timezone(tenantTimezone($business))->format('Y-m-d H:i'),
@@ -273,7 +298,7 @@ class ReportController extends Controller
             ->when($onlyBelowMinimum, fn ($query) => $query->whereRaw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_lines.reserved, 0)) <= products.min_stock'))
             ->orderByRaw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_lines.reserved, 0)) ASC')
             ->orderBy('products.name')
-            ->paginate(25, [
+            ->paginate($this->reportPerPage($request), [
                 'products.id',
                 'products.name as product',
                 DB::raw('COALESCE(products.code, products.barcode) as code'),
@@ -380,7 +405,7 @@ class ReportController extends Controller
             ])
             ->groupBy('sale_items.product_id', 'sale_items.product_name', 'products.code', 'products.barcode', 'categories.name')
             ->orderByDesc(DB::raw('SUM(sale_items.quantity)'))
-            ->paginate(25)
+            ->paginate($this->reportPerPage($request))
             ->withQueryString()
             ->through(fn ($row) => [
                 'product' => $row->product,
@@ -431,7 +456,7 @@ class ReportController extends Controller
                 });
             })
             ->orderBy('name')
-            ->paginate(25)
+            ->paginate($this->reportPerPage($request))
             ->withQueryString();
 
         $productIds = $products->getCollection()->pluck('id')->all();
@@ -514,7 +539,7 @@ class ReportController extends Controller
         }
 
         $sales = $salesQuery->latest('sales.created_at')
-            ->paginate(25)
+            ->paginate($this->reportPerPage($request))
             ->withQueryString()
             ->through(fn (Sale $sale) => [
                 'number' => format_sale_number($sale),
@@ -585,7 +610,7 @@ class ReportController extends Controller
         $profitTotal = (float) (clone $summaryBase)->sum('sale_items.profit_amount');
 
         $rows = $query->latest()
-            ->paginate(25)
+            ->paginate($this->reportPerPage($request))
             ->withQueryString()
             ->through(fn (Sale $sale) => [
                 'number' => format_sale_number($sale),
@@ -628,7 +653,7 @@ class ReportController extends Controller
             ->when($categoryId, fn ($query) => $query->where('category_id', $categoryId))
             ->when($search !== '', fn ($query) => $query->where(fn ($query) => $query->where('name', 'ilike', "%{$search}%")->orWhere('code', 'ilike', "%{$search}%")->orWhere('barcode', 'ilike', "%{$search}%")))
             ->orderBy('name')
-            ->paginate(25)
+            ->paginate($this->reportPerPage($request))
             ->withQueryString();
 
         $defaultPriceType = PriceLists::getDefaultPriceType($businessId);
@@ -752,7 +777,7 @@ class ReportController extends Controller
             ->select($select)
             ->groupBy('users.id', 'users.name')
             ->orderByDesc(DB::raw('SUM(sales.total)'))
-            ->paginate(25)
+            ->paginate($this->reportPerPage($request))
             ->withQueryString();
 
         return $this->report('Ventas por vendedor', 'reports.sales-by-seller', [
@@ -787,7 +812,7 @@ class ReportController extends Controller
             ])
             ->groupByRaw('DATE(created_at)')
             ->orderByRaw('DATE(created_at) DESC')
-            ->paginate(25)
+            ->paginate($this->reportPerPage($request))
             ->withQueryString();
 
         return $this->report('Ventas por fecha', 'reports.sales-by-date', [
@@ -826,7 +851,7 @@ class ReportController extends Controller
 
             $rows = (clone $filteredBase)
                 ->latest()
-                ->paginate(25)
+                ->paginate($this->reportPerPage($request))
                 ->withQueryString()
                 ->through(fn (Sale $sale) => ['number' => format_sale_number($sale), 'date' => $sale->created_at?->format('Y-m-d'), 'customer' => $sale->customer_name, 'total' => (float) $sale->total]);
             $columns = [['key' => 'number', 'label' => 'No. venta'], ['key' => 'date', 'label' => 'Fecha'], ['key' => 'customer', 'label' => 'Cliente'], ['key' => 'total', 'label' => 'Total', 'type' => 'money']];
@@ -847,7 +872,7 @@ class ReportController extends Controller
                 ])
                 ->groupBy('customer_id', 'customer_name', 'customer_doc_number')
                 ->orderByDesc(DB::raw('SUM(total)'))
-                ->paginate(25)
+                ->paginate($this->reportPerPage($request))
                 ->withQueryString();
             $columns = [['key' => 'customer', 'label' => 'Cliente'], ['key' => 'nit', 'label' => 'NIT'], ['key' => 'sales_count', 'label' => 'Cantidad de ventas', 'type' => 'number'], ['key' => 'total', 'label' => 'Total vendido', 'type' => 'money']];
             $totalCustomers = (int) (clone $base)->distinct('customer_id')->count('customer_id');
@@ -918,7 +943,7 @@ class ReportController extends Controller
             ])
             ->groupBy('sale_items.product_id', 'sale_items.product_name')
             ->orderByDesc(DB::raw('SUM(sale_items.quantity)'))
-            ->paginate(25)
+            ->paginate($this->reportPerPage($request))
             ->withQueryString();
 
         return $this->report('Productos vendidos resumido', 'reports.products-sold-summary', [
@@ -951,7 +976,7 @@ class ReportController extends Controller
             ->whereBetween('sales.created_at', [$range->start, $range->end])
             ->where(fn ($query) => $query->where('sales.status', 'completed')->orWhereNull('sales.status'))
             ->orderByDesc('sales.created_at')
-            ->paginate(25, [
+            ->paginate($this->reportPerPage($request), [
                 DB::raw("to_char(sales.created_at, 'YYYY-MM-DD HH24:MI') as date"),
                 'users.name as seller',
                 'sales.customer_name as customer',
@@ -1037,28 +1062,168 @@ class ReportController extends Controller
             ->value('id');
     }
 
-    public function salesExportExcel(): never
+    public function export(Request $request, string $report, string $format): SymfonyResponse
     {
-        // TODO: Implementar exportación a Excel.
-        abort(501, 'Exportaciones no disponibles en esta versión.');
+        abort_unless(isset(self::REPORT_EXPORTS[$report]), 404);
+        abort_unless(in_array($format, ['excel', 'pdf'], true), 404);
+        abort_unless(Permissions::userHas($request->user(), Permissions::REPORTS_EXPORT), 403);
+
+        $config = self::REPORT_EXPORTS[$report];
+        abort_unless(Permissions::userHas($request->user(), $config['permission']), 403);
+
+        return $this->downloadTableExport(
+            $this->reportExportPayload($request, $config['method']),
+            $format,
+            $report,
+        );
     }
 
-    public function salesExportPdf(): never
+    public function salesExportExcel(Request $request): SymfonyResponse
     {
-        // TODO: Implementar exportación a PDF.
-        abort(501, 'Exportaciones no disponibles en esta versión.');
+        return $this->export($request, 'sales', 'excel');
     }
 
-    public function lowStockExportExcel(): never
+    public function salesExportPdf(Request $request): SymfonyResponse
     {
-        // TODO: Implementar exportación a Excel.
-        abort(501, 'Exportaciones no disponibles en esta versión.');
+        return $this->export($request, 'sales', 'pdf');
     }
 
-    public function topProductsExportExcel(): never
+    public function lowStockExportExcel(Request $request): SymfonyResponse
     {
-        // TODO: Implementar exportación a Excel.
-        abort(501, 'Exportaciones no disponibles en esta versión.');
+        return $this->export($request, 'low-stock', 'excel');
+    }
+
+    public function lowStockExportPdf(Request $request): SymfonyResponse
+    {
+        return $this->export($request, 'low-stock', 'pdf');
+    }
+
+    public function topProductsExportExcel(Request $request): SymfonyResponse
+    {
+        return $this->export($request, 'top-products', 'excel');
+    }
+
+    public function topProductsExportPdf(Request $request): SymfonyResponse
+    {
+        return $this->export($request, 'top-products', 'pdf');
+    }
+
+    private function reportPerPage(Request $request): int
+    {
+        return $request->boolean('__export') ? self::EXPORT_LIMIT : 25;
+    }
+
+    private function reportExportPayload(Request $request, string $method): array
+    {
+        $exportRequest = clone $request;
+        $exportRequest->query->set('__export', '1');
+        $exportRequest->headers->set('X-Inertia', 'true');
+
+        /** @var Response $inertiaResponse */
+        $inertiaResponse = $this->{$method}($exportRequest);
+        $jsonResponse = $inertiaResponse->toResponse($exportRequest);
+        $page = json_decode($jsonResponse->getContent(), true);
+        $props = $page['props'] ?? [];
+        $rows = $props['rows'] ?? [];
+        $totalRows = (int) ($rows['total'] ?? count($rows['data'] ?? []));
+
+        if ($totalRows > self::EXPORT_LIMIT) {
+            throw ValidationException::withMessages([
+                'export' => 'La exportación es demasiado grande. Reduce los filtros e inténtalo nuevamente.',
+            ]);
+        }
+
+        return $this->normalizeTableExportPayload($props, $rows['data'] ?? []);
+    }
+
+    private function normalizeTableExportPayload(array $props, array $data): array
+    {
+        $columns = collect($props['columns'] ?? [])
+            ->reject(fn (array $column) => ($column['type'] ?? null) === 'link')
+            ->values();
+
+        $rows = collect($data)
+            ->map(fn (array $row) => $columns
+                ->map(fn (array $column) => TableExporter::value($row[$column['key']] ?? null))
+                ->all())
+            ->all();
+
+        $branchName = $props['branch']['name'] ?? BranchReportScope::current(currentBusinessId())->branch->name;
+
+        return [
+            'title' => $props['title'] ?? 'Reporte',
+            'businessName' => Business::query()->whereKey(currentBusinessId())->value('name') ?? 'Empresa',
+            'branchName' => $branchName,
+            'generatedAt' => now(tenantTimezone())->format('Y-m-d H:i'),
+            'filters' => TableExporter::filters($props['filters'] ?? []),
+            'columns' => $columns->pluck('label')->all(),
+            'rows' => $rows,
+            'summary' => collect($props['summary'] ?? [])
+                ->reject(fn (array $item) => (bool) ($item['hidden'] ?? false))
+                ->map(fn (array $item) => [
+                    'label' => $item['label'] ?? '',
+                    'value' => TableExporter::value($item['value'] ?? null),
+                ])
+                ->values()
+                ->all(),
+        ];
+    }
+
+    private function downloadTableExport(array $payload, string $format, string $filename): SymfonyResponse
+    {
+        $filename = str($filename)->slug()->toString() ?: 'reporte';
+
+        if ($format === 'excel') {
+            $sheet = [
+                [$payload['title']],
+                ['Empresa', $payload['businessName']],
+                ['Sucursal', $payload['branchName']],
+                ['Generado', $payload['generatedAt']],
+                ['Filtros', $payload['filters']],
+                [],
+                $payload['columns'],
+                ...$payload['rows'],
+            ];
+
+            if (! empty($payload['summary'])) {
+                $sheet[] = [];
+                $sheet[] = ['Resumen'];
+                foreach ($payload['summary'] as $item) {
+                    $sheet[] = [$item['label'], $item['value']];
+                }
+            }
+
+            return Excel::download(new ArrayTableExport($sheet, $payload['title']), "{$filename}.xlsx");
+        }
+
+        return Pdf::loadView('exports.table', $payload)
+            ->setPaper('a4', 'landscape')
+            ->download("{$filename}.pdf");
+    }
+
+    private function exportValue(mixed $value): string|int|float
+    {
+        if (is_bool($value)) {
+            return $value ? 'Sí' : 'No';
+        }
+
+        if ($value === null) {
+            return '';
+        }
+
+        if (is_array($value)) {
+            return json_encode($value, JSON_UNESCAPED_UNICODE);
+        }
+
+        return is_numeric($value) ? (float) $value : (string) $value;
+    }
+
+    private function formatFilters(array $filters): string
+    {
+        return collect($filters)
+            ->reject(fn ($value) => $value === null || $value === '' || $value === 'all')
+            ->map(fn ($value, $key) => "{$key}: {$value}")
+            ->implode(' | ');
     }
 
     private function dateRange(string $startDate, string $endDate, string $timezone): array

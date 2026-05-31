@@ -114,6 +114,20 @@ export default function GenericReport({
                                     {maxRangeLabel}
                                 </p>
                             </div>
+                            <div className="flex flex-wrap gap-2">
+                                <a
+                                    href={exportUrl(routeName, 'excel', form)}
+                                    className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                                >
+                                    Exportar Excel
+                                </a>
+                                <a
+                                    href={exportUrl(routeName, 'pdf', form)}
+                                    className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                                >
+                                    Exportar PDF
+                                </a>
+                            </div>
                         </div>
 
                         <form onSubmit={submit} className="grid gap-3 md:grid-cols-4">
@@ -306,6 +320,14 @@ function stringifyFilters(filters: Record<string, string | number | null>): Reco
 
 function cleanForm(form: Record<string, string>): Record<string, string> {
     return Object.fromEntries(Object.entries(form).filter(([, value]) => value !== ''));
+}
+
+function exportUrl(routeName: string, format: 'excel' | 'pdf', form: Record<string, string>) {
+    return route('reports.export', {
+        report: routeName.replace(/^reports\./, ''),
+        format,
+        ...cleanForm(form),
+    });
 }
 
 function renderCell(value: unknown, column: Column, country: string): ReactNode {

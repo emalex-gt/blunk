@@ -3,11 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Models\Branch;
+use App\Models\Business;
 use App\Models\InventoryTransfer;
 use App\Models\Product;
 use App\Models\StockMovement;
 use App\Support\BranchInventory;
+use App\Support\Exports\TableExporter;
 use App\Support\Permissions;
+use App\Support\Reports\ReportDateRange;
 use App\Support\StockAvailability;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -15,6 +18,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
+use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class InventoryTransferController extends Controller
 {
@@ -22,22 +26,67 @@ class InventoryTransferController extends Controller
     {
         $this->authorizePermission($request, Permissions::INVENTORY_TRANSFERS_VIEW);
         $businessId = currentBusinessId();
+        $business = Business::query()->select('id', 'country')->find($businessId);
+        $range = ReportDateRange::monthToDate($request, $business);
 
         return Inertia::render('Inventory/Transfers/Index', [
-            'transfers' => InventoryTransfer::query()
-                ->where('business_id', $businessId)
-                ->when(! BranchInventory::canSwitchBranches($request->user()), function ($query) use ($businessId) {
-                    $branchId = BranchInventory::activeBranch($businessId)->id;
-                    $query->where(function ($query) use ($branchId) {
-                        $query->where('from_branch_id', $branchId)
-                            ->orWhere('to_branch_id', $branchId);
-                    });
-                })
+            'transfers' => $this->transferListQuery($request, $range)
                 ->with(['fromBranch:id,name', 'toBranch:id,name', 'createdBy:id,name'])
+                ->withCount('lines')
+                ->withSum('lines', 'quantity')
                 ->latest()
                 ->paginate(25)
                 ->withQueryString(),
+            'filters' => $this->transferFilters($request, $range),
+            'branches' => BranchInventory::canSwitchBranches($request->user()) ? BranchInventory::branchOptions($businessId) : [],
         ]);
+    }
+
+    public function export(Request $request, string $format): SymfonyResponse
+    {
+        $this->authorizePermission($request, Permissions::INVENTORY_TRANSFERS_EXPORT);
+        abort_unless(in_array($format, ['excel', 'pdf'], true), 404);
+
+        $businessId = currentBusinessId();
+        $business = Business::query()->select('id', 'name', 'country')->find($businessId);
+        $range = ReportDateRange::monthToDate($request, $business);
+        $query = $this->transferListQuery($request, $range)
+            ->with(['fromBranch:id,name', 'toBranch:id,name', 'createdBy:id,name', 'lines.product:id,name,code,barcode'])
+            ->latest();
+        $count = (clone $query)->count();
+
+        if ($count > 5000) {
+            throw ValidationException::withMessages([
+                'export' => 'La exportación es demasiado grande. Reduce los filtros e inténtalo nuevamente.',
+            ]);
+        }
+
+        $transfers = $query->limit(5000)->get();
+        $rows = $transfers->flatMap(fn (InventoryTransfer $transfer) => $transfer->lines->map(fn ($line) => [
+            $transfer->created_at?->timezone(tenantTimezone($business))->format('Y-m-d H:i'),
+            (string) $transfer->id,
+            $transfer->fromBranch?->name ?? '-',
+            $transfer->toBranch?->name ?? '-',
+            $transfer->status ?? 'completed',
+            $line->product?->name ?? '-',
+            $line->product?->code ?? $line->product?->barcode ?? '-',
+            (int) $line->quantity,
+            $transfer->createdBy?->name ?? '-',
+        ]))->values()->all();
+
+        return TableExporter::download([
+            'title' => 'Reporte de traslados',
+            'businessName' => $business?->name ?? 'Empresa',
+            'branchName' => BranchInventory::activeBranch($businessId)->name,
+            'generatedAt' => now(tenantTimezone($business))->format('Y-m-d H:i'),
+            'filters' => TableExporter::filters($this->transferFilters($request, $range)),
+            'columns' => ['Fecha', 'No. traslado', 'Sucursal origen', 'Sucursal destino', 'Estado', 'Producto', 'Código/SKU', 'Cantidad', 'Usuario'],
+            'rows' => $rows,
+            'summary' => [
+                ['label' => 'Total traslados', 'value' => $count],
+                ['label' => 'Total unidades', 'value' => $transfers->sum(fn (InventoryTransfer $transfer) => $transfer->lines->sum('quantity'))],
+            ],
+        ], $format, 'traslados');
     }
 
     public function create(Request $request): Response
@@ -182,6 +231,69 @@ class InventoryTransferController extends Controller
         return Inertia::render('Inventory/Transfers/Show', [
             'transfer' => $transfer->load(['fromBranch:id,name', 'toBranch:id,name', 'createdBy:id,name', 'lines.product:id,name,code']),
         ]);
+    }
+
+    private function transferListQuery(Request $request, ReportDateRange $range)
+    {
+        $businessId = currentBusinessId();
+        $activeBranchId = BranchInventory::activeBranch($businessId)->id;
+        $canSwitch = BranchInventory::canSwitchBranches($request->user());
+        $originBranchId = $request->integer('origin_branch_id') ?: null;
+        $destinationBranchId = $request->integer('destination_branch_id') ?: null;
+        $transferNumber = trim((string) $request->query('transfer_number', ''));
+        $productSearch = trim((string) $request->query('product_search', ''));
+        $status = (string) $request->query('status', 'all');
+
+        return InventoryTransfer::query()
+            ->where('business_id', $businessId)
+            ->whereBetween('created_at', [$range->start, $range->end])
+            ->when($canSwitch, function ($query) use ($activeBranchId, $originBranchId, $destinationBranchId) {
+                if ($originBranchId) {
+                    $query->where('from_branch_id', $originBranchId);
+                }
+
+                if ($destinationBranchId) {
+                    $query->where('to_branch_id', $destinationBranchId);
+                }
+
+                if (! $originBranchId && ! $destinationBranchId) {
+                    $query->where(function ($query) use ($activeBranchId) {
+                        $query->where('from_branch_id', $activeBranchId)
+                            ->orWhere('to_branch_id', $activeBranchId);
+                    });
+                }
+            })
+            ->when(! $canSwitch, function ($query) use ($activeBranchId) {
+                $query->where(function ($query) use ($activeBranchId) {
+                    $query->where('from_branch_id', $activeBranchId)
+                        ->orWhere('to_branch_id', $activeBranchId);
+                });
+            })
+            ->when($transferNumber !== '', function ($query) use ($transferNumber) {
+                $number = preg_replace('/\D+/', '', $transferNumber);
+                $query->when($number !== '', fn ($query) => $query->where('id', (int) $number));
+            })
+            ->when(in_array($status, ['pending', 'completed', 'cancelled'], true), fn ($query) => $query->where('status', $status))
+            ->when($productSearch !== '', function ($query) use ($productSearch) {
+                $query->whereHas('lines.product', function ($query) use ($productSearch) {
+                    $query->where('name', 'ilike', "%{$productSearch}%")
+                        ->orWhere('code', 'ilike', "%{$productSearch}%")
+                        ->orWhere('barcode', 'ilike', "%{$productSearch}%");
+                });
+            });
+    }
+
+    private function transferFilters(Request $request, ReportDateRange $range): array
+    {
+        return [
+            'date_from' => $range->dateFrom,
+            'date_to' => $range->dateTo,
+            'transfer_number' => trim((string) $request->query('transfer_number', '')),
+            'origin_branch_id' => $request->query('origin_branch_id'),
+            'destination_branch_id' => $request->query('destination_branch_id'),
+            'product_search' => trim((string) $request->query('product_search', '')),
+            'status' => (string) $request->query('status', 'all'),
+        ];
     }
 
     private function branchForBusiness(int $branchId, int $businessId): Branch

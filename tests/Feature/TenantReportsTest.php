@@ -398,25 +398,52 @@ class TenantReportsTest extends TestCase
                 ->where('rows.data.0.total', 250));
     }
 
-    public function test_operational_report_exports_are_disabled(): void
+    public function test_operational_report_exports_are_available_with_export_permission(): void
     {
         [$business, $user] = $this->tenant();
 
         $this->actingAs($user)
             ->get(route('reports.sales.export.excel'))
-            ->assertStatus(501);
+            ->assertOk();
 
         $this->actingAs($user)
             ->get(route('reports.sales.export.pdf'))
-            ->assertStatus(501);
+            ->assertOk();
 
         $this->actingAs($user)
             ->get(route('reports.low-stock.export.excel'))
-            ->assertStatus(501);
+            ->assertOk();
 
         $this->actingAs($user)
             ->get(route('reports.top-products.export.excel'))
-            ->assertStatus(501);
+            ->assertOk();
+    }
+
+    public function test_report_export_requires_export_and_view_permissions(): void
+    {
+        [$business, $cashier] = $this->tenant(role: 'cashier');
+
+        $this->actingAs($cashier)
+            ->get(route('reports.export', ['report' => 'sales', 'format' => 'excel']))
+            ->assertForbidden();
+    }
+
+    public function test_report_export_respects_three_month_limit(): void
+    {
+        [$business, $user] = $this->tenant();
+
+        $this->actingAs($user)
+            ->from(route('reports.sales'))
+            ->get(route('reports.export', [
+                'report' => 'sales',
+                'format' => 'excel',
+                'date_from' => '2026-01-01',
+                'date_to' => '2026-05-01',
+            ]))
+            ->assertRedirect(route('reports.sales'))
+            ->assertSessionHasErrors([
+                'date_from' => 'El rango máximo permitido es de 3 meses.',
+            ]);
     }
 
     public function test_report_permission_is_required(): void

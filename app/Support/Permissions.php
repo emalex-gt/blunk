@@ -22,6 +22,7 @@ class Permissions
     public const PURCHASES_VIEW = 'purchases.view';
     public const PURCHASES_CREATE = 'purchases.create';
     public const PURCHASES_CANCEL = 'purchases.cancel';
+    public const PURCHASES_EXPORT = 'purchases.export';
 
     public const PRODUCTS_VIEW = 'products.view';
     public const PRODUCTS_CREATE = 'products.create';
@@ -51,6 +52,7 @@ class Permissions
     public const REPORTS_SALES_DETAILED_VIEW = 'reports.sales_detailed.view';
     public const REPORTS_PRODUCTS_SOLD_DETAILED_VIEW = 'reports.products_sold_detailed.view';
     public const REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW = 'reports.products_sold_summary.view';
+    public const REPORTS_EXPORT = 'reports.export';
 
     public const CUSTOMERS_VIEW = 'customers.view';
     public const CUSTOMERS_CREATE = 'customers.create';
@@ -83,6 +85,7 @@ class Permissions
     public const BRANCHES_SWITCH = 'branches.switch';
     public const INVENTORY_TRANSFERS_VIEW = 'inventory.transfers.view';
     public const INVENTORY_TRANSFERS_CREATE = 'inventory.transfers.create';
+    public const INVENTORY_TRANSFERS_EXPORT = 'inventory.transfers.export';
 
     public const TENANT_SETTINGS_VIEW = 'tenant.settings.view';
     public const TENANT_SETTINGS_MANAGE = 'tenant.settings.manage';
@@ -106,6 +109,7 @@ class Permissions
             self::PURCHASES_VIEW => ['name' => 'Ver compras', 'group' => 'Compras'],
             self::PURCHASES_CREATE => ['name' => 'Crear compras', 'group' => 'Compras'],
             self::PURCHASES_CANCEL => ['name' => 'Anular compras', 'group' => 'Compras'],
+            self::PURCHASES_EXPORT => ['name' => 'Exportar compras', 'group' => 'Compras'],
             self::PRODUCTS_VIEW => ['name' => 'Ver productos', 'group' => 'Inventario'],
             self::PRODUCTS_CREATE => ['name' => 'Crear productos', 'group' => 'Inventario'],
             self::PRODUCTS_UPDATE => ['name' => 'Editar productos', 'group' => 'Inventario'],
@@ -131,6 +135,7 @@ class Permissions
             self::REPORTS_SALES_DETAILED_VIEW => ['name' => 'Ver ventas detalladas', 'group' => 'Reportes'],
             self::REPORTS_PRODUCTS_SOLD_DETAILED_VIEW => ['name' => 'Ver productos vendidos detallado', 'group' => 'Reportes'],
             self::REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW => ['name' => 'Ver productos vendidos resumido', 'group' => 'Reportes'],
+            self::REPORTS_EXPORT => ['name' => 'Exportar reportes', 'group' => 'Reportes'],
             self::CUSTOMERS_VIEW => ['name' => 'Ver clientes', 'group' => 'Clientes'],
             self::CUSTOMERS_CREATE => ['name' => 'Crear clientes', 'group' => 'Clientes'],
             self::CUSTOMERS_UPDATE => ['name' => 'Editar clientes', 'group' => 'Clientes'],
@@ -157,6 +162,7 @@ class Permissions
             self::BRANCHES_SWITCH => ['name' => 'Cambiar sucursal activa', 'group' => 'Sucursales'],
             self::INVENTORY_TRANSFERS_VIEW => ['name' => 'Ver traslados', 'group' => 'Sucursales'],
             self::INVENTORY_TRANSFERS_CREATE => ['name' => 'Crear traslados', 'group' => 'Sucursales'],
+            self::INVENTORY_TRANSFERS_EXPORT => ['name' => 'Exportar traslados', 'group' => 'Sucursales'],
             self::TENANT_SETTINGS_VIEW => ['name' => 'Ver configuración tenant', 'group' => 'Configuración'],
             self::TENANT_SETTINGS_MANAGE => ['name' => 'Gestionar configuración tenant', 'group' => 'Configuración'],
             self::SUPER_ADMIN_ACCESS => ['name' => 'Acceso Super Admin', 'group' => 'Super Admin'],
@@ -199,11 +205,13 @@ class Permissions
                 self::INVENTORY_TRANSFER,
                 self::INVENTORY_TRANSFERS_VIEW,
                 self::INVENTORY_TRANSFERS_CREATE,
+                self::INVENTORY_TRANSFERS_EXPORT,
                 self::REPORTS_LOW_STOCK_VIEW,
             ],
             'purchases' => [
                 self::PURCHASES_VIEW,
                 self::PURCHASES_CREATE,
+                self::PURCHASES_EXPORT,
                 self::PRODUCTS_VIEW,
                 self::INVENTORY_VIEW,
             ],
@@ -222,6 +230,7 @@ class Permissions
                 self::REPORTS_SALES_DETAILED_VIEW,
                 self::REPORTS_PRODUCTS_SOLD_DETAILED_VIEW,
                 self::REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW,
+                self::REPORTS_EXPORT,
                 self::CREDITS_VIEW,
             ],
         ];
