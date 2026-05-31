@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Business;
+use App\Models\Branch;
 use App\Models\CreditCustomerTransfer;
 use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
@@ -91,7 +92,7 @@ class CreditReceiptController extends Controller
         $this->ensureCreditsAvailable($request, Permissions::CREDITS_CREATE);
 
         $data = $request->validate([
-            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
+            'branch_id' => ['nullable', 'integer'],
             'customer' => ['required', 'array'],
             'customer.id' => ['nullable', 'integer', 'exists:customers,id'],
             'customer.name' => ['required', 'string', 'max:255'],
@@ -110,10 +111,18 @@ class CreditReceiptController extends Controller
         $docNumber = strtoupper(trim((string) $data['customer']['doc_number']));
         $activeBranch = BranchInventory::activeBranch($businessId);
 
-        if (filled($data['branch_id'] ?? null) && (int) $data['branch_id'] !== (int) $activeBranch->id) {
-            throw ValidationException::withMessages([
-                'branch_id' => 'La sucursal de la venta no coincide con la sucursal activa.',
-            ]);
+        if (filled($data['branch_id'] ?? null)) {
+            $submittedBranchId = (int) $data['branch_id'];
+            $branchBelongsToBusiness = Branch::query()
+                ->where('business_id', $businessId)
+                ->whereKey($submittedBranchId)
+                ->exists();
+
+            if (! $branchBelongsToBusiness || $submittedBranchId !== (int) $activeBranch->id) {
+                throw ValidationException::withMessages([
+                    'branch_id' => 'La sucursal de la venta no coincide con la sucursal activa.',
+                ]);
+            }
         }
 
         if ($docType === 'CF' || $docNumber === 'CF') {

@@ -896,6 +896,31 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertDatabaseCount('sales', 0);
     }
 
+    public function test_backend_rejects_sale_when_submitted_branch_belongs_to_another_business(): void
+    {
+        [$business, $user] = $this->tenant(
+            modules: ['pos', 'cash_register', 'branches'],
+            role: 'owner',
+        );
+        [, $otherUser] = $this->tenant(
+            modules: ['pos', 'branches'],
+            role: 'owner',
+        );
+        $otherBranch = BranchInventory::defaultBranch((int) $otherUser->business_id);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $payload = $this->salePayload($product, quantity: 1, total: 100);
+        $payload['branch_id'] = $otherBranch->id;
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $payload)
+            ->assertSessionHasErrors([
+                'branch_id' => 'La sucursal de la venta no coincide con la sucursal activa.',
+            ]);
+
+        $this->assertDatabaseCount('sales', 0);
+    }
+
     public function test_backend_rejects_credit_receipt_when_submitted_branch_differs_from_active_branch(): void
     {
         [$business, $user] = $this->tenant(
@@ -916,6 +941,31 @@ class CriticalPosFelFlowTest extends TestCase
 
         $this->actingAs($user)
             ->withSession(['active_branch_id' => $branchA->id])
+            ->post(route('credits.receipts.store'), $payload)
+            ->assertSessionHasErrors([
+                'branch_id' => 'La sucursal de la venta no coincide con la sucursal activa.',
+            ]);
+
+        $this->assertDatabaseCount('credit_receipts', 0);
+    }
+
+    public function test_backend_rejects_credit_receipt_when_submitted_branch_belongs_to_another_business(): void
+    {
+        [$business, $user] = $this->tenant(
+            modules: ['pos', 'credits', 'branches'],
+            role: 'owner',
+            enableCredits: true,
+        );
+        [, $otherUser] = $this->tenant(
+            modules: ['pos', 'branches'],
+            role: 'owner',
+        );
+        $otherBranch = BranchInventory::defaultBranch((int) $otherUser->business_id);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $payload = $this->creditPayload($product, 1);
+        $payload['branch_id'] = $otherBranch->id;
+
+        $this->actingAs($user)
             ->post(route('credits.receipts.store'), $payload)
             ->assertSessionHasErrors([
                 'branch_id' => 'La sucursal de la venta no coincide con la sucursal activa.',

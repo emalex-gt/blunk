@@ -6,6 +6,7 @@ use App\Models\Product;
 use App\Models\PriceType;
 use App\Models\Sale;
 use App\Models\Business;
+use App\Models\Branch;
 use App\Models\CashRegisterSession;
 use App\Models\Category;
 use App\Models\CreditReceiptLine;
@@ -139,7 +140,7 @@ class SaleController extends Controller
 
         $data = $request->validate([
             'note' => ['nullable', 'string', 'max:2000'],
-            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
+            'branch_id' => ['nullable', 'integer'],
             'document_type' => ['nullable', 'in:invoice,receipt'],
             'payments' => ['required', 'array', 'min:1'],
             'payments.*.method' => ['required', 'in:'.implode(',', $paymentMethods)],
@@ -190,10 +191,18 @@ class SaleController extends Controller
         $availableDocumentTypes = $this->availableDocumentTypes($business, $tenantSettings, $felSettings, $felModuleEnabled);
         $activeBranch = BranchInventory::activeBranch($business->id);
 
-        if (filled($data['branch_id'] ?? null) && (int) $data['branch_id'] !== (int) $activeBranch->id) {
-            throw ValidationException::withMessages([
-                'branch_id' => 'La sucursal de la venta no coincide con la sucursal activa.',
-            ]);
+        if (filled($data['branch_id'] ?? null)) {
+            $submittedBranchId = (int) $data['branch_id'];
+            $branchBelongsToBusiness = Branch::query()
+                ->where('business_id', $business->id)
+                ->whereKey($submittedBranchId)
+                ->exists();
+
+            if (! $branchBelongsToBusiness || $submittedBranchId !== (int) $activeBranch->id) {
+                throw ValidationException::withMessages([
+                    'branch_id' => 'La sucursal de la venta no coincide con la sucursal activa.',
+                ]);
+            }
         }
 
         if ($availableDocumentTypes === []) {
