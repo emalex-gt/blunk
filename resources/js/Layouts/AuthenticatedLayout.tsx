@@ -2,6 +2,7 @@ import ApplicationLogo from '@/Components/ApplicationLogo';
 import Dropdown from '@/Components/Dropdown';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink';
 import { t } from '@/lib/i18n';
+import { setCsrfToken } from '@/bootstrap';
 import { Link, router, usePage } from '@inertiajs/react';
 import { PropsWithChildren, ReactNode, useEffect, useRef, useState } from 'react';
 
@@ -34,6 +35,8 @@ export default function Authenticated({
     const branches = (usePage().props.branches as BranchOption[] | undefined) ?? [];
     const [showingNavigationDropdown, setShowingNavigationDropdown] = useState(false);
     const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
+    const [sessionExpired, setSessionExpired] = useState(false);
+    const [sessionExpiredInPos, setSessionExpiredInPos] = useState(false);
     const navRef = useRef<HTMLDivElement>(null);
     const canManageUsers = Boolean(user?.is_super_admin) || ['owner', 'admin'].includes(user?.role ?? '');
     const canViewCredits = Boolean(user?.is_super_admin) || permissions.includes('credits.view');
@@ -63,10 +66,13 @@ export default function Authenticated({
     ].filter(Boolean) as NavItem[];
 
     const reportItems: NavItem[] = [
+        hasModule('reports') && can('reports.sales.view') ? { label: 'Ventas', href: route('reports.sales'), active: route().current('reports.sales') } : null,
         hasModule('reports') && can('reports.inventory.view') ? { label: 'Inventario', href: route('reports.inventory'), active: route().current('reports.inventory') } : null,
+        hasModule('reports') && can('reports.low_stock.view') ? { label: 'Stock bajo', href: route('reports.low-stock'), active: route().current('reports.low-stock') } : null,
         hasModule('reports') && can('reports.daily.view') ? { label: 'Diario', href: route('reports.daily'), active: route().current('reports.daily') } : null,
         hasModule('reports') && can('reports.profit.view') ? { label: 'Utilidades', href: route('reports.profit'), active: route().current('reports.profit') } : null,
         hasModule('reports') && can('reports.warehouse_money.view') ? { label: 'Dinero en bodega', href: route('reports.warehouse-money'), active: route().current('reports.warehouse-money') } : null,
+        hasModule('reports') && can('reports.top_products.view') ? { label: 'Productos más vendidos', href: route('reports.top-products'), active: route().current('reports.top-products') } : null,
         hasModule('reports') && can('reports.sales_by_seller.view') ? { label: 'Ventas por vendedor', href: route('reports.sales-by-seller'), active: route().current('reports.sales-by-seller') } : null,
         hasModule('reports') && can('reports.sales_by_date.view') ? { label: 'Ventas por fecha', href: route('reports.sales-by-date'), active: route().current('reports.sales-by-date') } : null,
         hasModule('reports') && can('reports.sales_by_customer.view') ? { label: 'Ventas por cliente', href: route('reports.sales-by-customer'), active: route().current('reports.sales-by-customer') } : null,
@@ -92,6 +98,70 @@ export default function Authenticated({
 
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
+
+    useEffect(() => {
+        if (!user) {
+            return;
+        }
+
+        const handleExpired = (event: Event) => {
+            const detail = (event as CustomEvent<{ isPos?: boolean }>).detail ?? {};
+            setSessionExpiredInPos(Boolean(detail.isPos || route().current('sales.create')));
+            setSessionExpired(true);
+        };
+
+        const removeInvalidListener = router.on('invalid', (event) => {
+            const response = event.detail.response;
+
+            if (response.status === 419) {
+                event.preventDefault();
+                window.dispatchSessionExpired?.({ isPos: route().current('sales.create') });
+            }
+        });
+
+        const keepAlive = async () => {
+            if (document.visibilityState !== 'visible') {
+                return;
+            }
+
+            try {
+                const response = await fetch(route('session.keep-alive'), {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    headers: {
+                        Accept: 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                });
+
+                if (response.status === 401 || response.status === 419) {
+                    window.dispatchSessionExpired?.({ isPos: route().current('sales.create') });
+                    return;
+                }
+
+                if (!response.ok) {
+                    return;
+                }
+
+                const payload = await response.json() as { csrf_token?: string };
+
+                if (payload.csrf_token) {
+                    setCsrfToken(payload.csrf_token);
+                }
+            } catch {
+                // Network errors are ignored until a real request proves the session expired.
+            }
+        };
+
+        window.addEventListener('blunk:session-expired', handleExpired);
+        const interval = window.setInterval(keepAlive, 10 * 60 * 1000);
+
+        return () => {
+            window.removeEventListener('blunk:session-expired', handleExpired);
+            window.clearInterval(interval);
+            removeInvalidListener();
+        };
+    }, [user]);
 
     return (
         <div className="min-h-screen bg-[#f4f6fb] text-slate-900">
@@ -406,6 +476,33 @@ export default function Authenticated({
             )}
 
             <main className="min-h-[calc(100vh-4rem)] bg-[#f4f6fb]">{children}</main>
+
+            {sessionExpired && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 px-4">
+                    <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+                        <h2 className="text-lg font-semibold text-slate-950">Sesión expirada</h2>
+                        <p className="mt-2 text-sm text-slate-600">
+                            Por seguridad, tu sesión expiró. Inicia sesión nuevamente para continuar.
+                        </p>
+                        {sessionExpiredInPos && (
+                            <p className="mt-3 rounded-xl bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700">
+                                Tu venta quedó guardada como borrador.
+                            </p>
+                        )}
+                        <div className="mt-5 flex justify-end">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    window.location.href = route('login');
+                                }}
+                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
+                            >
+                                Iniciar sesión
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -39,6 +39,7 @@ class Permissions
 
     public const REPORTS_SALES_VIEW = 'reports.sales.view';
     public const REPORTS_STOCK_VIEW = 'reports.stock.view';
+    public const REPORTS_LOW_STOCK_VIEW = 'reports.low_stock.view';
     public const REPORTS_TOP_PRODUCTS_VIEW = 'reports.top_products.view';
     public const REPORTS_INVENTORY_VIEW = 'reports.inventory.view';
     public const REPORTS_DAILY_VIEW = 'reports.daily.view';
@@ -118,6 +119,7 @@ class Permissions
             self::CASH_REGISTER_EXPENSES => ['name' => 'Registrar gastos de caja', 'group' => 'Caja'],
             self::REPORTS_SALES_VIEW => ['name' => 'Ver reporte de ventas', 'group' => 'Reportes'],
             self::REPORTS_STOCK_VIEW => ['name' => 'Ver reporte de stock', 'group' => 'Reportes'],
+            self::REPORTS_LOW_STOCK_VIEW => ['name' => 'Ver reporte de stock bajo', 'group' => 'Reportes'],
             self::REPORTS_TOP_PRODUCTS_VIEW => ['name' => 'Ver productos más vendidos', 'group' => 'Reportes'],
             self::REPORTS_INVENTORY_VIEW => ['name' => 'Ver reporte de inventario', 'group' => 'Reportes'],
             self::REPORTS_DAILY_VIEW => ['name' => 'Ver reporte diario', 'group' => 'Reportes'],
@@ -197,6 +199,7 @@ class Permissions
                 self::INVENTORY_TRANSFER,
                 self::INVENTORY_TRANSFERS_VIEW,
                 self::INVENTORY_TRANSFERS_CREATE,
+                self::REPORTS_LOW_STOCK_VIEW,
             ],
             'purchases' => [
                 self::PURCHASES_VIEW,
@@ -207,6 +210,7 @@ class Permissions
             'reports' => [
                 self::REPORTS_SALES_VIEW,
                 self::REPORTS_STOCK_VIEW,
+                self::REPORTS_LOW_STOCK_VIEW,
                 self::REPORTS_TOP_PRODUCTS_VIEW,
                 self::REPORTS_INVENTORY_VIEW,
                 self::REPORTS_DAILY_VIEW,

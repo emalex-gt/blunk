@@ -47,6 +47,7 @@ type Props = {
     filters?: Record<string, string | number | null>;
     categories?: Option[];
     customers?: Option[];
+    sellers?: Option[];
     branch?: Branch | null;
     maxRangeLabel?: string;
 };
@@ -70,6 +71,7 @@ export default function GenericReport({
     filters = {},
     categories = [],
     customers = [],
+    sellers = [],
     branch = null,
     maxRangeLabel = 'Rango máximo: 3 meses',
 }: Props) {
@@ -133,6 +135,31 @@ export default function GenericReport({
                                     ))}
                                 </SelectField>
                             )}
+                            {filterKeys.includes('document_type') && (
+                                <SelectField label="Tipo documento" value={form.document_type ?? 'all'} onChange={(value) => setField('document_type', value)}>
+                                    <option value="all">Todos</option>
+                                    <option value="receipt">Comprobante</option>
+                                    <option value="invoice">Factura</option>
+                                    <option value="credit">Crédito</option>
+                                </SelectField>
+                            )}
+                            {filterKeys.includes('status') && (
+                                <SelectField label="Estado" value={form.status ?? 'completed'} onChange={(value) => setField('status', value)}>
+                                    <option value="completed">Completadas</option>
+                                    <option value="cancelled">Anuladas</option>
+                                    <option value="all">Todas</option>
+                                </SelectField>
+                            )}
+                            {filterKeys.includes('seller_id') && (
+                                <SelectField label="Vendedor" value={form.seller_id ?? ''} onChange={(value) => setField('seller_id', value)}>
+                                    <option value="">Todos</option>
+                                    {sellers.map((seller) => (
+                                        <option key={seller.id} value={seller.id}>
+                                            {seller.name}
+                                        </option>
+                                    ))}
+                                </SelectField>
+                            )}
                             {filterKeys.includes('category_id') && (
                                 <SelectField label="Categoría" value={form.category_id ?? ''} onChange={(value) => setField('category_id', value)}>
                                     <option value="">Todas</option>
@@ -156,6 +183,9 @@ export default function GenericReport({
                             {filterKeys.includes('customer_search') && (
                                 <TextField label="Buscar cliente / NIT" value={form.customer_search ?? ''} onChange={(value) => setField('customer_search', value)} />
                             )}
+                            {filterKeys.includes('sale_number') && (
+                                <TextField label="No. venta" value={form.sale_number ?? ''} onChange={(value) => setField('sale_number', value)} />
+                            )}
                             {filterKeys.includes('product_name') && (
                                 <TextField label="Producto" value={form.product_name ?? ''} onChange={(value) => setField('product_name', value)} />
                             )}
@@ -164,6 +194,12 @@ export default function GenericReport({
                             )}
                             {filterKeys.includes('product_search') && (
                                 <TextField label="Producto" value={form.product_search ?? ''} onChange={(value) => setField('product_search', value)} />
+                            )}
+                            {filterKeys.includes('only_below_minimum') && (
+                                <SelectField label="Stock bajo" value={form.only_below_minimum ?? '1'} onChange={(value) => setField('only_below_minimum', value)}>
+                                    <option value="1">Solo bajo mínimo</option>
+                                    <option value="0">Todos</option>
+                                </SelectField>
                             )}
                             {filterKeys.includes('search') && (
                                 <TextField label="Buscar" value={form.search ?? ''} onChange={(value) => setField('search', value)} />

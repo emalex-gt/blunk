@@ -40,6 +40,16 @@ Route::get('/dashboard', [ReportController::class, 'dashboard'])
     ->middleware(['auth', 'verified', 'tenant.active', 'permission:pos.view'])
     ->name('dashboard');
 
+Route::get('/session/keep-alive', function (Request $request) {
+    $request->session()->put('_last_keep_alive_at', now()->timestamp);
+
+    return response()->json([
+        'ok' => true,
+        'csrf_token' => csrf_token(),
+        'expires_in' => (int) config('session.lifetime') * 60,
+    ]);
+})->middleware('auth')->name('session.keep-alive');
+
 Route::middleware(['auth', 'super.admin'])
     ->prefix('super-admin')
     ->name('super-admin.')
@@ -254,12 +264,12 @@ Route::middleware('auth')->group(function () {
             Route::get('/reports/sales-detailed', [ReportController::class, 'salesDetailed'])->middleware('permission:reports.sales_detailed.view')->name('reports.sales-detailed');
             Route::get('/reports/products-sold-detailed', [ReportController::class, 'productsSoldDetailed'])->middleware('permission:reports.products_sold_detailed.view')->name('reports.products-sold-detailed');
             Route::get('/reports/products-sold-summary', [ReportController::class, 'productsSoldSummary'])->middleware('permission:reports.products_sold_summary.view')->name('reports.products-sold-summary');
-            Route::redirect('/reports/sales', '/reports/sales-detailed')->middleware('permission:reports.sales.view')->name('reports.sales');
+            Route::get('/reports/sales', [ReportController::class, 'sales'])->middleware('permission:reports.sales.view')->name('reports.sales');
             Route::get('/reports/sales/export/excel', [ReportController::class, 'salesExportExcel'])->middleware('permission:reports.sales.view')->name('reports.sales.export.excel');
             Route::get('/reports/sales/export/pdf', [ReportController::class, 'salesExportPdf'])->middleware('permission:reports.sales.view')->name('reports.sales.export.pdf');
-            Route::redirect('/reports/low-stock', '/reports/inventory')->middleware('permission:reports.stock.view')->name('reports.low-stock');
-            Route::get('/reports/low-stock/export/excel', [ReportController::class, 'lowStockExportExcel'])->middleware('permission:reports.stock.view')->name('reports.low-stock.export.excel');
-            Route::redirect('/reports/top-products', '/reports/products-sold-summary')->middleware('permission:reports.top_products.view')->name('reports.top-products');
+            Route::get('/reports/low-stock', [ReportController::class, 'lowStock'])->middleware('permission:reports.low_stock.view')->name('reports.low-stock');
+            Route::get('/reports/low-stock/export/excel', [ReportController::class, 'lowStockExportExcel'])->middleware('permission:reports.low_stock.view')->name('reports.low-stock.export.excel');
+            Route::get('/reports/top-products', [ReportController::class, 'topProducts'])->middleware('permission:reports.top_products.view')->name('reports.top-products');
             Route::get('/reports/top-products/export/excel', [ReportController::class, 'topProductsExportExcel'])->middleware('permission:reports.top_products.view')->name('reports.top-products.export.excel');
         });
 

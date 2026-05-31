@@ -10,6 +10,7 @@ use App\Models\Customer;
 use App\Models\Product;
 use App\Models\Purchase;
 use App\Models\Sale;
+use App\Models\User;
 use App\Support\CashRegister;
 use App\Support\BranchInventory;
 use App\Support\PriceLists;
@@ -104,96 +105,215 @@ class ReportController extends Controller
     {
         $businessId = currentBusinessId();
         $business = Business::query()->select('id', 'country')->find($businessId);
-        $timezone = tenantTimezone($business);
-        $today = now($timezone)->toDateString();
-        $startDate = $request->query('start_date', $today);
-        $endDate = $request->query('end_date', $today);
-        $status = $request->query('status', 'completed');
-        $status = in_array($status, ['completed', 'cancelled', 'all'], true) ? $status : 'completed';
-        $branchId = $this->branchFilter($request, $businessId);
-        [$start, $end] = $this->dateRange($startDate, $endDate, $timezone);
+        $scope = BranchReportScope::current($businessId);
+        $today = now(tenantTimezone($business))->toDateString();
+        $range = ReportDateRange::fromRequest($request, $business, $today, $today);
+        $customerSearch = trim((string) $request->query('customer_search', ''));
+        $sellerId = $request->integer('seller_id') ?: null;
+        $paymentMethod = (string) $request->query('payment_method', 'all');
+        $documentType = (string) $request->query('document_type', 'all');
+        $status = (string) $request->query('status', 'completed');
+        $saleNumber = trim((string) $request->query('sale_number', ''));
+        $allowedPaymentMethods = ['all', 'cash', 'card', 'bank_transfer', 'transfer', 'check', 'credit', 'other'];
+        $allowedDocumentTypes = ['all', 'receipt', 'invoice', 'credit'];
+        $allowedStatuses = ['completed', 'cancelled', 'all'];
+        $paymentMethod = in_array($paymentMethod, $allowedPaymentMethods, true) ? $paymentMethod : 'all';
+        $documentType = in_array($documentType, $allowedDocumentTypes, true) ? $documentType : 'all';
+        $status = in_array($status, $allowedStatuses, true) ? $status : 'completed';
+        $salePaymentMethod = $paymentMethod === 'bank_transfer' ? 'transfer' : $paymentMethod;
 
-        $sales = Sale::query()
-            ->where('business_id', $businessId)
-            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
-            ->whereBetween('created_at', [$start, $end])
-            ->when($status === 'completed', fn ($query) => $query->where('status', 'completed'))
-            ->when($status === 'cancelled', fn ($query) => $query->where('status', 'cancelled'))
-            ->with('items:id,sale_id,quantity,unit_price,unit_cost,total')
-            ->with('cancelledBy:id,name')
-            ->latest()
-            ->get();
+        $query = Sale::query()
+            ->where('sales.business_id', $businessId)
+            ->where('sales.branch_id', $scope->branch->id)
+            ->whereBetween('sales.created_at', [$range->start, $range->end])
+            ->with(['createdBy:id,name', 'payments:id,sale_id,method,amount']);
 
-        $rows = $sales->map(fn (Sale $sale) => [
-            'id' => $sale->id,
-            'business_number' => $sale->business_number,
-            'display_number' => format_sale_number($sale),
-            'created_at' => $sale->created_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
-            'created_at_local' => $sale->created_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
-            'created_at_local_date' => $sale->created_at?->copy()->timezone($timezone)->format('Y-m-d'),
-            'created_at_local_time' => $sale->created_at?->copy()->timezone($timezone)->format('H:i'),
-            'status' => $sale->status ?? 'completed',
-            'cancelled_at' => $sale->cancelled_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
-            'cancelled_by' => $sale->cancelledBy?->name,
-            'cancellation_reason' => $sale->cancellation_reason,
-            'payment_method' => $sale->payment_method,
-            'items_count' => $sale->items->sum('quantity'),
-            'total' => (float) $sale->total,
-            'estimated_margin' => round($sale->items->sum(
-                fn ($item) => ((float) $item->unit_price - (float) $item->unit_cost) * (int) $item->quantity
-            ), 2),
-        ]);
+        if ($status === 'completed') {
+            $query->where(fn ($query) => $query->where('sales.status', 'completed')->orWhereNull('sales.status'));
+        } elseif ($status === 'cancelled') {
+            $query->where('sales.status', 'cancelled');
+        }
 
-        return Inertia::render('Reports/Sales', [
+        if ($customerSearch !== '') {
+            $this->applyCustomerSearch($query, $customerSearch);
+        }
+
+        if ($sellerId) {
+            $query->where('sales.created_by', $sellerId);
+        }
+
+        if ($paymentMethod !== 'all') {
+            $query->whereHas('payments', fn ($query) => $query->where('method', $salePaymentMethod));
+        }
+
+        if ($documentType === 'credit') {
+            $query->whereRaw('1 = 0');
+        } elseif ($documentType !== 'all') {
+            $query->where('sales.document_type', $documentType);
+        }
+
+        if ($saleNumber !== '') {
+            $number = preg_replace('/\D+/', '', $saleNumber);
+            $query->when($number !== '', fn ($query) => $query->where('sales.business_number', (int) $number));
+        }
+
+        $summaryBase = clone $query;
+        $totalSales = (int) (clone $summaryBase)->count();
+        $totalSold = (float) (clone $summaryBase)->sum('sales.total');
+        $invoiceCount = (int) (clone $summaryBase)->where('sales.document_type', 'invoice')->count();
+        $receiptCount = (int) (clone $summaryBase)->where('sales.document_type', 'receipt')->count();
+        $paymentTotals = DB::table('sale_payments')
+            ->where('sale_payments.business_id', $businessId)
+            ->whereIn('sale_payments.sale_id', (clone $summaryBase)->select('sales.id'))
+            ->when($paymentMethod !== 'all', fn ($query) => $query->where('sale_payments.method', $salePaymentMethod))
+            ->groupBy('sale_payments.method')
+            ->selectRaw('sale_payments.method, SUM(sale_payments.amount) as total')
+            ->pluck('total', 'method');
+
+        $rows = $query
+            ->latest('sales.created_at')
+            ->paginate(25)
+            ->withQueryString()
+            ->through(fn (Sale $sale) => [
+                'created_at' => $sale->created_at?->timezone(tenantTimezone($business))->format('Y-m-d H:i'),
+                'number' => format_sale_number($sale),
+                'customer' => $sale->customer_name ?: 'Consumidor Final',
+                'nit' => $sale->customer_doc_number ?: 'CF',
+                'seller' => $sale->createdBy?->name ?: 'Sin vendedor',
+                'document_type' => match ($sale->document_type) {
+                    'invoice' => 'Factura',
+                    'receipt' => 'Comprobante',
+                    default => $sale->document_type ?: '-',
+                },
+                'payment_method' => $sale->payments->pluck('method')->unique()->join(', ') ?: $sale->payment_method,
+                'total' => (float) $sale->total,
+                'status' => $sale->status === 'cancelled' ? 'Anulada' : 'Completada',
+                'detail_url' => route('sales.show', $sale),
+                'print_url' => route('sales.receipt', $sale),
+            ]);
+
+        return $this->report('Ventas', 'reports.sales', [
+            ['key' => 'created_at', 'label' => 'Fecha / hora'],
+            ['key' => 'number', 'label' => 'No. venta'],
+            ['key' => 'customer', 'label' => 'Cliente'],
+            ['key' => 'nit', 'label' => 'NIT'],
+            ['key' => 'seller', 'label' => 'Vendedor'],
+            ['key' => 'document_type', 'label' => 'Tipo documento'],
+            ['key' => 'payment_method', 'label' => 'Forma de pago'],
+            ['key' => 'total', 'label' => 'Total', 'type' => 'money'],
+            ['key' => 'status', 'label' => 'Estado'],
+            ['key' => 'detail_url', 'label' => 'Ver detalle', 'type' => 'link', 'link_label' => 'Ver'],
+            ['key' => 'print_url', 'label' => 'Imprimir', 'type' => 'link', 'link_label' => 'Imprimir'],
+        ], $rows, [
             'filters' => [
-                'start_date' => Carbon::parse($startDate, $timezone)->toDateString(),
-                'end_date' => Carbon::parse($endDate, $timezone)->toDateString(),
+                'date_from' => $range->dateFrom,
+                'date_to' => $range->dateTo,
+                'customer_search' => $customerSearch,
+                'seller_id' => $sellerId,
+                'payment_method' => $paymentMethod,
+                'document_type' => $documentType,
                 'status' => $status,
-                'branch_id' => $branchId,
+                'sale_number' => $saleNumber,
             ],
             'summary' => [
-                'sales_total' => round($rows->where('status', '!=', 'cancelled')->sum('total'), 2),
-                'sales_count' => $rows->where('status', '!=', 'cancelled')->count(),
-                'items_count' => $rows->where('status', '!=', 'cancelled')->sum('items_count'),
-                'estimated_margin' => round($rows->where('status', '!=', 'cancelled')->sum('estimated_margin'), 2),
-                'cancelled_total' => round($rows->where('status', 'cancelled')->sum('total'), 2),
-                'cancelled_count' => $rows->where('status', 'cancelled')->count(),
-                'cancelled_items_count' => $rows->where('status', 'cancelled')->sum('items_count'),
+                ['label' => 'Total ventas', 'value' => $totalSales],
+                ['label' => 'Total vendido', 'value' => $totalSold, 'money' => true],
+                ['label' => 'Total efectivo', 'value' => (float) ($paymentTotals['cash'] ?? 0), 'money' => true],
+                ['label' => 'Total tarjeta', 'value' => (float) ($paymentTotals['card'] ?? 0), 'money' => true],
+                ['label' => 'Total transferencia', 'value' => (float) (($paymentTotals['transfer'] ?? 0) + ($paymentTotals['bank_transfer'] ?? 0)), 'money' => true],
+                ['label' => 'Total otros', 'value' => (float) (($paymentTotals['check'] ?? 0) + ($paymentTotals['credit'] ?? 0) + ($paymentTotals['other'] ?? 0)), 'money' => true],
+                ['label' => 'Cantidad de facturas', 'value' => $invoiceCount],
+                ['label' => 'Cantidad de comprobantes', 'value' => $receiptCount],
             ],
-            'sales' => $rows,
-            'branches_enabled' => BranchInventory::branchesEnabled($businessId),
-            'branches' => BranchInventory::branchesEnabled($businessId) ? BranchInventory::branchOptions($businessId) : [],
-            'timezone' => $timezone,
+            'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
+            'branch' => $scope->payload(),
         ]);
     }
 
     public function lowStock(Request $request): Response
     {
         $businessId = currentBusinessId();
-        $search = trim((string) $request->query('search', ''));
-        $branchId = $this->branchFilter($request, $businessId) ?: BranchInventory::activeBranch($businessId)->id;
+        $scope = BranchReportScope::current($businessId);
+        $categoryId = $request->integer('category_id') ?: null;
+        $productSearch = trim((string) $request->query('product_search', ''));
+        $onlyBelowMinimum = filter_var($request->query('only_below_minimum', true), FILTER_VALIDATE_BOOLEAN);
+
+        $reservedSubquery = DB::table('credit_receipt_lines')
+            ->where('business_id', $businessId)
+            ->where('branch_id', $scope->branch->id)
+            ->whereIn('status', ['pending', 'partially_invoiced'])
+            ->groupBy('product_id')
+            ->selectRaw('product_id, SUM(qty_pending) as reserved');
+
+        $lastInSubquery = DB::table('stock_movements')
+            ->where('business_id', $businessId)
+            ->where('branch_id', $scope->branch->id)
+            ->where('quantity', '>', 0)
+            ->groupBy('product_id')
+            ->selectRaw('product_id, MAX(created_at) as last_in_at');
 
         $products = Product::query()
-            ->where('business_id', $businessId)
-            ->when(! BranchInventory::branchesEnabled($businessId), fn ($query) => $query->whereColumn('stock', '<=', 'min_stock'))
-            ->when($search !== '', function ($query) use ($search) {
-                $query->where(function ($query) use ($search) {
-                    $query->where('name', 'ilike', "%{$search}%")
-                        ->orWhere('code', 'ilike', "%{$search}%")
-                        ->orWhere('barcode', 'ilike', "%{$search}%");
+            ->where('products.business_id', $businessId)
+            ->leftJoin('categories', 'products.category_id', '=', 'categories.id')
+            ->leftJoin('product_branch_stocks as pbs', function ($join) use ($businessId, $scope) {
+                $join->on('pbs.product_id', '=', 'products.id')
+                    ->where('pbs.business_id', '=', $businessId)
+                    ->where('pbs.branch_id', '=', $scope->branch->id);
+            })
+            ->leftJoinSub($reservedSubquery, 'reserved_lines', fn ($join) => $join->on('reserved_lines.product_id', '=', 'products.id'))
+            ->leftJoinSub($lastInSubquery, 'last_in', fn ($join) => $join->on('last_in.product_id', '=', 'products.id'))
+            ->when($categoryId, fn ($query) => $query->where('products.category_id', $categoryId))
+            ->when($productSearch !== '', function ($query) use ($productSearch) {
+                $query->where(function ($query) use ($productSearch) {
+                    $query->where('products.name', 'ilike', "%{$productSearch}%")
+                        ->orWhere('products.code', 'ilike', "%{$productSearch}%")
+                        ->orWhere('products.barcode', 'ilike', "%{$productSearch}%");
                 });
             })
-            ->orderBy('stock')
-            ->orderBy('name')
-            ->get(['id', 'name', 'code', 'barcode', 'stock', 'min_stock', 'location', 'sale_price']);
-        BranchInventory::applyBranchStockAndPrices($products, $businessId, $branchId);
-        $products = $products->filter(fn (Product $product) => (float) $product->stock <= (float) $product->min_stock)->values();
+            ->when($onlyBelowMinimum, fn ($query) => $query->whereRaw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_lines.reserved, 0)) <= products.min_stock'))
+            ->orderByRaw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_lines.reserved, 0)) ASC')
+            ->orderBy('products.name')
+            ->paginate(25, [
+                'products.id',
+                'products.name as product',
+                DB::raw('COALESCE(products.code, products.barcode) as code'),
+                DB::raw("COALESCE(categories.name, '-') as category"),
+                'products.min_stock as minimum',
+                DB::raw('COALESCE(pbs.stock, 0) as stock'),
+                DB::raw('COALESCE(reserved_lines.reserved, 0) as reserved'),
+                DB::raw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_lines.reserved, 0)) as available'),
+                DB::raw('GREATEST(products.min_stock - (COALESCE(pbs.stock, 0) - COALESCE(reserved_lines.reserved, 0)), 0) as suggested_missing'),
+                'last_in.last_in_at',
+            ])
+            ->withQueryString()
+            ->through(fn ($row) => [
+                'product' => $row->product,
+                'code' => $row->code,
+                'category' => $row->category,
+                'minimum' => (float) $row->minimum,
+                'stock' => (float) $row->stock,
+                'reserved' => (float) $row->reserved,
+                'available' => (float) $row->available,
+                'suggested_missing' => (float) $row->suggested_missing,
+                'last_in_at' => $row->last_in_at ? Carbon::parse($row->last_in_at)->timezone(tenantTimezone())->format('Y-m-d H:i') : '-',
+                'cardex_url' => route('products.stock-history', $row->id),
+            ]);
 
-        return Inertia::render('Reports/LowStock', [
-            'filters' => ['search' => $search, 'branch_id' => $branchId],
-            'products' => $products,
-            'branches_enabled' => BranchInventory::branchesEnabled($businessId),
-            'branches' => BranchInventory::branchesEnabled($businessId) ? BranchInventory::branchOptions($businessId) : [],
+        return $this->report('Stock bajo', 'reports.low-stock', [
+            ['key' => 'product', 'label' => 'Producto'],
+            ['key' => 'code', 'label' => 'Código/SKU'],
+            ['key' => 'category', 'label' => 'Categoría'],
+            ['key' => 'minimum', 'label' => 'Mínimo', 'type' => 'number'],
+            ['key' => 'stock', 'label' => 'Existencia', 'type' => 'number'],
+            ['key' => 'reserved', 'label' => 'Reservado', 'type' => 'number'],
+            ['key' => 'available', 'label' => 'Disponible', 'type' => 'number'],
+            ['key' => 'suggested_missing', 'label' => 'Faltante sugerido', 'type' => 'number'],
+            ['key' => 'last_in_at', 'label' => 'Último ingreso'],
+            ['key' => 'cardex_url', 'label' => 'Acción', 'type' => 'link', 'link_label' => 'Ver cardex'],
+        ], $products, [
+            'filters' => ['category_id' => $categoryId, 'product_search' => $productSearch, 'only_below_minimum' => $onlyBelowMinimum ? '1' : '0'],
+            'categories' => Category::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
+            'branch' => $scope->payload(),
         ]);
     }
 
@@ -201,46 +321,92 @@ class ReportController extends Controller
     {
         $businessId = currentBusinessId();
         $business = Business::query()->select('id', 'country')->find($businessId);
-        $timezone = tenantTimezone($business);
-        $today = now($timezone);
-        $startDate = $request->query('start_date', $today->copy()->subDays(6)->toDateString());
-        $endDate = $request->query('end_date', $today->toDateString());
-        $branchId = $this->branchFilter($request, $businessId);
-        [$start, $end] = $this->dateRange($startDate, $endDate, $timezone);
+        $scope = BranchReportScope::current($businessId);
+        $range = ReportDateRange::monthToDate($request, $business);
+        $categoryId = $request->integer('category_id') ?: null;
+        $productSearch = trim((string) $request->query('product_search', ''));
+        $sellerId = $request->integer('seller_id') ?: null;
+        $canViewProfit = $request->user()?->hasPermission('reports.profit.view') ?? false;
 
-        $products = DB::table('sale_items')
+        $base = DB::table('sale_items')
             ->join('sales', 'sale_items.sale_id', '=', 'sales.id')
             ->leftJoin('products', function ($join) use ($businessId) {
                 $join->on('sale_items.product_id', '=', 'products.id')
                     ->where('products.business_id', '=', $businessId);
             })
+            ->leftJoin('categories', 'products.category_id', '=', 'categories.id')
             ->where('sale_items.business_id', $businessId)
             ->where('sales.business_id', $businessId)
-            ->when($branchId, fn ($query) => $query->where('sales.branch_id', $branchId))
+            ->where('sales.branch_id', $scope->branch->id)
             ->where(fn ($query) => $query->where('sales.status', 'completed')->orWhereNull('sales.status'))
-            ->whereBetween('sales.created_at', [$start, $end])
-            ->groupBy('sale_items.product_id', 'sale_items.product_name', 'products.stock')
+            ->whereBetween('sales.created_at', [$range->start, $range->end])
+            ->when($categoryId, fn ($query) => $query->where('products.category_id', $categoryId))
+            ->when($sellerId, fn ($query) => $query->where('sales.created_by', $sellerId))
+            ->when($productSearch !== '', function ($query) use ($productSearch) {
+                $query->where(function ($query) use ($productSearch) {
+                    $query->where('sale_items.product_name', 'ilike', "%{$productSearch}%")
+                        ->orWhere('products.code', 'ilike', "%{$productSearch}%")
+                        ->orWhere('products.barcode', 'ilike', "%{$productSearch}%");
+                });
+            });
+
+        $unitsSold = (float) (clone $base)->sum('sale_items.quantity');
+        $totalSold = (float) (clone $base)->sum('sale_items.total');
+        $topProduct = (clone $base)
+            ->groupBy('sale_items.product_id', 'sale_items.product_name')
             ->orderByDesc(DB::raw('SUM(sale_items.quantity)'))
-            ->limit(50)
-            ->get([
-                'sale_items.product_id',
-                'sale_items.product_name',
-                'products.stock',
+            ->value('sale_items.product_name');
+
+        $columns = [
+            ['key' => 'product', 'label' => 'Producto'],
+            ['key' => 'code', 'label' => 'Código/SKU'],
+            ['key' => 'category', 'label' => 'Categoría'],
+            ['key' => 'quantity', 'label' => 'Cantidad vendida', 'type' => 'number'],
+            ['key' => 'total', 'label' => 'Total vendido', 'type' => 'money'],
+        ];
+
+        if ($canViewProfit) {
+            $columns[] = ['key' => 'profit', 'label' => 'Utilidad', 'type' => 'money'];
+        }
+
+        $products = $base
+            ->select([
+                'sale_items.product_name as product',
+                DB::raw('COALESCE(products.code, products.barcode) as code'),
+                DB::raw("COALESCE(categories.name, '-') as category"),
                 DB::raw('SUM(sale_items.quantity) as quantity_sold'),
                 DB::raw('SUM(sale_items.total) as total_sold'),
-                DB::raw('SUM((sale_items.unit_price - sale_items.unit_cost) * sale_items.quantity) as estimated_margin'),
+                DB::raw('SUM(COALESCE(sale_items.profit_amount, 0)) as profit'),
+            ])
+            ->groupBy('sale_items.product_id', 'sale_items.product_name', 'products.code', 'products.barcode', 'categories.name')
+            ->orderByDesc(DB::raw('SUM(sale_items.quantity)'))
+            ->paginate(25)
+            ->withQueryString()
+            ->through(fn ($row) => [
+                'product' => $row->product,
+                'code' => $row->code,
+                'category' => $row->category,
+                'quantity' => (float) $row->quantity_sold,
+                'total' => (float) $row->total_sold,
+                'profit' => $canViewProfit ? (float) $row->profit : null,
             ]);
 
-        return Inertia::render('Reports/TopProducts', [
+        return $this->report('Productos más vendidos', 'reports.top-products', $columns, $products, [
             'filters' => [
-                'start_date' => Carbon::parse($startDate, $timezone)->toDateString(),
-                'end_date' => Carbon::parse($endDate, $timezone)->toDateString(),
-                'branch_id' => $branchId,
+                'date_from' => $range->dateFrom,
+                'date_to' => $range->dateTo,
+                'category_id' => $categoryId,
+                'product_search' => $productSearch,
+                'seller_id' => $sellerId,
             ],
-            'products' => $products,
-            'branches_enabled' => BranchInventory::branchesEnabled($businessId),
-            'branches' => BranchInventory::branchesEnabled($businessId) ? BranchInventory::branchOptions($businessId) : [],
-            'timezone' => $timezone,
+            'summary' => [
+                ['label' => 'Total unidades vendidas', 'value' => $unitsSold],
+                ['label' => 'Total monetario vendido', 'value' => $totalSold, 'money' => true],
+                ['label' => 'Producto más vendido', 'value' => $topProduct ?: '-'],
+            ],
+            'categories' => Category::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
+            'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
+            'branch' => $scope->payload(),
         ]);
     }
 
@@ -842,6 +1008,7 @@ class ReportController extends Controller
             'filters' => $extra['filters'] ?? [],
             'categories' => $extra['categories'] ?? [],
             'customers' => $extra['customers'] ?? [],
+            'sellers' => $extra['sellers'] ?? [],
             'branch' => $extra['branch'] ?? null,
             'maxRangeLabel' => 'Rango máximo: 3 meses',
         ]);

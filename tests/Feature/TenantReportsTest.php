@@ -312,21 +312,111 @@ class TenantReportsTest extends TestCase
                 ->where('rows.data.0.total', 120));
     }
 
-    public function test_legacy_report_routes_redirect_to_new_reports(): void
+    public function test_sales_report_defaults_to_today(): void
+    {
+        [$business, $user, $main] = $this->tenant();
+        $product = $this->product($business, $main, stock: 10, salePrice: 100);
+        $this->sale($business, $main, $user, $product, total: 100, method: 'cash', createdAt: now()->subDay()->toDateTimeString());
+        $this->sale($business, $main, $user, $product, total: 200, method: 'card');
+
+        $this->actingAs($user)
+            ->get(route('reports.sales'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('rows.total', 1)
+                ->where('rows.data.0.total', 200));
+    }
+
+    public function test_sales_report_is_branch_scoped_and_rejects_large_range(): void
+    {
+        [$business, $user, $main, $other] = $this->tenant();
+        $product = $this->product($business, $main, stock: 10, salePrice: 100);
+        $this->sale($business, $main, $user, $product, total: 100, method: 'cash');
+        $this->sale($business, $other, $user, $product, total: 500, method: 'cash');
+
+        $this->actingAs($user)
+            ->get(route('reports.sales'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('rows.total', 1)
+                ->where('rows.data.0.total', 100));
+
+        $this->actingAs($user)
+            ->from(route('reports.sales'))
+            ->get(route('reports.sales', [
+                'date_from' => '2026-01-01',
+                'date_to' => '2026-05-01',
+            ]))
+            ->assertRedirect(route('reports.sales'))
+            ->assertSessionHasErrors([
+                'date_from' => 'El rango máximo permitido es de 3 meses.',
+            ]);
+    }
+
+    public function test_low_stock_report_shows_products_at_or_below_minimum_and_is_branch_scoped(): void
+    {
+        [$business, $user, $main, $other] = $this->tenant();
+        $low = $this->product($business, $main, name: 'Producto bajo', stock: 2, salePrice: 100);
+        $low->update(['min_stock' => 3]);
+        $otherOnly = $this->product($business, $other, name: 'Producto otra sucursal', stock: 1, salePrice: 100);
+        $otherOnly->update(['min_stock' => 3]);
+        ProductBranchStock::query()->updateOrCreate(
+            ['business_id' => $business->id, 'branch_id' => $main->id, 'product_id' => $otherOnly->id],
+            ['stock' => 10],
+        );
+
+        $this->actingAs($user)
+            ->get(route('reports.low-stock'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('rows.total', 1)
+                ->where('rows.data.0.product', 'Producto bajo')
+                ->where('rows.data.0.available', 2)
+                ->where('rows.data.0.minimum', 3));
+    }
+
+    public function test_top_products_report_groups_products_and_is_branch_scoped(): void
+    {
+        [$business, $user, $main, $other] = $this->tenant();
+        $product = $this->product($business, $main, name: 'Top A', stock: 10, salePrice: 100);
+        $otherProduct = $this->product($business, $other, name: 'Top B', stock: 10, salePrice: 100);
+        $this->sale($business, $main, $user, $product, total: 100, method: 'cash');
+        $this->sale($business, $main, $user, $product, total: 150, method: 'card');
+        $this->sale($business, $other, $user, $otherProduct, total: 900, method: 'cash');
+
+        $this->actingAs($user)
+            ->get(route('reports.top-products'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('rows.total', 1)
+                ->where('rows.data.0.product', 'Top A')
+                ->where('rows.data.0.quantity', 2)
+                ->where('rows.data.0.total', 250));
+    }
+
+    public function test_operational_report_exports_are_disabled(): void
     {
         [$business, $user] = $this->tenant();
 
         $this->actingAs($user)
-            ->get(route('reports.sales'))
-            ->assertRedirect(route('reports.sales-detailed'));
+            ->get(route('reports.sales.export.excel'))
+            ->assertStatus(501);
 
         $this->actingAs($user)
-            ->get(route('reports.low-stock'))
-            ->assertRedirect(route('reports.inventory'));
+            ->get(route('reports.sales.export.pdf'))
+            ->assertStatus(501);
 
         $this->actingAs($user)
-            ->get(route('reports.top-products'))
-            ->assertRedirect(route('reports.products-sold-summary'));
+            ->get(route('reports.low-stock.export.excel'))
+            ->assertStatus(501);
+
+        $this->actingAs($user)
+            ->get(route('reports.top-products.export.excel'))
+            ->assertStatus(501);
     }
 
     public function test_report_permission_is_required(): void
@@ -435,6 +525,9 @@ class TenantReportsTest extends TestCase
         float $unitCost = 50,
         ?float $profit = null,
         ?Customer $customer = null,
+        ?string $createdAt = null,
+        string $documentType = 'receipt',
+        string $status = 'completed',
     ): Sale {
         $sale = Sale::query()->create([
             'business_id' => $business->id,
@@ -448,10 +541,14 @@ class TenantReportsTest extends TestCase
             'discount_amount' => 0,
             'total' => $total,
             'payment_method' => $method,
-            'document_type' => 'receipt',
-            'status' => 'completed',
+            'document_type' => $documentType,
+            'status' => $status,
             'created_by' => $user->id,
         ]);
+        $sale->forceFill([
+            'created_at' => $createdAt ?? now(),
+            'updated_at' => $createdAt ?? now(),
+        ])->save();
 
         $profit ??= $total - $unitCost;
 
