@@ -11,6 +11,7 @@ use App\Services\Fel\FelException;
 use App\Support\BranchInventory;
 use App\Support\FelPhraseRenderer;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 
 class DigifactNucJsonBuilder
 {
