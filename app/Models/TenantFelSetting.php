@@ -97,10 +97,6 @@ class TenantFelSetting extends Model
             $missing[] = 'password';
         }
 
-        if (! filled($this->establishment_code)) {
-            $missing[] = 'codigo establecimiento';
-        }
-
         if (! filled($this->affiliate_type)) {
             $missing[] = 'afiliacion IVA';
         }

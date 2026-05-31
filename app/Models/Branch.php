@@ -16,6 +16,13 @@ class Branch extends Model
         'phone',
         'logo_url',
         'logo_public_id',
+        'fel_establishment_code',
+        'fel_establishment_name',
+        'fel_address',
+        'fel_postal_code',
+        'fel_municipality',
+        'fel_department',
+        'fel_country',
         'is_active',
     ];
 

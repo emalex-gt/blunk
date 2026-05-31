@@ -17,13 +17,14 @@ class TenantBranchController extends Controller
 {
     public function index(Business $business): Response
     {
-        $business->load(['tenantModules', 'tenantSetting']);
+        $business->load(['tenantModules', 'tenantSetting', 'tenantFelSetting']);
 
         return Inertia::render('SuperAdmin/Tenants/Branches', [
             'tenant' => [
                 'id' => $business->id,
                 'name' => $business->name,
                 'country' => $business->country,
+                'fel_enabled' => (bool) ($business->tenantFelSetting?->enabled ?? false),
                 'branches_module_enabled' => $business->tenantModules
                     ->where('module', 'branches')
                     ->where('is_enabled', true)
@@ -33,7 +34,23 @@ class TenantBranchController extends Controller
             'branches' => $business->branches()
                 ->orderByDesc('is_active')
                 ->orderBy('name')
-                ->get(['id', 'business_id', 'name', 'code', 'address', 'phone', 'logo_url', 'is_active']),
+                ->get([
+                    'id',
+                    'business_id',
+                    'name',
+                    'code',
+                    'address',
+                    'phone',
+                    'logo_url',
+                    'fel_establishment_code',
+                    'fel_establishment_name',
+                    'fel_address',
+                    'fel_postal_code',
+                    'fel_municipality',
+                    'fel_department',
+                    'fel_country',
+                    'is_active',
+                ]),
         ]);
     }
 
@@ -110,6 +127,10 @@ class TenantBranchController extends Controller
 
     private function validated(Request $request, Business $business, ?Branch $branch = null): array
     {
+        $felRequired = $business->country === 'GT' && (bool) $business->tenantFelSetting()->value('enabled');
+        $felRule = $felRequired ? ['required', 'string', 'max:255'] : ['nullable', 'string', 'max:255'];
+        $felCountryRule = $felRequired ? ['required', 'string', 'size:2'] : ['nullable', 'string', 'size:2'];
+
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'code' => [
@@ -122,11 +143,25 @@ class TenantBranchController extends Controller
             ],
             'address' => ['nullable', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:50'],
+            'fel_establishment_code' => $felRule,
+            'fel_establishment_name' => $felRule,
+            'fel_address' => $felRule,
+            'fel_postal_code' => $felRule,
+            'fel_municipality' => $felRule,
+            'fel_department' => $felRule,
+            'fel_country' => $felCountryRule,
             'is_active' => ['nullable', 'boolean'],
             'logo' => ['nullable', 'image', 'max:5120'],
             'remove_logo' => ['nullable', 'boolean'],
         ], [
             'logo.max' => 'El logo no debe superar los 5MB.',
+            'fel_establishment_code.required' => 'El código establecimiento SAT es obligatorio.',
+            'fel_establishment_name.required' => 'El nombre establecimiento FEL es obligatorio.',
+            'fel_address.required' => 'La dirección FEL es obligatoria.',
+            'fel_postal_code.required' => 'El código postal FEL es obligatorio.',
+            'fel_municipality.required' => 'El municipio FEL es obligatorio.',
+            'fel_department.required' => 'El departamento FEL es obligatorio.',
+            'fel_country.required' => 'El país FEL es obligatorio.',
         ]);
 
         return [
@@ -135,6 +170,13 @@ class TenantBranchController extends Controller
             'code' => $data['code'] ?? null,
             'address' => $data['address'] ?? null,
             'phone' => $data['phone'] ?? null,
+            'fel_establishment_code' => $data['fel_establishment_code'] ?? null,
+            'fel_establishment_name' => $data['fel_establishment_name'] ?? null,
+            'fel_address' => $data['fel_address'] ?? null,
+            'fel_postal_code' => $data['fel_postal_code'] ?? null,
+            'fel_municipality' => $data['fel_municipality'] ?? null,
+            'fel_department' => $data['fel_department'] ?? null,
+            'fel_country' => strtoupper((string) ($data['fel_country'] ?? 'GT')),
             'is_active' => (bool) ($data['is_active'] ?? true),
         ];
     }

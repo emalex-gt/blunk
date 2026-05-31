@@ -4,9 +4,11 @@ namespace App\Support;
 
 use App\Models\Branch;
 use App\Models\BranchProductPrice;
+use App\Models\Business;
 use App\Models\Product;
 use App\Models\ProductBranch;
 use App\Models\ProductBranchStock;
+use App\Models\TenantFelSetting;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -37,13 +39,86 @@ class BranchInventory
 
     public static function defaultBranch(int $businessId): Branch
     {
+        $business = Business::query()->find($businessId);
+
+        if ($business) {
+            return self::ensureDefaultBranch($business);
+        }
+
         return Branch::query()->firstOrCreate(
             ['business_id' => $businessId, 'code' => 'MAIN'],
             [
-                'name' => 'Principal',
+                'name' => 'Sucursal Principal',
                 'is_active' => true,
+                'fel_country' => 'GT',
             ],
         );
+    }
+
+    public static function defaultBranchForBusiness(Business $business): Branch
+    {
+        return self::ensureDefaultBranch($business);
+    }
+
+    public static function ensureDefaultBranch(Business $business): Branch
+    {
+        $branch = Branch::query()
+            ->where('business_id', $business->id)
+            ->where('code', 'MAIN')
+            ->first();
+
+        if (! $branch) {
+            $branch = Branch::query()
+                ->where('business_id', $business->id)
+                ->orderByDesc('is_active')
+                ->orderBy('id')
+                ->first();
+        }
+
+        if (! $branch) {
+            $branch = Branch::query()->create([
+                'business_id' => $business->id,
+                'name' => 'Sucursal Principal',
+                'code' => 'MAIN',
+                'is_active' => true,
+                'fel_country' => 'GT',
+            ]);
+        }
+
+        self::backfillFelDataFromLegacySettings($branch);
+
+        return $branch->refresh();
+    }
+
+    public static function felBranchForBusiness(Business $business, $user = null): Branch
+    {
+        if (! self::branchesEnabled($business->id)) {
+            return self::ensureDefaultBranch($business);
+        }
+
+        $user ??= auth()->user();
+        $branchId = null;
+
+        if ($user && self::canSwitchBranches($user) && session('active_branch_id')) {
+            $branchId = (int) session('active_branch_id');
+        } elseif ($user?->current_branch_id) {
+            $branchId = (int) $user->current_branch_id;
+        }
+
+        if ($branchId) {
+            $branch = Branch::query()
+                ->where('business_id', $business->id)
+                ->where('is_active', true)
+                ->find($branchId);
+
+            if ($branch) {
+                self::backfillFelDataFromLegacySettings($branch);
+
+                return $branch->refresh();
+            }
+        }
+
+        return self::ensureDefaultBranch($business);
     }
 
     public static function activeBranch(int $businessId): Branch
@@ -304,5 +379,45 @@ class BranchInventory
         DB::table('products')
             ->where('id', $product->id)
             ->update(['stock' => $total, 'updated_at' => now()]);
+    }
+
+    private static function backfillFelDataFromLegacySettings(Branch $branch): void
+    {
+        if (! Schema::hasTable('tenant_fel_settings') || ! Schema::hasColumn('branches', 'fel_establishment_code')) {
+            return;
+        }
+
+        $settings = TenantFelSetting::query()
+            ->where('business_id', $branch->business_id)
+            ->first();
+
+        if (! $settings) {
+            return;
+        }
+
+        $updates = [];
+        $mapping = [
+            'fel_establishment_code' => 'establishment_code',
+            'fel_establishment_name' => 'establishment_name',
+            'fel_address' => 'establishment_address',
+            'fel_postal_code' => 'establishment_postal_code',
+            'fel_municipality' => 'establishment_municipality',
+            'fel_department' => 'establishment_department',
+            'fel_country' => 'establishment_country',
+        ];
+
+        foreach ($mapping as $branchColumn => $settingsColumn) {
+            if (! filled($branch->{$branchColumn}) && filled($settings->{$settingsColumn})) {
+                $updates[$branchColumn] = $settings->{$settingsColumn};
+            }
+        }
+
+        if (! filled($branch->fel_country)) {
+            $updates['fel_country'] = 'GT';
+        }
+
+        if ($updates !== []) {
+            $branch->forceFill($updates)->save();
+        }
     }
 }

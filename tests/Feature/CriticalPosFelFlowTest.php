@@ -27,8 +27,11 @@ use App\Models\TenantFelSetting;
 use App\Models\TenantModule;
 use App\Models\TenantSetting;
 use App\Models\User;
+use App\Services\Fel\FelException;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
+use App\Services\Fel\Providers\Digifact\DigifactNucJsonBuilder;
 use App\Support\BranchInventory;
+use App\Support\FelPhraseRenderer;
 use App\Support\Permissions;
 use App\Support\StockAvailability;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -1678,6 +1681,114 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_fel_payload_uses_default_branch_establishment_when_branches_are_disabled(): void
+    {
+        [$business] = $this->tenant(country: 'GT', modules: ['fel_gt'], allowInvoices: true);
+        $settings = $this->felSettings($business);
+        BranchInventory::defaultBranchForBusiness($business)->update([
+            'fel_establishment_code' => '10',
+            'fel_establishment_name' => 'Sucursal Principal FEL',
+            'fel_address' => '1 avenida 1-01',
+            'fel_postal_code' => '01010',
+            'fel_municipality' => 'Guatemala',
+            'fel_department' => 'Guatemala',
+            'fel_country' => 'GT',
+        ]);
+
+        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload(
+            $this->invoiceSale($business),
+            $settings->refresh(),
+        );
+
+        $this->assertSame('Blunk Test', $payload['Seller']['Name']);
+        $this->assertSame('10', $payload['Seller']['BranchInfo']['Code']);
+        $this->assertSame('Sucursal Principal FEL', $payload['Seller']['BranchInfo']['Name']);
+        $this->assertSame('1 avenida 1-01', $payload['Seller']['BranchInfo']['AddressInfo']['Address']);
+    }
+
+    public function test_fel_payload_uses_active_sale_branch_establishment_when_branches_are_enabled(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt', 'branches'], role: 'admin', allowInvoices: true);
+        TenantSetting::query()->where('business_id', $business->id)->update(['use_branches' => true]);
+        $settings = $this->felSettings($business);
+
+        BranchInventory::defaultBranchForBusiness($business)->update([
+            'fel_establishment_code' => '1',
+            'fel_establishment_name' => 'Establecimiento A',
+            'fel_address' => 'Direccion A',
+            'fel_postal_code' => '01001',
+            'fel_municipality' => 'Guatemala',
+            'fel_department' => 'Guatemala',
+            'fel_country' => 'GT',
+        ]);
+        $branchB = Branch::create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal B',
+            'code' => 'B',
+            'is_active' => true,
+            'fel_establishment_code' => '2',
+            'fel_establishment_name' => 'Establecimiento B',
+            'fel_address' => 'Direccion B',
+            'fel_postal_code' => '02002',
+            'fel_municipality' => 'Mixco',
+            'fel_department' => 'Guatemala',
+            'fel_country' => 'GT',
+        ]);
+
+        $user->forceFill(['current_branch_id' => $branchB->id])->save();
+        $this->actingAs($user);
+        $payload = app(DigifactNucJsonBuilder::class)
+            ->buildInvoicePayload($this->invoiceSale($business, $branchB), $settings->refresh());
+
+        $this->assertSame('Blunk Test', $payload['Seller']['Name']);
+        $this->assertSame('2', $payload['Seller']['BranchInfo']['Code']);
+        $this->assertSame('Establecimiento B', $payload['Seller']['BranchInfo']['Name']);
+        $this->assertSame('Direccion B', $payload['Seller']['BranchInfo']['AddressInfo']['Address']);
+    }
+
+    public function test_fel_certification_is_blocked_when_branch_establishment_data_is_missing(): void
+    {
+        [$business] = $this->tenant(country: 'GT', modules: ['fel_gt'], allowInvoices: true);
+        $settings = $this->felSettings($business);
+        $settings->update([
+            'establishment_code' => null,
+            'establishment_name' => null,
+            'establishment_address' => null,
+            'establishment_postal_code' => null,
+            'establishment_municipality' => null,
+            'establishment_department' => null,
+            'establishment_country' => 'GT',
+        ]);
+        BranchInventory::defaultBranchForBusiness($business)->update([
+            'fel_establishment_code' => null,
+            'fel_establishment_name' => null,
+            'fel_address' => null,
+        ]);
+
+        $this->expectException(FelException::class);
+        $this->expectExceptionMessage('Faltan datos del establecimiento FEL. Configura código, nombre y dirección del establecimiento.');
+
+        app(DigifactNucJsonBuilder::class)->buildInvoicePayload($this->invoiceSale($business), $settings->refresh());
+    }
+
+    public function test_fel_phrase_renderer_maps_visible_phrases_and_skips_unmapped(): void
+    {
+        $phrases = FelPhraseRenderer::visiblePhrases([
+            ['phrase_type' => '1', 'scenario_code' => '1'],
+            ['phrase_type' => '1', 'scenario_code' => '2'],
+            ['phrase_type' => '1', 'scenario_code' => '3', 'resolution_number' => 'SAT-123', 'resolution_date' => '2026-05-31'],
+            ['phrase_type' => '3', 'scenario_code' => '1'],
+            ['phrase_type' => '99', 'scenario_code' => '99'],
+        ]);
+
+        $this->assertSame([
+            'Sujeto a pagos trimestrales ISR',
+            'Sujeto a retención definitiva ISR',
+            'Sujeto a pago directo ISR (SAT-123 - 31/05/2026)',
+            'No genera derecho a crédito fiscal',
+        ], $phrases);
+    }
+
     private function tenant(
         string $country = 'GT',
         array $modules = [],
@@ -1781,7 +1892,45 @@ class CriticalPosFelFlowTest extends TestCase
         ]);
     }
 
-    private function felSettings(Business $business, bool $enabled = true): void
+    private function invoiceSale(Business $business, ?Branch $branch = null): Sale
+    {
+        $branch ??= BranchInventory::defaultBranchForBusiness($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $sale = Sale::create([
+            'business_id' => $business->id,
+            'business_number' => 1,
+            'branch_id' => $branch->id,
+            'customer_name' => 'Consumidor Final',
+            'customer_doc_type' => 'CF',
+            'customer_doc_number' => 'CF',
+            'customer_address' => 'Ciudad',
+            'customer_country' => 'GT',
+            'subtotal_before_discount' => 100,
+            'discount_amount' => 0,
+            'total' => 100,
+            'payment_method' => 'cash',
+            'document_type' => 'invoice',
+            'status' => 'completed',
+        ]);
+
+        SaleItem::create([
+            'business_id' => $business->id,
+            'sale_id' => $sale->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_price' => 100,
+            'unit_cost' => 50,
+            'total_before_discount' => 100,
+            'total_after_discount' => 100,
+            'total' => 100,
+            'discount_amount' => 0,
+        ]);
+
+        return $sale->refresh();
+    }
+
+    private function felSettings(Business $business, bool $enabled = true): TenantFelSetting
     {
         $settings = TenantFelSetting::create([
             'business_id' => $business->id,
@@ -1814,6 +1963,18 @@ class CriticalPosFelFlowTest extends TestCase
             'scenario_data' => '1',
             'scenario_value' => '2',
         ]);
+
+        BranchInventory::defaultBranchForBusiness($business)->update([
+            'fel_establishment_code' => '1',
+            'fel_establishment_name' => 'Casa Matriz',
+            'fel_address' => 'Ciudad',
+            'fel_postal_code' => '01001',
+            'fel_municipality' => 'Guatemala',
+            'fel_department' => 'Guatemala',
+            'fel_country' => 'GT',
+        ]);
+
+        return $settings;
     }
 
     private function salePayload(

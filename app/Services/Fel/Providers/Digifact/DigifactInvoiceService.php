@@ -13,6 +13,7 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class DigifactInvoiceService
 {
@@ -35,6 +36,7 @@ class DigifactInvoiceService
 
         $document = $sale->electronicDocument ?: $this->createPendingDocument($sale, $settings);
         $payload = $this->payloadBuilder->buildInvoicePayload($sale, $settings);
+        $felMetadata = $this->payloadBuilder->felMetadataFromPayload($payload, $settings);
         $this->validateInvoicePayload($payload, $settings);
         $issuedAtRaw = (string) ($payload['Header']['IssuedDateTime'] ?? now('America/Guatemala')->format('Y-m-d\TH:i:sP'));
         $issuedAt = $this->parseIssuedAt($issuedAtRaw);
@@ -44,13 +46,19 @@ class DigifactInvoiceService
             'fel_issued_at' => $issuedAt,
         ])->save();
 
-        $document->update([
+        $documentUpdate = [
             'status' => 'pending',
             'internal_reference' => $internalReference,
             'issued_at' => $issuedAt,
             'request_payload' => $payload,
             'error_message' => null,
-        ]);
+        ];
+
+        if (Schema::hasColumn('electronic_documents', 'metadata')) {
+            $documentUpdate['metadata'] = $felMetadata;
+        }
+
+        $document->update($documentUpdate);
 
         if (FelCertificationAttempt::query()
             ->where('sale_id', $sale->id)
@@ -125,7 +133,7 @@ class DigifactInvoiceService
                 );
             }
 
-            $document->update([
+            $certifiedDocumentUpdate = [
                 'status' => 'certified',
                 'internal_reference' => $internalReference,
                 'issued_at' => $issuedAt,
@@ -138,7 +146,13 @@ class DigifactInvoiceService
                 'pdf_base64' => null,
                 'html' => null,
                 'error_message' => null,
-            ]);
+            ];
+
+            if (Schema::hasColumn('electronic_documents', 'metadata')) {
+                $certifiedDocumentUpdate['metadata'] = $felMetadata;
+            }
+
+            $document->update($certifiedDocumentUpdate);
 
             $document = $document->refresh();
 

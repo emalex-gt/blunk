@@ -8,6 +8,7 @@ type Tenant = {
     id: number;
     name: string;
     country: string | null;
+    fel_enabled: boolean;
     branches_module_enabled: boolean;
     use_branches: boolean;
 };
@@ -19,6 +20,13 @@ type Branch = {
     address: string | null;
     phone: string | null;
     logo_url: string | null;
+    fel_establishment_code: string | null;
+    fel_establishment_name: string | null;
+    fel_address: string | null;
+    fel_postal_code: string | null;
+    fel_municipality: string | null;
+    fel_department: string | null;
+    fel_country: string | null;
     is_active: boolean;
 };
 
@@ -31,6 +39,13 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
         code: '',
         address: '',
         phone: '',
+        fel_establishment_code: '',
+        fel_establishment_name: '',
+        fel_address: '',
+        fel_postal_code: '',
+        fel_municipality: '',
+        fel_department: '',
+        fel_country: 'GT',
         is_active: true,
         logo: null as File | null,
         remove_logo: false,
@@ -48,6 +63,13 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
             code: '',
             address: '',
             phone: '',
+            fel_establishment_code: '',
+            fel_establishment_name: '',
+            fel_address: '',
+            fel_postal_code: '',
+            fel_municipality: '',
+            fel_department: '',
+            fel_country: 'GT',
             is_active: true,
             logo: null,
             remove_logo: false,
@@ -64,6 +86,13 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
             code: branch.code ?? '',
             address: branch.address ?? '',
             phone: branch.phone ?? '',
+            fel_establishment_code: branch.fel_establishment_code ?? '',
+            fel_establishment_name: branch.fel_establishment_name ?? '',
+            fel_address: branch.fel_address ?? '',
+            fel_postal_code: branch.fel_postal_code ?? '',
+            fel_municipality: branch.fel_municipality ?? '',
+            fel_department: branch.fel_department ?? '',
+            fel_country: branch.fel_country ?? 'GT',
             is_active: branch.is_active,
             logo: null,
             remove_logo: false,
@@ -213,6 +242,44 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
                             <Field label="Teléfono" error={form.errors.phone}>
                                 <TextInput className={inputClass} value={form.data.phone} onChange={(event) => form.setData('phone', event.target.value)} />
                             </Field>
+
+                            {tenant.country === 'GT' && (
+                                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                    <div className="mb-3">
+                                        <div className="text-sm font-semibold text-gray-800">Datos FEL del establecimiento</div>
+                                        <p className="mt-1 text-xs text-gray-500">
+                                            {tenant.fel_enabled
+                                                ? 'Estos campos son obligatorios porque FEL está habilitada.'
+                                                : 'Puedes dejar estos campos preparados aunque FEL esté deshabilitada.'}
+                                        </p>
+                                    </div>
+                                    <div className="space-y-3">
+                                        <Field label="Código establecimiento SAT" error={form.errors.fel_establishment_code}>
+                                            <TextInput className={inputClass} value={form.data.fel_establishment_code} onChange={(event) => form.setData('fel_establishment_code', event.target.value)} />
+                                        </Field>
+                                        <Field label="Nombre establecimiento FEL" error={form.errors.fel_establishment_name}>
+                                            <TextInput className={inputClass} value={form.data.fel_establishment_name} onChange={(event) => form.setData('fel_establishment_name', event.target.value)} />
+                                        </Field>
+                                        <Field label="Dirección FEL" error={form.errors.fel_address}>
+                                            <TextInput className={inputClass} value={form.data.fel_address} onChange={(event) => form.setData('fel_address', event.target.value)} />
+                                        </Field>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <Field label="Código postal" error={form.errors.fel_postal_code}>
+                                                <TextInput className={inputClass} value={form.data.fel_postal_code} onChange={(event) => form.setData('fel_postal_code', event.target.value)} />
+                                            </Field>
+                                            <Field label="País" error={form.errors.fel_country}>
+                                                <TextInput className={inputClass} value={form.data.fel_country} onChange={(event) => form.setData('fel_country', event.target.value.toUpperCase())} />
+                                            </Field>
+                                        </div>
+                                        <Field label="Municipio" error={form.errors.fel_municipality}>
+                                            <TextInput className={inputClass} value={form.data.fel_municipality} onChange={(event) => form.setData('fel_municipality', event.target.value)} />
+                                        </Field>
+                                        <Field label="Departamento" error={form.errors.fel_department}>
+                                            <TextInput className={inputClass} value={form.data.fel_department} onChange={(event) => form.setData('fel_department', event.target.value)} />
+                                        </Field>
+                                    </div>
+                                </div>
+                            )}
 
                             <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
                                 <input

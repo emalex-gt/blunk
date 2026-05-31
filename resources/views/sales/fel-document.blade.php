@@ -154,6 +154,9 @@
         </div>
         <div class="center">
             <h1>{{ $company['name'] }}</h1>
+            @if (! empty($company['establishment_name']))
+                <p><strong>{{ $company['establishment_name'] }}</strong></p>
+            @endif
             <p>{{ $company['address'] ?: 'Ciudad' }}</p>
             <p>{{ $company['municipality'] }} {{ $company['department'] }}</p>
         </div>
@@ -222,6 +225,13 @@
             <tr class="grand"><td>Total</td><td class="right">{{ formatMoney($total, 'GT') }}</td></tr>
         </table>
     </section>
+    @if (! empty($visibleFelPhrases))
+        <section class="certifier" style="margin-top: 14px;">
+            @foreach ($visibleFelPhrases as $phrase)
+                <p><strong>{{ $phrase }}</strong></p>
+            @endforeach
+        </section>
+    @endif
     <section class="bottom">
         <img class="qr" src="{{ $fel['qr_url'] }}" alt="Verificación SAT FEL">
         <div class="certifier">

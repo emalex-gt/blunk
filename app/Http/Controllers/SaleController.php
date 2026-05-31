@@ -25,6 +25,7 @@ use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\BusinessLogo;
 use App\Support\Credits;
+use App\Support\FelPhraseRenderer;
 use App\Support\Permissions;
 use App\Support\PriceLists;
 use App\Support\StockAvailability;
@@ -998,7 +999,7 @@ class SaleController extends Controller
 
         $businessId = currentBusinessId();
         $business = Business::query()
-            ->with(['tenantSetting', 'tenantFelSetting'])
+            ->with(['tenantSetting', 'tenantFelSetting.phrases'])
             ->findOrFail($businessId);
         $settings = $business->tenantSetting;
         $felSettings = $business->tenantFelSetting;
@@ -1009,12 +1010,43 @@ class SaleController extends Controller
             'items.product:id,code,barcode',
             'payments:id,sale_id,method,amount,reference,details',
             'electronicDocument',
-            'branch:id,business_id,name,logo_url',
+            'branch:id,business_id,name,logo_url,fel_establishment_code,fel_establishment_name,fel_address,fel_postal_code,fel_municipality,fel_department,fel_country',
         ]);
 
         $receiptFormat = $settings?->receipt_format === 'document' ? 'document' : 'ticket';
         $issuerNit = DigifactNit::cleanIssuerNitForPayload($felSettings?->issuer_tax_id ?: $settings?->company_tax_id);
         $receiverNit = DigifactNit::cleanReceiverNit($sale->customer_doc_number ?: $sale->customer?->doc_number ?: 'CF');
+        $documentMetadata = $sale->electronicDocument?->metadata ?? [];
+        $establishment = $documentMetadata['fel_establishment'] ?? null;
+
+        if (! is_array($establishment)) {
+            $printBranch = $sale->branch && (int) $sale->branch->business_id === (int) $business->id
+                ? $sale->branch
+                : BranchInventory::defaultBranchForBusiness($business);
+
+            if (! BranchInventory::branchesEnabled($business->id)) {
+                $printBranch = BranchInventory::defaultBranchForBusiness($business);
+            }
+
+            $establishment = [
+                'code' => $printBranch->fel_establishment_code,
+                'name' => $printBranch->fel_establishment_name ?: $printBranch->name,
+                'address' => $printBranch->fel_address ?: $felSettings?->establishment_address ?: $settings?->company_address,
+                'postal_code' => $printBranch->fel_postal_code ?: $felSettings?->establishment_postal_code,
+                'municipality' => $printBranch->fel_municipality ?: $felSettings?->establishment_municipality,
+                'department' => $printBranch->fel_department ?: $felSettings?->establishment_department,
+                'country' => $printBranch->fel_country ?: $felSettings?->establishment_country ?: 'GT',
+            ];
+        }
+
+        $visibleFelPhrases = $documentMetadata['fel_visible_phrases'] ?? null;
+
+        if (! is_array($visibleFelPhrases)) {
+            $visibleFelPhrases = $felSettings
+                ? FelPhraseRenderer::visiblePhrases($felSettings->phrases)
+                : [];
+        }
+
         $subtotal = round((float) ($sale->subtotal_before_discount ?? $sale->total), 2);
         $total = round((float) $sale->total, 2);
         $taxable = round($total / 1.12, 2);
@@ -1031,9 +1063,10 @@ class SaleController extends Controller
                 'logo_url' => BusinessLogo::forPrint($business, $sale->branch),
                 'name' => $settings?->company_name ?: $business->name,
                 'tax_id' => $issuerNit,
-                'address' => $felSettings?->establishment_address ?: $settings?->company_address,
-                'municipality' => $felSettings?->establishment_municipality,
-                'department' => $felSettings?->establishment_department,
+                'establishment_name' => $establishment['name'] ?? null,
+                'address' => $establishment['address'] ?? null,
+                'municipality' => $establishment['municipality'] ?? null,
+                'department' => $establishment['department'] ?? null,
                 'phone' => $settings?->company_phone,
             ],
             'business' => $business,
@@ -1064,6 +1097,7 @@ class SaleController extends Controller
             'discount' => round((float) ($sale->discount_amount ?? 0), 2),
             'iva' => $iva,
             'total' => $total,
+            'visibleFelPhrases' => $visibleFelPhrases,
             'createdAtLocal' => $sale->created_at?->copy()->timezone($timezone)->format('Y-m-d H:i:s'),
         ]);
     }

@@ -133,6 +133,9 @@
     <div class="section-title">INFORMACIÓN EMISOR</div>
 
     <div class="fel-name"><strong>{{ $company['name'] }}</strong></div>
+    @if (! empty($company['establishment_name']))
+        <div class="center">{{ $company['establishment_name'] }}</div>
+    @endif
     <div class="center">NIT: {{ $company['tax_id'] }}</div>
     <div class="center">{{ $company['address'] ?: 'Ciudad' }}</div>
     @if (! empty($company['municipality']) || ! empty($company['department']))
@@ -179,7 +182,12 @@
     <div class="row"><span>IVA</span><strong>{{ formatMoney($iva, 'GT') }}</strong></div>
     <div class="row total"><span>Total</span><span>{{ formatMoney($total, 'GT') }}</span></div>
 
-    <strong>SUJETO A PAGOS TRIMESTRALES</strong>
+    @if (! empty($visibleFelPhrases))
+        <div class="separator"></div>
+        @foreach ($visibleFelPhrases as $phrase)
+            <div class="center"><strong>{{ $phrase }}</strong></div>
+        @endforeach
+    @endif
 
     <div class="separator"></div>
     @foreach ($payments as $payment)

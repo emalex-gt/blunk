@@ -2,22 +2,28 @@
 
 namespace App\Services\Fel\Providers\Digifact;
 
+use App\Models\Branch;
 use App\Models\ElectronicDocument;
 use App\Models\Sale;
 use App\Models\TenantFelSetting;
 use App\Models\TenantSetting;
+use App\Services\Fel\FelException;
+use App\Support\BranchInventory;
+use App\Support\FelPhraseRenderer;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Log;
 
 class DigifactNucJsonBuilder
 {
     public function buildInvoicePayload(Sale $sale, TenantFelSetting $settings): array
     {
-        $sale->loadMissing(['business.tenantSetting', 'customer', 'items.product']);
+        $sale->loadMissing(['business.tenantSetting', 'branch', 'customer', 'items.product']);
         $settings->loadMissing('phrases');
+        FelPhraseRenderer::validate($settings->phrases);
         $internalReference = $sale->fel_internal_reference ?: $this->internalReference($sale);
         $companySettings = $sale->business?->tenantSetting
             ?: TenantSetting::query()->where('business_id', $sale->business_id)->first();
+        $felBranch = $this->felBranch($sale);
+        $this->validateFelBranch($felBranch);
         $customer = $sale->customer;
         $buyerTaxId = DigifactNit::cleanReceiverNit($sale->customer_doc_number ?: $customer?->doc_number ?: 'CF');
         $buyerName = $buyerTaxId === 'CF'
@@ -26,30 +32,35 @@ class DigifactNucJsonBuilder
         $buyerAddress = trim((string) (
             $sale->customer_address
             ?: $customer?->address
+            ?: $felBranch->fel_address
             ?: $settings->establishment_address
             ?: ''
         )) ?: 'Ciudad';
         $buyerPostalCode = trim((string) (
             $sale->customer_postal_code
             ?: $customer?->postal_code
+            ?: $felBranch->fel_postal_code
             ?: $settings->establishment_postal_code
             ?: ''
         )) ?: '01001';
         $buyerMunicipality = trim((string) (
             $sale->customer_municipality
             ?: $customer?->municipality
+            ?: $felBranch->fel_municipality
             ?: $settings->establishment_municipality
             ?: ''
         )) ?: 'Guatemala';
         $buyerDepartment = trim((string) (
             $sale->customer_department
             ?: $customer?->department
+            ?: $felBranch->fel_department
             ?: $settings->establishment_department
             ?: ''
         )) ?: 'Guatemala';
         $buyerCountry = trim((string) (
             $sale->customer_country
             ?: $customer?->country
+            ?: $felBranch->fel_country
             ?: $settings->establishment_country
             ?: ''
         )) ?: 'GT';
@@ -65,52 +76,6 @@ class DigifactNucJsonBuilder
                 'Country' => $buyerCountry,
             ],
         ];
-
-        $branchDefaults = [];
-        $branchCode = (string) ($settings->establishment_code ?: '1');
-        $branchName = $settings->establishment_name ?: 'Casa Matriz';
-        $branchAddress = $settings->establishment_address
-            ?: $companySettings?->company_address
-            ?: 'Ciudad';
-        $branchPostalCode = $settings->establishment_postal_code ?: '01001';
-        $branchMunicipality = $settings->establishment_municipality ?: 'Guatemala';
-        $branchDepartment = $settings->establishment_department ?: 'Guatemala';
-        $branchCountry = $settings->establishment_country ?: 'GT';
-
-        if (! $settings->establishment_code) {
-            $branchDefaults[] = 'establishment_code';
-        }
-
-        if (! $settings->establishment_name) {
-            $branchDefaults[] = 'establishment_name';
-        }
-
-        if (! $settings->establishment_address && ! $companySettings?->company_address) {
-            $branchDefaults[] = 'establishment_address';
-        }
-
-        if (! $settings->establishment_postal_code) {
-            $branchDefaults[] = 'establishment_postal_code';
-        }
-
-        if (! $settings->establishment_municipality) {
-            $branchDefaults[] = 'establishment_municipality';
-        }
-
-        if (! $settings->establishment_department) {
-            $branchDefaults[] = 'establishment_department';
-        }
-
-        if (! $settings->establishment_country) {
-            $branchDefaults[] = 'establishment_country';
-        }
-
-        if ($branchDefaults !== []) {
-            Log::warning('Digifact Seller.BranchInfo defaults used', [
-                'business_id' => $sale->business_id,
-                'defaults' => $branchDefaults,
-            ]);
-        }
 
         $items = [];
         $grandTotal = 0.0;
@@ -192,19 +157,18 @@ class DigifactNucJsonBuilder
                     ],
                 ],
                 'AdditionlInfo' => $this->buildSellerAdditionlInfo($settings),
-                'Name' => $settings->establishment_name
-                    ?: $companySettings?->company_name
+                'Name' => $companySettings?->company_name
                     ?: $sale->business?->name
                     ?: 'Empresa',
                 'BranchInfo' => [
-                    'Code' => $branchCode,
-                    'Name' => $branchName,
+                    'Code' => (string) $felBranch->fel_establishment_code,
+                    'Name' => $felBranch->fel_establishment_name ?: $felBranch->name,
                     'AddressInfo' => [
-                        'Address' => $branchAddress,
-                        'City' => $branchPostalCode,
-                        'District' => $branchMunicipality,
-                        'State' => $branchDepartment,
-                        'Country' => $branchCountry,
+                        'Address' => $felBranch->fel_address,
+                        'City' => $felBranch->fel_postal_code,
+                        'District' => $felBranch->fel_municipality,
+                        'State' => $felBranch->fel_department,
+                        'Country' => $felBranch->fel_country ?: 'GT',
                     ],
                 ],
             ],
@@ -240,6 +204,61 @@ class DigifactNucJsonBuilder
     public function internalReference(Sale $sale): string
     {
         return 'BLUNK-'.$sale->business_id.'-'.$sale->id;
+    }
+
+    public function felMetadataFromPayload(array $payload, TenantFelSetting $settings): array
+    {
+        $branchInfo = $payload['Seller']['BranchInfo'] ?? [];
+        $addressInfo = $branchInfo['AddressInfo'] ?? [];
+
+        return [
+            'fel_establishment' => [
+                'code' => $branchInfo['Code'] ?? null,
+                'name' => $branchInfo['Name'] ?? null,
+                'address' => $addressInfo['Address'] ?? null,
+                'postal_code' => $addressInfo['City'] ?? null,
+                'municipality' => $addressInfo['District'] ?? null,
+                'department' => $addressInfo['State'] ?? null,
+                'country' => $addressInfo['Country'] ?? null,
+            ],
+            'fel_visible_phrases' => FelPhraseRenderer::visiblePhrases($settings->phrases),
+        ];
+    }
+
+    private function felBranch(Sale $sale): Branch
+    {
+        $business = $sale->business;
+
+        if ($sale->branch && (int) $sale->branch->business_id === (int) $sale->business_id) {
+            if ($business && ! BranchInventory::branchesEnabled($sale->business_id)) {
+                return BranchInventory::defaultBranchForBusiness($business);
+            }
+
+            return $sale->branch;
+        }
+
+        if (! $business) {
+            throw new FelException('No se pudo resolver la empresa para certificar FEL.');
+        }
+
+        return BranchInventory::felBranchForBusiness($business, auth()->user());
+    }
+
+    private function validateFelBranch(Branch $branch): void
+    {
+        foreach ([
+            'fel_establishment_code',
+            'fel_establishment_name',
+            'fel_address',
+            'fel_postal_code',
+            'fel_municipality',
+            'fel_department',
+            'fel_country',
+        ] as $field) {
+            if (! filled($branch->{$field})) {
+                throw new FelException('Faltan datos del establecimiento FEL. Configura código, nombre y dirección del establecimiento.');
+            }
+        }
     }
 
     private function buildSellerAdditionlInfo(TenantFelSetting $settings): array
