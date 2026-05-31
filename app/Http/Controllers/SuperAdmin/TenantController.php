@@ -245,13 +245,6 @@ class TenantController extends Controller
             'fel_password' => ['nullable', 'string', 'max:1000'],
             'fel_test_base_url' => ['nullable', 'url', 'max:255'],
             'fel_production_base_url' => ['nullable', 'url', 'max:255'],
-            'fel_establishment_code' => ['nullable', 'string', 'max:255'],
-            'fel_establishment_name' => ['nullable', 'string', 'max:255'],
-            'fel_establishment_address' => ['nullable', 'string', 'max:255'],
-            'fel_establishment_postal_code' => ['nullable', 'string', 'max:50'],
-            'fel_establishment_municipality' => ['nullable', 'string', 'max:255'],
-            'fel_establishment_department' => ['nullable', 'string', 'max:255'],
-            'fel_establishment_country' => ['nullable', 'string', 'size:2'],
             'fel_affiliate_type' => ['nullable', 'string', 'max:255'],
             'fel_certifier_tax_id' => ['nullable', 'string', 'max:50'],
             'fel_phrases' => ['nullable', 'array'],
@@ -311,13 +304,6 @@ class TenantController extends Controller
                 'production_base_url' => filled($validated['fel_production_base_url'] ?? null)
                     ? $validated['fel_production_base_url']
                     : config('digifact.production_base_url'),
-                'establishment_code' => $validated['fel_establishment_code'] ?? null,
-                'establishment_name' => $validated['fel_establishment_name'] ?? null,
-                'establishment_address' => $validated['fel_establishment_address'] ?? null,
-                'establishment_postal_code' => $validated['fel_establishment_postal_code'] ?? null,
-                'establishment_municipality' => $validated['fel_establishment_municipality'] ?? null,
-                'establishment_department' => $validated['fel_establishment_department'] ?? null,
-                'establishment_country' => $validated['fel_establishment_country'] ?? 'GT',
                 'affiliate_type' => $validated['fel_affiliate_type'] ?? null,
                 'certifier_tax_id' => $validated['fel_certifier_tax_id'] ?? null,
             ],
@@ -358,7 +344,6 @@ class TenantController extends Controller
             && filled($fel['username'] ?? null)
             && $hasPassword
             && filled($activeBaseUrl)
-            && filled($fel['establishment_code'] ?? null)
             && filled($fel['affiliate_type'] ?? null);
 
         if (! $ready) {
@@ -480,13 +465,6 @@ class TenantController extends Controller
             'username' => null,
             'test_base_url' => config('digifact.test_base_url'),
             'production_base_url' => config('digifact.production_base_url'),
-            'establishment_code' => null,
-            'establishment_name' => null,
-            'establishment_address' => 'Ciudad',
-            'establishment_postal_code' => '01001',
-            'establishment_municipality' => 'Guatemala',
-            'establishment_department' => 'Guatemala',
-            'establishment_country' => 'GT',
             'affiliate_type' => null,
             'certifier_tax_id' => null,
             'last_successful_connection_at' => null,
@@ -513,13 +491,6 @@ class TenantController extends Controller
             'username' => $settings->username,
             'test_base_url' => $settings->test_base_url ?: config('digifact.test_base_url'),
             'production_base_url' => $settings->production_base_url ?: config('digifact.production_base_url'),
-            'establishment_code' => $settings->establishment_code,
-            'establishment_name' => $settings->establishment_name,
-            'establishment_address' => $settings->establishment_address ?: 'Ciudad',
-            'establishment_postal_code' => $settings->establishment_postal_code ?: '01001',
-            'establishment_municipality' => $settings->establishment_municipality ?: 'Guatemala',
-            'establishment_department' => $settings->establishment_department ?: 'Guatemala',
-            'establishment_country' => $settings->establishment_country ?: 'GT',
             'affiliate_type' => $settings->affiliate_type,
             'certifier_tax_id' => $settings->certifier_tax_id,
             'last_successful_connection_at' => $settings->last_successful_connection_at?->format('Y-m-d H:i'),

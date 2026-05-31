@@ -31,13 +31,6 @@ type FelSettings = {
     username: string | null;
     test_base_url: string | null;
     production_base_url: string | null;
-    establishment_code: string | null;
-    establishment_name: string | null;
-    establishment_address: string | null;
-    establishment_postal_code: string | null;
-    establishment_municipality: string | null;
-    establishment_department: string | null;
-    establishment_country: string | null;
     affiliate_type: string | null;
     certifier_tax_id: string | null;
     last_successful_connection_at: string | null;
@@ -114,13 +107,6 @@ export default function Form({
         fel_password: '',
         fel_test_base_url: felSettings.test_base_url ?? 'https://testnucgt.digifact.com/api',
         fel_production_base_url: felSettings.production_base_url ?? 'https://nucgt.digifact.com/gt.com.apinuc/api',
-        fel_establishment_code: felSettings.establishment_code ?? '',
-        fel_establishment_name: felSettings.establishment_name ?? '',
-        fel_establishment_address: felSettings.establishment_address ?? 'Ciudad',
-        fel_establishment_postal_code: felSettings.establishment_postal_code ?? '01001',
-        fel_establishment_municipality: felSettings.establishment_municipality ?? 'Guatemala',
-        fel_establishment_department: felSettings.establishment_department ?? 'Guatemala',
-        fel_establishment_country: felSettings.establishment_country ?? 'GT',
         fel_affiliate_type: felSettings.affiliate_type ?? '',
         fel_certifier_tax_id: felSettings.certifier_tax_id ?? '',
         fel_phrases: felSettings.phrases?.length ? felSettings.phrases : [defaultPhrase()],
@@ -506,37 +492,26 @@ export default function Form({
                             <Field label="URL Producción" error={errors.fel_production_base_url}>
                                 <TextInput className={inputClass} value={data.fel_production_base_url} onChange={(e) => setData('fel_production_base_url', e.target.value)} />
                             </Field>
-                            <Field label="Código establecimiento" error={errors.fel_establishment_code}>
-                                <TextInput className={inputClass} value={data.fel_establishment_code} onChange={(e) => setData('fel_establishment_code', e.target.value)} />
-                            </Field>
-                            <Field label="Nombre establecimiento" error={errors.fel_establishment_name}>
-                                <TextInput className={inputClass} value={data.fel_establishment_name} onChange={(e) => setData('fel_establishment_name', e.target.value)} />
-                            </Field>
                             <Field label="Afiliación IVA" error={errors.fel_affiliate_type}>
                                 <TextInput className={inputClass} value={data.fel_affiliate_type} onChange={(e) => setData('fel_affiliate_type', e.target.value)} />
-                            </Field>
-                            <div className="md:col-span-2">
-                                <h3 className="mt-2 text-base font-semibold text-gray-900">Datos del establecimiento</h3>
-                                <p className="mt-1 text-sm text-gray-500">Estos datos se envían a Digifact en BranchInfo.AddressInfo.</p>
-                            </div>
-                            <Field label="Dirección del establecimiento" error={errors.fel_establishment_address}>
-                                <TextInput className={inputClass} value={data.fel_establishment_address} onChange={(e) => setData('fel_establishment_address', e.target.value)} />
-                            </Field>
-                            <Field label="Código postal" error={errors.fel_establishment_postal_code}>
-                                <TextInput className={inputClass} value={data.fel_establishment_postal_code} onChange={(e) => setData('fel_establishment_postal_code', e.target.value)} />
-                            </Field>
-                            <Field label="Municipio" error={errors.fel_establishment_municipality}>
-                                <TextInput className={inputClass} value={data.fel_establishment_municipality} onChange={(e) => setData('fel_establishment_municipality', e.target.value)} />
-                            </Field>
-                            <Field label="Departamento" error={errors.fel_establishment_department}>
-                                <TextInput className={inputClass} value={data.fel_establishment_department} onChange={(e) => setData('fel_establishment_department', e.target.value)} />
-                            </Field>
-                            <Field label="País" error={errors.fel_establishment_country}>
-                                <TextInput className={inputClass} value={data.fel_establishment_country} onChange={(e) => setData('fel_establishment_country', e.target.value.toUpperCase())} />
                             </Field>
                             <Field label="NIT certificador" error={errors.fel_certifier_tax_id}>
                                 <TextInput className={inputClass} value={data.fel_certifier_tax_id} onChange={(e) => setData('fel_certifier_tax_id', e.target.value)} />
                             </Field>
+                        </div>
+
+                        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                            <p>
+                                Los datos del establecimiento FEL se configuran en la sucursal. Si la empresa no usa sucursales, se utiliza la Sucursal Principal.
+                            </p>
+                            {tenant && (
+                                <Link
+                                    href={route('super-admin.tenants.branches', tenant.id)}
+                                    className="mt-3 inline-flex rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100"
+                                >
+                                    Configurar establecimiento FEL
+                                </Link>
+                            )}
                         </div>
 
                         <div className="mt-6">

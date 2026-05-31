@@ -275,6 +275,63 @@ class CriticalPosFelFlowTest extends TestCase
         $response->assertSessionHasErrors(['allow_receipts']);
     }
 
+    public function test_tenant_fel_settings_page_does_not_expose_legacy_establishment_fields(): void
+    {
+        [$business] = $this->tenant(country: 'GT', modules: ['pos', 'fel_gt']);
+        $this->felSettings($business);
+        $superAdmin = User::factory()->create([
+            'role' => 'super_admin',
+            'is_super_admin' => true,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($superAdmin)
+            ->get(route('super-admin.tenants.edit', $business))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('SuperAdmin/Tenants/Form')
+                ->missing('felSettings.establishment_code')
+                ->missing('felSettings.establishment_name')
+                ->missing('felSettings.establishment_address')
+                ->missing('felSettings.establishment_postal_code')
+                ->missing('felSettings.establishment_municipality')
+                ->missing('felSettings.establishment_department')
+                ->missing('felSettings.establishment_country')
+            );
+    }
+
+    public function test_super_admin_branch_page_exposes_fel_establishment_fields(): void
+    {
+        [$business] = $this->tenant(country: 'GT', modules: ['pos', 'fel_gt']);
+        $this->felSettings($business);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $branch->update([
+            'fel_establishment_code' => '1',
+            'fel_establishment_name' => 'Sucursal Principal FEL',
+            'fel_address' => 'Ciudad',
+            'fel_postal_code' => '01001',
+            'fel_municipality' => 'Guatemala',
+            'fel_department' => 'Guatemala',
+            'fel_country' => 'GT',
+        ]);
+        $superAdmin = User::factory()->create([
+            'role' => 'super_admin',
+            'is_super_admin' => true,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($superAdmin)
+            ->get(route('super-admin.tenants.branches', $business))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('SuperAdmin/Tenants/Branches')
+                ->where('branches.0.fel_establishment_code', '1')
+                ->where('branches.0.fel_establishment_name', 'Sucursal Principal FEL')
+                ->where('branches.0.fel_address', 'Ciudad')
+                ->where('branches.0.fel_postal_code', '01001')
+            );
+    }
+
     public function test_only_receipt_enabled_uses_receipt_when_request_has_no_document_type(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);
