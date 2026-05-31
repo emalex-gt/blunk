@@ -1834,15 +1834,17 @@ class CriticalPosFelFlowTest extends TestCase
             ['phrase_type' => '1', 'scenario_code' => '1'],
             ['phrase_type' => '1', 'scenario_code' => '2'],
             ['phrase_type' => '1', 'scenario_code' => '3', 'resolution_number' => 'SAT-123', 'resolution_date' => '2026-05-31'],
+            ['phrase_type' => '2', 'scenario_code' => '1'],
             ['phrase_type' => '3', 'scenario_code' => '1'],
             ['phrase_type' => '99', 'scenario_code' => '99'],
         ]);
 
         $this->assertSame([
-            'Sujeto a pagos trimestrales ISR',
-            'Sujeto a retención definitiva ISR',
-            'Sujeto a pago directo ISR (SAT-123 - 31/05/2026)',
-            'No genera derecho a crédito fiscal',
+            'SUJETO A PAGOS TRIMESTRALES',
+            'SUJETO A RETENCIÓN DEFINITIVA',
+            'SUJETO A PAGO DIRECTO (SAT-123 - 31/05/2026)',
+            'AGENTE DE RETENCIÓN DEL IVA',
+            'NO GENERA DERECHO A CRÉDITO FISCAL',
         ], $phrases);
     }
 

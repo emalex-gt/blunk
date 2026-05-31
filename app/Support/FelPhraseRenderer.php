@@ -38,11 +38,11 @@ class FelPhraseRenderer
         $scenario = (string) (self::value($phrase, 'scenario_code') ?: self::value($phrase, 'scenario_value'));
 
         if ($type === '1' && $scenario === '1') {
-            return 'Sujeto a pagos trimestrales ISR';
+            return 'SUJETO A PAGOS TRIMESTRALES';
         }
 
         if ($type === '1' && $scenario === '2') {
-            return 'Sujeto a retención definitiva ISR';
+            return 'SUJETO A RETENCIÓN DEFINITIVA';
         }
 
         if ($type === '1' && $scenario === '3') {
@@ -56,18 +56,18 @@ class FelPhraseRenderer
             }
 
             return sprintf(
-                'Sujeto a pago directo ISR (%s - %s)',
+                'SUJETO A PAGO DIRECTO (%s - %s)',
                 $resolutionNumber,
                 self::formatDate($resolutionDate),
             );
         }
 
         if ($type === '2' && $scenario === '1') {
-            return 'Agente de Retención del IVA';
+            return 'AGENTE DE RETENCIÓN DEL IVA';
         }
 
         if ($type === '3' && $scenario === '1') {
-            return 'No genera derecho a crédito fiscal';
+            return 'NO GENERA DERECHO A CRÉDITO FISCAL';
         }
 
         self::logUnmapped($type, $scenario);
