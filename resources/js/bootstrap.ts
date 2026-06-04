@@ -27,18 +27,11 @@ window.dispatchSessionExpired = (detail = {}) => {
     window.dispatchEvent(new CustomEvent('blunk:session-expired', { detail }));
 };
 
-window.clearSessionExpired = () => {
-    window.dispatchEvent(new CustomEvent('blunk:session-restored'));
-};
-
 window.axios.interceptors.response.use(
     (response) => response,
     (error) => {
         if (error?.response?.status === 419) {
-            window.dispatchSessionExpired?.({
-                isPos: window.location.pathname.includes('/sales/create'),
-                source: 'axios',
-            });
+            window.dispatchSessionExpired?.({ isPos: window.location.pathname.includes('/sales/create') });
         }
 
         return Promise.reject(error);
@@ -47,24 +40,11 @@ window.axios.interceptors.response.use(
 
 const originalFetch = window.fetch.bind(window);
 
-function isKeepAliveRequest(input: RequestInfo | URL): boolean {
-    const value = typeof input === 'string'
-        ? input
-        : input instanceof URL
-            ? input.href
-            : input.url;
-
-    return new URL(value, window.location.origin).pathname.endsWith('/session/keep-alive');
-}
-
 window.fetch = async (...args) => {
     const response = await originalFetch(...args);
 
-    if (response.status === 419 && !isKeepAliveRequest(args[0])) {
-        window.dispatchSessionExpired?.({
-            isPos: window.location.pathname.includes('/sales/create'),
-            source: 'fetch',
-        });
+    if (response.status === 419) {
+        window.dispatchSessionExpired?.({ isPos: window.location.pathname.includes('/sales/create') });
     }
 
     return response;

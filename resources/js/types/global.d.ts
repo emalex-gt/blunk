@@ -6,8 +6,7 @@ import { PageProps as AppPageProps } from './';
 declare global {
     interface Window {
         axios: AxiosInstance;
-        dispatchSessionExpired?: (detail?: { isPos?: boolean; source?: string }) => void;
-        clearSessionExpired?: () => void;
+        dispatchSessionExpired?: (detail?: { isPos?: boolean }) => void;
     }
 
     /* eslint-disable no-var */

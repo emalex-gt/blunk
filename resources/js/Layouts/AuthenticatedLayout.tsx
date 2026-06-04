@@ -20,8 +20,6 @@ type BranchOption = {
     code: string | null;
 };
 
-type SessionProbeResult = 'active' | 'expired' | 'unknown';
-
 export default function Authenticated({
     header,
     children,
@@ -40,7 +38,6 @@ export default function Authenticated({
     const [sessionExpired, setSessionExpired] = useState(false);
     const [sessionExpiredInPos, setSessionExpiredInPos] = useState(false);
     const navRef = useRef<HTMLDivElement>(null);
-    const sessionProbeRef = useRef<Promise<SessionProbeResult> | null>(null);
     const canManageUsers = Boolean(user?.is_super_admin) || ['owner', 'admin'].includes(user?.role ?? '');
     const canViewCredits = Boolean(user?.is_super_admin) || permissions.includes('credits.view');
     const hasModule = (module: string) => enabledModules.includes(module);
@@ -104,75 +101,13 @@ export default function Authenticated({
 
     useEffect(() => {
         if (!user) {
-            setSessionExpired(false);
-            setSessionExpiredInPos(false);
             return;
         }
 
-        setSessionExpired(false);
-        setSessionExpiredInPos(false);
-
-        const clearExpired = () => {
-            setSessionExpired(false);
-            setSessionExpiredInPos(false);
-        };
-
-        const showExpired = (isPos = false) => {
-            setSessionExpiredInPos(Boolean(isPos || route().current('sales.create')));
-            setSessionExpired(true);
-        };
-
-        const probeSession = (): Promise<SessionProbeResult> => {
-            if (sessionProbeRef.current) {
-                return sessionProbeRef.current;
-            }
-
-            const probe = fetch(route('session.keep-alive'), {
-                method: 'GET',
-                credentials: 'same-origin',
-                cache: 'no-store',
-                headers: {
-                    Accept: 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-            })
-                .then(async (response): Promise<SessionProbeResult> => {
-                    if (response.status === 401 || response.status === 419) {
-                        return 'expired';
-                    }
-
-                    if (!response.ok) {
-                        return 'unknown';
-                    }
-
-                    const payload = await response.json() as { csrf_token?: string };
-
-                    if (payload.csrf_token) {
-                        setCsrfToken(payload.csrf_token);
-                    }
-
-                    return 'active';
-                })
-                .catch((): SessionProbeResult => 'unknown')
-                .finally(() => {
-                    sessionProbeRef.current = null;
-                });
-
-            sessionProbeRef.current = probe;
-
-            return probe;
-        };
-
         const handleExpired = (event: Event) => {
             const detail = (event as CustomEvent<{ isPos?: boolean }>).detail ?? {};
-
-            void probeSession().then((result) => {
-                if (result === 'active') {
-                    clearExpired();
-                } else if (result === 'expired') {
-                    showExpired(detail.isPos);
-                }
-            });
+            setSessionExpiredInPos(Boolean(detail.isPos || route().current('sales.create')));
+            setSessionExpired(true);
         };
 
         const removeInvalidListener = router.on('invalid', (event) => {
@@ -189,28 +124,44 @@ export default function Authenticated({
                 return;
             }
 
-            const result = await probeSession();
+            try {
+                const response = await fetch(route('session.keep-alive'), {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    headers: {
+                        Accept: 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                });
 
-            if (result === 'active') {
-                clearExpired();
-            } else if (result === 'expired') {
-                showExpired(route().current('sales.create'));
+                if (response.status === 401 || response.status === 419) {
+                    window.dispatchSessionExpired?.({ isPos: route().current('sales.create') });
+                    return;
+                }
+
+                if (!response.ok) {
+                    return;
+                }
+
+                const payload = await response.json() as { csrf_token?: string };
+
+                if (payload.csrf_token) {
+                    setCsrfToken(payload.csrf_token);
+                }
+            } catch {
+                // Network errors are ignored until a real request proves the session expired.
             }
         };
 
         window.addEventListener('blunk:session-expired', handleExpired);
-        window.addEventListener('blunk:session-restored', clearExpired);
-        const initialTimeout = window.setTimeout(keepAlive, 60 * 1000);
         const interval = window.setInterval(keepAlive, 10 * 60 * 1000);
 
         return () => {
             window.removeEventListener('blunk:session-expired', handleExpired);
-            window.removeEventListener('blunk:session-restored', clearExpired);
-            window.clearTimeout(initialTimeout);
             window.clearInterval(interval);
             removeInvalidListener();
         };
-    }, [user?.id]);
+    }, [user]);
 
     return (
         <div className="min-h-screen bg-[#f4f6fb] text-slate-900">
