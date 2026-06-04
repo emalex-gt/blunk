@@ -2,7 +2,6 @@ import ApplicationLogo from '@/Components/ApplicationLogo';
 import Dropdown from '@/Components/Dropdown';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink';
 import { t } from '@/lib/i18n';
-import { setCsrfToken } from '@/bootstrap';
 import { Link, router, usePage } from '@inertiajs/react';
 import { PropsWithChildren, ReactNode, useEffect, useRef, useState } from 'react';
 
@@ -35,8 +34,9 @@ export default function Authenticated({
     const branches = (usePage().props.branches as BranchOption[] | undefined) ?? [];
     const [showingNavigationDropdown, setShowingNavigationDropdown] = useState(false);
     const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
-    const [sessionExpired, setSessionExpired] = useState(false);
-    const [sessionExpiredInPos, setSessionExpiredInPos] = useState(false);
+    // Disabled while session expiry recovery is handled by valid Inertia redirects.
+    const sessionExpired = false;
+    const sessionExpiredInPos = false;
     const navRef = useRef<HTMLDivElement>(null);
     const canManageUsers = Boolean(user?.is_super_admin) || ['owner', 'admin'].includes(user?.role ?? '');
     const canViewCredits = Boolean(user?.is_super_admin) || permissions.includes('credits.view');
@@ -98,70 +98,6 @@ export default function Authenticated({
 
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
-
-    useEffect(() => {
-        if (!user) {
-            return;
-        }
-
-        const handleExpired = (event: Event) => {
-            const detail = (event as CustomEvent<{ isPos?: boolean }>).detail ?? {};
-            setSessionExpiredInPos(Boolean(detail.isPos || route().current('sales.create')));
-            setSessionExpired(true);
-        };
-
-        const removeInvalidListener = router.on('invalid', (event) => {
-            const response = event.detail.response;
-
-            if (response.status === 419) {
-                event.preventDefault();
-                window.dispatchSessionExpired?.({ isPos: route().current('sales.create') });
-            }
-        });
-
-        const keepAlive = async () => {
-            if (document.visibilityState !== 'visible') {
-                return;
-            }
-
-            try {
-                const response = await fetch(route('session.keep-alive'), {
-                    method: 'GET',
-                    credentials: 'same-origin',
-                    headers: {
-                        Accept: 'application/json',
-                        'X-Requested-With': 'XMLHttpRequest',
-                    },
-                });
-
-                if (response.status === 401 || response.status === 419) {
-                    window.dispatchSessionExpired?.({ isPos: route().current('sales.create') });
-                    return;
-                }
-
-                if (!response.ok) {
-                    return;
-                }
-
-                const payload = await response.json() as { csrf_token?: string };
-
-                if (payload.csrf_token) {
-                    setCsrfToken(payload.csrf_token);
-                }
-            } catch {
-                // Network errors are ignored until a real request proves the session expired.
-            }
-        };
-
-        window.addEventListener('blunk:session-expired', handleExpired);
-        const interval = window.setInterval(keepAlive, 10 * 60 * 1000);
-
-        return () => {
-            window.removeEventListener('blunk:session-expired', handleExpired);
-            window.clearInterval(interval);
-            removeInvalidListener();
-        };
-    }, [user]);
 
     return (
         <div className="min-h-screen bg-[#f4f6fb] text-slate-900">

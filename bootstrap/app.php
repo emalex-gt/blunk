@@ -5,6 +5,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 use Illuminate\Session\TokenMismatchException;
+use Inertia\Inertia;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -31,7 +32,11 @@ return Application::configure(basePath: dirname(__DIR__))
         $sessionExpiredResponse = function (Request $request) {
             $message = 'Por seguridad, tu sesión expiró. Inicia sesión nuevamente para continuar.';
 
-            if ($request->expectsJson() || $request->header('X-Inertia')) {
+            if ($request->header('X-Inertia') === 'true') {
+                return Inertia::location(route('login'));
+            }
+
+            if ($request->expectsJson()) {
                 return response()->json([
                     'message' => $message,
                     'session_expired' => true,

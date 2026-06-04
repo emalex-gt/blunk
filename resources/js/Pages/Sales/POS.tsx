@@ -591,19 +591,7 @@ export default function POS({
         }
 
         tokenPrewarmStartedRef.current = true;
-        const csrfToken = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '';
-
-        void fetch(route('sales.fel.prewarm-token'), {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: {
-                Accept: 'application/json',
-                'Content-Type': 'application/json',
-                'X-CSRF-TOKEN': csrfToken,
-                'X-Requested-With': 'XMLHttpRequest',
-            },
-            body: '{}',
-        }).catch(() => undefined);
+        void window.axios.post(route('sales.fel.prewarm-token'), {}).catch(() => undefined);
     }, [country, fel?.enabled, fel?.module_enabled]);
 
     const paymentMethods = useMemo(
