@@ -39,6 +39,8 @@ class HandleInertiaRequests extends Middleware
         $businessId = currentBusinessId();
 
         return array_merge(parent::share($request), [
+            'csrf_token' => csrf_token(),
+
             'auth' => [
                 'user' => $user
                     ? $user->only('id', 'name', 'email', 'business_id', 'role', 'is_super_admin', 'is_active')
@@ -174,6 +176,7 @@ class HandleInertiaRequests extends Middleware
             },
             'use_product_images' => fn () => tenantSetting('use_product_images', true),
             'flash' => [
+                'error' => fn () => $request->session()->get('error'),
                 'success' => fn () => $request->session()->get('success'),
                 'receipt_sale_id' => fn () => $request->session()->get('receipt_sale_id'),
                 'fel_print_sale_id' => fn () => $request->session()->get('fel_print_sale_id'),
