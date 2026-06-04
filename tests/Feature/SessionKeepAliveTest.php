@@ -41,21 +41,46 @@ class SessionKeepAliveTest extends TestCase
             ->assertUnauthorized();
     }
 
-    public function test_token_mismatch_returns_friendly_json_for_inertia_requests(): void
+    public function test_token_mismatch_returns_inertia_location_for_inertia_requests(): void
     {
-        Route::post('/__testing/session-expired', function () {
-            throw new TokenMismatchException();
-        })->middleware('web');
+        $this->registerExpiredSessionRoute();
 
         $this->withHeaders([
             'Accept' => 'application/json',
             'X-Inertia' => 'true',
         ])
             ->post('/__testing/session-expired')
+            ->assertStatus(409)
+            ->assertHeader('X-Inertia-Location', route('login'))
+            ->assertSessionHas('error', 'Tu sesión expiró. Inicia sesión nuevamente para continuar.')
+            ->assertContent('');
+    }
+
+    public function test_token_mismatch_returns_friendly_json_for_non_inertia_json_requests(): void
+    {
+        $this->registerExpiredSessionRoute();
+
+        $this->postJson('/__testing/session-expired')
             ->assertStatus(419)
             ->assertJson([
                 'message' => 'Por seguridad, tu sesión expiró. Inicia sesión nuevamente para continuar.',
                 'session_expired' => true,
             ]);
+    }
+
+    public function test_token_mismatch_redirects_normal_web_requests_to_login(): void
+    {
+        $this->registerExpiredSessionRoute();
+
+        $this->post('/__testing/session-expired')
+            ->assertRedirect(route('login'))
+            ->assertSessionHas('error', 'Tu sesión expiró. Inicia sesión nuevamente para continuar.');
+    }
+
+    private function registerExpiredSessionRoute(): void
+    {
+        Route::post('/__testing/session-expired', function () {
+            throw new TokenMismatchException();
+        })->middleware('web');
     }
 }
