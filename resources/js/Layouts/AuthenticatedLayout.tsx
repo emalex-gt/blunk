@@ -170,8 +170,13 @@ export default function Authenticated({
                     <div className="flex h-16 justify-between">
                         <div className="flex min-w-0">
                             <div className="flex shrink-0 items-center">
-                                <Link href={route('dashboard')} className="flex items-center">
-                                    <ApplicationLogo className="h-10 w-auto max-w-[154px] object-contain sm:max-w-[190px]" />
+                                <Link href={route('dashboard')} className="flex items-center gap-3">
+                                    <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 shadow-lg shadow-indigo-200">
+                                        <ApplicationLogo className="block h-5 w-5 fill-current text-white" />
+                                    </span>
+                                    <span className="hidden text-base font-bold tracking-tight text-slate-950 sm:inline">
+                                        POS SaaS
+                                    </span>
                                 </Link>
                             </div>
 
