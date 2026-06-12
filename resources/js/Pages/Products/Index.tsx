@@ -475,6 +475,7 @@ export default function ProductIndex({
                                     <th className="py-2 pr-3">{t('products.product')}</th>
                                     <th className="px-3 py-2">{t('products.category')}</th>
                                     <th className="px-3 py-2">{t('common.code')}</th>
+                                    <th className="px-3 py-2">{t('common.barcode')}</th>
                                     <th className="px-3 py-2">{t('stock.stock')}</th>
                                     <th className="px-3 py-2">{t('common.location')}</th>
                                     <th className="px-3 py-2">{t('products.price')}</th>
@@ -503,6 +504,7 @@ export default function ProductIndex({
                                         <td className="py-3 pr-3 font-medium text-slate-950">{product.name}</td>
                                         <td className="px-3 py-3 text-slate-600">{product.category?.name ?? '-'}</td>
                                         <td className="px-3 py-3 text-slate-600">{product.code ?? '-'}</td>
+                                        <td className="px-3 py-3 text-slate-600">{product.barcode ?? '-'}</td>
                                         <td className="px-3 py-3 text-slate-950">{product.stock}</td>
                                         <td className="px-3 py-3 text-slate-600">{product.location ?? '-'}</td>
                                         <td className="whitespace-nowrap px-3 py-3 text-slate-950">

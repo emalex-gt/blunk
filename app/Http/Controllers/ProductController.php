@@ -249,6 +249,7 @@ class ProductController extends Controller
         }
 
         $data = $request->validate($rules, [
+            'name.required' => 'El nombre es obligatorio.',
             'image.max' => 'La imagen no debe superar los 5MB después de comprimirse.',
         ]);
         $data['code'] = $this->normalizeProductCode($data['code'] ?? null);

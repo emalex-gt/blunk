@@ -1102,6 +1102,60 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertSessionHasErrors(['code' => 'Ya existe un producto con este código.']);
     }
 
+    public function test_product_index_payload_includes_barcode(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        Product::create($this->productRecord($business, [
+            'name' => 'Producto con barras',
+            'code' => 'CODE-BAR-001',
+            'barcode' => 'BAR-PAYLOAD-001',
+        ]));
+
+        $this->actingAs($user)
+            ->get(route('products.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Products/Index')
+                ->where('products.0.barcode', 'BAR-PAYLOAD-001')
+            );
+    }
+
+    public function test_product_search_finds_by_barcode(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        Product::create($this->productRecord($business, [
+            'name' => 'Producto por barras',
+            'code' => 'SEARCH-CODE-001',
+            'barcode' => 'SEARCH-BAR-001',
+        ]));
+        Product::create($this->productRecord($business, [
+            'name' => 'Producto oculto',
+            'code' => 'OTHER-CODE-001',
+            'barcode' => 'OTHER-BAR-001',
+        ]));
+
+        $this->actingAs($user)
+            ->get(route('products.index', ['search' => 'SEARCH-BAR-001']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Products/Index')
+                ->has('products', 1)
+                ->where('products.0.barcode', 'SEARCH-BAR-001')
+            );
+    }
+
+    public function test_missing_product_name_returns_readable_spanish_message(): void
+    {
+        [, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+
+        $this->actingAs($user)
+            ->post(route('products.store'), $this->productFormPayload([
+                'name' => '',
+                'code' => 'NO-NAME-001',
+            ]))
+            ->assertSessionHasErrors(['name' => 'El nombre es obligatorio.']);
+    }
+
     public function test_cannot_create_product_without_code_and_barcode(): void
     {
         [, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
