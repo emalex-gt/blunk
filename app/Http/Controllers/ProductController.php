@@ -127,7 +127,7 @@ class ProductController extends Controller
         $useProductImages = tenantSetting('use_product_images', true);
 
         DB::transaction(function () use ($request, $product, $useProductImages) {
-            $data = $this->validatedProduct($request);
+            $data = $this->validatedProduct($request, $product);
             $prices = $data['prices'] ?? [];
             $categoryName = $data['category_name'] ?? null;
             unset($data['category_name'], $data['image'], $data['prices']);
@@ -227,7 +227,7 @@ class ProductController extends Controller
         ]);
     }
 
-    private function validatedProduct(Request $request): array
+    private function validatedProduct(Request $request, ?Product $product = null): array
     {
         $rules = [
             'name' => ['required', 'string', 'max:255'],
@@ -248,9 +248,44 @@ class ProductController extends Controller
             $rules['image'] = ['nullable', 'image', 'max:5120'];
         }
 
-        return $request->validate($rules, [
+        $data = $request->validate($rules, [
             'image.max' => 'La imagen no debe superar los 5MB después de comprimirse.',
         ]);
+        $data['code'] = $this->normalizeProductCode($data['code'] ?? null);
+        $data['barcode'] = $this->normalizeProductCode($data['barcode'] ?? null);
+
+        $this->ensureProductCodeIsUnique('code', $data['code'] ?? null, $product);
+        $this->ensureProductCodeIsUnique('barcode', $data['barcode'] ?? null, $product);
+
+        return $data;
+    }
+
+    private function normalizeProductCode(?string $value): ?string
+    {
+        $normalized = preg_replace('/\s+/', ' ', trim((string) $value));
+
+        return $normalized === '' ? null : $normalized;
+    }
+
+    private function ensureProductCodeIsUnique(string $column, ?string $value, ?Product $product = null): void
+    {
+        if ($value === null) {
+            return;
+        }
+
+        $normalized = mb_strtoupper($value);
+        $duplicate = Product::query()
+            ->where('business_id', currentBusinessId())
+            ->when($product, fn ($query) => $query->whereKeyNot($product->id))
+            ->whereNotNull($column)
+            ->get(['id', $column])
+            ->first(fn (Product $existing) => mb_strtoupper($this->normalizeProductCode($existing->{$column}) ?? '') === $normalized);
+
+        if ($duplicate) {
+            throw ValidationException::withMessages([
+                $column => 'Ya existe un producto con este código.',
+            ]);
+        }
     }
 
     private function syncProductPrices(Product $product, array $prices, ?float $defaultSalePrice = null, ?int $branchId = null): void

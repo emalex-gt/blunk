@@ -1089,6 +1089,87 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('150.00', (string) BranchProductPrice::query()->where('business_id', $business->id)->where('branch_id', $branchB->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
     }
 
+    public function test_cannot_create_product_with_duplicate_code_in_same_business(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        Product::create($this->productRecord($business, ['name' => 'Bomba A', 'code' => '33100 4X700']));
+
+        $this->actingAs($user)
+            ->post(route('products.store'), $this->productFormPayload([
+                'name' => 'Bomba duplicada',
+                'code' => '33100 4X700',
+            ]))
+            ->assertSessionHasErrors(['code' => 'Ya existe un producto con este código.']);
+    }
+
+    public function test_cannot_create_product_with_duplicate_barcode_in_same_business(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        Product::create($this->productRecord($business, ['name' => 'Producto A', 'barcode' => 'BRC-001']));
+
+        $this->actingAs($user)
+            ->post(route('products.store'), $this->productFormPayload([
+                'name' => 'Producto B',
+                'barcode' => 'BRC-001',
+            ]))
+            ->assertSessionHasErrors(['barcode' => 'Ya existe un producto con este código.']);
+    }
+
+    public function test_can_create_same_product_code_in_different_business(): void
+    {
+        [$businessA] = $this->tenant(modules: ['inventory'], role: 'owner');
+        [, $userB] = $this->tenant(modules: ['inventory'], role: 'owner');
+        Product::create($this->productRecord($businessA, ['name' => 'Producto A', 'code' => 'DUP-001', 'barcode' => 'BAR-001']));
+
+        $this->actingAs($userB)
+            ->post(route('products.store'), $this->productFormPayload([
+                'name' => 'Producto B',
+                'code' => 'DUP-001',
+                'barcode' => 'BAR-001',
+            ]))
+            ->assertSessionHasNoErrors();
+    }
+
+    public function test_can_update_product_without_failing_against_itself(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        $product = Product::create($this->productRecord($business, ['name' => 'Producto editable', 'code' => 'SELF-001', 'barcode' => 'SELF-BAR']));
+
+        $this->actingAs($user)
+            ->put(route('products.update', $product), $this->productFormPayload([
+                'name' => 'Producto editable actualizado',
+                'code' => 'SELF-001',
+                'barcode' => 'SELF-BAR',
+            ]))
+            ->assertSessionHasNoErrors();
+    }
+
+    public function test_can_create_same_product_name_with_different_code(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        Product::create($this->productRecord($business, ['name' => 'BOMBA DE INYECCION KIA BONGO', 'code' => '33100 4X700']));
+
+        $this->actingAs($user)
+            ->post(route('products.store'), $this->productFormPayload([
+                'name' => 'BOMBA DE INYECCION KIA BONGO',
+                'code' => '33100 4X701',
+            ]))
+            ->assertSessionHasNoErrors();
+    }
+
+    public function test_duplicate_product_code_with_extra_spaces_is_blocked(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        Product::create($this->productRecord($business, ['name' => 'Bomba A', 'code' => '33100 4X700']));
+
+        $this->actingAs($user)
+            ->post(route('products.store'), $this->productFormPayload([
+                'name' => 'Bomba duplicada espacios',
+                'code' => '  33100   4X700  ',
+            ]))
+            ->assertSessionHasErrors(['code' => 'Ya existe un producto con este código.']);
+    }
+
     public function test_price_list_mass_update_in_branch_pricing_saves_branch_price_only(): void
     {
         [$business, $user] = $this->tenant(
@@ -2729,6 +2810,38 @@ class CriticalPosFelFlowTest extends TestCase
         );
 
         return $product;
+    }
+
+    private function productRecord(Business $business, array $overrides = []): array
+    {
+        return [
+            'business_id' => $business->id,
+            'name' => $overrides['name'] ?? 'Producto existente',
+            'code' => $overrides['code'] ?? 'CODE-'.uniqid(),
+            'barcode' => $overrides['barcode'] ?? null,
+            'cost_price' => $overrides['cost_price'] ?? 50,
+            'sale_price' => $overrides['sale_price'] ?? 100,
+            'stock' => $overrides['stock'] ?? 0,
+            'min_stock' => $overrides['min_stock'] ?? 0,
+            'is_active' => $overrides['is_active'] ?? true,
+        ];
+    }
+
+    private function productFormPayload(array $overrides = []): array
+    {
+        return [
+            'name' => $overrides['name'] ?? 'Producto nuevo',
+            'code' => $overrides['code'] ?? 'NEW-'.uniqid(),
+            'barcode' => $overrides['barcode'] ?? null,
+            'cost_price' => $overrides['cost_price'] ?? 50,
+            'sale_price' => $overrides['sale_price'] ?? 100,
+            'stock' => $overrides['stock'] ?? 0,
+            'min_stock' => $overrides['min_stock'] ?? 0,
+            'location' => $overrides['location'] ?? null,
+            'is_active' => $overrides['is_active'] ?? true,
+            'category_name' => $overrides['category_name'] ?? null,
+            'prices' => $overrides['prices'] ?? [],
+        ];
     }
 
     private function openCashRegister(Business $business, User $user): void
