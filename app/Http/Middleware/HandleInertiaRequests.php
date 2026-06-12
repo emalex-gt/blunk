@@ -181,6 +181,7 @@ class HandleInertiaRequests extends Middleware
                 'fel_success_message' => fn () => $request->session()->get('fel_success_message'),
                 'credit_print_url' => fn () => $request->session()->get('credit_print_url'),
                 'credit_receipt_id' => fn () => $request->session()->get('credit_receipt_id'),
+                'credit_payment_print_url' => fn () => $request->session()->get('credit_payment_print_url'),
                 'cash_closing_print_id' => fn () => $request->session()->get('cash_closing_print_id'),
             ],
         ]);

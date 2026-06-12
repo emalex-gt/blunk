@@ -70,6 +70,7 @@ export default function Form({
         manual_price_min_margin_percent?: number | string;
         remember_last_customer_product_price?: boolean;
         enable_credit_sales?: boolean;
+        allow_negative_stock?: boolean;
         allow_receipts?: boolean;
         allow_invoices?: boolean;
     };
@@ -95,6 +96,7 @@ export default function Form({
         manual_price_min_margin_percent: settings.manual_price_min_margin_percent ?? 0,
         remember_last_customer_product_price: settings.remember_last_customer_product_price ?? false,
         enable_credit_sales: settings.enable_credit_sales ?? false,
+        allow_negative_stock: settings.allow_negative_stock ?? false,
         allow_receipts: settings.allow_receipts ?? true,
         allow_invoices: settings.allow_invoices ?? false,
         owner_name: '',
@@ -407,6 +409,21 @@ export default function Form({
 
                     <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
                         <div className="mb-4">
+                            <h3 className="text-base font-semibold text-gray-900">Inventario</h3>
+                            <p className="mt-1 text-sm text-gray-500">
+                                Define si las operaciones pueden dejar existencias negativas.
+                            </p>
+                        </div>
+                        <Toggle
+                            checked={data.allow_negative_stock}
+                            onChange={(checked) => setData('allow_negative_stock', checked)}
+                            label="Permitir stock negativo"
+                            description="Si está activo, el sistema permitirá ventas, traslados y salidas aunque el producto quede en negativo."
+                        />
+                    </div>
+
+                    <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="mb-4">
                             <h3 className="text-base font-semibold text-gray-900">Precios en POS</h3>
                             <p className="mt-1 text-sm text-gray-500">
                                 Controla si se permiten precios manuales y si el POS recuerda el último precio por cliente y producto.
@@ -665,20 +682,25 @@ function Toggle({
     checked,
     onChange,
     label,
+    description,
 }: {
     checked: boolean;
     onChange: (checked: boolean) => void;
     label: string;
+    description?: string;
 }) {
     return (
-        <label className="flex items-center gap-3 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700">
+        <label className="flex items-start gap-3 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700">
             <input
                 type="checkbox"
                 checked={checked}
                 onChange={(e) => onChange(e.target.checked)}
-                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                className="mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
             />
-            {label}
+            <span>
+                <span className="block">{label}</span>
+                {description && <span className="mt-1 block text-xs font-normal text-gray-500">{description}</span>}
+            </span>
         </label>
     );
 }

@@ -217,7 +217,7 @@ class ProductController extends Controller
                 ]),
                 'stock' => $stock,
                 'reserved_stock' => $reserved,
-                'available_stock' => max(0, $stock - $reserved),
+                'available_stock' => $stock - $reserved,
                 'branch' => [
                     'id' => $activeBranch->id,
                     'name' => $activeBranch->name,

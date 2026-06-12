@@ -50,7 +50,8 @@ export default function Authenticated({
         (hasModule('branches') && route().current('inventory.transfers.*')) ||
         (hasModule('purchases') && route().current('purchases.*')) ||
         (hasModule('cash_register') && route().current('cash-register.*')) ||
-        (hasModule('credits') && route().current('credits.*'));
+        (hasModule('credits') && route().current('credits.*')) ||
+        (hasModule('fel_gt') && route().current('fel.reconciliation.*'));
     const settingsActive = false;
     const administrationActive = canManageUsers && route().current('users.*');
     const reportsActive = route().current('reports.*');
@@ -62,7 +63,10 @@ export default function Authenticated({
         hasModule('inventory') ? { label: t('nav.stock'), href: route('stock.quick'), active: route().current('stock.*') } : null,
         hasModule('branches') ? { label: 'Traslados', href: route('inventory.transfers.index'), active: route().current('inventory.transfers.*') } : null,
         hasModule('cash_register') ? { label: 'Caja', href: route('cash-register.index'), active: route().current('cash-register.*') } : null,
-        hasModule('credits') && canViewCredits ? { label: 'Créditos', href: route('credits.index'), active: route().current('credits.*') } : null,
+        hasModule('fel_gt') && can('fel.reconcile') ? { label: 'Reconciliación FEL', href: route('fel.reconciliation.index'), active: route().current('fel.reconciliation.*') } : null,
+        hasModule('credits') && can('credits.accounts.view') ? { label: 'Cuentas por cobrar', href: route('credits.accounts.index'), active: route().current('credits.accounts.*') } : null,
+        hasModule('credits') && (can('credits.payments.view') || can('credits.payments.create')) ? { label: 'Abonos', href: route('credits.payments.index'), active: route().current('credits.payments.*') } : null,
+        hasModule('credits') && canViewCredits ? { label: 'Reservas pendientes', href: route('credits.index'), active: route().current('credits.index') || route().current('credits.customers.*') || route().current('credits.receipts.*') } : null,
     ].filter(Boolean) as NavItem[];
 
     const reportItems: NavItem[] = [

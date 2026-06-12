@@ -27,6 +27,7 @@ class TenantSetting extends Model
         'allow_receipts',
         'allow_invoices',
         'enable_credit_sales',
+        'allow_negative_stock',
     ];
 
     protected $casts = [
@@ -39,6 +40,7 @@ class TenantSetting extends Model
         'allow_receipts' => 'boolean',
         'allow_invoices' => 'boolean',
         'enable_credit_sales' => 'boolean',
+        'allow_negative_stock' => 'boolean',
         'max_users' => 'integer',
     ];
 

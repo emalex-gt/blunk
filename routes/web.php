@@ -7,7 +7,9 @@ use App\Http\Controllers\PurchaseController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\BranchController;
 use App\Http\Controllers\CashRegisterController;
+use App\Http\Controllers\AccountReceivableController;
 use App\Http\Controllers\CreditReceiptController;
+use App\Http\Controllers\FelReconciliationController;
 use App\Http\Controllers\InventoryTransferController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SaleController;
@@ -124,6 +126,12 @@ Route::middleware('auth')->group(function () {
             ->name('sales.fel-download');
         Route::get('/sales/{sale}/fel-print', [SaleController::class, 'felPrint'])->middleware(['module:fel_gt', 'permission:fel.documents.view,signed'])->name('sales.fel-print');
         Route::get('/sales/{sale}/invoice-document', [SaleController::class, 'invoiceDocument'])->middleware(['module:fel_gt', 'permission:fel.documents.view,signed'])->name('sales.invoice-document');
+        Route::get('/fel/reconciliation', [FelReconciliationController::class, 'index'])
+            ->middleware(['module:fel_gt', 'permission:fel.reconcile'])
+            ->name('fel.reconciliation.index');
+        Route::post('/fel/reconciliation/{reconciliation}/check', [FelReconciliationController::class, 'check'])
+            ->middleware(['module:fel_gt', 'permission:fel.reconcile'])
+            ->name('fel.reconciliation.check');
         Route::get('/customers/lookup/nit', [CustomerController::class, 'lookupNit'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.lookup.nit');
         Route::get('/customers/gt/nit-lookup', [CustomerController::class, 'lookupGuatemalaNit'])->middleware(['module:fel_gt', 'permission:customers.view'])->name('customers.gt.nit-lookup');
         Route::get('/customers/{customer}/products/{product}/last-price', [SaleController::class, 'lastCustomerProductPrice'])
@@ -131,6 +139,27 @@ Route::middleware('auth')->group(function () {
             ->name('customers.products.last-price');
 
         Route::middleware('module:credits')->group(function () {
+            Route::get('/credits/accounts', [AccountReceivableController::class, 'index'])
+                ->middleware('permission:credits.accounts.view')
+                ->name('credits.accounts.index');
+            Route::get('/credits/accounts/{customer}/statement', [AccountReceivableController::class, 'statement'])
+                ->middleware('permission:credits.statement.view')
+                ->name('credits.accounts.statement');
+            Route::patch('/credits/accounts/{customer}', [AccountReceivableController::class, 'updateAccount'])
+                ->middleware('permission:credits.limits.manage')
+                ->name('credits.accounts.update');
+            Route::get('/credits/payments', [AccountReceivableController::class, 'payments'])
+                ->middleware('permission:any:credits.payments.view|credits.payments.create')
+                ->name('credits.payments.index');
+            Route::post('/credits/payments', [AccountReceivableController::class, 'storePayment'])
+                ->middleware('permission:credits.payments.create')
+                ->name('credits.payments.store');
+            Route::post('/credits/payments/{payment}/cancel', [AccountReceivableController::class, 'cancelPayment'])
+                ->middleware('permission:credits.payments.cancel')
+                ->name('credits.payments.cancel');
+            Route::get('/credits/payments/{payment}/print', [AccountReceivableController::class, 'printPayment'])
+                ->middleware('permission:any:credits.print|credits.payments.view')
+                ->name('credits.payments.print');
             Route::get('/credits', [CreditReceiptController::class, 'index'])
                 ->middleware('permission:credits.view')
                 ->name('credits.index');

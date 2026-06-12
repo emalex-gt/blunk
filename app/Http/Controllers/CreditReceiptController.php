@@ -14,6 +14,7 @@ use App\Support\BusinessCounter;
 use App\Support\BusinessLogo;
 use App\Support\Credits;
 use App\Support\GuatemalaNitCustomerResolver;
+use App\Support\Inventory\StockPolicy;
 use App\Support\Permissions;
 use App\Support\StockAvailability;
 use Illuminate\Http\JsonResponse;
@@ -152,9 +153,9 @@ class CreditReceiptController extends Controller
                 $quantity = (int) $item['quantity'];
                 $available = StockAvailability::availableStock($product, null, $branch->id);
 
-                if ($available < $quantity) {
+                if (! StockPolicy::allowsNegativeStockForBusinessId($businessId) && $available < $quantity) {
                     throw ValidationException::withMessages([
-                        'items' => "Stock disponible insuficiente para {$product->name}. Disponible: {$available}.",
+                        'items' => 'No hay suficiente stock disponible.',
                     ]);
                 }
 

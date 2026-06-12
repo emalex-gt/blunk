@@ -63,6 +63,11 @@ type Customer = {
     is_final_consumer?: boolean;
     name_locked?: boolean;
     tax_lookup_verified_at?: string | null;
+    credit_account?: {
+        credit_limit: string | number | null;
+        current_balance: string | number;
+        is_blocked: boolean;
+    } | null;
 };
 
 type CustomerForm = {
@@ -158,6 +163,7 @@ type PosDraft = {
     note: string;
     payments: PaymentLine[];
     document_type: 'invoice' | 'receipt';
+    payment_condition?: 'paid' | 'credit';
     selected_category_id: number | null;
     main_payment_method: string;
     split_payment: boolean;
@@ -424,6 +430,8 @@ export default function POS({
     price_settings = { allow_manual_price: false, remember_last_customer_product_price: false },
     available_document_types = ['receipt'],
     credit_available = false,
+    credit_sales_available = false,
+    allow_negative_stock = false,
     credit_invoice = null,
     use_product_images = true,
 }: {
@@ -441,6 +449,8 @@ export default function POS({
     };
     available_document_types?: ('invoice' | 'receipt')[];
     credit_available?: boolean;
+    credit_sales_available?: boolean;
+    allow_negative_stock?: boolean;
     credit_invoice?: CreditInvoicePayload | null;
     fel?: {
         module_enabled: boolean;
@@ -489,6 +499,7 @@ export default function POS({
     const [showCheckoutModal, setShowCheckoutModal] = useState(false);
     const [splitPayment, setSplitPayment] = useState(false);
     const [mainPaymentMethod, setMainPaymentMethod] = useState('cash');
+    const [paymentCondition, setPaymentCondition] = useState<'paid' | 'credit'>('paid');
     const [documentType, setDocumentType] = useState<CheckoutType>('receipt');
     const [creditProcessing, setCreditProcessing] = useState(false);
     const [openingFelPrint, setOpeningFelPrint] = useState(false);
@@ -523,6 +534,7 @@ export default function POS({
         branch_id: number | string | null;
         customer: CustomerForm;
         document_type: 'invoice' | 'receipt';
+        payment_condition: 'paid' | 'credit';
         payments: { method: string; amount: number; reference: string | null; details: Partial<PaymentDetails> }[];
         items: {
             product_id: number;
@@ -539,6 +551,7 @@ export default function POS({
         branch_id: activeBranchId,
         customer: emptyCustomer(country),
         document_type: 'receipt',
+        payment_condition: 'paid',
         payments: [],
         items: [],
         discount: null,
@@ -696,6 +709,10 @@ export default function POS({
             )
             .slice(0, 5);
     }, [customers, data.customer.consumidor_final, data.customer.doc_number, data.customer.name]);
+    const selectedCreditAccount = useMemo(
+        () => customers.find((customer) => customer.id === data.customer.id)?.credit_account ?? null,
+        [customers, data.customer.id],
+    );
 
     const cartItemsCount = useMemo(
         () => cart.reduce((sum, item) => sum + quantityNumber(item.quantity), 0),
@@ -818,6 +835,7 @@ export default function POS({
             note: data.note,
             payments,
             document_type: effectiveDocumentType,
+            payment_condition: paymentCondition,
             selected_category_id: selectedCategoryId,
             main_payment_method: mainPaymentMethod,
             split_payment: splitPayment,
@@ -851,7 +869,7 @@ export default function POS({
                 const quantity = Number(normalizeQuantity(item.quantity));
                 const availableStock = Number(product.available_stock ?? product.stock ?? 0);
 
-                if (!item.credit_line_id && quantity > availableStock) {
+                if (!allow_negative_stock && !item.credit_line_id && quantity > availableStock) {
                     discardedInvalidLines = true;
                     return null;
                 }
@@ -901,6 +919,7 @@ export default function POS({
         ));
         setSelectedCategoryId(draft.selected_category_id ?? null);
         setMainPaymentMethod(draft.main_payment_method ?? 'cash');
+        setPaymentCondition(draft.payment_condition === 'credit' && credit_sales_available ? 'credit' : 'paid');
         setSplitPayment(Boolean(draft.split_payment));
 
         if (discardedInvalidLines) {
@@ -918,6 +937,7 @@ export default function POS({
         setData('customer', emptyCustomer(country));
         setShowCheckoutModal(false);
         setSplitPayment(false);
+        setPaymentCondition('paid');
         setDocumentType(singleDocumentType ?? (availableCheckoutTypes[0] ?? 'receipt'));
         setPayments([paymentLine(mainPaymentMethod, '0.00')]);
         setDiscount(null);
@@ -1148,7 +1168,7 @@ export default function POS({
     function addProduct(product: Product): boolean {
         const availableStock = Math.floor(product.available_stock ?? product.stock);
 
-        if (availableStock < 1) {
+        if (!allow_negative_stock && availableStock < 1) {
             showError(`${product.name}: ${t('pos.out_of_stock_for')}`);
             return false;
         }
@@ -1156,7 +1176,7 @@ export default function POS({
         const items = cartRef.current;
         const existing = items.find((item) => item.product.id === product.id);
         const existingQuantity = existing ? quantityNumber(existing.quantity) : 0;
-        if (existing && existingQuantity >= availableStock) {
+        if (!allow_negative_stock && existing && existingQuantity >= availableStock) {
             showError(
                 `${product.name}: ${t('pos.stock_insufficient')} ${availableStock}.`,
             );
@@ -1211,7 +1231,7 @@ export default function POS({
 
                 const availableStock = Math.floor(item.max_quantity ?? item.product.available_stock ?? item.product.stock);
 
-                if (nextQuantity > availableStock) {
+                if (!allow_negative_stock && nextQuantity > availableStock) {
                     showError(
                         `${item.product.name}: ${t('pos.stock_insufficient')} ${availableStock}.`,
                     );
@@ -1344,7 +1364,7 @@ export default function POS({
 
                     const availableStock = Math.floor(Number(currentProduct.available_stock ?? currentProduct.stock ?? 0));
 
-                    if (quantityError(item.quantity) || availableStock < 1) {
+                    if (quantityError(item.quantity) || (!allow_negative_stock && availableStock < 1)) {
                         return null;
                     }
 
@@ -1355,7 +1375,7 @@ export default function POS({
                         product: currentProduct,
                         quantity: String(Math.max(
                             1,
-                            Math.min(quantityNumber(item.quantity), availableStock),
+                            allow_negative_stock ? quantityNumber(item.quantity) : Math.min(quantityNumber(item.quantity), availableStock),
                         )),
                         unit_price: manualPrice ? (item.unit_price ?? price.price) : price.price,
                         original_price: manualPrice ? (item.original_price ?? price.price) : price.price,
@@ -1424,7 +1444,7 @@ export default function POS({
             return;
         }
 
-        if (!hasOpenCashRegister && !credit_available) {
+        if (!hasOpenCashRegister && !credit_available && !credit_sales_available) {
             showError('No hay caja abierta. Abre caja para registrar ventas.');
             toast.error('No hay caja abierta. Abre caja para registrar ventas.');
             return;
@@ -1523,13 +1543,25 @@ export default function POS({
             return;
         }
 
-        if (!hasOpenCashRegister) {
+        if (paymentCondition === 'credit') {
+            const docType = data.customer.doc_type.trim().toUpperCase();
+            const docNumber = data.customer.doc_number.trim().toUpperCase();
+
+            if (data.customer.consumidor_final || docType === 'CF' || docNumber === 'CF' || docType !== 'NIT' || !docNumber) {
+                const message = 'Para una venta al crédito debes seleccionar un cliente con NIT válido.';
+                showError(message);
+                toast.error(message);
+                return;
+            }
+        }
+
+        if (paymentCondition === 'paid' && !hasOpenCashRegister) {
             showError('No hay caja abierta. Abre caja para registrar ventas.');
             toast.error('No hay caja abierta. Abre caja para registrar ventas.');
             return;
         }
 
-        if (!paymentIsBalanced) {
+        if (paymentCondition === 'paid' && !paymentIsBalanced) {
             toast.warning('El total pagado debe coincidir con el total de la venta.');
             return;
         }
@@ -1559,7 +1591,8 @@ export default function POS({
             branch_id: activeBranchId,
             customer: data.customer,
             document_type: effectiveDocumentType,
-            payments: finalPayments.map((payment) => ({
+            payment_condition: paymentCondition,
+            payments: (paymentCondition === 'credit' ? [] : finalPayments).map((payment) => ({
                 method: payment.method,
                 amount: Number(payment.amount || 0),
                 reference: payment.reference.trim() || null,
@@ -1598,6 +1631,7 @@ export default function POS({
                 setErrorMessage('');
                 setShowCheckoutModal(false);
                 setSplitPayment(false);
+                setPaymentCondition('paid');
                 setDocumentType(singleDocumentType ?? (availableCheckoutTypes[0] ?? 'receipt'));
                 setDiscount(null);
                 setPayments([paymentLine(mainPaymentMethod, '0.00')]);
@@ -1708,6 +1742,7 @@ export default function POS({
         draftKey,
         draftReady,
         mainPaymentMethod,
+        paymentCondition,
         payments,
         restoreDraft,
         selectedCategoryId,
@@ -2257,6 +2292,7 @@ export default function POS({
                                     const availableStock = Math.floor(product.available_stock ?? product.stock);
                                     const reservedStock = Math.floor(product.reserved_stock ?? 0);
                                     const outOfStock = availableStock <= 0;
+                                    const disabledByStock = !allow_negative_stock && outOfStock;
                                     const lowStock =
                                         availableStock > 0 && availableStock <= product.min_stock;
 
@@ -2264,7 +2300,7 @@ export default function POS({
                                         <button
                                             key={product.id}
                                             type="button"
-                                            disabled={outOfStock || processing}
+                                            disabled={disabledByStock || processing}
                                             onClick={() => addProduct(product)}
                                             className="flex items-stretch gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-70"
                                         >
@@ -2294,15 +2330,19 @@ export default function POS({
                                                 <div className="flex items-center justify-between gap-2 text-xs">
                                                     <span
                                                         className={
-                                                            outOfStock
+                                                            disabledByStock
                                                                 ? 'font-semibold text-red-600'
+                                                                : outOfStock
+                                                                  ? 'font-semibold text-amber-600'
                                                                 : lowStock
                                                                   ? 'font-semibold text-orange-600'
                                                                   : 'text-slate-700'
                                                         }
                                                     >
-                                                        {outOfStock
+                                                        {disabledByStock
                                                             ? t('stock_warning.out_of_stock')
+                                                            : outOfStock
+                                                              ? `Disponible ${availableStock}`
                                                             : lowStock
                                                               ? `${t('stock_warning.low_stock')} (${availableStock})`
                                                               : `Disponible ${availableStock}`}
@@ -2722,6 +2762,31 @@ export default function POS({
                                 </section>
                             )}
 
+                            {effectiveCheckoutType !== 'credit' && credit_sales_available && (
+                                <section>
+                                    <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
+                                        Condición de pago
+                                    </h3>
+                                    <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+                                        <button type="button" onClick={() => setPaymentCondition('paid')} className={`rounded-lg px-4 py-2 text-sm font-semibold ${paymentCondition === 'paid' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600'}`}>
+                                            Contado
+                                        </button>
+                                        <button type="button" onClick={() => setPaymentCondition('credit')} className={`rounded-lg px-4 py-2 text-sm font-semibold ${paymentCondition === 'credit' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600'}`}>
+                                            Crédito
+                                        </button>
+                                    </div>
+                                    {paymentCondition === 'credit' && (
+                                        <div className={`mt-3 grid gap-2 rounded-xl border p-3 text-sm sm:grid-cols-3 ${selectedCreditAccount?.is_blocked ? 'border-red-200 bg-red-50' : 'border-indigo-100 bg-indigo-50'}`}>
+                                            <div><span className="block text-xs font-semibold uppercase text-slate-500">Saldo actual</span><strong>{formatCurrency(selectedCreditAccount?.current_balance ?? 0, country)}</strong></div>
+                                            <div><span className="block text-xs font-semibold uppercase text-slate-500">Límite</span><strong>{selectedCreditAccount?.credit_limit === null || selectedCreditAccount?.credit_limit === undefined ? 'Sin límite' : formatCurrency(selectedCreditAccount.credit_limit, country)}</strong></div>
+                                            <div><span className="block text-xs font-semibold uppercase text-slate-500">Disponible</span><strong>{selectedCreditAccount?.is_blocked ? 'Crédito bloqueado' : (selectedCreditAccount?.credit_limit === null || selectedCreditAccount?.credit_limit === undefined ? 'Sin límite' : formatCurrency(Math.max(0, Number(selectedCreditAccount.credit_limit) - Number(selectedCreditAccount.current_balance)), country))}</strong></div>
+                                        </div>
+                                    )}
+                                </section>
+                            )}
+
+                            {paymentCondition === 'paid' && (
+                            <>
                             <section>
                                 <div className="mb-3 flex items-center justify-between gap-3">
                                     <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
@@ -2862,6 +2927,8 @@ export default function POS({
                                     </div>
                                 </section>
                             )}
+                            </>
+                            )}
 
                             <section>
                                 <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
@@ -2948,15 +3015,15 @@ export default function POS({
                                     </>
                                 )}
                                 <Summary label="Total venta" value={formatCurrency(total, country)} />
-                                <Summary label="Total pagado" value={formatCurrency(paidTotal, country)} />
+                                <Summary label={paymentCondition === 'credit' ? 'Saldo a crédito' : 'Total pagado'} value={formatCurrency(paymentCondition === 'credit' ? total : paidTotal, country)} />
                                 <Summary
-                                    label={pendingAmount < 0 ? 'Excedente' : 'Pendiente'}
-                                    value={formatCurrency(Math.abs(pendingAmount), country)}
-                                    danger={pendingAmount !== 0}
+                                    label={paymentCondition === 'credit' ? 'Condición' : (pendingAmount < 0 ? 'Excedente' : 'Pendiente')}
+                                    value={paymentCondition === 'credit' ? 'Crédito' : formatCurrency(Math.abs(pendingAmount), country)}
+                                    danger={paymentCondition === 'paid' && pendingAmount !== 0}
                                 />
                             </section>
 
-                            {splitPayment && !paymentIsBalanced && (
+                            {paymentCondition === 'paid' && splitPayment && !paymentIsBalanced && (
                                 <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
                                     El total pagado debe coincidir con el total de la venta.
                                 </div>
@@ -2987,7 +3054,7 @@ export default function POS({
                             <button
                                 type="button"
                                 onClick={submitSale}
-                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && !paymentIsBalanced) || invoiceNitNeedsVerification || invoiceCuiDisabled || hasInvalidCartQuantities || noAvailableDocumentTypes}
+                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && !paymentIsBalanced) || invoiceNitNeedsVerification || invoiceCuiDisabled || hasInvalidCartQuantities || noAvailableDocumentTypes}
                                 className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-200 hover:from-indigo-700 hover:to-violet-700 disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : ((processing || creditProcessing) ? 'Confirmando...' : (effectiveCheckoutType === 'credit' ? 'Confirmar crédito' : 'Confirmar venta'))}

@@ -13,6 +13,7 @@ use App\Models\CreditReceiptLine;
 use App\Models\CreditReceiptLineInvoice;
 use App\Models\Customer;
 use App\Models\ElectronicDocument;
+use App\Models\FelReconciliationRequest;
 use App\Models\StockMovement;
 use App\Models\TenantSetting;
 use App\Models\TenantFelSetting;
@@ -21,11 +22,13 @@ use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Fel\Providers\Digifact\DigifactNit;
 use App\Support\CashRegister;
+use App\Support\AccountsReceivable;
 use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\BusinessLogo;
 use App\Support\Credits;
 use App\Support\FelPhraseRenderer;
+use App\Support\Inventory\StockPolicy;
 use App\Support\Permissions;
 use App\Support\PriceLists;
 use App\Support\StockAvailability;
@@ -73,7 +76,7 @@ class SaleController extends Controller
         $products->each(function (Product $product) use ($activeBranch) {
             $reserved = StockAvailability::reservedStock($product, null, $activeBranch->id);
             $product->setAttribute('reserved_stock', $reserved);
-            $product->setAttribute('available_stock', max(0, (float) $product->stock - $reserved));
+            $product->setAttribute('available_stock', (float) $product->stock - $reserved);
         });
         $creditInvoice = $this->creditInvoicePayload($request, $businessId);
 
@@ -107,6 +110,8 @@ class SaleController extends Controller
             ],
             'available_document_types' => $availableDocumentTypes,
             'credit_available' => Credits::enabled($businessId) && Permissions::userHas($request->user(), Permissions::CREDITS_CREATE),
+            'credit_sales_available' => Credits::enabled($businessId) && Permissions::userHas($request->user(), Permissions::CREDITS_SALES_CREATE),
+            'allow_negative_stock' => (bool) ($tenantSettings?->allow_negative_stock ?? false),
             'credit_invoice' => $creditInvoice,
             'products' => $products,
             'categories' => Category::query()
@@ -115,6 +120,7 @@ class SaleController extends Controller
                 ->get(['id', 'name']),
             'customers' => Customer::query()
                 ->where('business_id', $businessId)
+                ->with('creditAccount:id,customer_id,credit_limit,current_balance,is_blocked')
                 ->latest()
                 ->limit(50)
                 ->get(['id', 'name', 'doc_type', 'doc_number', 'tax_condition', 'address', 'phone', 'country', 'is_final_consumer', 'name_locked', 'tax_lookup_verified_at']),
@@ -143,7 +149,9 @@ class SaleController extends Controller
             'note' => ['nullable', 'string', 'max:2000'],
             'branch_id' => ['nullable', 'integer'],
             'document_type' => ['nullable', 'in:invoice,receipt'],
-            'payments' => ['required', 'array', 'min:1'],
+            'payment_condition' => ['nullable', 'in:paid,credit'],
+            'due_date' => ['nullable', 'date'],
+            'payments' => ['nullable', 'array'],
             'payments.*.method' => ['required', 'in:'.implode(',', $paymentMethods)],
             'payments.*.amount' => ['required', 'numeric', 'gt:0'],
             'payments.*.reference' => ['nullable', 'string', 'max:255'],
@@ -191,6 +199,16 @@ class SaleController extends Controller
 
         $availableDocumentTypes = $this->availableDocumentTypes($business, $tenantSettings, $felSettings, $felModuleEnabled);
         $activeBranch = BranchInventory::activeBranch($business->id);
+        $isCreditSale = ($data['payment_condition'] ?? 'paid') === 'credit';
+
+        if ($isCreditSale) {
+            abort_unless(Credits::enabled($business->id), 403, 'El módulo de créditos no está habilitado.');
+            abort_unless(Permissions::userHas($request->user(), Permissions::CREDITS_SALES_CREATE), 403);
+        } elseif (empty($data['payments'])) {
+            throw ValidationException::withMessages([
+                'payments' => 'Debes registrar al menos una forma de pago.',
+            ]);
+        }
 
         if (filled($data['branch_id'] ?? null)) {
             $submittedBranchId = (int) $data['branch_id'];
@@ -253,25 +271,46 @@ class SaleController extends Controller
         }
 
         $saleTransactionStarted = microtime(true);
-        $saleId = DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch) {
+        $certifiedDocument = null;
+        $pendingFelReconciliation = null;
+
+        try {
+            $saleId = DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
             $businessId = currentBusinessId();
             $branch = $activeBranch;
-            $openSession = CashRegister::requireOpenSession(
+            $openSession = $isCreditSale ? null : CashRegister::requireOpenSession(
                 $businessId,
                 'Debes abrir caja antes de registrar ventas.',
                 true,
                 $branch->id,
             );
-            $cashAmount = CashRegister::cashAmountFromPayments($data['payments']);
+            $cashAmount = $isCreditSale ? 0 : CashRegister::cashAmountFromPayments($data['payments'] ?? []);
             $customer = $this->resolveCustomer($request, $data['customer'] ?? null);
             $customerSnapshot = $this->saleCustomerSnapshot($customer, $data['customer'] ?? null);
+
+            if ($isCreditSale) {
+                $docType = strtoupper(trim((string) ($customerSnapshot['customer_doc_type'] ?? '')));
+                $docNumber = strtoupper(trim((string) ($customerSnapshot['customer_doc_number'] ?? '')));
+
+                if (! $customer || $docType !== 'NIT' || $docNumber === '' || $docNumber === 'CF') {
+                    throw ValidationException::withMessages([
+                        'customer.doc_number' => 'Para una venta al crédito debes seleccionar un cliente con NIT válido.',
+                    ]);
+                }
+            }
+
             $sale = Sale::create([
                 'business_id' => $businessId,
                 'business_number' => BusinessCounter::next($businessId, 'sales'),
                 'branch_id' => $branch->id,
                 'customer_id' => $customer?->id,
                 ...$customerSnapshot,
-                'payment_method' => $data['payments'][0]['method'],
+                'payment_method' => $isCreditSale ? 'credit' : $data['payments'][0]['method'],
+                'payment_status' => $isCreditSale ? 'unpaid' : 'paid',
+                'amount_paid' => 0,
+                'credit_balance' => 0,
+                'is_credit_sale' => $isCreditSale,
+                'due_date' => $isCreditSale ? ($data['due_date'] ?? null) : null,
                 'document_type' => $data['document_type'],
                 'status' => 'completed',
                 'note' => $data['note'] ?? null,
@@ -318,9 +357,9 @@ class SaleController extends Controller
                     $availableStock += $quantity;
                 }
 
-                if ($availableStock < $quantity) {
+                if (! StockPolicy::allowsNegativeStock($business) && $availableStock < $quantity) {
                     throw ValidationException::withMessages([
-                        'items' => "Stock insuficiente para {$product->name}. Disponible: {$availableStock}.",
+                        'items' => 'No hay suficiente stock disponible.',
                     ]);
                 }
 
@@ -382,10 +421,10 @@ class SaleController extends Controller
                 ]);
             }
 
-            $paymentsTotal = collect($data['payments'])
+            $paymentsTotal = collect($data['payments'] ?? [])
                 ->sum(fn (array $payment) => (float) $payment['amount']);
 
-            if (round($paymentsTotal, 2) !== round($total, 2)) {
+            if (! $isCreditSale && round($paymentsTotal, 2) !== round($total, 2)) {
                 throw ValidationException::withMessages([
                     'payments' => 'La suma de los pagos debe ser igual al total de la venta.',
                 ]);
@@ -398,6 +437,10 @@ class SaleController extends Controller
                 ]);
             }
 
+            if ($isCreditSale && $customer) {
+                AccountsReceivable::assertCanCharge($customer, $total, $branch->id);
+            }
+
             $sale->update([
                 'total' => $total,
                 'subtotal_before_discount' => round($subtotalBeforeDiscount, 2),
@@ -405,6 +448,8 @@ class SaleController extends Controller
                 'discount_value' => $discount['value'],
                 'discount_amount' => $discount['amount'],
                 'discount_reason' => $discount['reason'],
+                'amount_paid' => $isCreditSale ? 0 : $total,
+                'credit_balance' => $isCreditSale ? $total : 0,
             ]);
 
             foreach ($saleLines as $index => $line) {
@@ -466,7 +511,7 @@ class SaleController extends Controller
                 }
             }
 
-            foreach ($data['payments'] as $payment) {
+            foreach ($data['payments'] ?? [] as $payment) {
                 $details = $this->paymentDetails($payment['method'], $payment['details'] ?? []);
 
                 $sale->payments()->create([
@@ -478,7 +523,7 @@ class SaleController extends Controller
                 ]);
             }
 
-            if ($cashAmount > 0) {
+            if ($cashAmount > 0 && $openSession) {
                 CashRegister::recordMovement(
                     $openSession,
                     'sale_cash',
@@ -507,8 +552,73 @@ class SaleController extends Controller
                 ]);
             }
 
+            if ($isCreditSale && ($data['document_type'] ?? null) === 'receipt') {
+                AccountsReceivable::createCharge($sale->refresh(), $request->user()->id);
+            }
+
+            if ($isCreditSale && ($data['document_type'] ?? null) === 'invoice') {
+                $invoiceService = app(DigifactInvoiceService::class);
+                $sale = $sale
+                    ->refresh()
+                    ->load(['business', 'customer', 'items.product', 'payments', 'electronicDocument']);
+
+                try {
+                    $certifiedDocument = $invoiceService->certifySale($sale, [
+                        'sale_transaction_ms' => round((microtime(true) - $saleTransactionStarted) * 1000, 2),
+                    ]);
+
+                    AccountsReceivable::createCharge($sale->refresh(), $request->user()->id);
+
+                    $invoiceService->recordSaleRequestTiming(
+                        $sale,
+                        round((microtime(true) - $saleRequestStarted) * 1000, 2),
+                    );
+                } catch (FelException $exception) {
+                    $pendingFelReconciliation = [
+                        'business_id' => $businessId,
+                        'branch_id' => $branch->id,
+                        'sale_id' => $sale->id,
+                        'internal_reference' => $sale->fel_internal_reference ?: 'BLUNK-'.$sale->business_id.'-'.$sale->id,
+                        'issued_date' => $sale->fel_issued_at ?: $sale->created_at,
+                        'provider' => 'digifact',
+                        'environment' => $felSettings?->environment ?? 'test',
+                        'last_error' => $exception->getMessage() ?: 'No se pudo certificar la factura.',
+                        'payload_snapshot' => [
+                            'sale_id' => $sale->id,
+                            'business_number' => $sale->business_number,
+                            'customer_id' => $sale->customer_id,
+                            'customer_name' => $sale->customer_name,
+                            'customer_doc_number' => $sale->customer_doc_number,
+                            'total' => $sale->total,
+                            'is_credit_sale' => $sale->is_credit_sale,
+                            'document_type' => $sale->document_type,
+                            'items' => $sale->items()
+                                ->get(['product_id', 'product_name', 'quantity', 'unit_price', 'total'])
+                                ->toArray(),
+                        ],
+                        'created_by' => $request->user()->id,
+                    ];
+
+                    $invoiceService->recordSaleRequestTiming(
+                        $sale,
+                        round((microtime(true) - $saleRequestStarted) * 1000, 2),
+                    );
+
+                    throw ValidationException::withMessages([
+                        'document_type' => $exception->getMessage() ?: 'No se pudo certificar la factura.',
+                    ]);
+                }
+            }
+
             return $sale->id;
-        });
+            });
+        } catch (ValidationException $exception) {
+            if ($pendingFelReconciliation) {
+                $this->createFelReconciliationRequest($pendingFelReconciliation);
+            }
+
+            throw $exception;
+        }
         $saleTransactionMs = round((microtime(true) - $saleTransactionStarted) * 1000, 2);
 
         Log::info('Sale transaction completed', [
@@ -518,9 +628,7 @@ class SaleController extends Controller
             'sale_transaction_ms' => $saleTransactionMs,
         ]);
 
-        $certifiedDocument = null;
-
-        if (($data['document_type'] ?? null) === 'invoice') {
+        if (($data['document_type'] ?? null) === 'invoice' && ! $isCreditSale) {
             $sale = Sale::query()
                 ->with(['business', 'customer', 'items.product', 'payments', 'electronicDocument'])
                 ->findOrFail($saleId);
@@ -539,6 +647,28 @@ class SaleController extends Controller
                     $sale,
                     round((microtime(true) - $saleRequestStarted) * 1000, 2),
                 );
+
+                $this->createFelReconciliationRequest([
+                    'business_id' => $sale->business_id,
+                    'branch_id' => $sale->branch_id,
+                    'sale_id' => $sale->id,
+                    'internal_reference' => $sale->fel_internal_reference ?: 'BLUNK-'.$sale->business_id.'-'.$sale->id,
+                    'issued_date' => $sale->fel_issued_at ?: $sale->created_at,
+                    'provider' => 'digifact',
+                    'environment' => $felSettings?->environment ?? 'test',
+                    'last_error' => $exception->getMessage() ?: 'No se pudo certificar la factura.',
+                    'payload_snapshot' => [
+                        'sale_id' => $sale->id,
+                        'business_number' => $sale->business_number,
+                        'customer_id' => $sale->customer_id,
+                        'customer_name' => $sale->customer_name,
+                        'customer_doc_number' => $sale->customer_doc_number,
+                        'total' => $sale->total,
+                        'is_credit_sale' => $sale->is_credit_sale,
+                        'document_type' => $sale->document_type,
+                    ],
+                    'created_by' => $request->user()->id,
+                ]);
 
                 throw ValidationException::withMessages([
                     'document_type' => $exception->getMessage() ?: 'No se pudo certificar la factura.',
@@ -788,6 +918,7 @@ class SaleController extends Controller
 
         try {
             $document = app(DigifactInvoiceService::class)->retryCertification($sale);
+            AccountsReceivable::createCharge($sale->refresh(), $request->user()->id);
             $message = 'Factura FEL certificada correctamente.';
 
             if (filled($document->series) || filled($document->number)) {
@@ -819,6 +950,12 @@ class SaleController extends Controller
         ]);
 
         $sale->load(['electronicDocument', 'payments']);
+
+        if ($sale->is_credit_sale && (float) $sale->amount_paid > 0) {
+            throw ValidationException::withMessages([
+                'reason' => 'No se puede anular una venta al crédito con abonos registrados.',
+            ]);
+        }
 
         if (CashRegister::cashAmountFromPayments($sale->payments) > 0) {
             CashRegister::requireOpenSession(
@@ -860,6 +997,8 @@ class SaleController extends Controller
                     'reason' => 'Esta venta ya fue anulada.',
                 ]);
             }
+
+            AccountsReceivable::cancelSaleCharge($sale, $request->user());
 
             foreach ($sale->items as $item) {
                 $product = Product::query()
@@ -1545,6 +1684,29 @@ class SaleController extends Controller
     private function ensureSaleBelongsToCurrentBusiness(Sale $sale): void
     {
         abort_unless((int) $sale->business_id === (int) currentBusinessId(), 403);
+    }
+
+    private function createFelReconciliationRequest(array $payload): void
+    {
+        FelReconciliationRequest::query()->updateOrCreate(
+            [
+                'business_id' => $payload['business_id'],
+                'provider' => $payload['provider'],
+                'environment' => $payload['environment'],
+                'internal_reference' => $payload['internal_reference'],
+            ],
+            [
+                'branch_id' => $payload['branch_id'] ?? null,
+                'sale_id' => ! empty($payload['sale_id']) && Sale::query()->whereKey($payload['sale_id'])->exists()
+                    ? $payload['sale_id']
+                    : null,
+                'issued_date' => $payload['issued_date'] ?? null,
+                'status' => 'pending',
+                'last_error' => $payload['last_error'] ?? null,
+                'payload_snapshot' => $payload['payload_snapshot'] ?? null,
+                'created_by' => $payload['created_by'] ?? null,
+            ],
+        );
     }
 
     private function availableDocumentTypes(

@@ -372,6 +372,29 @@ class DigifactInvoiceService
         return $this->certifySale($sale->refresh());
     }
 
+    public function applyReconciledResponse(Sale $sale, array $response, Carbon|string|null $issuedAt = null): ElectronicDocument
+    {
+        $sale->loadMissing(['business', 'customer', 'items.product', 'payments', 'electronicDocument']);
+        $business = $sale->business ?: Business::query()->find($sale->business_id);
+        $settings = $this->settings($business);
+        $document = $sale->electronicDocument ?: $this->createPendingDocument($sale, $settings);
+        $internalReference = $sale->fel_internal_reference
+            ?: $document->internal_reference
+            ?: $this->payloadBuilder->internalReference($sale);
+        $issuedAt ??= $sale->fel_issued_at ?: $document->issued_at ?: $sale->created_at;
+
+        return $this->applyCertifiedResponse(
+            $sale,
+            $document,
+            $settings,
+            $internalReference,
+            $issuedAt,
+            $response,
+            $this->sanitizeProviderResponse($response),
+            'reconciled_manual',
+        );
+    }
+
     public function cancelElectronicDocument(ElectronicDocument $document, string $reason): ElectronicDocument
     {
         $document->loadMissing(['business', 'sale']);

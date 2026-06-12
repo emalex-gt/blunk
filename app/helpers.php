@@ -197,3 +197,14 @@ if (! function_exists('format_credit_receipt_number')) {
         return 'CR-'.($number ?: $fallback ?: '-');
     }
 }
+
+if (! function_exists('format_credit_payment_number')) {
+    function format_credit_payment_number(array|object|null $payment): string
+    {
+        $number = is_array($payment)
+            ? ($payment['payment_number'] ?? null)
+            : ($payment?->payment_number ?? null);
+
+        return 'AB-'.($number ?: '-');
+    }
+}

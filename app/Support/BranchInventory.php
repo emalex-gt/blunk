@@ -299,7 +299,7 @@ class BranchInventory
         $row = self::lockedStockRow($product, $branchId);
         $previous = (float) $row->stock;
 
-        if ($newStock < 0) {
+        if ($newStock < 0 && ! \App\Support\Inventory\StockPolicy::allowsNegativeStockForBusinessId((int) $product->business_id)) {
             throw ValidationException::withMessages([
                 'quantity' => 'El stock no puede quedar negativo.',
             ]);
@@ -317,7 +317,7 @@ class BranchInventory
         $previous = (float) $row->stock;
         $newStock = $previous + $delta;
 
-        if ($newStock < 0) {
+        if ($newStock < 0 && ! \App\Support\Inventory\StockPolicy::allowsNegativeStockForBusinessId((int) $product->business_id)) {
             throw ValidationException::withMessages([
                 'items' => "Stock insuficiente para {$product->name}. Disponible: {$previous}.",
                 'quantity' => 'El stock no puede quedar negativo.',

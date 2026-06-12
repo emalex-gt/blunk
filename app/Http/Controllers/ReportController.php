@@ -494,7 +494,7 @@ class ReportController extends Controller
                 'category' => $product->category?->name ?: '-',
                 'stock' => $stock,
                 'reserved' => $reserved,
-                'available' => max(0, $stock - $reserved),
+                'available' => $stock - $reserved,
                 'last_in_at' => $lastIn ? Carbon::parse($lastIn)->timezone(tenantTimezone())->format('Y-m-d H:i') : '-',
                 'cardex_url' => route('products.stock-history', $product->id),
             ];
@@ -670,7 +670,7 @@ class ReportController extends Controller
                 'product' => $product->name,
                 'stock' => $stock,
                 'reserved' => $reserved,
-                'available' => max(0, $stock - $reserved),
+                'available' => $stock - $reserved,
                 'cost_price' => $cost,
                 'sale_price' => (float) $salePrice,
                 'total_cost' => round($stock * $cost, 2),

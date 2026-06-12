@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Product;
 use App\Models\StockMovement;
 use App\Support\BranchInventory;
+use App\Support\Inventory\StockPolicy;
 use App\Support\StockAvailability;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -72,6 +73,11 @@ class StockController extends Controller
             $quantity = $data['type'] === 'remove'
                 ? -1 * $data['quantity']
                 : $data['quantity'];
+
+            if ($quantity < 0) {
+                StockPolicy::assertCanDecreaseStock(currentBusinessId(), $branch, $product, null, abs($quantity), 'stock');
+            }
+
             [$previousStock, $newStock] = $quantity < 0
                 ? BranchInventory::decrease($product, $branch->id, abs($quantity))
                 : BranchInventory::increase($product, $branch->id, $quantity);
@@ -130,6 +136,11 @@ class StockController extends Controller
             };
 
             $movementQuantity = $newStock - $previousStock;
+
+            if ($movementQuantity < 0) {
+                StockPolicy::assertCanDecreaseStock(currentBusinessId(), $branch, $product, null, abs($movementQuantity), 'stock');
+            }
+
             [$previousStock, $newStock] = $data['type'] === 'adjustment'
                 ? BranchInventory::adjust($product, $branch->id, $newStock)
                 : ($movementQuantity < 0
@@ -160,7 +171,7 @@ class StockController extends Controller
         $products->each(function (Product $product) use ($branchId) {
             $reserved = StockAvailability::reservedStock($product, null, $branchId);
             $product->setAttribute('reserved_stock', $reserved);
-            $product->setAttribute('available_stock', max(0, (float) $product->stock - $reserved));
+            $product->setAttribute('available_stock', (float) $product->stock - $reserved);
         });
     }
 }

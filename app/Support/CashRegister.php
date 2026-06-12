@@ -99,6 +99,8 @@ class CashRegister
         return [
             'opening' => $sum('opening'),
             'cash_sales' => $sum('sale_cash'),
+            'credit_payments' => $sum('credit_payment_cash'),
+            'credit_payment_cancellations' => abs($sum('credit_payment_cash_cancel')),
             'cash_sale_cancellations' => abs($sum('sale_cash_cancel')),
             'expenses' => abs($sum('expense')),
             'cash_purchases' => abs($sum('purchase_cash')),

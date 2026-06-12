@@ -29,6 +29,11 @@ class Sale extends Model
         'discount_amount',
         'discount_reason',
         'payment_method',
+        'payment_status',
+        'amount_paid',
+        'credit_balance',
+        'is_credit_sale',
+        'due_date',
         'document_type',
         'electronic_document_id',
         'certification_status',
@@ -62,6 +67,10 @@ class Sale extends Model
         'fel_issued_at' => 'datetime',
         'fel_raw_response' => 'array',
         'business_number' => 'integer',
+        'amount_paid' => 'decimal:2',
+        'credit_balance' => 'decimal:2',
+        'is_credit_sale' => 'boolean',
+        'due_date' => 'date',
     ];
 
     public function business(): BelongsTo
@@ -87,6 +96,11 @@ class Sale extends Model
     public function payments(): HasMany
     {
         return $this->hasMany(SalePayment::class);
+    }
+
+    public function creditPaymentAllocations(): HasMany
+    {
+        return $this->hasMany(CustomerCreditPaymentAllocation::class);
     }
 
     public function electronicDocument(): BelongsTo

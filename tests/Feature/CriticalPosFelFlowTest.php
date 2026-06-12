@@ -11,6 +11,12 @@ use App\Models\CreditCustomerTransfer;
 use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
 use App\Models\Customer;
+use App\Models\CustomerAccountMovement;
+use App\Models\CustomerCreditAccount;
+use App\Models\CustomerCreditPayment;
+use App\Models\CustomerCreditPaymentAllocation;
+use App\Models\ElectronicDocument;
+use App\Models\FelReconciliationRequest;
 use App\Models\PriceType;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
@@ -1291,7 +1297,7 @@ class CriticalPosFelFlowTest extends TestCase
                     'quantity' => 3,
                 ]],
             ])
-            ->assertSessionHasErrors(['items' => 'No hay suficiente disponible para trasladar.']);
+            ->assertSessionHasErrors(['items' => 'No hay suficiente stock disponible para trasladar.']);
     }
 
     public function test_purchase_payment_method_controls_cash_register_usage(): void
@@ -1848,6 +1854,791 @@ class CriticalPosFelFlowTest extends TestCase
         ], $phrases);
     }
 
+    public function test_real_credit_sale_creates_receivable_and_deducts_stock_without_cash_movement(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $payload = $this->salePayload($product, quantity: 2, total: 200, customer: [
+            'name' => 'Cliente crédito real',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+            'address' => 'Ciudad',
+        ]);
+        $payload['payment_condition'] = 'credit';
+        $payload['payments'] = [];
+
+        $this->actingAs($user)->post(route('sales.store'), $payload)->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->latest('id')->firstOrFail();
+        $this->assertTrue($sale->is_credit_sale);
+        $this->assertSame('unpaid', $sale->payment_status);
+        $this->assertSame('200.00', $sale->credit_balance);
+        $this->assertSame(8.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+        $this->assertDatabaseHas('customer_credit_accounts', ['business_id' => $business->id, 'customer_id' => $sale->customer_id, 'current_balance' => 200]);
+        $this->assertDatabaseHas('customer_account_movements', ['sale_id' => $sale->id, 'type' => 'charge', 'direction' => 'debit', 'amount' => 200]);
+        $this->assertDatabaseCount('sale_payments', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+    }
+
+    public function test_credit_sale_rejects_blocked_customer_and_credit_limit(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $customer = Customer::create(['business_id' => $business->id, 'name' => 'Cliente limitado', 'doc_type' => 'NIT', 'doc_number' => '1234567', 'country' => 'GT']);
+        CustomerCreditAccount::create(['business_id' => $business->id, 'customer_id' => $customer->id, 'credit_limit' => 50, 'current_balance' => 0]);
+        $payload = $this->salePayload($product, quantity: 1, total: 100, customer: [
+            'id' => $customer->id, 'name' => $customer->name, 'doc_type' => 'NIT', 'doc_number' => $customer->doc_number,
+        ]);
+        $payload['payment_condition'] = 'credit';
+        $payload['payments'] = [];
+
+        $this->actingAs($user)->post(route('sales.store'), $payload)
+            ->assertSessionHasErrors('payment_condition');
+        $this->assertDatabaseCount('sales', 0);
+
+        $customer->creditAccount()->update(['credit_limit' => null, 'is_blocked' => true]);
+        $this->actingAs($user)->post(route('sales.store'), $payload)
+            ->assertSessionHasErrors('payment_condition');
+        $this->assertDatabaseCount('sales', 0);
+    }
+
+    public function test_non_cash_credit_payment_reduces_balance_and_allocates_oldest_sale(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $payload = $this->salePayload($product, quantity: 2, total: 200, customer: [
+            'name' => 'Cliente abono',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+        ]);
+        $payload['payment_condition'] = 'credit';
+        $payload['payments'] = [];
+        $this->actingAs($user)->post(route('sales.store'), $payload)->assertSessionHasNoErrors();
+        $sale = Sale::query()->latest('id')->firstOrFail();
+
+        $this->actingAs($user)->post(route('credits.payments.store'), [
+            'customer_id' => $sale->customer_id,
+            'amount' => 75,
+            'payment_method' => 'bank_transfer',
+            'reference' => 'TRX-1',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame('125.00', $sale->refresh()->credit_balance);
+        $this->assertSame('partial', $sale->payment_status);
+        $this->assertSame('125.00', $sale->customer->creditAccount->current_balance);
+        $payment = CustomerCreditPayment::query()->firstOrFail();
+        $this->assertDatabaseHas('customer_credit_payment_allocations', ['payment_id' => $payment->id, 'sale_id' => $sale->id, 'amount' => 75]);
+        $this->assertDatabaseCount('cash_movements', 0);
+    }
+
+    public function test_cash_credit_payment_requires_open_register_and_cancellation_reverses_it(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits', 'cash_register'], enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $payload = $this->salePayload($product, quantity: 1, total: 100, customer: [
+            'name' => 'Cliente efectivo',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+        ]);
+        $payload['payment_condition'] = 'credit';
+        $payload['payments'] = [];
+        $this->actingAs($user)->post(route('sales.store'), $payload)->assertSessionHasNoErrors();
+        $sale = Sale::query()->latest('id')->firstOrFail();
+
+        $this->actingAs($user)->post(route('credits.payments.store'), [
+            'customer_id' => $sale->customer_id, 'amount' => 100, 'payment_method' => 'cash',
+        ])->assertSessionHasErrors('cash_register');
+
+        $this->openCashRegister($business, $user);
+        $this->actingAs($user)->post(route('credits.payments.store'), [
+            'customer_id' => $sale->customer_id, 'amount' => 100, 'payment_method' => 'cash',
+        ])->assertSessionHasNoErrors();
+        $payment = CustomerCreditPayment::query()->firstOrFail();
+        $this->assertDatabaseHas('cash_movements', ['type' => 'credit_payment_cash', 'amount' => 100]);
+        $this->assertSame('0.00', $sale->customer->creditAccount->fresh()->current_balance);
+
+        Permissions::assignDirectPermissions($user, [Permissions::CREDITS_PAYMENTS_CANCEL]);
+        $this->actingAs($user)->post(route('credits.payments.cancel', $payment))->assertSessionHasNoErrors();
+        $this->assertSame('cancelled', $payment->refresh()->status);
+        $this->assertSame('100.00', $sale->customer->creditAccount->fresh()->current_balance);
+        $this->assertSame('unpaid', $sale->refresh()->payment_status);
+        $this->assertDatabaseHas('cash_movements', ['type' => 'credit_payment_cash_cancel', 'amount' => -100]);
+    }
+
+    public function test_credit_reservation_does_not_create_receivable_charge(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['credits'], enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+
+        $this->actingAs($user)->post(route('credits.receipts.store'), $this->creditPayload($product, 2))->assertSessionHasNoErrors();
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('customer_credit_accounts', 0);
+        $this->assertDatabaseCount('customer_account_movements', 0);
+    }
+
+    public function test_credit_invoice_fel_failure_rolls_back_sale_stock_and_receivable(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'credits', 'fel_gt'],
+            allowInvoices: true,
+            enableCredits: true,
+        );
+        $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $customer = Customer::create([
+            'business_id' => $business->id,
+            'name' => 'Cliente FEL credito',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+            'address' => 'Ciudad',
+            'country' => 'GT',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
+        ]);
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->once()->andThrow(new FelException('Digifact rechazo la factura.'));
+        $digifact->shouldReceive('recordSaleRequestTiming')->once();
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $payload = $this->salePayload($product, quantity: 2, total: 200, documentType: 'invoice', customer: [
+            'id' => $customer->id,
+            'name' => 'Cliente FEL credito',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+            'address' => 'Ciudad',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now()->toDateTimeString(),
+        ]);
+        $payload['payment_condition'] = 'credit';
+        $payload['payments'] = [];
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $payload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasErrors('document_type');
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('sale_items', 0);
+        $this->assertDatabaseCount('electronic_documents', 0);
+        $this->assertDatabaseCount('customer_credit_accounts', 0);
+        $this->assertDatabaseCount('customer_account_movements', 0);
+        $reconciliation = FelReconciliationRequest::query()->where('business_id', $business->id)->firstOrFail();
+        $this->assertNull($reconciliation->sale_id);
+        $this->assertSame('pending', $reconciliation->status);
+        $this->assertStringStartsWith('BLUNK-'.$business->id.'-', $reconciliation->internal_reference);
+        $this->assertSame(10.0, (float) ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+    }
+
+    public function test_user_without_credit_sales_permission_cannot_create_credit_sale(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $user->roles()->detach();
+        Permissions::assignDirectPermissions($user, [Permissions::POS_SELL]);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $payload = $this->salePayload($product, quantity: 1, total: 100, customer: [
+            'name' => 'Cliente sin permiso',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+        ]);
+        $payload['payment_condition'] = 'credit';
+        $payload['payments'] = [];
+
+        $this->actingAs($user)->post(route('sales.store'), $payload)->assertForbidden();
+        $this->assertDatabaseCount('sales', 0);
+    }
+
+    public function test_user_without_credit_payment_permission_cannot_record_payment(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['credits'], enableCredits: true);
+        $user->roles()->detach();
+        Permissions::assignDirectPermissions($user, [Permissions::CREDITS_VIEW]);
+        $customer = Customer::create(['business_id' => $business->id, 'name' => 'Cliente pago', 'doc_type' => 'NIT', 'doc_number' => '57289085']);
+        CustomerCreditAccount::create(['business_id' => $business->id, 'customer_id' => $customer->id, 'current_balance' => 100]);
+
+        $this->actingAs($user)->post(route('credits.payments.store'), [
+            'customer_id' => $customer->id,
+            'amount' => 25,
+            'payment_method' => 'bank_transfer',
+        ])->assertForbidden();
+    }
+
+    public function test_credit_sale_requires_nit_customer_and_rejects_cf(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+
+        $missingCustomer = $this->salePayload($product, quantity: 1, total: 100);
+        $missingCustomer['payment_condition'] = 'credit';
+        $missingCustomer['payments'] = [];
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $missingCustomer)
+            ->assertSessionHasErrors('customer.doc_number');
+        $this->assertDatabaseCount('sales', 0);
+
+        $cfCustomer = $this->salePayload($product, quantity: 1, total: 100, customer: [
+            'name' => 'Consumidor Final',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'consumidor_final' => true,
+        ]);
+        $cfCustomer['payment_condition'] = 'credit';
+        $cfCustomer['payments'] = [];
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $cfCustomer)
+            ->assertSessionHasErrors('customer.doc_number');
+        $this->assertDatabaseCount('sales', 0);
+    }
+
+    public function test_statement_is_business_scoped(): void
+    {
+        [, $user] = $this->tenant(modules: ['credits'], enableCredits: true);
+        [$otherBusiness] = $this->tenant(modules: ['credits'], enableCredits: true);
+        $otherCustomer = Customer::create([
+            'business_id' => $otherBusiness->id,
+            'name' => 'Otro tenant',
+            'doc_type' => 'NIT',
+            'doc_number' => '9999999',
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('credits.accounts.statement', $otherCustomer))
+            ->assertForbidden();
+    }
+
+    public function test_statement_movements_are_branch_scoped(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['credits', 'branches'], role: 'owner', enableCredits: true);
+        TenantSetting::query()->where('business_id', $business->id)->update(['use_branches' => true]);
+        $branchA = BranchInventory::defaultBranchForBusiness($business);
+        $branchB = Branch::create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal B',
+            'code' => 'B',
+            'is_active' => true,
+        ]);
+        $user->forceFill(['current_branch_id' => $branchA->id])->save();
+        $customer = Customer::create(['business_id' => $business->id, 'name' => 'Cliente sucursal', 'doc_type' => 'NIT', 'doc_number' => '57289085']);
+        $account = CustomerCreditAccount::create(['business_id' => $business->id, 'customer_id' => $customer->id, 'current_balance' => 200]);
+
+        CustomerAccountMovement::create([
+            'business_id' => $business->id,
+            'branch_id' => $branchA->id,
+            'customer_id' => $customer->id,
+            'customer_credit_account_id' => $account->id,
+            'type' => 'charge',
+            'direction' => 'debit',
+            'description' => 'Movimiento A',
+            'amount' => 100,
+            'balance_after' => 100,
+            'created_by' => $user->id,
+        ]);
+        CustomerAccountMovement::create([
+            'business_id' => $business->id,
+            'branch_id' => $branchB->id,
+            'customer_id' => $customer->id,
+            'customer_credit_account_id' => $account->id,
+            'type' => 'charge',
+            'direction' => 'debit',
+            'description' => 'Movimiento B',
+            'amount' => 100,
+            'balance_after' => 200,
+            'created_by' => $user->id,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('credits.accounts.statement', $customer))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Credits/Statement')
+                ->has('movements.data', 1)
+                ->where('movements.data.0.description', 'Movimiento A')
+            );
+    }
+
+    public function test_credit_payment_print_route_works(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $payload = $this->salePayload($product, quantity: 1, total: 100, customer: [
+            'name' => 'Cliente recibo',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+        ]);
+        $payload['payment_condition'] = 'credit';
+        $payload['payments'] = [];
+        $this->actingAs($user)->post(route('sales.store'), $payload)->assertSessionHasNoErrors();
+        $sale = Sale::query()->firstOrFail();
+
+        $this->actingAs($user)->post(route('credits.payments.store'), [
+            'customer_id' => $sale->customer_id,
+            'amount' => 25,
+            'payment_method' => 'bank_transfer',
+        ])->assertSessionHasNoErrors();
+        $payment = CustomerCreditPayment::query()->firstOrFail();
+
+        $this->actingAs($user)
+            ->get(route('credits.payments.print', $payment))
+            ->assertOk()
+            ->assertSee('RECIBO DE ABONO')
+            ->assertSee('AB-');
+    }
+
+    public function test_credit_payment_print_route_requires_print_or_payment_view_permission(): void
+    {
+        [, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $payment = $this->creditPaymentForPrint($user);
+
+        $user->roles()->detach();
+        $user->directPermissions()->sync([]);
+
+        $this->actingAs($user)
+            ->get(route('credits.payments.print', $payment))
+            ->assertForbidden();
+    }
+
+    public function test_credit_payment_print_route_allows_print_or_payment_view_permission(): void
+    {
+        [, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $payment = $this->creditPaymentForPrint($user);
+
+        $user->roles()->detach();
+        Permissions::assignDirectPermissions($user, [Permissions::CREDITS_PRINT]);
+
+        $this->actingAs($user)
+            ->get(route('credits.payments.print', $payment))
+            ->assertOk()
+            ->assertSee('RECIBO DE ABONO');
+
+        Permissions::assignDirectPermissions($user, [Permissions::CREDITS_PAYMENTS_VIEW]);
+
+        $this->actingAs($user)
+            ->get(route('credits.payments.print', $payment))
+            ->assertOk()
+            ->assertSee('RECIBO DE ABONO');
+    }
+
+    public function test_credit_payment_allocates_oldest_unpaid_sales_first(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $customerData = ['name' => 'Cliente FIFO', 'doc_type' => 'NIT', 'doc_number' => '57289085'];
+
+        $first = $this->salePayload($product, quantity: 1, total: 100, customer: $customerData);
+        $first['payment_condition'] = 'credit';
+        $first['payments'] = [];
+        $this->actingAs($user)->post(route('sales.store'), $first)->assertSessionHasNoErrors();
+        $firstSale = Sale::query()->latest('id')->firstOrFail();
+
+        $second = $this->salePayload($product, quantity: 2, total: 200, customer: ['id' => $firstSale->customer_id, ...$customerData]);
+        $second['payment_condition'] = 'credit';
+        $second['payments'] = [];
+        $this->actingAs($user)->post(route('sales.store'), $second)->assertSessionHasNoErrors();
+        $secondSale = Sale::query()->latest('id')->firstOrFail();
+
+        $this->actingAs($user)->post(route('credits.payments.store'), [
+            'customer_id' => $firstSale->customer_id,
+            'amount' => 150,
+            'payment_method' => 'bank_transfer',
+        ])->assertSessionHasNoErrors();
+        $payment = CustomerCreditPayment::query()->firstOrFail();
+
+        $this->assertSame('paid', $firstSale->refresh()->payment_status);
+        $this->assertSame('0.00', $firstSale->credit_balance);
+        $this->assertSame('partial', $secondSale->refresh()->payment_status);
+        $this->assertSame('150.00', $secondSale->credit_balance);
+        $this->assertDatabaseHas('customer_credit_payment_allocations', [
+            'payment_id' => $payment->id,
+            'sale_id' => $firstSale->id,
+            'amount' => 100,
+        ]);
+        $this->assertDatabaseHas('customer_credit_payment_allocations', [
+            'payment_id' => $payment->id,
+            'sale_id' => $secondSale->id,
+            'amount' => 50,
+        ]);
+    }
+
+    public function test_credit_sale_with_payments_cannot_be_cancelled(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        Permissions::assignDirectPermissions($user, [Permissions::SALES_CANCEL]);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $payload = $this->salePayload($product, quantity: 1, total: 100, customer: [
+            'name' => 'Cliente anular',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+        ]);
+        $payload['payment_condition'] = 'credit';
+        $payload['payments'] = [];
+        $this->actingAs($user)->post(route('sales.store'), $payload)->assertSessionHasNoErrors();
+        $sale = Sale::query()->firstOrFail();
+
+        $this->actingAs($user)->post(route('credits.payments.store'), [
+            'customer_id' => $sale->customer_id,
+            'amount' => 10,
+            'payment_method' => 'bank_transfer',
+        ])->assertSessionHasNoErrors();
+
+        $this->actingAs($user)
+            ->post(route('sales.cancel', $sale), ['reason' => 'Error de prueba'])
+            ->assertSessionHasErrors('reason');
+        $this->assertSame('completed', $sale->refresh()->status);
+        $this->assertSame('90.00', $sale->credit_balance);
+    }
+
+    public function test_credit_reservation_invoiced_as_credit_sale_creates_receivable_charge(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        Permissions::assignDirectPermissions($user, [Permissions::CREDITS_INVOICE]);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->actingAs($user)->post(route('credits.receipts.store'), $this->creditPayload($product, 2))->assertSessionHasNoErrors();
+        $line = CreditReceiptLine::query()->firstOrFail();
+
+        $payload = $this->salePayload($product, quantity: 2, total: 200, customer: [
+            'name' => 'Cliente crÃ©dito',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+        ], itemOverrides: ['credit_line_id' => $line->id]);
+        $payload['payment_condition'] = 'credit';
+        $payload['payments'] = [];
+
+        $this->actingAs($user)->post(route('sales.store'), $payload)->assertSessionHasNoErrors();
+        $sale = Sale::query()->firstOrFail();
+
+        $this->assertTrue($sale->is_credit_sale);
+        $this->assertDatabaseHas('customer_account_movements', ['sale_id' => $sale->id, 'type' => 'charge', 'amount' => 200]);
+        $this->assertSame(0, CreditReceiptLine::query()->firstOrFail()->qty_pending);
+    }
+
+    public function test_credit_reservation_invoiced_as_paid_sale_does_not_create_receivable_charge(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits', 'cash_register'], enableCredits: true);
+        Permissions::assignDirectPermissions($user, [Permissions::CREDITS_INVOICE]);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->actingAs($user)->post(route('credits.receipts.store'), $this->creditPayload($product, 2))->assertSessionHasNoErrors();
+        $line = CreditReceiptLine::query()->firstOrFail();
+        $this->openCashRegister($business, $user);
+
+        $payload = $this->salePayload($product, quantity: 2, total: 200, customer: [
+            'name' => 'Cliente crÃ©dito',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+        ], itemOverrides: ['credit_line_id' => $line->id]);
+
+        $this->actingAs($user)->post(route('sales.store'), $payload)->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->firstOrFail();
+        $this->assertFalse($sale->is_credit_sale);
+        $this->assertDatabaseMissing('customer_account_movements', ['sale_id' => $sale->id, 'type' => 'charge']);
+        $this->assertSame(0, CreditReceiptLine::query()->firstOrFail()->qty_pending);
+    }
+
+    public function test_fel_reconciliation_found_without_local_sale_requires_manual_review(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner', allowInvoices: true);
+        $this->felSettings($business);
+        $request = FelReconciliationRequest::create([
+            'business_id' => $business->id,
+            'internal_reference' => 'BLUNK-'.$business->id.'-999',
+            'issued_date' => now(),
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'status' => 'pending',
+        ]);
+
+        $service = Mockery::mock(\App\Services\Fel\Providers\Digifact\DigifactReconciliationService::class);
+        $service->shouldReceive('findByInternalReference')->once()->andReturn([
+            'found' => true,
+            'authNumber' => 'UUID-FOUND',
+            'serial' => '123',
+            'batch' => 'A',
+            'raw' => ['Autorizacion' => 'UUID-FOUND'],
+        ]);
+        $this->app->instance(\App\Services\Fel\Providers\Digifact\DigifactReconciliationService::class, $service);
+
+        $this->actingAs($user)
+            ->post(route('fel.reconciliation.check', $request))
+            ->assertSessionHasErrors('reconciliation');
+
+        $this->assertSame('found', $request->refresh()->status);
+        $this->assertStringContainsString('venta local no existe', $request->last_error);
+    }
+
+    public function test_fel_reconciliation_not_found_marks_request_without_creating_local_records(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner', allowInvoices: true);
+        $this->felSettings($business);
+        $request = FelReconciliationRequest::create([
+            'business_id' => $business->id,
+            'internal_reference' => 'BLUNK-'.$business->id.'-NOTFOUND',
+            'issued_date' => now(),
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'status' => 'pending',
+        ]);
+
+        $service = Mockery::mock(\App\Services\Fel\Providers\Digifact\DigifactReconciliationService::class);
+        $service->shouldReceive('findByInternalReference')->once()->andReturn([
+            'found' => false,
+            'raw' => [],
+        ]);
+        $this->app->instance(\App\Services\Fel\Providers\Digifact\DigifactReconciliationService::class, $service);
+
+        $this->actingAs($user)
+            ->post(route('fel.reconciliation.check', $request))
+            ->assertSessionHasNoErrors();
+
+        $request->refresh();
+        $this->assertSame('not_found', $request->status);
+        $this->assertSame(1, $request->attempts);
+        $this->assertNotNull($request->checked_at);
+        $this->assertNull($request->last_error);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('electronic_documents', 0);
+        $this->assertDatabaseCount('customer_account_movements', 0);
+    }
+
+    public function test_fel_reconciliation_provider_error_increments_attempts_and_keeps_pending(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner', allowInvoices: true);
+        $this->felSettings($business);
+        $request = FelReconciliationRequest::create([
+            'business_id' => $business->id,
+            'internal_reference' => 'BLUNK-'.$business->id.'-ERROR',
+            'issued_date' => now(),
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'status' => 'pending',
+        ]);
+
+        $service = Mockery::mock(\App\Services\Fel\Providers\Digifact\DigifactReconciliationService::class);
+        $service->shouldReceive('findByInternalReference')->once()->andThrow(new FelException('Servicio Digifact no disponible.'));
+        $this->app->instance(\App\Services\Fel\Providers\Digifact\DigifactReconciliationService::class, $service);
+
+        $this->actingAs($user)
+            ->post(route('fel.reconciliation.check', $request))
+            ->assertSessionHasErrors('reconciliation');
+
+        $request->refresh();
+        $this->assertSame('pending', $request->status);
+        $this->assertSame(1, $request->attempts);
+        $this->assertSame('Servicio Digifact no disponible.', $request->last_error);
+        $this->assertNotNull($request->checked_at);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('electronic_documents', 0);
+        $this->assertDatabaseCount('customer_account_movements', 0);
+    }
+
+    public function test_fel_reconciliation_found_with_local_credit_sale_certifies_and_creates_missing_ar_charge(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt', 'credits'], role: 'owner', allowInvoices: true, enableCredits: true);
+        $this->felSettings($business);
+        $customer = Customer::create(['business_id' => $business->id, 'name' => 'Cliente conciliado', 'doc_type' => 'NIT', 'doc_number' => '57289085']);
+        $sale = Sale::create([
+            'business_id' => $business->id,
+            'business_number' => 1,
+            'branch_id' => BranchInventory::defaultBranchForBusiness($business)->id,
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'customer_doc_type' => 'NIT',
+            'customer_doc_number' => $customer->doc_number,
+            'total' => 100,
+            'subtotal_before_discount' => 100,
+            'payment_method' => 'credit',
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'credit_balance' => 100,
+            'is_credit_sale' => true,
+            'document_type' => 'invoice',
+            'status' => 'completed',
+            'created_by' => $user->id,
+            'fel_internal_reference' => 'BLUNK-'.$business->id.'-LOCAL',
+        ]);
+        $document = ElectronicDocument::create([
+            'business_id' => $business->id,
+            'sale_id' => $sale->id,
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'document_type' => 'invoice',
+            'status' => 'unknown',
+            'created_by' => $user->id,
+        ]);
+        $sale->update(['electronic_document_id' => $document->id]);
+        $request = FelReconciliationRequest::create([
+            'business_id' => $business->id,
+            'branch_id' => $sale->branch_id,
+            'sale_id' => $sale->id,
+            'internal_reference' => $sale->fel_internal_reference,
+            'issued_date' => now(),
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'status' => 'pending',
+        ]);
+
+        $service = Mockery::mock(\App\Services\Fel\Providers\Digifact\DigifactReconciliationService::class);
+        $service->shouldReceive('findByInternalReference')->once()->andReturn([
+            'found' => true,
+            'authNumber' => 'UUID-FOUND',
+            'serial' => '123',
+            'batch' => 'A',
+            'raw' => ['Autorizacion' => 'UUID-FOUND', 'Serial' => '123', 'Batch' => 'A'],
+        ]);
+        $this->app->instance(\App\Services\Fel\Providers\Digifact\DigifactReconciliationService::class, $service);
+
+        $this->actingAs($user)
+            ->post(route('fel.reconciliation.check', $request))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('resolved', $request->refresh()->status);
+        $this->assertSame('certified', $sale->refresh()->certification_status);
+        $this->assertSame('UUID-FOUND', $sale->fel_uuid);
+        $this->assertDatabaseHas('customer_account_movements', ['sale_id' => $sale->id, 'type' => 'charge', 'amount' => 100]);
+    }
+
+    public function test_pos_props_expose_negative_stock_policy_and_zero_available_product(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos'], allowNegativeStock: true);
+        $this->product($business, stock: 0, salePrice: 100);
+
+        $this->actingAs($user)
+            ->get(route('sales.create'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Sales/POS')
+                ->where('allow_negative_stock', true)
+                ->where('products.0.available_stock', fn ($value) => (float) $value === 0.0)
+            );
+
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+        $this->assertStringContainsString('const disabledByStock = !allow_negative_stock && outOfStock;', $source);
+        $this->assertStringContainsString('disabled={disabledByStock || processing}', $source);
+    }
+
+    public function test_negative_stock_policy_controls_pos_sales(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register'], allowNegativeStock: false);
+        $product = $this->product($business, stock: 1, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 2, total: 200))
+            ->assertSessionHasErrors('items');
+        $this->assertSame(1.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+
+        [$businessAllowed, $userAllowed] = $this->tenant(modules: ['pos', 'cash_register'], allowNegativeStock: true);
+        $productAllowed = $this->product($businessAllowed, stock: 1, salePrice: 100);
+        $this->openCashRegister($businessAllowed, $userAllowed);
+
+        $this->actingAs($userAllowed)
+            ->post(route('sales.store'), $this->salePayload($productAllowed, quantity: 2, total: 200))
+            ->assertSessionHasNoErrors();
+        $this->assertSame(-1.0, (float) ProductBranchStock::query()->where('product_id', $productAllowed->id)->value('stock'));
+    }
+
+    public function test_negative_stock_policy_controls_transfers(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['branches', 'inventory'], role: 'owner', allowNegativeStock: false);
+        TenantSetting::query()->where('business_id', $business->id)->update(['use_branches' => true]);
+        $from = BranchInventory::defaultBranchForBusiness($business);
+        $to = Branch::create(['business_id' => $business->id, 'name' => 'Destino', 'code' => 'D', 'is_active' => true]);
+        $product = $this->product($business, stock: 1, salePrice: 100);
+
+        $this->actingAs($user)->post(route('inventory.transfers.store'), [
+            'from_branch_id' => $from->id,
+            'to_branch_id' => $to->id,
+            'items' => [['product_id' => $product->id, 'quantity' => 2]],
+        ])->assertSessionHasErrors(['items' => 'No hay suficiente stock disponible para trasladar.']);
+
+        [$businessAllowed, $userAllowed] = $this->tenant(modules: ['branches', 'inventory'], role: 'owner', allowNegativeStock: true);
+        TenantSetting::query()->where('business_id', $businessAllowed->id)->update(['use_branches' => true]);
+        $fromAllowed = BranchInventory::defaultBranchForBusiness($businessAllowed);
+        $toAllowed = Branch::create(['business_id' => $businessAllowed->id, 'name' => 'Destino', 'code' => 'D', 'is_active' => true]);
+        $productAllowed = $this->product($businessAllowed, stock: 1, salePrice: 100);
+
+        $this->actingAs($userAllowed)->post(route('inventory.transfers.store'), [
+            'from_branch_id' => $fromAllowed->id,
+            'to_branch_id' => $toAllowed->id,
+            'items' => [['product_id' => $productAllowed->id, 'quantity' => 2]],
+        ])->assertSessionHasNoErrors();
+        $this->assertSame(-1.0, (float) ProductBranchStock::query()->where('product_id', $productAllowed->id)->where('branch_id', $fromAllowed->id)->value('stock'));
+        $this->assertSame(2.0, (float) ProductBranchStock::query()->where('product_id', $productAllowed->id)->where('branch_id', $toAllowed->id)->value('stock'));
+    }
+
+    public function test_negative_stock_policy_controls_credit_reservations(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['credits'], enableCredits: true, allowNegativeStock: false);
+        $product = $this->product($business, stock: 1, salePrice: 100);
+
+        $this->actingAs($user)
+            ->post(route('credits.receipts.store'), $this->creditPayload($product, 2))
+            ->assertSessionHasErrors('items');
+
+        [$businessAllowed, $userAllowed] = $this->tenant(modules: ['credits'], enableCredits: true, allowNegativeStock: true);
+        $productAllowed = $this->product($businessAllowed, stock: 1, salePrice: 100);
+
+        $this->actingAs($userAllowed)
+            ->post(route('credits.receipts.store'), $this->creditPayload($productAllowed, 2))
+            ->assertSessionHasNoErrors();
+        $this->assertSame(2, StockAvailability::reservedStock($productAllowed, null, BranchInventory::defaultBranch($businessAllowed->id)->id));
+        $this->assertSame(-1.0, StockAvailability::availableStock($productAllowed, null, BranchInventory::defaultBranch($businessAllowed->id)->id));
+    }
+
+    public function test_negative_stock_policy_controls_stock_outputs(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'stock_manager', allowNegativeStock: false);
+        $product = $this->product($business, stock: 1, salePrice: 100);
+
+        $this->actingAs($user)->post(route('stock.quick.store'), [
+            'product_id' => $product->id,
+            'type' => 'exit',
+            'quantity' => 2,
+            'note' => 'Salida prueba',
+        ])->assertSessionHasErrors('quantity');
+
+        [$businessAllowed, $userAllowed] = $this->tenant(modules: ['inventory'], role: 'stock_manager', allowNegativeStock: true);
+        $productAllowed = $this->product($businessAllowed, stock: 1, salePrice: 100);
+
+        $this->actingAs($userAllowed)->post(route('stock.quick.store'), [
+            'product_id' => $productAllowed->id,
+            'type' => 'exit',
+            'quantity' => 2,
+            'note' => 'Salida prueba',
+        ])->assertSessionHasNoErrors();
+        $this->assertSame(-1.0, (float) ProductBranchStock::query()->where('product_id', $productAllowed->id)->value('stock'));
+    }
+
+    public function test_inventory_and_low_stock_reports_show_negative_stock(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory', 'reports'], role: 'owner', allowNegativeStock: true);
+        $product = $this->product($business, stock: -2, salePrice: 100);
+
+        $this->actingAs($user)
+            ->get(route('reports.inventory', ['product_name' => $product->name]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('rows.data.0.stock', fn ($value) => (float) $value === -2.0)
+                ->where('rows.data.0.available', fn ($value) => (float) $value === -2.0)
+            );
+
+        $this->actingAs($user)
+            ->get(route('reports.low-stock', ['product_search' => $product->name]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('rows.data.0.available', fn ($value) => (float) $value === -2.0)
+            );
+    }
+
     private function tenant(
         string $country = 'GT',
         array $modules = [],
@@ -1857,6 +2648,7 @@ class CriticalPosFelFlowTest extends TestCase
         bool $allowInvoices = false,
         bool $enableCredits = false,
         string $pricingScope = 'global',
+        bool $allowNegativeStock = false,
     ): array
     {
         $business = Business::create([
@@ -1877,6 +2669,7 @@ class CriticalPosFelFlowTest extends TestCase
             'allow_manual_price' => $allowManualPrice,
             'remember_last_customer_product_price' => false,
             'enable_credit_sales' => $enableCredits,
+            'allow_negative_stock' => $allowNegativeStock,
             'allow_receipts' => $allowReceipts,
             'allow_invoices' => $allowInvoices,
         ]);
@@ -2092,5 +2885,35 @@ class CriticalPosFelFlowTest extends TestCase
             ],
             'note' => 'Reserva a crédito',
         ];
+    }
+
+    private function creditPaymentForPrint(User $user): CustomerCreditPayment
+    {
+        $business = Business::query()->findOrFail($user->business_id);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $payload = $this->salePayload($product, quantity: 1, total: 100, customer: [
+            'name' => 'Cliente recibo',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+        ]);
+        $payload['payment_condition'] = 'credit';
+        $payload['payments'] = [];
+
+        $this->actingAs($user)->post(route('sales.store'), $payload)->assertSessionHasNoErrors();
+        $sale = Sale::query()
+            ->where('business_id', $business->id)
+            ->latest('id')
+            ->firstOrFail();
+
+        $this->actingAs($user)->post(route('credits.payments.store'), [
+            'customer_id' => $sale->customer_id,
+            'amount' => 25,
+            'payment_method' => 'bank_transfer',
+        ])->assertSessionHasNoErrors();
+
+        return CustomerCreditPayment::query()
+            ->where('business_id', $business->id)
+            ->latest('id')
+            ->firstOrFail();
     }
 }

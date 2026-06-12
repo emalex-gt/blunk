@@ -11,10 +11,12 @@ export default function Create({
     branches,
     activeBranch,
     products,
+    allow_negative_stock = false,
 }: {
     branches: Branch[];
     activeBranch: Branch;
     products: Product[];
+    allow_negative_stock?: boolean;
 }) {
     const [fromBranchId, setFromBranchId] = useState(activeBranch?.id ?? branches[0]?.id ?? null);
     const [toBranchId, setToBranchId] = useState(branches.find((branch) => branch.id !== activeBranch?.id)?.id ?? null);
@@ -57,11 +59,11 @@ export default function Create({
             const product = productsById.get(Number(item.product_id));
             const quantity = Number(item.quantity);
 
-            return !Number.isInteger(quantity) || quantity < 1 || quantity > productAvailable(product);
+            return !Number.isInteger(quantity) || quantity < 1 || (!allow_negative_stock && quantity > productAvailable(product));
         });
 
         if (invalid) {
-            setMessage('No hay suficiente disponible para trasladar.');
+            setMessage('No hay suficiente stock disponible para trasladar.');
             return;
         }
 
@@ -92,14 +94,16 @@ export default function Create({
                         return item;
                     }
 
-                    const nextQuantity = Math.min(productAvailable(product), Number(item.quantity || 0) + 1);
+                    const nextQuantity = allow_negative_stock
+                        ? Number(item.quantity || 0) + 1
+                        : Math.min(productAvailable(product), Number(item.quantity || 0) + 1);
 
                     return { ...item, quantity: String(Math.max(1, nextQuantity)) };
                 });
             }
 
-            if (productAvailable(product) < 1) {
-                setMessage('No hay suficiente disponible para trasladar.');
+            if (!allow_negative_stock && productAvailable(product) < 1) {
+                setMessage('No hay suficiente stock disponible para trasladar.');
 
                 return current;
             }

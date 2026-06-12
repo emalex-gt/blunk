@@ -52,6 +52,8 @@ class Permissions
     public const REPORTS_SALES_DETAILED_VIEW = 'reports.sales_detailed.view';
     public const REPORTS_PRODUCTS_SOLD_DETAILED_VIEW = 'reports.products_sold_detailed.view';
     public const REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW = 'reports.products_sold_summary.view';
+    public const REPORTS_ACCOUNTS_RECEIVABLE_VIEW = 'reports.accounts_receivable.view';
+    public const REPORTS_CREDIT_PAYMENTS_VIEW = 'reports.credit_payments.view';
     public const REPORTS_EXPORT = 'reports.export';
 
     public const CUSTOMERS_VIEW = 'customers.view';
@@ -62,6 +64,7 @@ class Permissions
     public const FEL_CERTIFY = 'fel.certify';
     public const FEL_CANCEL = 'fel.cancel';
     public const FEL_TECHNICAL_VIEW = 'fel.technical.view';
+    public const FEL_RECONCILE = 'fel.reconcile';
 
     public const PRICE_LISTS_VIEW = 'price_lists.view';
     public const PRICE_LISTS_MANAGE = 'price_lists.manage';
@@ -73,6 +76,14 @@ class Permissions
     public const CREDITS_CANCEL_LINES = 'credits.cancel_lines';
     public const CREDITS_PRINT = 'credits.print';
     public const CREDITS_MANAGE = 'credits.manage';
+    public const CREDITS_ACCOUNTS_VIEW = 'credits.accounts.view';
+    public const CREDITS_ACCOUNTS_MANAGE = 'credits.accounts.manage';
+    public const CREDITS_SALES_CREATE = 'credits.sales.create';
+    public const CREDITS_PAYMENTS_VIEW = 'credits.payments.view';
+    public const CREDITS_PAYMENTS_CREATE = 'credits.payments.create';
+    public const CREDITS_PAYMENTS_CANCEL = 'credits.payments.cancel';
+    public const CREDITS_STATEMENT_VIEW = 'credits.statement.view';
+    public const CREDITS_LIMITS_MANAGE = 'credits.limits.manage';
 
     public const USERS_VIEW = 'users.view';
     public const USERS_CREATE = 'users.create';
@@ -135,6 +146,8 @@ class Permissions
             self::REPORTS_SALES_DETAILED_VIEW => ['name' => 'Ver ventas detalladas', 'group' => 'Reportes'],
             self::REPORTS_PRODUCTS_SOLD_DETAILED_VIEW => ['name' => 'Ver productos vendidos detallado', 'group' => 'Reportes'],
             self::REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW => ['name' => 'Ver productos vendidos resumido', 'group' => 'Reportes'],
+            self::REPORTS_ACCOUNTS_RECEIVABLE_VIEW => ['name' => 'Ver reporte de cuentas por cobrar', 'group' => 'Reportes'],
+            self::REPORTS_CREDIT_PAYMENTS_VIEW => ['name' => 'Ver reporte de abonos', 'group' => 'Reportes'],
             self::REPORTS_EXPORT => ['name' => 'Exportar reportes', 'group' => 'Reportes'],
             self::CUSTOMERS_VIEW => ['name' => 'Ver clientes', 'group' => 'Clientes'],
             self::CUSTOMERS_CREATE => ['name' => 'Crear clientes', 'group' => 'Clientes'],
@@ -143,6 +156,7 @@ class Permissions
             self::FEL_CERTIFY => ['name' => 'Certificar FEL', 'group' => 'FEL'],
             self::FEL_CANCEL => ['name' => 'Anular FEL', 'group' => 'FEL'],
             self::FEL_TECHNICAL_VIEW => ['name' => 'Ver respuesta técnica FEL', 'group' => 'FEL'],
+            self::FEL_RECONCILE => ['name' => 'Conciliar FEL', 'group' => 'FEL'],
             self::PRICE_LISTS_VIEW => ['name' => 'Ver listas de precios', 'group' => 'Precios'],
             self::PRICE_LISTS_MANAGE => ['name' => 'Gestionar listas de precios', 'group' => 'Precios'],
             self::CREDITS_VIEW => ['name' => 'Ver créditos', 'group' => 'Créditos'],
@@ -152,6 +166,14 @@ class Permissions
             self::CREDITS_CANCEL_LINES => ['name' => 'Cancelar líneas de crédito', 'group' => 'Créditos'],
             self::CREDITS_PRINT => ['name' => 'Imprimir créditos', 'group' => 'Créditos'],
             self::CREDITS_MANAGE => ['name' => 'Gestionar créditos', 'group' => 'Créditos'],
+            self::CREDITS_ACCOUNTS_VIEW => ['name' => 'Ver cuentas por cobrar', 'group' => 'Créditos'],
+            self::CREDITS_ACCOUNTS_MANAGE => ['name' => 'Gestionar cuentas por cobrar', 'group' => 'Créditos'],
+            self::CREDITS_SALES_CREATE => ['name' => 'Crear ventas al crédito', 'group' => 'Créditos'],
+            self::CREDITS_PAYMENTS_VIEW => ['name' => 'Ver abonos', 'group' => 'Créditos'],
+            self::CREDITS_PAYMENTS_CREATE => ['name' => 'Registrar abonos', 'group' => 'Créditos'],
+            self::CREDITS_PAYMENTS_CANCEL => ['name' => 'Anular abonos', 'group' => 'Créditos'],
+            self::CREDITS_STATEMENT_VIEW => ['name' => 'Ver estados de cuenta', 'group' => 'Créditos'],
+            self::CREDITS_LIMITS_MANAGE => ['name' => 'Gestionar límites de crédito', 'group' => 'Créditos'],
             self::USERS_VIEW => ['name' => 'Ver usuarios', 'group' => 'Usuarios'],
             self::USERS_CREATE => ['name' => 'Crear usuarios', 'group' => 'Usuarios'],
             self::USERS_UPDATE => ['name' => 'Editar usuarios', 'group' => 'Usuarios'],
@@ -195,6 +217,10 @@ class Permissions
                 self::CUSTOMERS_CREATE,
                 self::CREDITS_CREATE,
                 self::CREDITS_PRINT,
+                self::CREDITS_SALES_CREATE,
+                self::CREDITS_PAYMENTS_CREATE,
+                self::CREDITS_STATEMENT_VIEW,
+                self::CREDITS_VIEW,
             ],
             'stock_manager' => [
                 self::PRODUCTS_VIEW,
@@ -232,6 +258,11 @@ class Permissions
                 self::REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW,
                 self::REPORTS_EXPORT,
                 self::CREDITS_VIEW,
+                self::CREDITS_ACCOUNTS_VIEW,
+                self::CREDITS_PAYMENTS_VIEW,
+                self::CREDITS_STATEMENT_VIEW,
+                self::REPORTS_ACCOUNTS_RECEIVABLE_VIEW,
+                self::REPORTS_CREDIT_PAYMENTS_VIEW,
             ],
         ];
     }

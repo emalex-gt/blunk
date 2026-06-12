@@ -9,6 +9,7 @@ use App\Models\Product;
 use App\Models\StockMovement;
 use App\Support\BranchInventory;
 use App\Support\Exports\TableExporter;
+use App\Support\Inventory\StockPolicy;
 use App\Support\Permissions;
 use App\Support\Reports\ReportDateRange;
 use App\Support\StockAvailability;
@@ -104,13 +105,14 @@ class InventoryTransferController extends Controller
         $products->each(function (Product $product) use ($activeBranch) {
             $reserved = StockAvailability::reservedStock($product, null, $activeBranch->id);
             $product->setAttribute('reserved_stock', $reserved);
-            $product->setAttribute('available_stock', max(0, (float) $product->stock - $reserved));
+            $product->setAttribute('available_stock', (float) $product->stock - $reserved);
         });
 
         return Inertia::render('Inventory/Transfers/Create', [
             'branches' => BranchInventory::branchOptions($businessId),
             'activeBranch' => $activeBranch,
             'products' => $products,
+            'allow_negative_stock' => StockPolicy::allowsNegativeStockForBusinessId($businessId),
         ]);
     }
 
@@ -168,13 +170,7 @@ class InventoryTransferController extends Controller
                 }
 
                 $quantity = (int) $line['quantity'];
-                $available = StockAvailability::availableStock($product, null, $from->id);
-
-                if ($available < $quantity) {
-                    throw ValidationException::withMessages([
-                        'items' => 'No hay suficiente disponible para trasladar.',
-                    ]);
-                }
+                StockPolicy::assertCanDecreaseStock($businessId, $from, $product, null, $quantity, 'transfer');
 
                 [$previousFrom, $newFrom] = BranchInventory::decrease($product, $from->id, $quantity);
                 [$previousTo, $newTo] = BranchInventory::increase($product, $to->id, $quantity);
