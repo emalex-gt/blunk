@@ -254,6 +254,13 @@ class ProductController extends Controller
         $data['code'] = $this->normalizeProductCode($data['code'] ?? null);
         $data['barcode'] = $this->normalizeProductCode($data['barcode'] ?? null);
 
+        if ($data['code'] === null && $data['barcode'] === null) {
+            throw ValidationException::withMessages([
+                'code' => 'Debes ingresar código o código de barras.',
+                'barcode' => 'Debes ingresar código o código de barras.',
+            ]);
+        }
+
         $this->ensureProductCodeIsUnique('code', $data['code'] ?? null, $product);
         $this->ensureProductCodeIsUnique('barcode', $data['barcode'] ?? null, $product);
 
@@ -282,6 +289,12 @@ class ProductController extends Controller
             ->first(fn (Product $existing) => mb_strtoupper($this->normalizeProductCode($existing->{$column}) ?? '') === $normalized);
 
         if ($duplicate) {
+            if ($column === 'barcode') {
+                throw ValidationException::withMessages([
+                    $column => 'Ya existe un producto con este código de barras.',
+                ]);
+            }
+
             throw ValidationException::withMessages([
                 $column => 'Ya existe un producto con este código.',
             ]);

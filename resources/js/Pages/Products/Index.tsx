@@ -131,6 +131,7 @@ export default function ProductIndex({
 
             post(route('products.update', editing.id), {
                 forceFormData: true,
+                preserveScroll: true,
                 onSuccess: () => {
                     setEditing(null);
                     clearImagePreview();
@@ -144,6 +145,7 @@ export default function ProductIndex({
 
         post(route('products.store'), {
             forceFormData: true,
+            preserveScroll: true,
             onSuccess: () => {
                 clearImagePreview();
                 reset();
@@ -366,10 +368,12 @@ export default function ProductIndex({
                         <div>
                             <InputLabel htmlFor="code" value={t('common.code')} />
                             <TextInput id="code" className="mt-1 block w-full" value={data.code} onChange={(e) => setData('code', e.target.value)} />
+                            <InputError message={errors.code} className="mt-2" />
                         </div>
                         <div>
                             <InputLabel htmlFor="barcode" value={t('common.barcode')} />
                             <TextInput id="barcode" className="mt-1 block w-full" value={data.barcode} onChange={(e) => setData('barcode', e.target.value)} />
+                            <InputError message={errors.barcode} className="mt-2" />
                         </div>
                     </div>
 

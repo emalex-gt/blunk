@@ -1102,6 +1102,49 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertSessionHasErrors(['code' => 'Ya existe un producto con este código.']);
     }
 
+    public function test_cannot_create_product_without_code_and_barcode(): void
+    {
+        [, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+
+        $this->actingAs($user)
+            ->post(route('products.store'), $this->productFormPayload([
+                'name' => 'Producto sin identificador',
+                'code' => '',
+                'barcode' => '',
+            ]))
+            ->assertSessionHasErrors(['code' => 'Debes ingresar código o código de barras.']);
+    }
+
+    public function test_can_create_product_with_only_code(): void
+    {
+        [, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+
+        $this->actingAs($user)
+            ->post(route('products.store'), $this->productFormPayload([
+                'name' => 'Producto solo codigo',
+                'code' => 'ONLY-CODE-001',
+                'barcode' => '',
+            ]))
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('products', ['name' => 'Producto solo codigo', 'code' => 'ONLY-CODE-001', 'barcode' => null]);
+    }
+
+    public function test_can_create_product_with_only_barcode(): void
+    {
+        [, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+
+        $this->actingAs($user)
+            ->post(route('products.store'), $this->productFormPayload([
+                'name' => 'Producto solo barras',
+                'code' => '',
+                'barcode' => 'ONLY-BAR-001',
+            ]))
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('products', ['name' => 'Producto solo barras', 'code' => null, 'barcode' => 'ONLY-BAR-001']);
+    }
+
     public function test_cannot_create_product_with_duplicate_barcode_in_same_business(): void
     {
         [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
@@ -1112,7 +1155,7 @@ class CriticalPosFelFlowTest extends TestCase
                 'name' => 'Producto B',
                 'barcode' => 'BRC-001',
             ]))
-            ->assertSessionHasErrors(['barcode' => 'Ya existe un producto con este código.']);
+            ->assertSessionHasErrors(['barcode' => 'Ya existe un producto con este código de barras.']);
     }
 
     public function test_can_create_same_product_code_in_different_business(): void
@@ -1168,6 +1211,20 @@ class CriticalPosFelFlowTest extends TestCase
                 'code' => '  33100   4X700  ',
             ]))
             ->assertSessionHasErrors(['code' => 'Ya existe un producto con este código.']);
+    }
+
+    public function test_duplicate_product_barcode_with_extra_spaces_is_blocked(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        Product::create($this->productRecord($business, ['name' => 'Producto A', 'barcode' => 'BAR 001']));
+
+        $this->actingAs($user)
+            ->post(route('products.store'), $this->productFormPayload([
+                'name' => 'Producto barras duplicado',
+                'code' => 'DIFFERENT-CODE',
+                'barcode' => '  BAR   001  ',
+            ]))
+            ->assertSessionHasErrors(['barcode' => 'Ya existe un producto con este código de barras.']);
     }
 
     public function test_price_list_mass_update_in_branch_pricing_saves_branch_price_only(): void
