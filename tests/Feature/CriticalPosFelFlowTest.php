@@ -1212,6 +1212,109 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertSessionHasErrors(['barcode' => 'Ya existe un producto con este código de barras.']);
     }
 
+    public function test_product_identity_check_returns_hard_error_for_duplicate_code(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        $product = Product::create($this->productRecord($business, ['name' => 'Producto A', 'code' => 'ABC 123', 'barcode' => 'BAR-ABC']));
+
+        $response = $this->actingAs($user)
+            ->getJson(route('products.check-identity', ['code' => '  abc   123  ']))
+            ->assertOk()
+            ->assertJsonPath('errors.code', 'Ya existe un producto con este código.')
+            ->assertJsonPath('matches.0.id', $product->id)
+            ->assertJsonPath('matches.0.name', 'Producto A')
+            ->assertJsonPath('matches.0.code', 'ABC 123')
+            ->assertJsonPath('matches.0.barcode', 'BAR-ABC');
+
+        $this->assertArrayNotHasKey('barcode', $response->json('errors'));
+    }
+
+    public function test_product_identity_check_returns_hard_error_for_duplicate_barcode(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        $product = Product::create($this->productRecord($business, ['name' => 'Producto A', 'code' => 'CODE-A', 'barcode' => 'BAR 001']));
+
+        $response = $this->actingAs($user)
+            ->getJson(route('products.check-identity', ['barcode' => '  bar   001  ']))
+            ->assertOk()
+            ->assertJsonPath('errors.barcode', 'Ya existe un producto con este código de barras.')
+            ->assertJsonPath('matches.0.id', $product->id);
+
+        $this->assertArrayNotHasKey('code', $response->json('errors'));
+    }
+
+    public function test_code_matching_existing_barcode_warns_but_does_not_block_save(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        $product = Product::create($this->productRecord($business, ['name' => 'Producto A', 'code' => 'CODE-A', 'barcode' => '789']));
+
+        $this->actingAs($user)
+            ->getJson(route('products.check-identity', ['code' => '789']))
+            ->assertOk()
+            ->assertJsonPath('warnings.code', 'El código ingresado coincide con el código de barras de otro producto. Revisa si ya existe.')
+            ->assertJsonPath('matches.0.id', $product->id);
+
+        $this->actingAs($user)
+            ->post(route('products.store'), $this->productFormPayload([
+                'name' => 'Producto posible coincidencia',
+                'code' => '789',
+                'barcode' => 'NEW-BAR-789',
+            ]))
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('products', [
+            'business_id' => $business->id,
+            'name' => 'Producto posible coincidencia',
+            'code' => '789',
+            'barcode' => 'NEW-BAR-789',
+        ]);
+    }
+
+    public function test_barcode_matching_existing_code_warns_but_does_not_block_save(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        $product = Product::create($this->productRecord($business, ['name' => 'Producto A', 'code' => 'ABC123', 'barcode' => 'BAR-A']));
+
+        $this->actingAs($user)
+            ->getJson(route('products.check-identity', ['barcode' => 'ABC123']))
+            ->assertOk()
+            ->assertJsonPath('warnings.barcode', 'El código de barras ingresado coincide con el código de otro producto. Revisa si ya existe.')
+            ->assertJsonPath('matches.0.id', $product->id);
+
+        $this->actingAs($user)
+            ->post(route('products.store'), $this->productFormPayload([
+                'name' => 'Producto posible barras',
+                'code' => 'NEW-CODE-ABC',
+                'barcode' => 'ABC123',
+            ]))
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('products', [
+            'business_id' => $business->id,
+            'name' => 'Producto posible barras',
+            'code' => 'NEW-CODE-ABC',
+            'barcode' => 'ABC123',
+        ]);
+    }
+
+    public function test_product_identity_check_ignores_current_product_on_update(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        $product = Product::create($this->productRecord($business, ['name' => 'Producto editable', 'code' => 'SELF-001', 'barcode' => 'SELF-BAR']));
+
+        $response = $this->actingAs($user)
+            ->getJson(route('products.check-identity', [
+                'code' => 'SELF-001',
+                'barcode' => 'SELF-BAR',
+                'ignore_product_id' => $product->id,
+            ]))
+            ->assertOk();
+
+        $this->assertSame([], $response->json('errors'));
+        $this->assertSame([], $response->json('warnings'));
+        $this->assertSame([], $response->json('matches'));
+    }
+
     public function test_can_create_same_product_code_in_different_business(): void
     {
         [$businessA] = $this->tenant(modules: ['inventory'], role: 'owner');

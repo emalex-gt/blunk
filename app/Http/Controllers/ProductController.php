@@ -10,6 +10,7 @@ use App\Support\PriceLists;
 use App\Support\ProductSupplierCostHistory;
 use App\Support\StockAvailability;
 use Cloudinary\Cloudinary;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +22,12 @@ use RuntimeException;
 
 class ProductController extends Controller
 {
+    private const PRODUCT_CODE_REQUIRED_MESSAGE = 'Debes ingresar código o código de barras.';
+    private const PRODUCT_CODE_DUPLICATE_MESSAGE = 'Ya existe un producto con este código.';
+    private const PRODUCT_BARCODE_DUPLICATE_MESSAGE = 'Ya existe un producto con este código de barras.';
+    private const PRODUCT_CODE_MATCHES_BARCODE_WARNING = 'El código ingresado coincide con el código de barras de otro producto. Revisa si ya existe.';
+    private const PRODUCT_BARCODE_MATCHES_CODE_WARNING = 'El código de barras ingresado coincide con el código de otro producto. Revisa si ya existe.';
+
     public function index(Request $request): Response
     {
         $businessId = currentBusinessId();
@@ -72,6 +79,27 @@ class ProductController extends Controller
                 ->orderBy('name')
                 ->get(['id', 'name']),
             'filters' => ['search' => $search],
+        ]);
+    }
+
+    public function checkIdentity(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'code' => ['nullable', 'string', 'max:255'],
+            'barcode' => ['nullable', 'string', 'max:255'],
+            'ignore_product_id' => ['nullable', 'integer'],
+        ]);
+
+        $issues = $this->productIdentityIssues(
+            $this->normalizeProductCode($data['code'] ?? null),
+            $this->normalizeProductCode($data['barcode'] ?? null),
+            isset($data['ignore_product_id']) ? (int) $data['ignore_product_id'] : null,
+        );
+
+        return response()->json([
+            'errors' => (object) $issues['errors'],
+            'warnings' => (object) $issues['warnings'],
+            'matches' => $issues['matches'],
         ]);
     }
 
@@ -257,13 +285,16 @@ class ProductController extends Controller
 
         if ($data['code'] === null && $data['barcode'] === null) {
             throw ValidationException::withMessages([
-                'code' => 'Debes ingresar código o código de barras.',
-                'barcode' => 'Debes ingresar código o código de barras.',
+                'code' => self::PRODUCT_CODE_REQUIRED_MESSAGE,
+                'barcode' => self::PRODUCT_CODE_REQUIRED_MESSAGE,
             ]);
         }
 
-        $this->ensureProductCodeIsUnique('code', $data['code'] ?? null, $product);
-        $this->ensureProductCodeIsUnique('barcode', $data['barcode'] ?? null, $product);
+        $identityIssues = $this->productIdentityIssues($data['code'] ?? null, $data['barcode'] ?? null, $product?->id);
+
+        if ($identityIssues['errors'] !== []) {
+            throw ValidationException::withMessages($identityIssues['errors']);
+        }
 
         return $data;
     }
@@ -275,31 +306,93 @@ class ProductController extends Controller
         return $normalized === '' ? null : $normalized;
     }
 
-    private function ensureProductCodeIsUnique(string $column, ?string $value, ?Product $product = null): void
+    private function productIdentityIssues(?string $code, ?string $barcode, ?int $ignoreProductId = null): array
     {
-        if ($value === null) {
-            return;
+        $errors = [];
+        $warnings = [];
+        $matches = collect();
+
+        if ($code === null && $barcode === null) {
+            return [
+                'errors' => [
+                    'code' => self::PRODUCT_CODE_REQUIRED_MESSAGE,
+                    'barcode' => self::PRODUCT_CODE_REQUIRED_MESSAGE,
+                ],
+                'warnings' => [],
+                'matches' => [],
+            ];
         }
 
-        $normalized = mb_strtoupper($value);
-        $duplicate = Product::query()
-            ->where('business_id', currentBusinessId())
-            ->when($product, fn ($query) => $query->whereKeyNot($product->id))
-            ->whereNotNull($column)
-            ->get(['id', $column])
-            ->first(fn (Product $existing) => mb_strtoupper($this->normalizeProductCode($existing->{$column}) ?? '') === $normalized);
+        if ($code !== null) {
+            $codeDuplicates = $this->productsMatchingIdentityColumn('code', $code, $ignoreProductId);
 
-        if ($duplicate) {
-            if ($column === 'barcode') {
-                throw ValidationException::withMessages([
-                    $column => 'Ya existe un producto con este código de barras.',
-                ]);
+            if ($codeDuplicates->isNotEmpty()) {
+                $errors['code'] = self::PRODUCT_CODE_DUPLICATE_MESSAGE;
+                $matches = $matches->merge($codeDuplicates);
             }
 
-            throw ValidationException::withMessages([
-                $column => 'Ya existe un producto con este código.',
-            ]);
+            $barcodeMatches = $this->productsMatchingIdentityColumn('barcode', $code, $ignoreProductId);
+
+            if ($barcodeMatches->isNotEmpty()) {
+                $warnings['code'] = self::PRODUCT_CODE_MATCHES_BARCODE_WARNING;
+                $matches = $matches->merge($barcodeMatches);
+            }
         }
+
+        if ($barcode !== null) {
+            $barcodeDuplicates = $this->productsMatchingIdentityColumn('barcode', $barcode, $ignoreProductId);
+
+            if ($barcodeDuplicates->isNotEmpty()) {
+                $errors['barcode'] = self::PRODUCT_BARCODE_DUPLICATE_MESSAGE;
+                $matches = $matches->merge($barcodeDuplicates);
+            }
+
+            $codeMatches = $this->productsMatchingIdentityColumn('code', $barcode, $ignoreProductId);
+
+            if ($codeMatches->isNotEmpty()) {
+                $warnings['barcode'] = self::PRODUCT_BARCODE_MATCHES_CODE_WARNING;
+                $matches = $matches->merge($codeMatches);
+            }
+        }
+
+        return [
+            'errors' => $errors,
+            'warnings' => $warnings,
+            'matches' => $matches
+                ->unique('id')
+                ->values()
+                ->map(fn (Product $product) => $this->productIdentityMatchPayload($product))
+                ->all(),
+        ];
+    }
+
+    private function productsMatchingIdentityColumn(string $column, string $value, ?int $ignoreProductId = null)
+    {
+        $normalized = mb_strtoupper($value);
+
+        return Product::query()
+            ->where('business_id', currentBusinessId())
+            ->when($ignoreProductId, fn ($query) => $query->whereKeyNot($ignoreProductId))
+            ->whereNotNull($column)
+            ->with('category:id,name')
+            ->get(['id', 'business_id', 'category_id', 'name', 'code', 'barcode', 'stock', 'location', 'sale_price', 'image_url'])
+            ->filter(fn (Product $existing) => mb_strtoupper($this->normalizeProductCode($existing->{$column}) ?? '') === $normalized)
+            ->values();
+    }
+
+    private function productIdentityMatchPayload(Product $product): array
+    {
+        return [
+            'id' => $product->id,
+            'name' => $product->name,
+            'code' => $product->code,
+            'barcode' => $product->barcode,
+            'category' => $product->category?->name,
+            'stock' => $product->stock,
+            'location' => $product->location,
+            'price' => $product->sale_price,
+            'image_url' => $product->image_url,
+        ];
     }
 
     private function syncProductPrices(Product $product, array $prices, ?float $defaultSalePrice = null, ?int $branchId = null): void

@@ -234,6 +234,7 @@ Route::middleware('auth')->group(function () {
 
         Route::middleware('module:inventory')->group(function () {
             Route::get('/products', [ProductController::class, 'index'])->middleware('permission:products.view')->name('products.index');
+            Route::get('/products/check-identity', [ProductController::class, 'checkIdentity'])->middleware('permission:products.view')->name('products.check-identity');
             Route::post('/products', [ProductController::class, 'store'])->middleware('permission:products.create')->name('products.store');
             Route::get('/products/{product}/stock-history', [ProductController::class, 'stockHistory'])->middleware('permission:products.view')->name('products.stock-history');
             Route::put('/products/{product}', [ProductController::class, 'update'])->middleware('permission:products.update')->name('products.update');

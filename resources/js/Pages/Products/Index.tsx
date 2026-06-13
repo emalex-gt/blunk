@@ -78,6 +78,20 @@ type ProductForm = {
     prices: Record<string, string>;
 };
 
+type IdentityMatch = {
+    id: number;
+    name: string;
+    code: string | null;
+    barcode: string | null;
+    category: string | null;
+    stock: number | string;
+    location: string | null;
+    price: string | number;
+    image_url: string | null;
+};
+
+type IdentityMessages = Partial<Record<'code' | 'barcode', string>>;
+
 const emptyForm: ProductForm = {
     name: '',
     code: '',
@@ -119,9 +133,22 @@ export default function ProductIndex({
     const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
     const { data, setData, post, processing, errors, reset, transform } =
         useForm<ProductForm>(emptyForm);
+    const [identityErrors, setIdentityErrors] = useState<IdentityMessages>({});
+    const [identityWarnings, setIdentityWarnings] = useState<IdentityMessages>({});
+    const [identityMatches, setIdentityMatches] = useState<IdentityMatch[]>([]);
+    const [identityChecking, setIdentityChecking] = useState(false);
+    const hasIdentityError = Boolean(identityErrors.code || identityErrors.barcode);
+    const identityMatchIds = useMemo(
+        () => new Set(identityMatches.map((match) => match.id)),
+        [identityMatches],
+    );
 
     function submit(event: FormEvent) {
         event.preventDefault();
+
+        if (hasIdentityError) {
+            return;
+        }
 
         if (editing) {
             transform((formData) => ({
@@ -251,6 +278,78 @@ export default function ProductIndex({
     }
 
     useEffect(() => {
+        const code = data.code.trim();
+        const barcode = data.barcode.trim();
+
+        if (!code && !barcode) {
+            setIdentityErrors({});
+            setIdentityWarnings({});
+            setIdentityMatches([]);
+            setIdentityChecking(false);
+            return;
+        }
+
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => {
+            const params = new URLSearchParams();
+
+            if (code) {
+                params.set('code', code);
+            }
+
+            if (barcode) {
+                params.set('barcode', barcode);
+            }
+
+            if (editing?.id) {
+                params.set('ignore_product_id', String(editing.id));
+            }
+
+            setIdentityChecking(true);
+
+            fetch(`${route('products.check-identity')}?${params.toString()}`, {
+                headers: {
+                    Accept: 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                credentials: 'same-origin',
+                signal: controller.signal,
+            })
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error('identity-check-failed');
+                    }
+
+                    return response.json() as Promise<{
+                        errors?: IdentityMessages;
+                        warnings?: IdentityMessages;
+                        matches?: IdentityMatch[];
+                    }>;
+                })
+                .then((payload) => {
+                    setIdentityErrors(payload.errors ?? {});
+                    setIdentityWarnings(payload.warnings ?? {});
+                    setIdentityMatches(payload.matches ?? []);
+                })
+                .catch((error) => {
+                    if (error instanceof DOMException && error.name === 'AbortError') {
+                        return;
+                    }
+                })
+                .finally(() => {
+                    if (!controller.signal.aborted) {
+                        setIdentityChecking(false);
+                    }
+                });
+        }, 400);
+
+        return () => {
+            window.clearTimeout(timeout);
+            controller.abort();
+        };
+    }, [data.code, data.barcode, editing?.id]);
+
+    useEffect(() => {
         return () => {
             if (imagePreview) {
                 URL.revokeObjectURL(imagePreview);
@@ -368,14 +467,24 @@ export default function ProductIndex({
                         <div>
                             <InputLabel htmlFor="code" value={t('common.code')} />
                             <TextInput id="code" className="mt-1 block w-full" value={data.code} onChange={(e) => setData('code', e.target.value)} />
-                            <InputError message={errors.code} className="mt-2" />
+                            <InputError message={errors.code || identityErrors.code} className="mt-2" />
+                            {!errors.code && !identityErrors.code && identityWarnings.code && (
+                                <p className="mt-2 text-xs font-medium text-amber-700">{identityWarnings.code}</p>
+                            )}
                         </div>
                         <div>
                             <InputLabel htmlFor="barcode" value={t('common.barcode')} />
                             <TextInput id="barcode" className="mt-1 block w-full" value={data.barcode} onChange={(e) => setData('barcode', e.target.value)} />
-                            <InputError message={errors.barcode} className="mt-2" />
+                            <InputError message={errors.barcode || identityErrors.barcode} className="mt-2" />
+                            {!errors.barcode && !identityErrors.barcode && identityWarnings.barcode && (
+                                <p className="mt-2 text-xs font-medium text-amber-700">{identityWarnings.barcode}</p>
+                            )}
                         </div>
                     </div>
+
+                    {identityChecking && (
+                        <p className="-mt-2 text-xs text-slate-500">Verificando código y código de barras...</p>
+                    )}
 
                     <div className="grid grid-cols-2 gap-3">
                         <div>
@@ -443,7 +552,7 @@ export default function ProductIndex({
                     </label>
 
                     <div className="flex gap-2">
-                        <PrimaryButton disabled={processing}>
+                        <PrimaryButton disabled={processing || hasIdentityError}>
                             {editing ? t('actions.update') : t('actions.create')}
                         </PrimaryButton>
                         {editing && (
@@ -467,6 +576,66 @@ export default function ProductIndex({
                         <PrimaryButton>{t('actions.search')}</PrimaryButton>
                     </form>
 
+                    {identityMatches.length > 0 && (
+                        <section className="mb-4 rounded-xl border border-amber-200 bg-amber-50/80 p-4">
+                            <div>
+                                <h3 className="text-sm font-semibold text-amber-950">Coincidencias encontradas</h3>
+                                <p className="mt-1 text-xs text-amber-800">Revisa estos productos antes de guardar.</p>
+                            </div>
+                            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                                {identityMatches.map((match) => {
+                                    const visibleProduct = products.find((product) => product.id === match.id);
+
+                                    return (
+                                        <article key={match.id} className="flex gap-3 rounded-lg border border-amber-200 bg-white p-3 shadow-sm">
+                                            {use_product_images && (
+                                                match.image_url ? (
+                                                    <img
+                                                        src={getProductImageUrl(match.image_url, 96) ?? ''}
+                                                        alt={match.name}
+                                                        loading="lazy"
+                                                        className="h-12 w-12 rounded-md object-cover"
+                                                    />
+                                                ) : (
+                                                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-xs font-semibold text-amber-800">
+                                                        {imageInitials(match.name)}
+                                                    </div>
+                                                )
+                                            )}
+                                            <div className="min-w-0 flex-1">
+                                                <p className="truncate text-sm font-semibold text-slate-950">{match.name}</p>
+                                                <p className="mt-1 text-xs text-slate-600">{match.category ?? '-'}</p>
+                                                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700">
+                                                    <span>Código: <strong>{match.code ?? '-'}</strong></span>
+                                                    <span>Barras: <strong>{match.barcode ?? '-'}</strong></span>
+                                                    <span>Stock: <strong>{match.stock}</strong></span>
+                                                    <span>Precio: <strong>{formatCurrency(match.price, country)}</strong></span>
+                                                    <span className="col-span-2">Ubicación: <strong>{match.location ?? '-'}</strong></span>
+                                                </div>
+                                                <div className="mt-3 flex gap-2">
+                                                    <button
+                                                        type="button"
+                                                        className="rounded-lg px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                                                        disabled={!visibleProduct}
+                                                        onClick={() => visibleProduct && edit(visibleProduct)}
+                                                    >
+                                                        Editar
+                                                    </button>
+                                                    <Link
+                                                        href={route('products.stock-history', match.id)}
+                                                        className="rounded-lg px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-50"
+                                                    >
+                                                        Ver historial
+                                                    </Link>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    );
+                                })}
+                            </div>
+                        </section>
+                    )}
+
                     <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-slate-100 text-sm">
                             <thead>
@@ -484,7 +653,10 @@ export default function ProductIndex({
                             </thead>
                             <tbody className="divide-y divide-gray-100">
                                 {products.map((product) => (
-                                    <tr key={product.id} className="transition-colors hover:bg-indigo-50/30">
+                                    <tr
+                                        key={product.id}
+                                        className={`transition-colors ${identityMatchIds.has(product.id) ? 'bg-amber-50 ring-1 ring-inset ring-amber-200' : 'hover:bg-indigo-50/30'}`}
+                                    >
                                         {use_product_images && (
                                             <td className="py-3 pr-3">
                                                 {product.image_url ? (
