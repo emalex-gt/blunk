@@ -368,13 +368,18 @@ class ProductController extends Controller
 
     private function productsMatchingIdentityColumn(string $column, string $value, ?int $ignoreProductId = null)
     {
+        abort_unless(in_array($column, ['code', 'barcode'], true), 500);
+
         $normalized = mb_strtoupper($value);
+        $normalizedColumn = "UPPER(REPLACE(REPLACE(REPLACE(TRIM({$column}), '  ', ' '), '  ', ' '), '  ', ' '))";
 
         return Product::query()
             ->where('business_id', currentBusinessId())
             ->when($ignoreProductId, fn ($query) => $query->whereKeyNot($ignoreProductId))
             ->whereNotNull($column)
+            ->whereRaw("{$normalizedColumn} = ?", [$normalized])
             ->with('category:id,name')
+            ->limit(10)
             ->get(['id', 'business_id', 'category_id', 'name', 'code', 'barcode', 'stock', 'location', 'sale_price', 'image_url'])
             ->filter(fn (Product $existing) => mb_strtoupper($this->normalizeProductCode($existing->{$column}) ?? '') === $normalized)
             ->values();

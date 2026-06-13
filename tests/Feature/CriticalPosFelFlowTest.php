@@ -1315,6 +1315,73 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame([], $response->json('matches'));
     }
 
+    public function test_product_identity_check_does_not_return_matches_from_another_business(): void
+    {
+        [$businessA] = $this->tenant(modules: ['inventory'], role: 'owner');
+        [, $userB] = $this->tenant(modules: ['inventory'], role: 'owner');
+        Product::create($this->productRecord($businessA, [
+            'name' => 'Producto negocio A',
+            'code' => 'TENANT-A-CODE',
+            'barcode' => 'TENANT-A-BAR',
+        ]));
+
+        $response = $this->actingAs($userB)
+            ->getJson(route('products.check-identity', [
+                'code' => 'TENANT-A-CODE',
+                'barcode' => 'TENANT-A-BAR',
+            ]))
+            ->assertOk();
+
+        $this->assertSame([], $response->json('errors'));
+        $this->assertSame([], $response->json('warnings'));
+        $this->assertSame([], $response->json('matches'));
+    }
+
+    public function test_product_identity_check_other_business_cross_field_matches_do_not_warn(): void
+    {
+        [$businessA] = $this->tenant(modules: ['inventory'], role: 'owner');
+        [, $userB] = $this->tenant(modules: ['inventory'], role: 'owner');
+        Product::create($this->productRecord($businessA, [
+            'name' => 'Producto negocio A',
+            'code' => 'OTHER-CODE',
+            'barcode' => 'OTHER-BAR',
+        ]));
+
+        $response = $this->actingAs($userB)
+            ->getJson(route('products.check-identity', [
+                'code' => 'OTHER-BAR',
+                'barcode' => 'OTHER-CODE',
+            ]))
+            ->assertOk();
+
+        $this->assertSame([], $response->json('errors'));
+        $this->assertSame([], $response->json('warnings'));
+        $this->assertSame([], $response->json('matches'));
+    }
+
+    public function test_product_identity_check_ignore_product_id_from_another_business_does_not_hide_current_duplicate(): void
+    {
+        [$businessA] = $this->tenant(modules: ['inventory'], role: 'owner');
+        [$businessB, $userB] = $this->tenant(modules: ['inventory'], role: 'owner');
+        $otherBusinessProduct = Product::create($this->productRecord($businessA, [
+            'name' => 'Producto negocio A',
+            'code' => 'SHARED-CODE',
+        ]));
+        $currentBusinessProduct = Product::create($this->productRecord($businessB, [
+            'name' => 'Producto negocio B',
+            'code' => 'SHARED-CODE',
+        ]));
+
+        $this->actingAs($userB)
+            ->getJson(route('products.check-identity', [
+                'code' => 'SHARED-CODE',
+                'ignore_product_id' => $otherBusinessProduct->id,
+            ]))
+            ->assertOk()
+            ->assertJsonPath('errors.code', 'Ya existe un producto con este código.')
+            ->assertJsonPath('matches.0.id', $currentBusinessProduct->id);
+    }
+
     public function test_can_create_same_product_code_in_different_business(): void
     {
         [$businessA] = $this->tenant(modules: ['inventory'], role: 'owner');
