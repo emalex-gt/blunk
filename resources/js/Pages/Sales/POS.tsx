@@ -512,6 +512,8 @@ export default function POS({
     const [draftReady, setDraftReady] = useState(false);
     const [showClearSaleModal, setShowClearSaleModal] = useState(false);
     const [showDiscountModal, setShowDiscountModal] = useState(false);
+    const [duplicateProductChoices, setDuplicateProductChoices] = useState<Product[]>([]);
+    const [duplicateProductSearchTerm, setDuplicateProductSearchTerm] = useState('');
     const [manualPriceProductId, setManualPriceProductId] = useState<number | null>(null);
     const [discount, setDiscount] = useState<SaleDiscount | null>(null);
     const [discountForm, setDiscountForm] = useState<SaleDiscount>({
@@ -1011,6 +1013,26 @@ export default function POS({
         focusSearch();
     }
 
+    function normalizeProductIdentifier(value: string | null | undefined) {
+        return (value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+    }
+
+    function exactProductIdentifierMatches(value: string): Product[] {
+        const normalized = normalizeProductIdentifier(value);
+
+        if (!normalized) {
+            return [];
+        }
+
+        return products
+            .filter((product) =>
+                [product.code, product.barcode]
+                    .filter(Boolean)
+                    .some((identifier) => normalizeProductIdentifier(identifier) === normalized),
+            )
+            .slice(0, 20);
+    }
+
     function clearSearchAndFeedback() {
         setSearch('');
         setErrorMessage('');
@@ -1411,7 +1433,16 @@ export default function POS({
 
         event.preventDefault();
 
-        const product = filteredProducts[0];
+        const exactMatches = exactProductIdentifierMatches(search);
+
+        if (exactMatches.length > 1) {
+            setDuplicateProductChoices(exactMatches);
+            setDuplicateProductSearchTerm(search.trim());
+            showMessage('Hay varios productos con este código. Selecciona cuál deseas vender.');
+            return;
+        }
+
+        const product = exactMatches[0] ?? filteredProducts[0];
 
         if (!product) {
             return;
@@ -1420,6 +1451,16 @@ export default function POS({
         const added = addProduct(product);
 
         if (added) {
+            clearAndFocusSearch();
+        }
+    }
+
+    function selectDuplicateProduct(product: Product) {
+        const added = addProduct(product);
+
+        if (added) {
+            setDuplicateProductChoices([]);
+            setDuplicateProductSearchTerm('');
             clearAndFocusSearch();
         }
     }
@@ -3099,6 +3140,73 @@ export default function POS({
                             >
                                 Continuar
                             </button>
+                        </div>
+                    </section>
+                </div>
+            )}
+
+            {duplicateProductChoices.length > 1 && (
+                <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+                    <section className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <h2 className="text-lg font-semibold text-slate-950">
+                                    Hay varios productos con este código
+                                </h2>
+                                <p className="mt-1 text-sm text-slate-600">
+                                    Selecciona cuál deseas vender{duplicateProductSearchTerm ? ` para "${duplicateProductSearchTerm}"` : ''}.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setDuplicateProductChoices([]);
+                                    setDuplicateProductSearchTerm('');
+                                    focusSearch();
+                                }}
+                                className="rounded-lg border border-slate-200 px-3 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                            >
+                                Cerrar
+                            </button>
+                        </div>
+
+                        <div className="mt-5 max-h-[60vh] space-y-3 overflow-y-auto">
+                            {duplicateProductChoices.map((product) => {
+                                const availableStock = Math.floor(product.available_stock ?? product.stock);
+
+                                return (
+                                    <button
+                                        key={product.id}
+                                        type="button"
+                                        onClick={() => selectDuplicateProduct(product)}
+                                        className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50/50"
+                                    >
+                                        {use_product_images && product.image_url ? (
+                                            <img
+                                                src={getProductImageUrl(product.image_url, 120) ?? ''}
+                                                alt={product.name}
+                                                loading="lazy"
+                                                className="h-14 w-14 shrink-0 rounded-lg object-cover"
+                                            />
+                                        ) : (
+                                            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs font-semibold text-slate-500">
+                                                {product.name.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}
+                                            </div>
+                                        )}
+                                        <div className="min-w-0 flex-1">
+                                            <div className="truncate text-sm font-semibold text-slate-950">{product.name}</div>
+                                            <div className="mt-1 grid gap-1 text-xs text-slate-600 sm:grid-cols-3">
+                                                <span>Código: <strong>{product.code ?? '-'}</strong></span>
+                                                <span>Barras: <strong>{product.barcode ?? '-'}</strong></span>
+                                                <span>Disponible: <strong>{availableStock}</strong></span>
+                                            </div>
+                                        </div>
+                                        <div className="whitespace-nowrap text-sm font-bold text-slate-950">
+                                            {formatCurrency(product.sale_price, country)}
+                                        </div>
+                                    </button>
+                                );
+                            })}
                         </div>
                     </section>
                 </div>

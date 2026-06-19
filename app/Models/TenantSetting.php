@@ -28,6 +28,8 @@ class TenantSetting extends Model
         'allow_invoices',
         'enable_credit_sales',
         'allow_negative_stock',
+        'allow_duplicate_product_codes',
+        'allow_duplicate_product_barcodes',
     ];
 
     protected $casts = [
@@ -41,6 +43,8 @@ class TenantSetting extends Model
         'allow_invoices' => 'boolean',
         'enable_credit_sales' => 'boolean',
         'allow_negative_stock' => 'boolean',
+        'allow_duplicate_product_codes' => 'boolean',
+        'allow_duplicate_product_barcodes' => 'boolean',
         'max_users' => 'integer',
     ];
 

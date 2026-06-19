@@ -71,6 +71,8 @@ export default function Form({
         remember_last_customer_product_price?: boolean;
         enable_credit_sales?: boolean;
         allow_negative_stock?: boolean;
+        allow_duplicate_product_codes?: boolean;
+        allow_duplicate_product_barcodes?: boolean;
         allow_receipts?: boolean;
         allow_invoices?: boolean;
     };
@@ -97,6 +99,8 @@ export default function Form({
         remember_last_customer_product_price: settings.remember_last_customer_product_price ?? false,
         enable_credit_sales: settings.enable_credit_sales ?? false,
         allow_negative_stock: settings.allow_negative_stock ?? false,
+        allow_duplicate_product_codes: settings.allow_duplicate_product_codes ?? false,
+        allow_duplicate_product_barcodes: settings.allow_duplicate_product_barcodes ?? false,
         allow_receipts: settings.allow_receipts ?? true,
         allow_invoices: settings.allow_invoices ?? false,
         owner_name: '',
@@ -420,6 +424,29 @@ export default function Form({
                             label="Permitir stock negativo"
                             description="Si está activo, el sistema permitirá ventas, traslados y salidas aunque el producto quede en negativo."
                         />
+                    </div>
+
+                    <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="mb-4">
+                            <h3 className="text-base font-semibold text-gray-900">Configuración de productos</h3>
+                            <p className="mt-1 text-sm text-gray-500">
+                                Define si el tenant puede registrar productos con identificadores repetidos.
+                            </p>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <Toggle
+                                checked={data.allow_duplicate_product_codes}
+                                onChange={(checked) => setData('allow_duplicate_product_codes', checked)}
+                                label="Permitir códigos repetidos"
+                                description="Si está activo, varios productos podrán tener el mismo código. En POS, al buscar ese código, el usuario deberá elegir el producto correcto."
+                            />
+                            <Toggle
+                                checked={data.allow_duplicate_product_barcodes}
+                                onChange={(checked) => setData('allow_duplicate_product_barcodes', checked)}
+                                label="Permitir códigos de barras repetidos"
+                                description="Si está activo, varios productos podrán tener el mismo código de barras. No recomendado si se usa escáner."
+                            />
+                        </div>
                     </div>
 
                     <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">

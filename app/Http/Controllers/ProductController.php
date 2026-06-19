@@ -25,6 +25,8 @@ class ProductController extends Controller
     private const PRODUCT_CODE_REQUIRED_MESSAGE = 'Debes ingresar código o código de barras.';
     private const PRODUCT_CODE_DUPLICATE_MESSAGE = 'Ya existe un producto con este código.';
     private const PRODUCT_BARCODE_DUPLICATE_MESSAGE = 'Ya existe un producto con este código de barras.';
+    private const PRODUCT_CODE_DUPLICATE_WARNING = 'Ya existe otro producto con este código. Revisa las coincidencias antes de guardar.';
+    private const PRODUCT_BARCODE_DUPLICATE_WARNING = 'Ya existe otro producto con este código de barras. Revisa las coincidencias antes de guardar.';
     private const PRODUCT_CODE_MATCHES_BARCODE_WARNING = 'El código ingresado coincide con el código de barras de otro producto. Revisa si ya existe.';
     private const PRODUCT_BARCODE_MATCHES_CODE_WARNING = 'El código de barras ingresado coincide con el código de otro producto. Revisa si ya existe.';
 
@@ -311,6 +313,8 @@ class ProductController extends Controller
         $errors = [];
         $warnings = [];
         $matches = collect();
+        $allowDuplicateCodes = tenantSetting('allow_duplicate_product_codes', false);
+        $allowDuplicateBarcodes = tenantSetting('allow_duplicate_product_barcodes', false);
 
         if ($code === null && $barcode === null) {
             return [
@@ -327,14 +331,20 @@ class ProductController extends Controller
             $codeDuplicates = $this->productsMatchingIdentityColumn('code', $code, $ignoreProductId);
 
             if ($codeDuplicates->isNotEmpty()) {
-                $errors['code'] = self::PRODUCT_CODE_DUPLICATE_MESSAGE;
+                if ($allowDuplicateCodes) {
+                    $warnings['code'] = self::PRODUCT_CODE_DUPLICATE_WARNING;
+                } else {
+                    $errors['code'] = self::PRODUCT_CODE_DUPLICATE_MESSAGE;
+                }
                 $matches = $matches->merge($codeDuplicates);
             }
 
             $barcodeMatches = $this->productsMatchingIdentityColumn('barcode', $code, $ignoreProductId);
 
             if ($barcodeMatches->isNotEmpty()) {
-                $warnings['code'] = self::PRODUCT_CODE_MATCHES_BARCODE_WARNING;
+                if (! isset($warnings['code'])) {
+                    $warnings['code'] = self::PRODUCT_CODE_MATCHES_BARCODE_WARNING;
+                }
                 $matches = $matches->merge($barcodeMatches);
             }
         }
@@ -343,14 +353,20 @@ class ProductController extends Controller
             $barcodeDuplicates = $this->productsMatchingIdentityColumn('barcode', $barcode, $ignoreProductId);
 
             if ($barcodeDuplicates->isNotEmpty()) {
-                $errors['barcode'] = self::PRODUCT_BARCODE_DUPLICATE_MESSAGE;
+                if ($allowDuplicateBarcodes) {
+                    $warnings['barcode'] = self::PRODUCT_BARCODE_DUPLICATE_WARNING;
+                } else {
+                    $errors['barcode'] = self::PRODUCT_BARCODE_DUPLICATE_MESSAGE;
+                }
                 $matches = $matches->merge($barcodeDuplicates);
             }
 
             $codeMatches = $this->productsMatchingIdentityColumn('code', $barcode, $ignoreProductId);
 
             if ($codeMatches->isNotEmpty()) {
-                $warnings['barcode'] = self::PRODUCT_BARCODE_MATCHES_CODE_WARNING;
+                if (! isset($warnings['barcode'])) {
+                    $warnings['barcode'] = self::PRODUCT_BARCODE_MATCHES_CODE_WARNING;
+                }
                 $matches = $matches->merge($codeMatches);
             }
         }
