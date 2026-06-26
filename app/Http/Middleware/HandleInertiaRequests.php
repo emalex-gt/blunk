@@ -36,7 +36,7 @@ class HandleInertiaRequests extends Middleware
     public function share(Request $request): array
     {
         $user = $request->user();
-        $businessId = currentBusinessId();
+        $businessId = $user ? currentBusinessId() : null;
 
         return array_merge(parent::share($request), [
             'auth' => [
@@ -130,14 +130,14 @@ class HandleInertiaRequests extends Middleware
                 return Currency::forCountry($country);
             },
 
-            'subscription_status' => fn () => $businessId
+            'subscription_status' => fn () => $user && $businessId
                 ? Business::query()->with('latestSubscription')->find($businessId)?->latestSubscription?->status
                 : null,
-            'enabled_modules' => fn () => $businessId ? enabled_modules($businessId) : [],
-            'branches_enabled' => fn () => $businessId ? BranchInventory::branchesEnabled($businessId) : false,
-            'branch_can_switch' => fn () => $businessId ? BranchInventory::canSwitchBranches($user) : false,
-            'active_branch' => function () use ($businessId) {
-                if (! $businessId || ! BranchInventory::branchesEnabled($businessId)) {
+            'enabled_modules' => fn () => $user && $businessId ? enabled_modules($businessId) : [],
+            'branches_enabled' => fn () => $user && $businessId ? BranchInventory::branchesEnabled($businessId) : false,
+            'branch_can_switch' => fn () => $user && $businessId ? BranchInventory::canSwitchBranches($user) : false,
+            'active_branch' => function () use ($businessId, $user) {
+                if (! $user || ! $businessId || ! BranchInventory::branchesEnabled($businessId)) {
                     return null;
                 }
 
@@ -149,12 +149,10 @@ class HandleInertiaRequests extends Middleware
                     'code' => $branch->code,
                 ];
             },
-            'branches' => function () use ($businessId) {
-                if (! $businessId || ! BranchInventory::branchesEnabled($businessId)) {
+            'branches' => function () use ($businessId, $user) {
+                if (! $user || ! $businessId || ! BranchInventory::branchesEnabled($businessId)) {
                     return [];
                 }
-
-                $user = request()->user();
 
                 if (! BranchInventory::canSwitchBranches($user)) {
                     $branch = $user?->currentBranch;
@@ -172,7 +170,7 @@ class HandleInertiaRequests extends Middleware
 
                 return BranchInventory::branchOptions($businessId);
             },
-            'use_product_images' => fn () => tenantSetting('use_product_images', true),
+            'use_product_images' => fn () => $user && $businessId ? tenantSetting('use_product_images', true) : true,
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),
                 'receipt_sale_id' => fn () => $request->session()->get('receipt_sale_id'),

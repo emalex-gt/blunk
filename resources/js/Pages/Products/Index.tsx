@@ -17,6 +17,16 @@ type Category = {
     name: string;
 };
 
+type Brand = {
+    id: number;
+    name: string;
+};
+
+type ProductLocation = {
+    id: number;
+    name: string;
+};
+
 type Product = {
     id: number;
     name: string;
@@ -32,6 +42,10 @@ type Product = {
     image_public_id: string | null;
     category_id: number | null;
     category: Category | null;
+    brand_id: number | null;
+    brand: Brand | null;
+    location_id: number | null;
+    product_location: ProductLocation | null;
     supplier_cost_history: SupplierCostHistory[];
     prices: ProductPrice[];
 };
@@ -75,6 +89,8 @@ type ProductForm = {
     is_active: boolean;
     image: File | null;
     category_name: string;
+    brand_name: string;
+    location_name: string;
     prices: Record<string, string>;
 };
 
@@ -104,6 +120,8 @@ const emptyForm: ProductForm = {
     is_active: true,
     image: null,
     category_name: '',
+    brand_name: '',
+    location_name: '',
     prices: {},
 };
 
@@ -111,6 +129,8 @@ export default function ProductIndex({
     products,
     priceTypes,
     categories,
+    brands,
+    locations,
     filters,
     pricingScope = 'global',
     activeBranch = null,
@@ -119,6 +139,8 @@ export default function ProductIndex({
     products: Product[];
     priceTypes: PriceType[];
     categories: Category[];
+    brands: Brand[];
+    locations: ProductLocation[];
     filters: { search: string };
     pricingScope?: 'global' | 'branch';
     activeBranch?: { id: number; name: string } | null;
@@ -131,6 +153,8 @@ export default function ProductIndex({
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const [imageError, setImageError] = useState('');
     const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
+    const [showBrandSuggestions, setShowBrandSuggestions] = useState(false);
+    const [showLocationSuggestions, setShowLocationSuggestions] = useState(false);
     const { data, setData, post, processing, errors, reset, transform } =
         useForm<ProductForm>(emptyForm);
     const [identityErrors, setIdentityErrors] = useState<IdentityMessages>({});
@@ -194,6 +218,8 @@ export default function ProductIndex({
             is_active: product.is_active,
             image: null,
             category_name: product.category?.name ?? '',
+            brand_name: product.brand?.name ?? '',
+            location_name: product.product_location?.name ?? product.location ?? '',
             prices: priceTypes.reduce<Record<string, string>>((values, priceType) => {
                 const existing = product.prices?.find((price) => Number(price.price_type_id) === Number(priceType.id));
                 values[String(priceType.id)] = existing ? String(existing.price) : '';
@@ -211,6 +237,22 @@ export default function ProductIndex({
             .filter((category) => !term || category.name.toLowerCase().includes(term))
             .slice(0, 8);
     }, [categories, data.category_name]);
+
+    const brandSuggestions = useMemo(() => {
+        const term = data.brand_name.trim().toLowerCase();
+
+        return brands
+            .filter((brand) => !term || brand.name.toLowerCase().includes(term))
+            .slice(0, 8);
+    }, [brands, data.brand_name]);
+
+    const locationSuggestions = useMemo(() => {
+        const term = data.location_name.trim().toLowerCase();
+
+        return locations
+            .filter((location) => !term || location.name.toLowerCase().includes(term))
+            .slice(0, 8);
+    }, [locations, data.location_name]);
 
     function applySearch(event: FormEvent) {
         event.preventDefault();
@@ -412,7 +454,12 @@ export default function ProductIndex({
                     </div>
 
                     <div className="relative">
-                        <InputLabel htmlFor="category_name" value={t('products.category')} />
+                        <div className="flex items-center justify-between gap-3">
+                            <InputLabel htmlFor="category_name" value={t('products.category')} />
+                            <Link href={route('categories.index')} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+                                Gestionar categorías
+                            </Link>
+                        </div>
                         <input
                             type="text"
                             className="hidden"
@@ -430,7 +477,7 @@ export default function ProductIndex({
                             spellCheck={false}
                             inputMode="text"
                             className="mt-1 block w-full"
-                            placeholder={t('products.category_placeholder')}
+                            placeholder="Buscar o crear categoría"
                             value={data.category_name}
                             onBlur={() => setTimeout(() => setShowCategorySuggestions(false), 120)}
                             onChange={(e) => {
@@ -440,7 +487,7 @@ export default function ProductIndex({
                             onFocus={() => setShowCategorySuggestions(true)}
                         />
                         <p className="mt-1 text-xs text-slate-500">
-                            {t('products.category_helper')}
+                            Escribe una categoría existente o una nueva. Se creará al guardar.
                         </p>
                         {showCategorySuggestions && categorySuggestions.length > 0 && (
                             <div className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg">
@@ -461,6 +508,54 @@ export default function ProductIndex({
                             </div>
                         )}
                         <InputError message={errors.category_name} className="mt-2" />
+                    </div>
+
+                    <div className="relative">
+                        <div className="flex items-center justify-between gap-3">
+                            <InputLabel htmlFor="brand_name" value="Marca" />
+                            <Link href={route('brands.index')} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+                                Gestionar marcas
+                            </Link>
+                        </div>
+                        <TextInput
+                            id="brand_name"
+                            type="text"
+                            autoComplete="off"
+                            autoCorrect="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            className="mt-1 block w-full"
+                            placeholder="Buscar o crear marca"
+                            value={data.brand_name}
+                            onBlur={() => setTimeout(() => setShowBrandSuggestions(false), 120)}
+                            onChange={(e) => {
+                                setData('brand_name', e.target.value);
+                                setShowBrandSuggestions(true);
+                            }}
+                            onFocus={() => setShowBrandSuggestions(true)}
+                        />
+                        <p className="mt-1 text-xs text-slate-500">
+                            Escribe una marca existente o una nueva. Se creará al guardar.
+                        </p>
+                        {showBrandSuggestions && brandSuggestions.length > 0 && (
+                            <div className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg">
+                                {brandSuggestions.map((brand) => (
+                                    <button
+                                        key={brand.id}
+                                        type="button"
+                                        className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
+                                        onMouseDown={(event) => {
+                                            event.preventDefault();
+                                            setData('brand_name', brand.name);
+                                            setShowBrandSuggestions(false);
+                                        }}
+                                    >
+                                        {brand.name}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        <InputError message={errors.brand_name} className="mt-2" />
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -541,9 +636,60 @@ export default function ProductIndex({
                         </div>
                     </div>
 
-                    <div>
-                        <InputLabel htmlFor="location" value={t('common.location')} />
-                        <TextInput id="location" className="mt-1 block w-full" value={data.location} onChange={(e) => setData('location', e.target.value)} />
+                    <div className="relative">
+                        <div className="flex items-center justify-between gap-3">
+                            <InputLabel htmlFor="location_name" value={t('common.location')} />
+                            <Link href={route('product-locations.index')} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+                                Gestionar ubicaciones
+                            </Link>
+                        </div>
+                        <TextInput
+                            id="location_name"
+                            className="mt-1 block w-full"
+                            placeholder="Buscar o crear ubicación"
+                            value={data.location_name}
+                            autoComplete="off"
+                            autoCorrect="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            onBlur={() => setTimeout(() => setShowLocationSuggestions(false), 120)}
+                            onChange={(e) => {
+                                const value = e.target.value;
+                                setData({
+                                    ...data,
+                                    location_name: value,
+                                    location: value,
+                                });
+                                setShowLocationSuggestions(true);
+                            }}
+                            onFocus={() => setShowLocationSuggestions(true)}
+                        />
+                        <p className="mt-1 text-xs text-slate-500">
+                            Escribe una ubicación existente o una nueva. Se creará al guardar.
+                        </p>
+                        {showLocationSuggestions && locationSuggestions.length > 0 && (
+                            <div className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg">
+                                {locationSuggestions.map((location) => (
+                                    <button
+                                        key={location.id}
+                                        type="button"
+                                        className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
+                                        onMouseDown={(event) => {
+                                            event.preventDefault();
+                                            setData({
+                                                ...data,
+                                                location_name: location.name,
+                                                location: location.name,
+                                            });
+                                            setShowLocationSuggestions(false);
+                                        }}
+                                    >
+                                        {location.name}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        <InputError message={errors.location_name || errors.location} className="mt-2" />
                     </div>
 
                     <label className="flex items-center gap-2 text-sm text-slate-700">
@@ -643,6 +789,7 @@ export default function ProductIndex({
                                     {use_product_images && <th className="py-2 pr-3">{t('products.image')}</th>}
                                     <th className="py-2 pr-3">{t('products.product')}</th>
                                     <th className="px-3 py-2">{t('products.category')}</th>
+                                    <th className="px-3 py-2">Marca</th>
                                     <th className="px-3 py-2">{t('common.code')}</th>
                                     <th className="px-3 py-2">{t('common.barcode')}</th>
                                     <th className="px-3 py-2">{t('stock.stock')}</th>
@@ -675,10 +822,11 @@ export default function ProductIndex({
                                         )}
                                         <td className="py-3 pr-3 font-medium text-slate-950">{product.name}</td>
                                         <td className="px-3 py-3 text-slate-600">{product.category?.name ?? '-'}</td>
+                                        <td className="px-3 py-3 text-slate-600">{product.brand?.name ?? '-'}</td>
                                         <td className="px-3 py-3 text-slate-600">{product.code ?? '-'}</td>
                                         <td className="px-3 py-3 text-slate-600">{product.barcode ?? '-'}</td>
                                         <td className="px-3 py-3 text-slate-950">{product.stock}</td>
-                                        <td className="px-3 py-3 text-slate-600">{product.location ?? '-'}</td>
+                                        <td className="px-3 py-3 text-slate-600">{product.product_location?.name ?? product.location ?? '-'}</td>
                                         <td className="whitespace-nowrap px-3 py-3 text-slate-950">
                                             {formatCurrency(product.sale_price, country)}
                                         </td>

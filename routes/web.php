@@ -2,16 +2,20 @@
 
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProductController;
+use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\PriceListController;
 use App\Http\Controllers\PurchaseController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\BranchController;
+use App\Http\Controllers\BrandController;
+use App\Http\Controllers\ProductLocationController;
 use App\Http\Controllers\CashRegisterController;
 use App\Http\Controllers\AccountReceivableController;
 use App\Http\Controllers\CreditReceiptController;
 use App\Http\Controllers\FelReconciliationController;
 use App\Http\Controllers\InventoryTransferController;
 use App\Http\Controllers\ReportController;
+use App\Http\Controllers\RouteController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\TenantUserController;
@@ -189,6 +193,59 @@ Route::middleware('auth')->group(function () {
                 ->name('credits.lines.cancel');
         });
 
+        Route::middleware('module:routes')->prefix('routes')->name('routes.')->group(function () {
+            Route::get('/zones', [RouteController::class, 'zones'])
+                ->middleware('permission:routes.manage')
+                ->name('zones.index');
+            Route::post('/zones', [RouteController::class, 'storeZone'])
+                ->middleware('permission:routes.manage')
+                ->name('zones.store');
+            Route::put('/zones/{zone}', [RouteController::class, 'updateZone'])
+                ->middleware('permission:routes.manage')
+                ->name('zones.update');
+            Route::get('/zones/{zone}/customers', [RouteController::class, 'zoneCustomers'])
+                ->middleware('permission:routes.assign_customers')
+                ->name('zones.customers');
+            Route::post('/zones/{zone}/customers', [RouteController::class, 'storeZoneCustomer'])
+                ->middleware('permission:routes.assign_customers')
+                ->name('zones.customers.store');
+            Route::put('/zones/{zone}/customers/{assignment}', [RouteController::class, 'updateZoneCustomer'])
+                ->middleware('permission:routes.assign_customers')
+                ->name('zones.customers.update');
+            Route::delete('/zones/{zone}/customers/{assignment}', [RouteController::class, 'destroyZoneCustomer'])
+                ->middleware('permission:routes.assign_customers')
+                ->name('zones.customers.destroy');
+
+            Route::get('/pre-sales', [RouteController::class, 'preSales'])
+                ->middleware('permission:any:routes.pre_sales.admin_view|routes.pre_sales.view')
+                ->name('pre-sales.index');
+
+            Route::get('/mobile/zones', [RouteController::class, 'mobileZones'])
+                ->middleware('permission:routes.work')
+                ->name('mobile.zones');
+            Route::post('/mobile/zones/{zone}/work-day/start', [RouteController::class, 'startWorkDay'])
+                ->middleware('permission:routes.work')
+                ->name('mobile.zones.work-day.start');
+            Route::get('/mobile/work-days/{workDay}', [RouteController::class, 'workDay'])
+                ->middleware('permission:routes.work')
+                ->name('mobile.work-days.show');
+            Route::post('/mobile/work-days/{workDay}/close', [RouteController::class, 'closeWorkDay'])
+                ->middleware('permission:routes.work_days.close')
+                ->name('mobile.work-days.close');
+            Route::get('/mobile/visits/{visit}', [RouteController::class, 'visit'])
+                ->middleware('permission:routes.pre_sales.view')
+                ->name('mobile.visits.show');
+            Route::post('/mobile/visits/{visit}/pre-sale', [RouteController::class, 'savePreSale'])
+                ->middleware('permission:any:routes.pre_sales.create|routes.pre_sales.edit')
+                ->name('mobile.visits.pre-sale.store');
+            Route::post('/mobile/visits/{visit}/without-sale', [RouteController::class, 'withoutSale'])
+                ->middleware('permission:routes.work')
+                ->name('mobile.visits.without-sale');
+            Route::post('/pre-sales/{preSale}/cancel', [RouteController::class, 'cancelPreSale'])
+                ->middleware('permission:routes.pre_sales.cancel')
+                ->name('pre-sales.cancel');
+        });
+
         Route::match(['get', 'patch'], '/settings/fel', fn () => abort(403));
         Route::post('/settings/fel/test-connection', fn () => abort(403));
         Route::get('/debug/digifact/nit/{nit}', function (Request $request, string $nit) {
@@ -233,6 +290,20 @@ Route::middleware('auth')->group(function () {
         })->name('debug.digifact.last-response');
 
         Route::middleware('module:inventory')->group(function () {
+            Route::get('/brands', [BrandController::class, 'index'])->middleware('permission:brands.view')->name('brands.index');
+            Route::post('/brands', [BrandController::class, 'store'])->middleware('permission:brands.create')->name('brands.store');
+            Route::put('/brands/{brand}', [BrandController::class, 'update'])->middleware('permission:brands.edit')->name('brands.update');
+            Route::delete('/brands/{brand}', [BrandController::class, 'destroy'])->middleware('permission:brands.delete')->name('brands.destroy');
+
+            Route::get('/categories', [CategoryController::class, 'index'])->middleware('permission:products.view')->name('categories.index');
+            Route::post('/categories', [CategoryController::class, 'store'])->middleware('permission:products.create')->name('categories.store');
+            Route::put('/categories/{category}', [CategoryController::class, 'update'])->middleware('permission:products.update')->name('categories.update');
+
+            Route::get('/product-locations', [ProductLocationController::class, 'index'])->middleware('permission:product_locations.view')->name('product-locations.index');
+            Route::post('/product-locations', [ProductLocationController::class, 'store'])->middleware('permission:product_locations.create')->name('product-locations.store');
+            Route::put('/product-locations/{productLocation}', [ProductLocationController::class, 'update'])->middleware('permission:product_locations.edit')->name('product-locations.update');
+            Route::delete('/product-locations/{productLocation}', [ProductLocationController::class, 'destroy'])->middleware('permission:product_locations.delete')->name('product-locations.destroy');
+
             Route::get('/products', [ProductController::class, 'index'])->middleware('permission:products.view')->name('products.index');
             Route::get('/products/check-identity', [ProductController::class, 'checkIdentity'])->middleware('permission:products.view')->name('products.check-identity');
             Route::post('/products', [ProductController::class, 'store'])->middleware('permission:products.create')->name('products.store');

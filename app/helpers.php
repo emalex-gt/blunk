@@ -13,11 +13,34 @@ if (! function_exists('currentBusinessId')) {
         $user = auth()->user();
 
         if (! $user) {
+            if (app()->bound('session')) {
+                session()->forget([
+                    'active_business_id',
+                    'current_business_id',
+                    'business_id',
+                    'tenant_id',
+                    'active_branch_id',
+                    'selected_branch_id',
+                    'route_work_day_id',
+                    'route_zone_id',
+                ]);
+            }
+
             return null;
         }
 
         if ($user->id === 1 && session('active_business_id')) {
-            return (int) session('active_business_id');
+            $businessId = (int) session('active_business_id');
+
+            if (Business::query()->whereKey($businessId)->exists()) {
+                return $businessId;
+            }
+
+            session()->forget(['active_business_id', 'active_branch_id', 'selected_branch_id']);
+        }
+
+        if (! $user->is_super_admin && session('active_business_id')) {
+            session()->forget(['active_business_id', 'active_branch_id', 'selected_branch_id']);
         }
 
         return $user->business_id;

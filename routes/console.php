@@ -2,10 +2,12 @@
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use App\Models\Sale;
 use App\Models\TenantFelSetting;
 use App\Models\User;
+use App\Support\Ferrymas\CreditsFocusedAudit;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
@@ -57,6 +59,50 @@ Artisan::command('app:create-super-admin {email?} {--name=} {--password=}', func
 
     return self::SUCCESS;
 })->purpose('Create or update a platform super admin user');
+
+Artisan::command('ferrymas:audit-credits {--business=1}', function (CreditsFocusedAudit $audit) {
+    $businessId = (int) $this->option('business');
+
+    $runId = DB::table('migration_runs')->insertGetId([
+        'business_id' => $businessId,
+        'type' => 'ferrymas_credits_focused_audit',
+        'status' => 'running',
+        'metadata' => json_encode([
+            'sources' => ['legacy_main', 'legacy_branch'],
+            'mode' => 'audit_only',
+        ]),
+        'started_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    try {
+        $outputPath = $audit->run($businessId, $runId);
+
+        DB::table('migration_runs')->where('id', $runId)->update([
+            'status' => 'completed',
+            'output_path' => $outputPath,
+            'finished_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->info("Auditoría de créditos completada. run_id={$runId}");
+        $this->line($outputPath);
+
+        return self::SUCCESS;
+    } catch (Throwable $exception) {
+        DB::table('migration_runs')->where('id', $runId)->update([
+            'status' => 'failed',
+            'error_message' => $exception->getMessage(),
+            'finished_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->error('Auditoría de créditos falló: '.$exception->getMessage());
+
+        return self::FAILURE;
+    }
+})->purpose('Audit legacy Ferrymas credit reservations and possible real AR without importing data');
 
 Artisan::command('fel:diagnose-speed {sale_id?}', function (?string $sale_id = null) {
     $query = Sale::query()

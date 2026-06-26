@@ -14,6 +14,8 @@ class Product extends Model
     protected $fillable = [
         'business_id',
         'category_id',
+        'brand_id',
+        'location_id',
         'name',
         'code',
         'barcode',
@@ -34,6 +36,8 @@ class Product extends Model
         'min_stock' => 'float',
         'is_active' => 'boolean',
         'category_id' => 'integer',
+        'brand_id' => 'integer',
+        'location_id' => 'integer',
     ];
 
     public function business(): BelongsTo
@@ -44,6 +48,16 @@ class Product extends Model
     public function category(): BelongsTo
     {
         return $this->belongsTo(Category::class);
+    }
+
+    public function brand(): BelongsTo
+    {
+        return $this->belongsTo(Brand::class);
+    }
+
+    public function productLocation(): BelongsTo
+    {
+        return $this->belongsTo(ProductLocation::class, 'location_id');
     }
 
     public function stockMovements(): HasMany

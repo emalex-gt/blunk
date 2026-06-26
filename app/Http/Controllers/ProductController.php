@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\Category;
+use App\Models\Brand;
 use App\Models\Product;
+use App\Models\ProductLocation;
 use App\Models\StockMovement;
 use App\Support\BranchInventory;
 use App\Support\PriceLists;
@@ -39,6 +41,8 @@ class ProductController extends Controller
             ->where('business_id', $businessId)
             ->with([
                 'category:id,name',
+                'brand:id,name',
+                'productLocation:id,name',
                 'prices' => fn ($query) => $query
                     ->where('business_id', $businessId)
                     ->where('is_active', true)
@@ -48,7 +52,10 @@ class ProductController extends Controller
                 $query->where(function ($query) use ($search) {
                     $query->where('name', 'ilike', "%{$search}%")
                         ->orWhere('code', 'ilike', "%{$search}%")
-                        ->orWhere('barcode', 'ilike', "%{$search}%");
+                        ->orWhere('barcode', 'ilike', "%{$search}%")
+                        ->orWhere('location', 'ilike', "%{$search}%")
+                        ->orWhereHas('productLocation', fn ($query) => $query->where('name', 'ilike', "%{$search}%"))
+                        ->orWhereHas('brand', fn ($query) => $query->where('name', 'ilike', "%{$search}%"));
                 });
             })
             ->orderBy('name')
@@ -80,6 +87,16 @@ class ProductController extends Controller
                 ->where('business_id', $businessId)
                 ->orderBy('name')
                 ->get(['id', 'name']),
+            'brands' => Brand::query()
+                ->where('business_id', $businessId)
+                ->where('is_active', true)
+                ->orderBy('name')
+                ->get(['id', 'name']),
+            'locations' => ProductLocation::query()
+                ->where('business_id', $businessId)
+                ->where('is_active', true)
+                ->orderBy('name')
+                ->get(['id', 'name']),
             'filters' => ['search' => $search],
         ]);
     }
@@ -109,15 +126,31 @@ class ProductController extends Controller
     {
         $data = $this->validatedProduct($request);
         $categoryName = $data['category_name'] ?? null;
-        unset($data['category_name'], $data['image']);
+        $brandNameProvided = array_key_exists('brand_name', $data);
+        $brandName = $data['brand_name'] ?? null;
+        $brandId = isset($data['brand_id']) ? (int) $data['brand_id'] : null;
+        $locationNameProvided = array_key_exists('location_name', $data);
+        $locationName = $data['location_name'] ?? ($data['location'] ?? null);
+        unset($data['category_name'], $data['brand_name'], $data['brand_id'], $data['location_name'], $data['image']);
         $businessId = currentBusinessId();
         $data['business_id'] = $businessId;
         $useProductImages = tenantSetting('use_product_images', true);
 
-        DB::transaction(function () use ($request, $data, $categoryName, $useProductImages, $businessId) {
+        DB::transaction(function () use ($request, $data, $categoryName, $brandName, $brandId, $brandNameProvided, $locationName, $locationNameProvided, $useProductImages, $businessId) {
             $data['category_id'] = $this->resolveCategoryId(
                 $businessId,
                 $categoryName,
+            );
+            $data['brand_id'] = $this->resolveBrandIdByName(
+                $businessId,
+                $brandName,
+                $brandId,
+                $brandNameProvided,
+            );
+            [$data['location_id'], $data['location']] = $this->resolveProductLocationByName(
+                $businessId,
+                $locationName,
+                $locationNameProvided || filled($locationName),
             );
 
             if ($useProductImages && $request->hasFile('image')) {
@@ -160,13 +193,29 @@ class ProductController extends Controller
             $data = $this->validatedProduct($request, $product);
             $prices = $data['prices'] ?? [];
             $categoryName = $data['category_name'] ?? null;
-            unset($data['category_name'], $data['image'], $data['prices']);
+            $brandNameProvided = array_key_exists('brand_name', $data);
+            $brandName = $data['brand_name'] ?? null;
+            $brandId = isset($data['brand_id']) ? (int) $data['brand_id'] : null;
+            $locationNameProvided = array_key_exists('location_name', $data);
+            $locationName = $data['location_name'] ?? ($data['location'] ?? null);
+            unset($data['category_name'], $data['brand_name'], $data['brand_id'], $data['location_name'], $data['image'], $data['prices']);
             $branch = BranchInventory::activeBranch(currentBusinessId());
             $oldStock = (float) (BranchInventory::stockMap(currentBusinessId(), [$product->id], $branch->id)[$product->id] ?? 0);
             $oldImagePublicId = $product->image_public_id;
             $data['category_id'] = $this->resolveCategoryId(
                 currentBusinessId(),
                 $categoryName,
+            );
+            $data['brand_id'] = $this->resolveBrandIdByName(
+                currentBusinessId(),
+                $brandName,
+                $brandId,
+                $brandNameProvided,
+            );
+            [$data['location_id'], $data['location']] = $this->resolveProductLocationByName(
+                currentBusinessId(),
+                $locationName,
+                $locationNameProvided || filled($locationName),
             );
 
             if ($useProductImages && $request->hasFile('image')) {
@@ -268,8 +317,11 @@ class ProductController extends Controller
             'stock' => ['required', 'integer', 'min:0'],
             'min_stock' => ['required', 'integer', 'min:0'],
             'location' => ['nullable', 'string', 'max:255'],
+            'location_name' => ['nullable', 'string', 'max:255'],
             'is_active' => ['boolean'],
             'category_name' => ['nullable', 'string', 'max:255'],
+            'brand_id' => ['nullable', 'integer'],
+            'brand_name' => ['nullable', 'string', 'max:255'],
             'prices' => ['nullable', 'array'],
             'prices.*' => ['nullable', 'numeric', 'min:0'],
         ];
@@ -284,6 +336,18 @@ class ProductController extends Controller
         ]);
         $data['code'] = $this->normalizeProductCode($data['code'] ?? null);
         $data['barcode'] = $this->normalizeProductCode($data['barcode'] ?? null);
+        if (array_key_exists('brand_name', $data)) {
+            $data['brand_name'] = $this->normalizeCatalogName($data['brand_name']);
+        }
+
+        if (array_key_exists('location_name', $data)) {
+            $data['location_name'] = $this->normalizeCatalogName($data['location_name']);
+        }
+
+        if (array_key_exists('location', $data)) {
+            $data['location'] = $this->normalizeCatalogName($data['location']);
+        }
+        $data['brand_id'] = $data['brand_id'] ?? null;
 
         if ($data['code'] === null && $data['barcode'] === null) {
             throw ValidationException::withMessages([
@@ -302,6 +366,13 @@ class ProductController extends Controller
     }
 
     private function normalizeProductCode(?string $value): ?string
+    {
+        $normalized = preg_replace('/\s+/', ' ', trim((string) $value));
+
+        return $normalized === '' ? null : $normalized;
+    }
+
+    private function normalizeCatalogName(?string $value): ?string
     {
         $normalized = preg_replace('/\s+/', ' ', trim((string) $value));
 
@@ -426,9 +497,9 @@ class ProductController extends Controller
 
     private function resolveCategoryId(int $businessId, ?string $categoryName): ?int
     {
-        $categoryName = trim((string) $categoryName);
+        $categoryName = $this->normalizeCatalogName($categoryName);
 
-        if ($categoryName === '') {
+        if ($categoryName === null) {
             return null;
         }
 
@@ -445,6 +516,72 @@ class ProductController extends Controller
             'business_id' => $businessId,
             'name' => $categoryName,
         ])->id;
+    }
+
+    private function resolveBrandIdByName(int $businessId, ?string $brandName, ?int $brandId = null, bool $brandNameProvided = true): ?int
+    {
+        if (! $brandNameProvided) {
+            if (! $brandId) {
+                return null;
+            }
+
+            return Brand::query()
+                ->where('business_id', $businessId)
+                ->where('is_active', true)
+                ->findOrFail($brandId)
+                ->id;
+        }
+
+        if ($brandName === null) {
+            return null;
+        }
+
+        $brand = Brand::query()
+            ->where('business_id', $businessId)
+            ->whereRaw('LOWER(name) = ?', [mb_strtolower($brandName)])
+            ->first();
+
+        if ($brand) {
+            if (! $brand->is_active) {
+                $brand->update(['is_active' => true]);
+            }
+
+            return $brand->id;
+        }
+
+        return Brand::query()->create([
+            'business_id' => $businessId,
+            'name' => $brandName,
+            'is_active' => true,
+        ])->id;
+    }
+
+    private function resolveProductLocationByName(int $businessId, ?string $locationName, bool $locationNameProvided = true): array
+    {
+        if (! $locationNameProvided || $locationName === null) {
+            return [null, null];
+        }
+
+        $location = ProductLocation::query()
+            ->where('business_id', $businessId)
+            ->whereRaw('LOWER(name) = ?', [mb_strtolower($locationName)])
+            ->first();
+
+        if ($location) {
+            if (! $location->is_active) {
+                $location->update(['is_active' => true]);
+            }
+
+            return [$location->id, $location->name];
+        }
+
+        $location = ProductLocation::query()->create([
+            'business_id' => $businessId,
+            'name' => $locationName,
+            'is_active' => true,
+        ]);
+
+        return [$location->id, $location->name];
     }
 
     private function uploadProductImage(Request $request): array

@@ -47,10 +47,14 @@ export default function Authenticated({
 
     const managementActive =
         (hasModule('inventory') && (route().current('products.*') || route().current('stock.*') || route().current('price-lists.*'))) ||
+        (hasModule('inventory') && route().current('categories.*')) ||
+        (hasModule('inventory') && route().current('brands.*')) ||
+        (hasModule('inventory') && route().current('product-locations.*')) ||
         (hasModule('branches') && route().current('inventory.transfers.*')) ||
         (hasModule('purchases') && route().current('purchases.*')) ||
         (hasModule('cash_register') && route().current('cash-register.*')) ||
         (hasModule('credits') && route().current('credits.*')) ||
+        (hasModule('routes') && route().current('routes.*')) ||
         (hasModule('fel_gt') && route().current('fel.reconciliation.*'));
     const settingsActive = false;
     const administrationActive = canManageUsers && route().current('users.*');
@@ -67,6 +71,9 @@ export default function Authenticated({
         hasModule('credits') && can('credits.accounts.view') ? { label: 'Cuentas por cobrar', href: route('credits.accounts.index'), active: route().current('credits.accounts.*') } : null,
         hasModule('credits') && (can('credits.payments.view') || can('credits.payments.create')) ? { label: 'Abonos', href: route('credits.payments.index'), active: route().current('credits.payments.*') } : null,
         hasModule('credits') && canViewCredits ? { label: 'Reservas pendientes', href: route('credits.index'), active: route().current('credits.index') || route().current('credits.customers.*') || route().current('credits.receipts.*') } : null,
+        hasModule('routes') && can('routes.work') ? { label: 'Mis rutas', href: route('routes.mobile.zones'), active: route().current('routes.mobile.*') } : null,
+        hasModule('routes') && can('routes.manage') ? { label: 'Rutas', href: route('routes.zones.index'), active: route().current('routes.zones.*') } : null,
+        hasModule('routes') && (can('routes.pre_sales.admin_view') || can('routes.pre_sales.view')) ? { label: 'Preventas', href: route('routes.pre-sales.index'), active: route().current('routes.pre-sales.*') } : null,
     ].filter(Boolean) as NavItem[];
 
     const reportItems: NavItem[] = [

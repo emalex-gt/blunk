@@ -28,6 +28,14 @@ class Permissions
     public const PRODUCTS_CREATE = 'products.create';
     public const PRODUCTS_UPDATE = 'products.update';
     public const PRODUCTS_DELETE = 'products.delete';
+    public const BRANDS_VIEW = 'brands.view';
+    public const BRANDS_CREATE = 'brands.create';
+    public const BRANDS_EDIT = 'brands.edit';
+    public const BRANDS_DELETE = 'brands.delete';
+    public const PRODUCT_LOCATIONS_VIEW = 'product_locations.view';
+    public const PRODUCT_LOCATIONS_CREATE = 'product_locations.create';
+    public const PRODUCT_LOCATIONS_EDIT = 'product_locations.edit';
+    public const PRODUCT_LOCATIONS_DELETE = 'product_locations.delete';
 
     public const INVENTORY_VIEW = 'inventory.view';
     public const INVENTORY_ADJUST = 'inventory.adjust';
@@ -68,6 +76,17 @@ class Permissions
 
     public const PRICE_LISTS_VIEW = 'price_lists.view';
     public const PRICE_LISTS_MANAGE = 'price_lists.manage';
+
+    public const ROUTES_VIEW = 'routes.view';
+    public const ROUTES_MANAGE = 'routes.manage';
+    public const ROUTES_ASSIGN_CUSTOMERS = 'routes.assign_customers';
+    public const ROUTES_WORK = 'routes.work';
+    public const ROUTES_PRE_SALES_VIEW = 'routes.pre_sales.view';
+    public const ROUTES_PRE_SALES_CREATE = 'routes.pre_sales.create';
+    public const ROUTES_PRE_SALES_EDIT = 'routes.pre_sales.edit';
+    public const ROUTES_PRE_SALES_CANCEL = 'routes.pre_sales.cancel';
+    public const ROUTES_PRE_SALES_ADMIN_VIEW = 'routes.pre_sales.admin_view';
+    public const ROUTES_WORK_DAYS_CLOSE = 'routes.work_days.close';
 
     public const CREDITS_VIEW = 'credits.view';
     public const CREDITS_CREATE = 'credits.create';
@@ -125,6 +144,14 @@ class Permissions
             self::PRODUCTS_CREATE => ['name' => 'Crear productos', 'group' => 'Inventario'],
             self::PRODUCTS_UPDATE => ['name' => 'Editar productos', 'group' => 'Inventario'],
             self::PRODUCTS_DELETE => ['name' => 'Eliminar productos', 'group' => 'Inventario'],
+            self::BRANDS_VIEW => ['name' => 'Ver marcas', 'group' => 'Inventario'],
+            self::BRANDS_CREATE => ['name' => 'Crear marcas', 'group' => 'Inventario'],
+            self::BRANDS_EDIT => ['name' => 'Editar marcas', 'group' => 'Inventario'],
+            self::BRANDS_DELETE => ['name' => 'Eliminar marcas', 'group' => 'Inventario'],
+            self::PRODUCT_LOCATIONS_VIEW => ['name' => 'Ver ubicaciones de productos', 'group' => 'Inventario'],
+            self::PRODUCT_LOCATIONS_CREATE => ['name' => 'Crear ubicaciones de productos', 'group' => 'Inventario'],
+            self::PRODUCT_LOCATIONS_EDIT => ['name' => 'Editar ubicaciones de productos', 'group' => 'Inventario'],
+            self::PRODUCT_LOCATIONS_DELETE => ['name' => 'Eliminar ubicaciones de productos', 'group' => 'Inventario'],
             self::INVENTORY_VIEW => ['name' => 'Ver inventario', 'group' => 'Inventario'],
             self::INVENTORY_ADJUST => ['name' => 'Ajustar inventario', 'group' => 'Inventario'],
             self::INVENTORY_TRANSFER => ['name' => 'Trasladar inventario', 'group' => 'Inventario'],
@@ -159,6 +186,16 @@ class Permissions
             self::FEL_RECONCILE => ['name' => 'Conciliar FEL', 'group' => 'FEL'],
             self::PRICE_LISTS_VIEW => ['name' => 'Ver listas de precios', 'group' => 'Precios'],
             self::PRICE_LISTS_MANAGE => ['name' => 'Gestionar listas de precios', 'group' => 'Precios'],
+            self::ROUTES_VIEW => ['name' => 'Ver rutas', 'group' => 'Rutas'],
+            self::ROUTES_MANAGE => ['name' => 'Gestionar zonas de ruta', 'group' => 'Rutas'],
+            self::ROUTES_ASSIGN_CUSTOMERS => ['name' => 'Asignar clientes a rutas', 'group' => 'Rutas'],
+            self::ROUTES_WORK => ['name' => 'Trabajar rutas', 'group' => 'Rutas'],
+            self::ROUTES_PRE_SALES_VIEW => ['name' => 'Ver preventas de ruta', 'group' => 'Rutas'],
+            self::ROUTES_PRE_SALES_CREATE => ['name' => 'Crear preventas de ruta', 'group' => 'Rutas'],
+            self::ROUTES_PRE_SALES_EDIT => ['name' => 'Editar preventas de ruta', 'group' => 'Rutas'],
+            self::ROUTES_PRE_SALES_CANCEL => ['name' => 'Cancelar preventas de ruta', 'group' => 'Rutas'],
+            self::ROUTES_PRE_SALES_ADMIN_VIEW => ['name' => 'Ver preventas como administrador', 'group' => 'Rutas'],
+            self::ROUTES_WORK_DAYS_CLOSE => ['name' => 'Cerrar jornadas de ruta', 'group' => 'Rutas'],
             self::CREDITS_VIEW => ['name' => 'Ver créditos', 'group' => 'Créditos'],
             self::CREDITS_CREATE => ['name' => 'Crear créditos', 'group' => 'Créditos'],
             self::CREDITS_INVOICE => ['name' => 'Facturar créditos', 'group' => 'Créditos'],
@@ -222,10 +259,26 @@ class Permissions
                 self::CREDITS_STATEMENT_VIEW,
                 self::CREDITS_VIEW,
             ],
+            'pre_seller' => [
+                self::CUSTOMERS_VIEW,
+                self::PRODUCTS_VIEW,
+                self::ROUTES_VIEW,
+                self::ROUTES_WORK,
+                self::ROUTES_PRE_SALES_VIEW,
+                self::ROUTES_PRE_SALES_CREATE,
+                self::ROUTES_PRE_SALES_EDIT,
+                self::ROUTES_WORK_DAYS_CLOSE,
+            ],
             'stock_manager' => [
                 self::PRODUCTS_VIEW,
                 self::PRODUCTS_CREATE,
                 self::PRODUCTS_UPDATE,
+                self::BRANDS_VIEW,
+                self::BRANDS_CREATE,
+                self::BRANDS_EDIT,
+                self::PRODUCT_LOCATIONS_VIEW,
+                self::PRODUCT_LOCATIONS_CREATE,
+                self::PRODUCT_LOCATIONS_EDIT,
                 self::INVENTORY_VIEW,
                 self::INVENTORY_ADJUST,
                 self::INVENTORY_TRANSFER,
@@ -263,6 +316,8 @@ class Permissions
                 self::CREDITS_STATEMENT_VIEW,
                 self::REPORTS_ACCOUNTS_RECEIVABLE_VIEW,
                 self::REPORTS_CREDIT_PAYMENTS_VIEW,
+                self::ROUTES_PRE_SALES_ADMIN_VIEW,
+                self::ROUTES_PRE_SALES_VIEW,
             ],
         ];
     }
@@ -274,6 +329,7 @@ class Permissions
             'owner' => 'Owner',
             'admin' => 'Admin',
             'cashier' => 'Cajero',
+            'pre_seller' => 'Preventista',
             'stock_manager' => 'Inventario',
             'purchases' => 'Compras',
             'reports' => 'Reportes',

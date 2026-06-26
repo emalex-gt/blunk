@@ -41,6 +41,17 @@ class AuthenticatedSessionController extends Controller
      */
     public function destroy(Request $request): RedirectResponse
     {
+        $request->session()->forget([
+            'active_business_id',
+            'current_business_id',
+            'business_id',
+            'tenant_id',
+            'active_branch_id',
+            'selected_branch_id',
+            'route_work_day_id',
+            'route_zone_id',
+        ]);
+
         Auth::guard('web')->logout();
 
         $request->session()->invalidate();

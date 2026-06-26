@@ -63,7 +63,7 @@ return [
     ],
     'routes' => [
         'name' => 'Rutas',
-        'description' => 'Gestion futura de rutas.',
+        'description' => 'Zonas, jornadas y preventas de ruta.',
         'group' => 'Rutas',
         'plan_hint' => 'routes',
     ],
