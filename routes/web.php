@@ -28,6 +28,7 @@ use App\Http\Controllers\SuperAdmin\TenantSubscriptionController as SuperAdminTe
 use App\Http\Controllers\SuperAdmin\TenantUserController as SuperAdminTenantUserController;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
+use App\Support\AuthRedirect;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use App\Models\Business;
@@ -35,8 +36,8 @@ use App\Models\Sale;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
-    if (auth()->check()) {
-        return redirect()->route('dashboard');
+    if ($user = auth()->user()) {
+        return redirect(AuthRedirect::pathFor($user));
     }
 
     return redirect()->route('login');
@@ -136,6 +137,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/fel/reconciliation/{reconciliation}/check', [FelReconciliationController::class, 'check'])
             ->middleware(['module:fel_gt', 'permission:fel.reconcile'])
             ->name('fel.reconciliation.check');
+        Route::get('/customers/search', [CustomerController::class, 'search'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.search');
         Route::get('/customers/lookup/nit', [CustomerController::class, 'lookupNit'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.lookup.nit');
         Route::get('/customers/gt/nit-lookup', [CustomerController::class, 'lookupGuatemalaNit'])->middleware(['module:fel_gt', 'permission:customers.view'])->name('customers.gt.nit-lookup');
         Route::get('/customers/{customer}/products/{product}/last-price', [SaleController::class, 'lastCustomerProductPrice'])
@@ -209,9 +211,15 @@ Route::middleware('auth')->group(function () {
             Route::post('/zones/{zone}/customers', [RouteController::class, 'storeZoneCustomer'])
                 ->middleware('permission:routes.assign_customers')
                 ->name('zones.customers.store');
+            Route::post('/zones/{zone}/customers/create', [RouteController::class, 'createZoneCustomer'])
+                ->middleware('permission:routes.assign_customers')
+                ->name('zones.customers.create');
             Route::put('/zones/{zone}/customers/{assignment}', [RouteController::class, 'updateZoneCustomer'])
                 ->middleware('permission:routes.assign_customers')
                 ->name('zones.customers.update');
+            Route::put('/zones/{zone}/customers/{assignment}/details', [RouteController::class, 'updateZoneCustomerDetails'])
+                ->middleware('permission:routes.assign_customers')
+                ->name('zones.customers.details.update');
             Route::delete('/zones/{zone}/customers/{assignment}', [RouteController::class, 'destroyZoneCustomer'])
                 ->middleware('permission:routes.assign_customers')
                 ->name('zones.customers.destroy');
@@ -229,12 +237,18 @@ Route::middleware('auth')->group(function () {
             Route::get('/mobile/work-days/{workDay}', [RouteController::class, 'workDay'])
                 ->middleware('permission:routes.work')
                 ->name('mobile.work-days.show');
+            Route::post('/mobile/work-days/{workDay}/customers', [RouteController::class, 'createMobileCustomer'])
+                ->middleware('permission:routes.work')
+                ->name('mobile.work-days.customers.store');
             Route::post('/mobile/work-days/{workDay}/close', [RouteController::class, 'closeWorkDay'])
                 ->middleware('permission:routes.work_days.close')
                 ->name('mobile.work-days.close');
             Route::get('/mobile/visits/{visit}', [RouteController::class, 'visit'])
                 ->middleware('permission:routes.pre_sales.view')
                 ->name('mobile.visits.show');
+            Route::put('/mobile/visits/{visit}/customer', [RouteController::class, 'updateVisitCustomer'])
+                ->middleware('permission:routes.work')
+                ->name('mobile.visits.customer.update');
             Route::post('/mobile/visits/{visit}/pre-sale', [RouteController::class, 'savePreSale'])
                 ->middleware('permission:any:routes.pre_sales.create|routes.pre_sales.edit')
                 ->name('mobile.visits.pre-sale.store');

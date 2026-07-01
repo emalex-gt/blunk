@@ -10,7 +10,7 @@ import { compressImage } from '@/lib/images';
 import { t } from '@/lib/i18n';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 type Category = {
     id: number;
@@ -48,6 +48,25 @@ type Product = {
     product_location: ProductLocation | null;
     supplier_cost_history: SupplierCostHistory[];
     prices: ProductPrice[];
+};
+
+type PaginationLink = {
+    url: string | null;
+    label: string;
+    active: boolean;
+};
+
+type PaginatedProducts = {
+    data: Product[];
+    links: PaginationLink[];
+    current_page: number;
+    last_page: number;
+    from: number | null;
+    to: number | null;
+    total: number;
+    per_page: number;
+    prev_page_url: string | null;
+    next_page_url: string | null;
 };
 
 type PriceType = {
@@ -136,12 +155,19 @@ export default function ProductIndex({
     activeBranch = null,
     use_product_images = true,
 }: {
-    products: Product[];
+    products: PaginatedProducts;
     priceTypes: PriceType[];
     categories: Category[];
     brands: Brand[];
     locations: ProductLocation[];
-    filters: { search: string };
+    filters: {
+        search: string;
+        category_id?: number | null;
+        brand_id?: number | null;
+        location_id?: number | null;
+        status?: string;
+        per_page?: number;
+    };
     pricingScope?: 'global' | 'branch';
     activeBranch?: { id: number; name: string } | null;
     use_product_images?: boolean;
@@ -150,6 +176,14 @@ export default function ProductIndex({
     const country = business?.country ?? 'GT';
     const [editing, setEditing] = useState<Product | null>(null);
     const [search, setSearch] = useState(filters.search ?? '');
+    const didMountSearch = useRef(false);
+    const [filterState, setFilterState] = useState({
+        category_id: filters.category_id ? String(filters.category_id) : '',
+        brand_id: filters.brand_id ? String(filters.brand_id) : '',
+        location_id: filters.location_id ? String(filters.location_id) : '',
+        status: filters.status ?? '',
+        per_page: String(filters.per_page ?? products.per_page ?? 25),
+    });
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const [imageError, setImageError] = useState('');
     const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
@@ -166,6 +200,7 @@ export default function ProductIndex({
         () => new Set(identityMatches.map((match) => match.id)),
         [identityMatches],
     );
+    const currentProducts = products.data;
 
     function submit(event: FormEvent) {
         event.preventDefault();
@@ -256,7 +291,40 @@ export default function ProductIndex({
 
     function applySearch(event: FormEvent) {
         event.preventDefault();
-        router.get(route('products.index'), { search }, { preserveState: true });
+        router.get(route('products.index'), productQueryParams(), { preserveState: true, preserveScroll: true });
+    }
+
+    function productQueryParams(overrides: Record<string, string | number | null> = {}) {
+        const params = {
+            search,
+            category_id: filterState.category_id,
+            brand_id: filterState.brand_id,
+            location_id: filterState.location_id,
+            status: filterState.status,
+            per_page: filterState.per_page,
+            ...overrides,
+        };
+
+        return Object.fromEntries(
+            Object.entries(params).filter(([, value]) => value !== '' && value !== null && value !== undefined),
+        );
+    }
+
+    function updateFilter(field: keyof typeof filterState, value: string) {
+        const next = { ...filterState, [field]: value };
+        setFilterState(next);
+
+        router.get(
+            route('products.index'),
+            Object.fromEntries(
+                Object.entries({
+                    search,
+                    ...next,
+                    page: 1,
+                }).filter(([, current]) => current !== '' && current !== null && current !== undefined),
+            ),
+            { preserveState: true, preserveScroll: true, replace: true },
+        );
     }
 
     function clearImagePreview() {
@@ -390,6 +458,23 @@ export default function ProductIndex({
             controller.abort();
         };
     }, [data.code, data.barcode, editing?.id]);
+
+    useEffect(() => {
+        if (!didMountSearch.current) {
+            didMountSearch.current = true;
+            return;
+        }
+
+        const timeout = window.setTimeout(() => {
+            router.get(route('products.index'), productQueryParams({ page: 1 }), {
+                preserveState: true,
+                preserveScroll: true,
+                replace: true,
+            });
+        }, 400);
+
+        return () => window.clearTimeout(timeout);
+    }, [search]);
 
     useEffect(() => {
         return () => {
@@ -717,8 +802,57 @@ export default function ProductIndex({
                 </form>
 
                 <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
-                    <form onSubmit={applySearch} className="mb-4 flex gap-2">
+                    <form onSubmit={applySearch} className="mb-4 grid gap-2 lg:grid-cols-[1fr_180px_180px_180px_150px_150px_auto]">
                         <TextInput className="w-full" placeholder={t('products.search_placeholder')} value={search} onChange={(e) => setSearch(e.target.value)} />
+                        <select
+                            value={filterState.category_id}
+                            onChange={(event) => updateFilter('category_id', event.target.value)}
+                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                        >
+                            <option value="">Categoría</option>
+                            {categories.map((category) => (
+                                <option key={category.id} value={category.id}>{category.name}</option>
+                            ))}
+                        </select>
+                        <select
+                            value={filterState.brand_id}
+                            onChange={(event) => updateFilter('brand_id', event.target.value)}
+                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                        >
+                            <option value="">Marca</option>
+                            {brands.map((brand) => (
+                                <option key={brand.id} value={brand.id}>{brand.name}</option>
+                            ))}
+                        </select>
+                        <select
+                            value={filterState.location_id}
+                            onChange={(event) => updateFilter('location_id', event.target.value)}
+                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                        >
+                            <option value="">Ubicación</option>
+                            {locations.map((location) => (
+                                <option key={location.id} value={location.id}>{location.name}</option>
+                            ))}
+                        </select>
+                        <select
+                            value={filterState.status}
+                            onChange={(event) => updateFilter('status', event.target.value)}
+                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                        >
+                            <option value="">Estado</option>
+                            <option value="active">Activos</option>
+                            <option value="inactive">Inactivos</option>
+                        </select>
+                        <select
+                            value={filterState.per_page}
+                            onChange={(event) => updateFilter('per_page', event.target.value)}
+                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                            aria-label="Productos por página"
+                        >
+                            <option value="25">25 por página</option>
+                            <option value="50">50 por página</option>
+                            <option value="100">100 por página</option>
+                        </select>
                         <PrimaryButton>{t('actions.search')}</PrimaryButton>
                     </form>
 
@@ -730,7 +864,7 @@ export default function ProductIndex({
                             </div>
                             <div className="mt-3 grid gap-3 lg:grid-cols-2">
                                 {identityMatches.map((match) => {
-                                    const visibleProduct = products.find((product) => product.id === match.id);
+                                    const visibleProduct = currentProducts.find((product) => product.id === match.id);
 
                                     return (
                                         <article key={match.id} className="flex gap-3 rounded-lg border border-amber-200 bg-white p-3 shadow-sm">
@@ -799,7 +933,7 @@ export default function ProductIndex({
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
-                                {products.map((product) => (
+                                {currentProducts.map((product) => (
                                     <tr
                                         key={product.id}
                                         className={`transition-colors ${identityMatchIds.has(product.id) ? 'bg-amber-50 ring-1 ring-inset ring-amber-200' : 'hover:bg-indigo-50/30'}`}
@@ -845,6 +979,33 @@ export default function ProductIndex({
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+
+                    <div className="mt-4 flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-sm text-slate-600">
+                            Mostrando {products.from ?? 0}-{products.to ?? 0} de {products.total} productos
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <Link
+                                href={products.prev_page_url ?? '#'}
+                                preserveScroll
+                                preserveState
+                                className={`rounded-lg px-3 py-2 text-sm font-semibold ${products.prev_page_url ? 'bg-slate-100 text-slate-700 hover:bg-slate-200' : 'pointer-events-none bg-slate-50 text-slate-400'}`}
+                            >
+                                Anterior
+                            </Link>
+                            <span className="px-2 text-sm font-medium text-slate-600">
+                                Página {products.current_page} de {products.last_page}
+                            </span>
+                            <Link
+                                href={products.next_page_url ?? '#'}
+                                preserveScroll
+                                preserveState
+                                className={`rounded-lg px-3 py-2 text-sm font-semibold ${products.next_page_url ? 'bg-slate-100 text-slate-700 hover:bg-slate-200' : 'pointer-events-none bg-slate-50 text-slate-400'}`}
+                            >
+                                Siguiente
+                            </Link>
+                        </div>
                     </div>
                 </section>
             </div>

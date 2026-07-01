@@ -37,6 +37,7 @@ use App\Services\Fel\FelException;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Fel\Providers\Digifact\DigifactNucJsonBuilder;
 use App\Support\BranchInventory;
+use App\Support\Credits;
 use App\Support\FelPhraseRenderer;
 use App\Support\Permissions;
 use App\Support\StockAvailability;
@@ -1138,7 +1139,7 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Products/Index')
-                ->where('products.0.barcode', 'BAR-PAYLOAD-001')
+                ->where('products.data.0.barcode', 'BAR-PAYLOAD-001')
             );
     }
 
@@ -1161,8 +1162,8 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Products/Index')
-                ->has('products', 1)
-                ->where('products.0.barcode', 'SEARCH-BAR-001')
+                ->has('products.data', 1)
+                ->where('products.data.0.barcode', 'SEARCH-BAR-001')
             );
     }
 
@@ -1740,6 +1741,40 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertSessionHasErrors(['items' => 'No hay suficiente stock disponible para trasladar.']);
     }
 
+    public function test_pos_cf_customer_with_details_does_not_merge_by_name_or_commercial_name(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register'], role: 'owner');
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $customer = [
+            'name' => 'Cliente Mostrador',
+            'commercial_name' => 'Tienda Repetida',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'address' => 'Mercado',
+            'country' => 'GT',
+            'consumidor_final' => true,
+        ];
+
+        for ($i = 0; $i < 2; $i++) {
+            $this->actingAs($user)
+                ->post(route('sales.store'), $this->salePayload(
+                    $product,
+                    quantity: 1,
+                    total: 100,
+                    documentType: 'receipt',
+                    customer: $customer,
+                ))
+                ->assertSessionHasNoErrors();
+        }
+
+        $this->assertSame(2, Customer::query()
+            ->where('business_id', $business->id)
+            ->where('commercial_name', 'Tienda Repetida')
+            ->count());
+    }
+
     public function test_purchase_payment_method_controls_cash_register_usage(): void
     {
         [$business, $user] = $this->tenant(modules: ['purchases', 'cash_register'], role: 'owner');
@@ -1964,9 +1999,130 @@ class CriticalPosFelFlowTest extends TestCase
         ]);
 
         $this->assertSame(10.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(3, CreditReceiptLine::query()->where('product_id', $product->id)->value('qty_reserved'));
         $this->assertSame(3, StockAvailability::reservedStock($product, null, BranchInventory::defaultBranch($business->id)->id));
         $this->assertSame(7.0, StockAvailability::availableStock($product, null, BranchInventory::defaultBranch($business->id)->id));
         Http::assertNothingSent();
+    }
+
+    public function test_credit_receipt_can_skip_stock_reservation_when_tenant_setting_is_disabled(): void
+    {
+        [$business, $user] = $this->tenant(
+            modules: ['pos', 'credits'],
+            enableCredits: true,
+            allowNegativeStock: false,
+            reserveStockOnCreditReservations: false,
+        );
+        $product = $this->product($business, stock: 0, salePrice: 100);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('credits.receipts.store'), $this->creditPayload($product, 2))
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('credit_receipt_lines', [
+            'business_id' => $business->id,
+            'product_id' => $product->id,
+            'quantity' => 2,
+            'qty_reserved' => 0,
+            'qty_pending' => 2,
+        ]);
+        $branchId = BranchInventory::defaultBranch($business->id)->id;
+        $this->assertSame(0.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(0, StockAvailability::reservedStock($product, null, $branchId));
+        $this->assertSame(0.0, StockAvailability::availableStock($product, null, $branchId));
+    }
+
+    public function test_credit_reservation_stock_setting_is_scoped_per_tenant(): void
+    {
+        [$businessWithoutReservation, $userWithoutReservation] = $this->tenant(
+            modules: ['credits'],
+            enableCredits: true,
+            reserveStockOnCreditReservations: false,
+        );
+        $productWithoutReservation = $this->product($businessWithoutReservation, stock: 5, salePrice: 100);
+
+        [$businessWithReservation, $userWithReservation] = $this->tenant(
+            modules: ['credits'],
+            enableCredits: true,
+            reserveStockOnCreditReservations: true,
+        );
+        $productWithReservation = $this->product($businessWithReservation, stock: 5, salePrice: 100);
+
+        $this->actingAs($userWithoutReservation)
+            ->post(route('credits.receipts.store'), $this->creditPayload($productWithoutReservation, 2))
+            ->assertSessionHasNoErrors();
+        $this->actingAs($userWithReservation)
+            ->post(route('credits.receipts.store'), $this->creditPayload($productWithReservation, 2))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(0, StockAvailability::reservedStock(
+            $productWithoutReservation,
+            null,
+            BranchInventory::defaultBranch($businessWithoutReservation->id)->id,
+        ));
+        $this->assertSame(2, StockAvailability::reservedStock(
+            $productWithReservation,
+            null,
+            BranchInventory::defaultBranch($businessWithReservation->id)->id,
+        ));
+    }
+
+    public function test_disabling_credit_reservation_stock_setting_releases_existing_reserved_quantities(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['credits'], enableCredits: true);
+        $product = $this->product($business, stock: 5, salePrice: 100);
+
+        $this->actingAs($user)
+            ->post(route('credits.receipts.store'), $this->creditPayload($product, 3))
+            ->assertSessionHasNoErrors();
+
+        $line = CreditReceiptLine::query()->where('business_id', $business->id)->firstOrFail();
+        $this->assertSame(3, $line->qty_reserved);
+
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'reserve_stock_on_credit_reservations' => false,
+        ]);
+        Credits::releaseReservationStock($business->id);
+
+        $line->refresh();
+        $this->assertSame(0, $line->qty_reserved);
+        $this->assertSame(3, $line->qty_pending);
+        $this->assertSame(0, StockAvailability::reservedStock(
+            $product,
+            null,
+            BranchInventory::defaultBranch($business->id)->id,
+        ));
+    }
+
+    public function test_credit_reservation_without_stock_reserve_validates_stock_when_generating_sale(): void
+    {
+        [$business, $user] = $this->tenant(
+            modules: ['pos', 'credits', 'cash_register'],
+            enableCredits: true,
+            allowNegativeStock: false,
+            reserveStockOnCreditReservations: false,
+        );
+        Permissions::assignDirectPermissions($user, [Permissions::CREDITS_INVOICE]);
+        $product = $this->product($business, stock: 0, salePrice: 100);
+
+        $this->actingAs($user)
+            ->post(route('credits.receipts.store'), $this->creditPayload($product, 2))
+            ->assertSessionHasNoErrors();
+        $line = CreditReceiptLine::query()->where('business_id', $business->id)->firstOrFail();
+        $this->openCashRegister($business, $user);
+
+        $payload = $this->salePayload($product, quantity: 2, total: 200, itemOverrides: ['credit_line_id' => $line->id]);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $payload)
+            ->assertSessionHasErrors([
+                'items' => 'No hay suficiente stock disponible para generar la venta.',
+            ]);
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertSame(2, $line->refresh()->qty_pending);
     }
 
     public function test_credit_receipt_rejects_final_consumer_customer(): void
@@ -3089,6 +3245,7 @@ class CriticalPosFelFlowTest extends TestCase
         bool $enableCredits = false,
         string $pricingScope = 'global',
         bool $allowNegativeStock = false,
+        bool $reserveStockOnCreditReservations = true,
     ): array
     {
         $business = Business::create([
@@ -3110,6 +3267,7 @@ class CriticalPosFelFlowTest extends TestCase
             'remember_last_customer_product_price' => false,
             'enable_credit_sales' => $enableCredits,
             'allow_negative_stock' => $allowNegativeStock,
+            'reserve_stock_on_credit_reservations' => $reserveStockOnCreditReservations,
             'allow_receipts' => $allowReceipts,
             'allow_invoices' => $allowInvoices,
         ]);

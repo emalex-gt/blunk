@@ -86,7 +86,7 @@ class AuthenticationTest extends TestCase
         $this->post('/login', [
             'email' => $user->email,
             'password' => 'password',
-        ])->assertRedirect(route('dashboard', absolute: false));
+        ])->assertRedirect(route('profile.edit', absolute: false));
 
         $this->withSession([
             'active_business_id' => 123,
@@ -128,7 +128,7 @@ class AuthenticationTest extends TestCase
         ]);
 
         $this->assertAuthenticated();
-        $response->assertRedirect(route('dashboard', absolute: false));
+        $response->assertRedirect(route('profile.edit', absolute: false));
     }
 
     public function test_users_can_not_authenticate_with_invalid_password(): void
@@ -171,7 +171,7 @@ class AuthenticationTest extends TestCase
         $this->post('/login', [
             'email' => $user->email,
             'password' => 'password',
-        ])->assertRedirect(route('dashboard', absolute: false));
+        ])->assertRedirect(route('profile.edit', absolute: false));
 
         $this->post('/logout')->assertRedirect(route('login'));
         $this->assertGuest();
@@ -179,7 +179,7 @@ class AuthenticationTest extends TestCase
         $this->post('/login', [
             'email' => $user->email,
             'password' => 'password',
-        ])->assertRedirect(route('dashboard', absolute: false));
+        ])->assertRedirect(route('profile.edit', absolute: false));
 
         $this->assertAuthenticatedAs($user);
     }
@@ -199,9 +199,44 @@ class AuthenticationTest extends TestCase
         $this->post('/login', [
             'email' => $userB->email,
             'password' => 'password',
-        ])->assertRedirect(route('dashboard', absolute: false));
+        ])->assertRedirect(route('profile.edit', absolute: false));
 
         $this->assertAuthenticatedAs($userB);
+    }
+
+    public function test_authenticated_user_without_pos_permission_does_not_get_403_when_visiting_login(): void
+    {
+        $user = User::factory()->create();
+
+        $this->actingAs($user)
+            ->get(route('login'))
+            ->assertRedirect(route('profile.edit', absolute: false));
+
+        $this->actingAs($user)
+            ->followingRedirects()
+            ->get(route('login'))
+            ->assertOk();
+    }
+
+    public function test_guest_login_page_ignores_all_stale_tenant_and_branch_session_keys(): void
+    {
+        $business = Business::create([
+            'name' => 'Stale Session Tenant',
+            'slug' => 'stale-session-tenant-'.uniqid(),
+            'currency' => 'GTQ',
+            'country' => 'GT',
+            'is_active' => true,
+        ]);
+
+        $this->withSession([
+            'current_business_id' => $business->id,
+            'active_branch_id' => 123,
+            'selected_branch_id' => 456,
+            'branch_id' => 789,
+            'tenant_id' => $business->id,
+            'business_id' => $business->id,
+            'active_business_id' => $business->id,
+        ])->get(route('login'))->assertOk();
     }
 
     private function tenantUser(): array

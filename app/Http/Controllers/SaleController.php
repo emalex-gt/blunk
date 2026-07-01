@@ -32,6 +32,7 @@ use App\Support\Inventory\StockPolicy;
 use App\Support\Permissions;
 use App\Support\PriceLists;
 use App\Support\StockAvailability;
+use App\Support\GuatemalaLocations;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -123,7 +124,7 @@ class SaleController extends Controller
                 ->with('creditAccount:id,customer_id,credit_limit,current_balance,is_blocked')
                 ->latest()
                 ->limit(50)
-                ->get(['id', 'name', 'doc_type', 'doc_number', 'tax_condition', 'address', 'phone', 'country', 'is_final_consumer', 'name_locked', 'tax_lookup_verified_at']),
+                ->get(['id', 'name', 'commercial_name', 'doc_type', 'doc_number', 'tax_condition', 'address', 'department', 'municipality', 'phone', 'country', 'is_final_consumer', 'name_locked', 'tax_lookup_verified_at']),
         ]);
     }
 
@@ -164,10 +165,13 @@ class SaleController extends Controller
             'customer' => ['nullable', 'array'],
             'customer.id' => ['nullable', 'integer', 'exists:customers,id'],
             'customer.name' => ['nullable', 'string', 'max:255'],
+            'customer.commercial_name' => ['nullable', 'string', 'max:255'],
             'customer.doc_type' => ['nullable', 'string', 'max:50'],
             'customer.doc_number' => ['nullable', 'string', 'max:50'],
             'customer.tax_condition' => ['nullable', 'string', 'max:100'],
             'customer.address' => ['nullable', 'string', 'max:255'],
+            'customer.department' => ['nullable', 'string', 'max:100'],
+            'customer.municipality' => ['nullable', 'string', 'max:100'],
             'customer.phone' => ['nullable', 'string', 'max:50'],
             'customer.country' => ['nullable', 'in:GT,AR'],
             'customer.consumidor_final' => ['nullable', 'boolean'],
@@ -354,12 +358,16 @@ class SaleController extends Controller
                         ]);
                     }
 
-                    $availableStock += $quantity;
+                    if (Credits::reserveStockOnCreditReservations($businessId) && (int) $creditLine->qty_reserved > 0) {
+                        $availableStock += min($quantity, (int) $creditLine->qty_reserved);
+                    }
                 }
 
                 if (! StockPolicy::allowsNegativeStock($business) && $availableStock < $quantity) {
                     throw ValidationException::withMessages([
-                        'items' => 'No hay suficiente stock disponible.',
+                        'items' => $creditLine
+                            ? 'No hay suficiente stock disponible para generar la venta.'
+                            : 'No hay suficiente stock disponible.',
                     ]);
                 }
 
@@ -1521,8 +1529,8 @@ class SaleController extends Controller
             'customer_doc_number' => $this->normalizeDocument($customerData['doc_number'] ?? $customer?->doc_number),
             'customer_address' => trim((string) ($customerData['address'] ?? '')) ?: $customer?->address,
             'customer_postal_code' => $customer?->postal_code,
-            'customer_municipality' => $customer?->municipality,
-            'customer_department' => $customer?->department,
+            'customer_municipality' => trim((string) ($customerData['municipality'] ?? '')) ?: $customer?->municipality,
+            'customer_department' => trim((string) ($customerData['department'] ?? '')) ?: $customer?->department,
             'customer_country' => $customer?->country ?: 'GT',
             'customer_phone' => trim((string) ($customerData['phone'] ?? '')) ?: $customer?->phone,
         ];
@@ -1537,32 +1545,50 @@ class SaleController extends Controller
         $docType = $customerData['doc_type'] ?? null;
         $docNumber = $this->normalizeDocument($customerData['doc_number'] ?? null);
         $name = trim((string) ($customerData['name'] ?? ''));
+        $commercialName = trim((string) ($customerData['commercial_name'] ?? ''));
+        $department = trim((string) ($customerData['department'] ?? ''));
+        $municipality = trim((string) ($customerData['municipality'] ?? ''));
+
+        $this->validateCustomerLocation($customerCountry, $department, $municipality);
 
         if ($customerCountry === 'GT' && ($customerData['consumidor_final'] ?? false)) {
-            $name = $name !== '' ? $name : 'Consumidor Final';
-            $customer = Customer::query()
-                ->where('business_id', $businessId)
-                ->where('doc_type', 'CF')
-                ->where('doc_number', 'CF')
-                ->whereRaw('LOWER(name) = ?', [strtolower($name)])
-                ->first();
-
+            $name = $name !== '' ? $name : ($commercialName !== '' ? $commercialName : 'Consumidor Final');
             $payload = [
                 'name' => $name,
+                'commercial_name' => $commercialName !== '' ? $commercialName : null,
                 'doc_type' => 'CF',
                 'doc_number' => 'CF',
                 'tax_condition' => null,
                 'address' => $customerData['address'] ?? null,
+                'department' => $department !== '' ? $department : null,
+                'municipality' => $municipality !== '' ? $municipality : null,
                 'phone' => $customerData['phone'] ?? null,
                 'country' => 'GT',
                 'is_final_consumer' => true,
                 'name_locked' => false,
             ];
 
-            if ($customer) {
-                $customer->update($payload);
+            if (! empty($customerData['id'])) {
+                $customer = Customer::query()
+                    ->where('business_id', $businessId)
+                    ->find($customerData['id']);
 
-                return $customer;
+                if ($customer) {
+                    $customer->update($payload);
+
+                    return $customer;
+                }
+            }
+
+            $hasCustomerDetails = $commercialName !== ''
+                || trim((string) ($customerData['address'] ?? '')) !== ''
+                || $department !== ''
+                || $municipality !== ''
+                || trim((string) ($customerData['phone'] ?? '')) !== ''
+                || strcasecmp($name, 'Consumidor Final') !== 0;
+
+            if (! $hasCustomerDetails) {
+                return null;
             }
 
             return Customer::create([
@@ -1587,7 +1613,7 @@ class SaleController extends Controller
         }
 
         if ($customerCountry === 'GT') {
-            if ($docNumber === '' && $name === '') {
+            if ($docNumber === '' && $name === '' && $commercialName === '') {
                 return null;
             }
 
@@ -1642,7 +1668,7 @@ class SaleController extends Controller
         }
 
         if ($name === '') {
-            $name = $docNumber !== '' ? "Cliente {$docNumber}" : 'Cliente';
+            $name = $commercialName !== '' ? $commercialName : ($docNumber !== '' ? "Cliente {$docNumber}" : 'Cliente');
         }
 
         $query = Customer::query()->where('business_id', $businessId);
@@ -1651,16 +1677,17 @@ class SaleController extends Controller
             $customer = (clone $query)->find($customerData['id']);
         } elseif ($docNumber !== '') {
             $customer = (clone $query)->where('doc_number', $docNumber)->first();
-        } else {
-            $customer = (clone $query)->whereRaw('LOWER(name) = ?', [strtolower($name)])->first();
         }
 
         $payload = [
             'name' => $name,
+            'commercial_name' => $commercialName !== '' ? $commercialName : null,
             'doc_type' => $docType,
             'doc_number' => $docNumber !== '' ? $docNumber : null,
             'tax_condition' => $customerData['tax_condition'] ?? null,
             'address' => $customerData['address'] ?? null,
+            'department' => $department !== '' ? $department : null,
+            'municipality' => $municipality !== '' ? $municipality : null,
             'phone' => $customerData['phone'] ?? null,
             'country' => $customerCountry,
             'is_final_consumer' => $customerCountry === 'GT' ? false : ($docType === 'Consumidor Final'),
@@ -1684,6 +1711,25 @@ class SaleController extends Controller
     private function ensureSaleBelongsToCurrentBusiness(Sale $sale): void
     {
         abort_unless((int) $sale->business_id === (int) currentBusinessId(), 403);
+    }
+
+    private function validateCustomerLocation(string $country, ?string $department, ?string $municipality): void
+    {
+        if ($country !== 'GT') {
+            return;
+        }
+
+        if (! GuatemalaLocations::isValidDepartment($department)) {
+            throw ValidationException::withMessages([
+                'customer.department' => 'Selecciona un departamento válido.',
+            ]);
+        }
+
+        if (! GuatemalaLocations::isValidMunicipality($department, $municipality)) {
+            throw ValidationException::withMessages([
+                'customer.municipality' => 'Selecciona un municipio válido para el departamento.',
+            ]);
+        }
     }
 
     private function createFelReconciliationRequest(array $payload): void

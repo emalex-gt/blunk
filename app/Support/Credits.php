@@ -4,6 +4,7 @@ namespace App\Support;
 
 use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
+use App\Models\StockReservation;
 use App\Models\TenantSetting;
 
 class Credits
@@ -19,6 +20,39 @@ class Credits
         return (bool) TenantSetting::query()
             ->where('business_id', $businessId)
             ->value('enable_credit_sales');
+    }
+
+    public static function reserveStockOnCreditReservations(?int $businessId = null): bool
+    {
+        $businessId ??= currentBusinessId();
+
+        if (! $businessId) {
+            return true;
+        }
+
+        $value = TenantSetting::query()
+            ->where('business_id', $businessId)
+            ->value('reserve_stock_on_credit_reservations');
+
+        return $value === null ? true : (bool) $value;
+    }
+
+    public static function releaseReservationStock(int $businessId): void
+    {
+        CreditReceiptLine::query()
+            ->where('business_id', $businessId)
+            ->whereIn('status', ['pending', 'partially_invoiced'])
+            ->where('qty_reserved', '>', 0)
+            ->update(['qty_reserved' => 0]);
+
+        StockReservation::query()
+            ->where('business_id', $businessId)
+            ->where('source_type', 'credit_receipt')
+            ->where('status', 'active')
+            ->update([
+                'status' => 'released',
+                'released_at' => now(),
+            ]);
     }
 
     public static function formatNumber(CreditReceipt|int|null $receipt): string
@@ -40,6 +74,7 @@ class Credits
         };
 
         $line->update([
+            'qty_reserved' => min((int) $line->qty_reserved, $pending),
             'qty_pending' => $pending,
             'pending_total' => $pendingTotal,
             'status' => $status,

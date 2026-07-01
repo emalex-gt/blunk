@@ -135,6 +135,7 @@ class CreditReceiptController extends Controller
         $receipt = DB::transaction(function () use ($request, $businessId, $data, $docType, $docNumber, $activeBranch) {
             $branch = $activeBranch;
             $customer = $this->resolveCustomer($data['customer']);
+            $shouldReserveStock = Credits::reserveStockOnCreditReservations($businessId);
             $subtotal = 0.0;
             $preparedLines = [];
 
@@ -153,7 +154,7 @@ class CreditReceiptController extends Controller
                 $quantity = (int) $item['quantity'];
                 $available = StockAvailability::availableStock($product, null, $branch->id);
 
-                if (! StockPolicy::allowsNegativeStockForBusinessId($businessId) && $available < $quantity) {
+                if ($shouldReserveStock && ! StockPolicy::allowsNegativeStockForBusinessId($businessId) && $available < $quantity) {
                     throw ValidationException::withMessages([
                         'items' => 'No hay suficiente stock disponible.',
                     ]);
@@ -194,7 +195,7 @@ class CreditReceiptController extends Controller
                     'product_name' => $product->name,
                     'sku' => $product->code,
                     'quantity' => $line['quantity'],
-                    'qty_reserved' => $line['quantity'],
+                    'qty_reserved' => $shouldReserveStock ? $line['quantity'] : 0,
                     'qty_pending' => $line['quantity'],
                     'unit_price' => $line['unitPrice'],
                     'line_total' => $line['lineTotal'],

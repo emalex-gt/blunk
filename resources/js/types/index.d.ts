@@ -29,6 +29,7 @@ export interface TenantSettings {
     use_product_images: boolean;
     max_users: number;
     receipt_format?: 'ticket' | 'document' | null;
+    reserve_stock_on_credit_reservations?: boolean;
 }
 
 export type PageProps<

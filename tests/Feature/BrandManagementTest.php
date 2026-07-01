@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Brand;
 use App\Models\Business;
+use App\Models\Category;
 use App\Models\Product;
 use App\Models\ProductLocation;
 use App\Models\TenantModule;
@@ -357,6 +358,151 @@ class BrandManagementTest extends TestCase
                 ->component('Products/Index')
                 ->where('locations.0.name', 'Bodega A')
                 ->missing('locations.1')
+            );
+    }
+
+    public function test_products_index_is_paginated_by_default_and_does_not_return_all_products(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+
+        foreach (range(1, 120) as $index) {
+            Product::create([
+                'business_id' => $business->id,
+                'name' => sprintf('Producto %03d', $index),
+                'code' => sprintf('PAG-%03d', $index),
+                'cost_price' => 1,
+                'sale_price' => 2,
+                'stock' => 0,
+                'min_stock' => 0,
+                'is_active' => true,
+            ]);
+        }
+
+        $this->actingAs($user)
+            ->get(route('products.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Products/Index')
+                ->has('products.data', 25)
+                ->where('products.total', 120)
+                ->where('products.per_page', 25)
+            );
+    }
+
+    public function test_products_index_per_page_is_limited_to_allowed_values(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+
+        foreach (range(1, 40) as $index) {
+            Product::create([
+                'business_id' => $business->id,
+                'name' => sprintf('Producto limite %03d', $index),
+                'code' => sprintf('LIMIT-%03d', $index),
+                'cost_price' => 1,
+                'sale_price' => 2,
+                'stock' => 0,
+                'min_stock' => 0,
+                'is_active' => true,
+            ]);
+        }
+
+        $this->actingAs($user)
+            ->get(route('products.index', ['per_page' => 500]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('products.data', 25)
+                ->where('products.per_page', 25)
+                ->where('filters.per_page', 25)
+            );
+    }
+
+    public function test_products_index_filters_by_search_category_brand_and_location(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+        $category = Category::create(['business_id' => $business->id, 'name' => 'Bombas']);
+        $brand = Brand::create(['business_id' => $business->id, 'name' => 'Kia', 'is_active' => true]);
+        $location = ProductLocation::create(['business_id' => $business->id, 'name' => 'Pasillo 3', 'is_active' => true]);
+
+        Product::create([
+            'business_id' => $business->id,
+            'category_id' => $category->id,
+            'brand_id' => $brand->id,
+            'location_id' => $location->id,
+            'location' => $location->name,
+            'name' => 'BOMBA DE INYECCION KIA BONGO',
+            'code' => '33100 4X700',
+            'barcode' => 'FILTRO-001',
+            'cost_price' => 1,
+            'sale_price' => 2,
+            'stock' => 0,
+            'min_stock' => 0,
+            'is_active' => true,
+        ]);
+        Product::create([
+            'business_id' => $business->id,
+            'name' => 'Producto oculto',
+            'code' => 'OCULTO-001',
+            'cost_price' => 1,
+            'sale_price' => 2,
+            'stock' => 0,
+            'min_stock' => 0,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('products.index', [
+                'search' => '4X700',
+                'category_id' => $category->id,
+                'brand_id' => $brand->id,
+                'location_id' => $location->id,
+                'status' => 'active',
+                'per_page' => 50,
+            ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Products/Index')
+                ->has('products.data', 1)
+                ->where('products.data.0.code', '33100 4X700')
+                ->where('filters.category_id', $category->id)
+                ->where('filters.brand_id', $brand->id)
+                ->where('filters.location_id', $location->id)
+                ->where('filters.status', 'active')
+                ->where('filters.per_page', 50)
+            );
+    }
+
+    public function test_products_index_does_not_show_products_from_another_business(): void
+    {
+        [$businessA] = $this->tenantUser('owner');
+        [$businessB, $userB] = $this->tenantUser('owner');
+
+        Product::create([
+            'business_id' => $businessA->id,
+            'name' => 'Producto negocio A',
+            'code' => 'TENANT-A-PRODUCT',
+            'cost_price' => 1,
+            'sale_price' => 2,
+            'stock' => 0,
+            'min_stock' => 0,
+            'is_active' => true,
+        ]);
+        Product::create([
+            'business_id' => $businessB->id,
+            'name' => 'Producto negocio B',
+            'code' => 'TENANT-B-PRODUCT',
+            'cost_price' => 1,
+            'sale_price' => 2,
+            'stock' => 0,
+            'min_stock' => 0,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($userB)
+            ->get(route('products.index', ['search' => 'TENANT']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('products.data', 1)
+                ->where('products.data.0.code', 'TENANT-B-PRODUCT')
             );
     }
 

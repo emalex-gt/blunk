@@ -36,9 +36,35 @@ class ProductController extends Controller
     {
         $businessId = currentBusinessId();
         $search = $request->string('search')->toString();
+        $perPage = in_array($request->integer('per_page', 25), [25, 50, 100], true)
+            ? $request->integer('per_page', 25)
+            : 25;
+        $categoryId = $request->integer('category_id') ?: null;
+        $brandId = $request->integer('brand_id') ?: null;
+        $locationId = $request->integer('location_id') ?: null;
+        $status = $request->string('status')->toString();
 
         $products = Product::query()
             ->where('business_id', $businessId)
+            ->select([
+                'id',
+                'business_id',
+                'category_id',
+                'brand_id',
+                'location_id',
+                'name',
+                'code',
+                'barcode',
+                'cost_price',
+                'sale_price',
+                'stock',
+                'min_stock',
+                'location',
+                'is_active',
+                'image_url',
+                'image_public_id',
+                'created_at',
+            ])
             ->with([
                 'category:id,name',
                 'brand:id,name',
@@ -54,26 +80,35 @@ class ProductController extends Controller
                         ->orWhere('code', 'ilike', "%{$search}%")
                         ->orWhere('barcode', 'ilike', "%{$search}%")
                         ->orWhere('location', 'ilike', "%{$search}%")
+                        ->orWhereHas('category', fn ($query) => $query->where('name', 'ilike', "%{$search}%"))
                         ->orWhereHas('productLocation', fn ($query) => $query->where('name', 'ilike', "%{$search}%"))
                         ->orWhereHas('brand', fn ($query) => $query->where('name', 'ilike', "%{$search}%"));
                 });
             })
+            ->when($categoryId, fn ($query) => $query->where('category_id', $categoryId))
+            ->when($brandId, fn ($query) => $query->where('brand_id', $brandId))
+            ->when($locationId, fn ($query) => $query->where('location_id', $locationId))
+            ->when($status === 'active', fn ($query) => $query->where('is_active', true))
+            ->when($status === 'inactive', fn ($query) => $query->where('is_active', false))
             ->orderBy('name')
-            ->get();
+            ->paginate($perPage)
+            ->withQueryString();
         $activeBranch = BranchInventory::activeBranch($businessId);
-        BranchInventory::applyBranchStockAndPrices($products, $businessId, $activeBranch->id);
-        PriceLists::applyBranchPricesToProducts($products, $businessId, $activeBranch->id);
+        $pageProducts = $products->getCollection();
+        BranchInventory::applyBranchStockAndPrices($pageProducts, $businessId, $activeBranch->id);
+        PriceLists::applyBranchPricesToProducts($pageProducts, $businessId, $activeBranch->id);
         $supplierCostHistory = ProductSupplierCostHistory::forProducts(
             $businessId,
-            $products->pluck('id')->all(),
+            $pageProducts->pluck('id')->all(),
         );
 
-        $products->each(function (Product $product) use ($supplierCostHistory) {
+        $pageProducts->each(function (Product $product) use ($supplierCostHistory) {
             $product->setAttribute(
                 'supplier_cost_history',
                 $supplierCostHistory->get($product->id, collect())->values(),
             );
         });
+        $products->setCollection($pageProducts);
 
         return Inertia::render('Products/Index', [
             'products' => $products,
@@ -86,18 +121,28 @@ class ProductController extends Controller
             'categories' => Category::query()
                 ->where('business_id', $businessId)
                 ->orderBy('name')
+                ->limit(200)
                 ->get(['id', 'name']),
             'brands' => Brand::query()
                 ->where('business_id', $businessId)
                 ->where('is_active', true)
                 ->orderBy('name')
+                ->limit(200)
                 ->get(['id', 'name']),
             'locations' => ProductLocation::query()
                 ->where('business_id', $businessId)
                 ->where('is_active', true)
                 ->orderBy('name')
+                ->limit(200)
                 ->get(['id', 'name']),
-            'filters' => ['search' => $search],
+            'filters' => [
+                'search' => $search,
+                'category_id' => $categoryId,
+                'brand_id' => $brandId,
+                'location_id' => $locationId,
+                'status' => in_array($status, ['active', 'inactive'], true) ? $status : '',
+                'per_page' => $perPage,
+            ],
         ]);
     }
 

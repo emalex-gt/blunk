@@ -12,6 +12,7 @@ class Customer extends Model
     protected $fillable = [
         'business_id',
         'name',
+        'commercial_name',
         'doc_type',
         'doc_number',
         'tax_condition',
@@ -37,6 +38,11 @@ class Customer extends Model
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
+    }
+
+    public function getDisplayNameAttribute(): string
+    {
+        return $this->commercial_name ?: $this->name;
     }
 
     public function sales(): HasMany

@@ -36,6 +36,41 @@ class HandleInertiaRequests extends Middleware
     public function share(Request $request): array
     {
         $user = $request->user();
+
+        if (! $user) {
+            return array_merge(parent::share($request), [
+                'auth' => [
+                    'user' => null,
+                    'permissions' => [],
+                ],
+                'current_business_id' => null,
+                'current_business' => null,
+                'available_businesses' => null,
+                'business' => null,
+                'tenant_settings' => null,
+                'fel_settings' => null,
+                'currency_format' => Currency::forCountry('GT'),
+                'subscription_status' => null,
+                'enabled_modules' => [],
+                'branches_enabled' => false,
+                'branch_can_switch' => false,
+                'active_branch' => null,
+                'branches' => [],
+                'use_product_images' => true,
+                'flash' => [
+                    'success' => fn () => $request->session()->get('success'),
+                    'receipt_sale_id' => fn () => $request->session()->get('receipt_sale_id'),
+                    'fel_print_sale_id' => fn () => $request->session()->get('fel_print_sale_id'),
+                    'fel_print_url' => fn () => $request->session()->get('fel_print_url'),
+                    'fel_success_message' => fn () => $request->session()->get('fel_success_message'),
+                    'credit_print_url' => fn () => $request->session()->get('credit_print_url'),
+                    'credit_receipt_id' => fn () => $request->session()->get('credit_receipt_id'),
+                    'credit_payment_print_url' => fn () => $request->session()->get('credit_payment_print_url'),
+                    'cash_closing_print_id' => fn () => $request->session()->get('cash_closing_print_id'),
+                ],
+            ]);
+        }
+
         $businessId = $user ? currentBusinessId() : null;
 
         return array_merge(parent::share($request), [

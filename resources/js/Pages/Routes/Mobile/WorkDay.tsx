@@ -1,16 +1,37 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, Link, router } from '@inertiajs/react';
+import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
+import { Head, Link, router, useForm } from '@inertiajs/react';
+import { FormEvent, useState } from 'react';
 
 type Visit = {
     id: number;
     status: string;
     visit_order: number | null;
-    customer: { name: string; doc_number: string | null; address: string | null; phone: string | null };
+    customer: { name: string; commercial_name: string | null; doc_number: string | null; address: string | null; department: string | null; municipality: string | null; phone: string | null };
     pre_sale?: { id: number; status: string; total: string } | null;
 };
 
 export default function WorkDay({ workDay, visits }: { workDay: { id: number; status: string; zone?: { name: string }; branch?: { name: string } }; visits: Visit[] }) {
     const mapHref = (visit: Visit) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(visit.customer.address || visit.customer.name)}`;
+    const [showCustomerForm, setShowCustomerForm] = useState(false);
+    const customerForm = useForm({
+        name: '',
+        commercial_name: '',
+        doc_number: '',
+        phone: '',
+        address: '',
+        department: '',
+        municipality: '',
+        notes: '',
+        work_day: '',
+    });
+
+    const createCustomer = (event: FormEvent) => {
+        event.preventDefault();
+        customerForm.post(route('routes.mobile.work-days.customers.store', workDay.id), {
+            preserveScroll: true,
+        });
+    };
 
     return (
         <AuthenticatedLayout>
@@ -20,13 +41,108 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
                     <h1 className="text-2xl font-semibold text-slate-950">{workDay.zone?.name}</h1>
                     <p className="text-sm text-slate-500">{workDay.branch?.name} · {workDay.status}</p>
                 </div>
+                {workDay.status === 'open' && (
+                    <button
+                        type="button"
+                        onClick={() => setShowCustomerForm((value) => !value)}
+                        className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-base font-semibold text-white shadow-sm"
+                    >
+                        Nuevo cliente
+                    </button>
+                )}
+
+                {showCustomerForm && (
+                    <form onSubmit={createCustomer} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-indigo-100">
+                        <div className="mb-3">
+                            <h2 className="text-lg font-semibold text-slate-950">Nuevo cliente</h2>
+                            <p className="text-sm text-slate-500">Se agregará a esta zona y a la jornada actual.</p>
+                        </div>
+                        {customerForm.errors.work_day && (
+                            <div className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{customerForm.errors.work_day}</div>
+                        )}
+                        <div className="space-y-3">
+                            <label className="block text-sm font-medium text-slate-700">
+                                Nombre
+                                <input
+                                    value={customerForm.data.name}
+                                    onChange={(event) => customerForm.setData('name', event.target.value)}
+                                    className="mt-1 w-full rounded-xl border-slate-200 text-base"
+                                />
+                                {customerForm.errors.name && <span className="mt-1 block text-xs text-red-600">{customerForm.errors.name}</span>}
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                                Nombre del negocio
+                                <input
+                                    value={customerForm.data.commercial_name}
+                                    onChange={(event) => customerForm.setData('commercial_name', event.target.value)}
+                                    className="mt-1 w-full rounded-xl border-slate-200 text-base"
+                                />
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                                NIT
+                                <input
+                                    value={customerForm.data.doc_number}
+                                    onChange={(event) => customerForm.setData('doc_number', event.target.value)}
+                                    placeholder="Opcional"
+                                    className="mt-1 w-full rounded-xl border-slate-200 text-base"
+                                />
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                                Teléfono
+                                <input
+                                    value={customerForm.data.phone}
+                                    onChange={(event) => customerForm.setData('phone', event.target.value)}
+                                    className="mt-1 w-full rounded-xl border-slate-200 text-base"
+                                />
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                                Dirección
+                                <input
+                                    value={customerForm.data.address}
+                                    onChange={(event) => customerForm.setData('address', event.target.value)}
+                                    className="mt-1 w-full rounded-xl border-slate-200 text-base"
+                                />
+                            </label>
+                            <GuatemalaLocationSelects
+                                department={customerForm.data.department}
+                                municipality={customerForm.data.municipality}
+                                onDepartmentChange={(value) => customerForm.setData('department', value)}
+                                onMunicipalityChange={(value) => customerForm.setData('municipality', value)}
+                                departmentError={customerForm.errors.department}
+                                municipalityError={customerForm.errors.municipality}
+                            />
+                            <label className="block text-sm font-medium text-slate-700">
+                                Referencia
+                                <textarea
+                                    value={customerForm.data.notes}
+                                    onChange={(event) => customerForm.setData('notes', event.target.value)}
+                                    className="mt-1 w-full rounded-xl border-slate-200 text-base"
+                                    rows={2}
+                                />
+                            </label>
+                        </div>
+                        <div className="sticky bottom-20 mt-4 grid grid-cols-2 gap-2 bg-white py-2">
+                            <button
+                                type="button"
+                                onClick={() => setShowCustomerForm(false)}
+                                className="rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-700 ring-1 ring-slate-200"
+                            >
+                                Cancelar
+                            </button>
+                            <button disabled={customerForm.processing} className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white">
+                                Crear cliente
+                            </button>
+                        </div>
+                    </form>
+                )}
+
                 {visits.map((visit) => (
                     <div key={visit.id} className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
                         <div className="flex items-start justify-between gap-3">
                             <div>
                                 <p className="text-xs font-semibold uppercase text-slate-400">#{visit.visit_order ?? '-'}</p>
-                                <h2 className="text-lg font-semibold text-slate-950">{visit.customer.name}</h2>
-                                <p className="text-sm text-slate-500">{visit.customer.doc_number ?? '-'}</p>
+                                <h2 className="text-lg font-semibold text-slate-950">{visit.customer.commercial_name || visit.customer.name}</h2>
+                                <p className="text-sm text-slate-500">{visit.customer.name}{visit.customer.doc_number ? ` · NIT ${visit.customer.doc_number}` : ''}</p>
                             </div>
                             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{visit.status}</span>
                         </div>

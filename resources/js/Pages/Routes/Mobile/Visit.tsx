@@ -1,6 +1,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
 import { Head, Link, router, useForm } from '@inertiajs/react';
-import { FormEvent, useMemo } from 'react';
+import { FormEvent, useMemo, useState } from 'react';
 
 type Product = {
     id: number;
@@ -23,7 +24,7 @@ export default function Visit({
     filters,
     allowNegativeStock,
 }: {
-    visit: { id: number; customer: { name: string; doc_number: string | null; address: string | null; phone: string | null }; work_day?: { status: string }; zone?: { name: string } };
+    visit: { id: number; customer: { name: string; commercial_name: string | null; doc_number: string | null; address: string | null; department: string | null; municipality: string | null; phone: string | null }; work_day?: { status: string }; zone?: { name: string } };
     preSale: { id: number; status: string; notes: string | null; items: ExistingItem[] } | null;
     products: Product[];
     filters: { search?: string };
@@ -36,6 +37,15 @@ export default function Visit({
         discount: Number(item.discount ?? 0),
     }));
     const form = useForm<{ notes: string; items: Item[] }>({ notes: preSale?.notes ?? '', items: initialItems });
+    const [editingCustomer, setEditingCustomer] = useState(false);
+    const customerForm = useForm({
+        commercial_name: visit.customer.commercial_name ?? '',
+        phone: visit.customer.phone ?? '',
+        address: visit.customer.address ?? '',
+        department: visit.customer.department ?? '',
+        municipality: visit.customer.municipality ?? '',
+        notes: '',
+    });
     const total = useMemo(() => form.data.items.reduce((sum, item) => {
         const product = products.find((product) => product.id === item.product_id);
         return sum + (Number(product?.sale_price ?? 0) * item.quantity) - item.discount;
@@ -65,17 +75,61 @@ export default function Visit({
         form.post(route('routes.mobile.visits.pre-sale.store', visit.id), { preserveScroll: true });
     };
 
+    const updateCustomer = (event: FormEvent) => {
+        event.preventDefault();
+        customerForm.put(route('routes.mobile.visits.customer.update', visit.id), {
+            preserveScroll: true,
+            onSuccess: () => setEditingCustomer(false),
+        });
+    };
+
     return (
         <AuthenticatedLayout>
-            <Head title={`Visita ${visit.customer.name}`} />
+            <Head title={`Visita ${visit.customer.commercial_name || visit.customer.name}`} />
             <div className="mx-auto max-w-xl space-y-4 px-4 pb-32 pt-5">
                 <div>
                     <Link href={window.history.length > 1 ? '#' : route('routes.mobile.zones')} onClick={(event) => { event.preventDefault(); window.history.back(); }} className="text-sm font-semibold text-indigo-700">
                         Volver
                     </Link>
-                    <h1 className="mt-2 text-2xl font-semibold text-slate-950">{visit.customer.name}</h1>
+                    <h1 className="mt-2 text-2xl font-semibold text-slate-950">{visit.customer.commercial_name || visit.customer.name}</h1>
+                    <p className="mt-1 text-sm text-slate-600">{[visit.customer.department, visit.customer.municipality].filter(Boolean).join(', ')} {visit.customer.address ? `· ${visit.customer.address}` : ''}</p>
+                    <button type="button" onClick={() => setEditingCustomer((value) => !value)} className="mt-3 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-200">
+                        Editar cliente
+                    </button>
                     <p className="text-sm text-slate-500">{visit.customer.doc_number ?? '-'} · {visit.zone?.name}</p>
                 </div>
+
+                {editingCustomer && (
+                    <form onSubmit={updateCustomer} className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+                        <h2 className="font-semibold text-slate-950">Datos del cliente</h2>
+                        <div className="mt-3 space-y-3">
+                            <label className="block text-sm font-medium text-slate-700">
+                                Nombre del negocio
+                                <input value={customerForm.data.commercial_name} onChange={(event) => customerForm.setData('commercial_name', event.target.value)} className="mt-1 w-full rounded-xl border-slate-200 text-base" />
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                                Teléfono
+                                <input value={customerForm.data.phone} onChange={(event) => customerForm.setData('phone', event.target.value)} className="mt-1 w-full rounded-xl border-slate-200 text-base" />
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                                Dirección
+                                <input value={customerForm.data.address} onChange={(event) => customerForm.setData('address', event.target.value)} className="mt-1 w-full rounded-xl border-slate-200 text-base" />
+                            </label>
+                            <GuatemalaLocationSelects
+                                department={customerForm.data.department}
+                                municipality={customerForm.data.municipality}
+                                onDepartmentChange={(value) => customerForm.setData('department', value)}
+                                onMunicipalityChange={(value) => customerForm.setData('municipality', value)}
+                                departmentError={customerForm.errors.department}
+                                municipalityError={customerForm.errors.municipality}
+                            />
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                            <button type="button" onClick={() => setEditingCustomer(false)} className="rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-700 ring-1 ring-slate-200">Cancelar</button>
+                            <button disabled={customerForm.processing} className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white">Guardar</button>
+                        </div>
+                    </form>
+                )}
 
                 <form onSubmit={search} className="flex gap-2 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
                     <input name="search" defaultValue={filters.search ?? ''} placeholder="Buscar producto, código o barra" className="min-w-0 flex-1 rounded-lg border-slate-200 text-sm" />

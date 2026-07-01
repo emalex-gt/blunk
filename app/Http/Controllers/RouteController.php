@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Branch;
+use App\Models\Business;
 use App\Models\Customer;
 use App\Models\PreSale;
 use App\Models\Product;
@@ -12,6 +13,7 @@ use App\Models\RouteZone;
 use App\Models\RouteZoneCustomer;
 use App\Models\User;
 use App\Support\BranchInventory;
+use App\Support\GuatemalaLocations;
 use App\Support\Inventory\StockReservationService;
 use App\Support\Permissions;
 use App\Support\PriceLists;
@@ -74,7 +76,7 @@ class RouteController extends Controller
             'assignments' => RouteZoneCustomer::query()
                 ->where('business_id', $businessId)
                 ->where('route_zone_id', $zone->id)
-                ->with('customer:id,name,doc_number,address,phone')
+                ->with('customer:id,name,commercial_name,doc_number,address,department,municipality,phone')
                 ->orderByRaw('visit_order IS NULL, visit_order')
                 ->orderBy('id')
                 ->get(),
@@ -83,13 +85,17 @@ class RouteController extends Controller
                 ->when($search, function ($query) use ($search) {
                     $query->where(function ($query) use ($search) {
                         $query->where('name', 'ilike', "%{$search}%")
+                            ->orWhere('commercial_name', 'ilike', "%{$search}%")
                             ->orWhere('doc_number', 'ilike', "%{$search}%")
-                            ->orWhere('phone', 'ilike', "%{$search}%");
+                            ->orWhere('phone', 'ilike', "%{$search}%")
+                            ->orWhere('address', 'ilike', "%{$search}%")
+                            ->orWhere('department', 'ilike', "%{$search}%")
+                            ->orWhere('municipality', 'ilike', "%{$search}%");
                     });
                 })
                 ->orderBy('name')
                 ->limit(25)
-                ->get(['id', 'name', 'doc_number', 'address', 'phone']),
+                ->get(['id', 'name', 'commercial_name', 'doc_number', 'address', 'department', 'municipality', 'phone']),
             'filters' => ['search' => $search],
         ]);
     }
@@ -123,6 +129,29 @@ class RouteController extends Controller
         return back()->with('success', 'Cliente asignado a la zona.');
     }
 
+    public function createZoneCustomer(Request $request, RouteZone $zone): RedirectResponse
+    {
+        $this->authorizeBusiness($zone);
+
+        $data = $this->validateRouteCustomer($request);
+        $result = DB::transaction(function () use ($data, $zone) {
+            $customerResult = $this->findOrCreateRouteCustomer($data);
+            /** @var Customer $customer */
+            $customer = $customerResult['customer'];
+            $assignment = $this->assignCustomerToZone($zone, $customer, $data['notes'] ?? null);
+
+            $this->createMissingVisitsForOpenZoneWorkDays($zone, $customer, $assignment);
+
+            return $customerResult;
+        });
+
+        $message = $result['created']
+            ? 'Cliente creado y asignado a la zona.'
+            : 'El cliente ya existía y fue asignado a la zona.';
+
+        return back()->with('success', $message);
+    }
+
     public function updateZoneCustomer(Request $request, RouteZone $zone, RouteZoneCustomer $assignment): RedirectResponse
     {
         $this->authorizeBusiness($zone);
@@ -137,6 +166,23 @@ class RouteController extends Controller
         $assignment->update($data);
 
         return back()->with('success', 'Orden de visita actualizado.');
+    }
+
+    public function updateZoneCustomerDetails(Request $request, RouteZone $zone, RouteZoneCustomer $assignment): RedirectResponse
+    {
+        $this->authorizeBusiness($zone);
+        abort_unless((int) $assignment->route_zone_id === (int) $zone->id && (int) $assignment->business_id === currentBusinessId(), 403);
+        $assignment->loadMissing('customer');
+        abort_unless((int) $assignment->customer->business_id === currentBusinessId(), 403);
+
+        $data = $this->validateRouteCustomer($request, requireAnyName: true);
+        $this->updateCustomerFromRouteData($assignment->customer, $data, allowFiscalFields: true);
+
+        if (array_key_exists('notes', $data)) {
+            $assignment->update(['notes' => $data['notes'] !== '' ? $data['notes'] : null]);
+        }
+
+        return back()->with('success', 'Cliente actualizado correctamente.');
     }
 
     public function destroyZoneCustomer(RouteZone $zone, RouteZoneCustomer $assignment): RedirectResponse
@@ -264,11 +310,45 @@ class RouteController extends Controller
             'workDay' => $workDay->load(['zone:id,name', 'branch:id,name']),
             'visits' => RouteVisit::query()
                 ->where('route_work_day_id', $workDay->id)
-                ->with(['customer:id,name,doc_number,address,phone', 'preSale:id,route_visit_id,status,total'])
+                ->with(['customer:id,name,commercial_name,doc_number,address,department,municipality,phone', 'preSale:id,route_visit_id,status,total'])
                 ->orderByRaw('visit_order IS NULL, visit_order')
                 ->orderBy('id')
                 ->get(),
         ]);
+    }
+
+    public function createMobileCustomer(Request $request, RouteWorkDay $workDay): RedirectResponse
+    {
+        $this->authorizeSellerWorkDay($request, $workDay);
+        $workDay->loadMissing('zone');
+
+        if ($workDay->status !== 'open') {
+            throw ValidationException::withMessages([
+                'work_day' => 'La jornada ya fue cerrada. No puedes agregar clientes.',
+            ]);
+        }
+
+        abort_unless((int) $workDay->zone?->assigned_user_id === (int) $request->user()->id, 403);
+
+        $data = $this->validateRouteCustomer($request);
+
+        $result = DB::transaction(function () use ($data, $workDay) {
+            $customerResult = $this->findOrCreateRouteCustomer($data);
+            /** @var Customer $customer */
+            $customer = $customerResult['customer'];
+            $assignment = $this->assignCustomerToZone($workDay->zone, $customer, $data['notes'] ?? null);
+            $visit = $this->createVisitForWorkDay($workDay, $customer, $assignment);
+
+            return ['customer_result' => $customerResult, 'visit' => $visit];
+        });
+
+        $message = $result['customer_result']['created']
+            ? 'Cliente creado y asignado a la zona.'
+            : 'El cliente ya existía y fue asignado a la zona.';
+
+        return redirect()
+            ->route('routes.mobile.visits.show', $result['visit'])
+            ->with('success', $message);
     }
 
     public function visit(Request $request, RouteVisit $visit): Response
@@ -307,7 +387,7 @@ class RouteController extends Controller
         });
 
         return Inertia::render('Routes/Mobile/Visit', [
-            'visit' => $visit->load(['customer:id,name,doc_number,address,phone', 'workDay:id,status,work_date', 'zone:id,name']),
+            'visit' => $visit->load(['customer:id,name,commercial_name,doc_number,address,department,municipality,phone', 'workDay:id,status,work_date', 'zone:id,name']),
             'preSale' => PreSale::query()
                 ->where('business_id', currentBusinessId())
                 ->where('route_visit_id', $visit->id)
@@ -426,6 +506,21 @@ class RouteController extends Controller
         return back()->with('success', 'Preventa guardada y stock reservado.');
     }
 
+    public function updateVisitCustomer(Request $request, RouteVisit $visit): RedirectResponse
+    {
+        $this->authorizeSellerVisit($request, $visit);
+        $visit->loadMissing('customer');
+
+        $data = $this->validateRouteCustomer($request, requireAnyName: false);
+        $this->updateCustomerFromRouteData($visit->customer, $data, allowFiscalFields: false);
+
+        if (array_key_exists('notes', $data) && $data['notes'] !== '') {
+            $visit->update(['notes' => $data['notes']]);
+        }
+
+        return back()->with('success', 'Cliente actualizado correctamente.');
+    }
+
     public function cancelPreSale(Request $request, PreSale $preSale, StockReservationService $reservations): RedirectResponse
     {
         abort_unless((int) $preSale->business_id === currentBusinessId(), 403);
@@ -517,6 +612,233 @@ class RouteController extends Controller
         $data['is_active'] = (bool) ($data['is_active'] ?? true);
 
         return $data;
+    }
+
+    private function validateRouteCustomer(Request $request, bool $requireAnyName = true): array
+    {
+        $data = $request->validate([
+            'name' => ['nullable', 'string', 'max:255'],
+            'commercial_name' => ['nullable', 'string', 'max:255'],
+            'doc_number' => ['nullable', 'string', 'max:50'],
+            'phone' => ['nullable', 'string', 'max:50'],
+            'address' => ['nullable', 'string', 'max:255'],
+            'department' => ['nullable', 'string', 'max:100'],
+            'municipality' => ['nullable', 'string', 'max:100'],
+            'notes' => ['nullable', 'string'],
+        ], [
+            'name.required' => 'El nombre del cliente es obligatorio.',
+        ]);
+
+        $data['name'] = trim((string) ($data['name'] ?? ''));
+        $data['commercial_name'] = trim((string) ($data['commercial_name'] ?? ''));
+        if ($requireAnyName && $data['name'] === '' && $data['commercial_name'] === '') {
+            throw ValidationException::withMessages([
+                'name' => 'Debes ingresar nombre o nombre del negocio.',
+            ]);
+        }
+
+        if ($data['name'] === '' && $data['commercial_name'] !== '') {
+            $data['name'] = $data['commercial_name'];
+        }
+
+        $data['doc_number'] = $this->normalizeRouteCustomerDocument($data['doc_number'] ?? null);
+        $data['phone'] = trim((string) ($data['phone'] ?? ''));
+        $data['address'] = trim((string) ($data['address'] ?? ''));
+        $data['department'] = trim((string) ($data['department'] ?? ''));
+        $data['municipality'] = trim((string) ($data['municipality'] ?? ''));
+        $data['notes'] = trim((string) ($data['notes'] ?? ''));
+        $this->validateRouteCustomerLocation($data['department'], $data['municipality']);
+
+        return $data;
+    }
+
+    private function findOrCreateRouteCustomer(array $data): array
+    {
+        $businessId = currentBusinessId();
+        $docNumber = $data['doc_number'];
+        $isFinalConsumer = $docNumber === '' || $docNumber === 'CF';
+
+        if (! $isFinalConsumer) {
+            $existing = Customer::query()
+                ->where('business_id', $businessId)
+                ->whereRaw("UPPER(REPLACE(REPLACE(doc_number, '-', ''), ' ', '')) = ?", [$docNumber])
+                ->where(function ($query) {
+                    $query->where('doc_type', 'NIT')->orWhereNull('doc_type');
+                })
+                ->lockForUpdate()
+                ->first();
+
+            if ($existing) {
+                return ['customer' => $existing, 'created' => false];
+            }
+        }
+
+        $customer = Customer::query()->create([
+            'business_id' => $businessId,
+            'name' => $data['name'],
+            'commercial_name' => $data['commercial_name'] !== '' ? $data['commercial_name'] : null,
+            'doc_type' => $isFinalConsumer ? 'CF' : 'NIT',
+            'doc_number' => $isFinalConsumer ? 'CF' : $docNumber,
+            'address' => $data['address'] !== '' ? $data['address'] : null,
+            'department' => $data['department'] !== '' ? $data['department'] : null,
+            'municipality' => $data['municipality'] !== '' ? $data['municipality'] : null,
+            'phone' => $data['phone'] !== '' ? $data['phone'] : null,
+            'country' => $this->currentBusinessCountry(),
+            'is_final_consumer' => $isFinalConsumer,
+        ]);
+
+        return ['customer' => $customer, 'created' => true];
+    }
+
+    private function updateCustomerFromRouteData(Customer $customer, array $data, bool $allowFiscalFields): void
+    {
+        $payload = [
+            'commercial_name' => $data['commercial_name'] !== '' ? $data['commercial_name'] : null,
+            'address' => $data['address'] !== '' ? $data['address'] : null,
+            'department' => $data['department'] !== '' ? $data['department'] : null,
+            'municipality' => $data['municipality'] !== '' ? $data['municipality'] : null,
+            'phone' => $data['phone'] !== '' ? $data['phone'] : null,
+        ];
+
+        if ($allowFiscalFields) {
+            $docNumber = $data['doc_number'];
+            if ($docNumber !== '' && $docNumber !== 'CF') {
+                $duplicate = Customer::query()
+                    ->where('business_id', currentBusinessId())
+                    ->whereKeyNot($customer->id)
+                    ->whereRaw("UPPER(REPLACE(REPLACE(doc_number, '-', ''), ' ', '')) = ?", [$docNumber])
+                    ->where(function ($query) {
+                        $query->where('doc_type', 'NIT')->orWhereNull('doc_type');
+                    })
+                    ->exists();
+
+                if ($duplicate) {
+                    throw ValidationException::withMessages([
+                        'doc_number' => 'Ya existe un cliente con este NIT.',
+                    ]);
+                }
+            }
+
+            $payload['name'] = $data['name'] !== '' ? $data['name'] : ($data['commercial_name'] ?: $customer->name);
+            $payload['doc_type'] = ($docNumber === '' || $docNumber === 'CF') ? 'CF' : 'NIT';
+            $payload['doc_number'] = ($docNumber === '' || $docNumber === 'CF') ? 'CF' : $docNumber;
+            $payload['is_final_consumer'] = $payload['doc_number'] === 'CF';
+        }
+
+        $customer->update($payload);
+    }
+
+    private function validateRouteCustomerLocation(?string $department, ?string $municipality): void
+    {
+        if ($this->currentBusinessCountry() !== 'GT') {
+            return;
+        }
+
+        if (! GuatemalaLocations::isValidDepartment($department)) {
+            throw ValidationException::withMessages([
+                'department' => 'Selecciona un departamento válido.',
+            ]);
+        }
+
+        if (! GuatemalaLocations::isValidMunicipality($department, $municipality)) {
+            throw ValidationException::withMessages([
+                'municipality' => 'Selecciona un municipio válido para el departamento.',
+            ]);
+        }
+    }
+
+    private function currentBusinessCountry(): string
+    {
+        return Business::query()->whereKey(currentBusinessId())->value('country') ?: 'GT';
+    }
+
+    private function assignCustomerToZone(RouteZone $zone, Customer $customer, ?string $notes = null): RouteZoneCustomer
+    {
+        abort_unless((int) $customer->business_id === currentBusinessId(), 403);
+
+        $assignment = RouteZoneCustomer::query()
+            ->where('business_id', currentBusinessId())
+            ->where('route_zone_id', $zone->id)
+            ->where('customer_id', $customer->id)
+            ->lockForUpdate()
+            ->first();
+
+        if ($assignment) {
+            $payload = ['is_active' => true];
+
+            if ($assignment->visit_order === null) {
+                $payload['visit_order'] = $this->nextZoneVisitOrder($zone);
+            }
+
+            if (filled($notes)) {
+                $payload['notes'] = $notes;
+            }
+
+            $assignment->update($payload);
+
+            return $assignment->refresh();
+        }
+
+        return RouteZoneCustomer::query()->create([
+            'business_id' => currentBusinessId(),
+            'route_zone_id' => $zone->id,
+            'customer_id' => $customer->id,
+            'visit_order' => $this->nextZoneVisitOrder($zone),
+            'notes' => filled($notes) ? $notes : null,
+            'is_active' => true,
+        ]);
+    }
+
+    private function createMissingVisitsForOpenZoneWorkDays(RouteZone $zone, Customer $customer, RouteZoneCustomer $assignment): void
+    {
+        RouteWorkDay::query()
+            ->where('business_id', currentBusinessId())
+            ->where('route_zone_id', $zone->id)
+            ->where('status', 'open')
+            ->get()
+            ->each(fn (RouteWorkDay $workDay) => $this->createVisitForWorkDay($workDay, $customer, $assignment));
+    }
+
+    private function createVisitForWorkDay(RouteWorkDay $workDay, Customer $customer, RouteZoneCustomer $assignment): RouteVisit
+    {
+        return RouteVisit::query()->firstOrCreate(
+            [
+                'route_work_day_id' => $workDay->id,
+                'customer_id' => $customer->id,
+            ],
+            [
+                'business_id' => currentBusinessId(),
+                'branch_id' => $workDay->branch_id,
+                'route_zone_id' => $workDay->route_zone_id,
+                'seller_id' => $workDay->seller_id,
+                'visit_order' => $assignment->visit_order ?? $this->nextWorkDayVisitOrder($workDay),
+                'status' => 'pending',
+                'notes' => $assignment->notes,
+            ],
+        );
+    }
+
+    private function nextZoneVisitOrder(RouteZone $zone): int
+    {
+        return ((int) RouteZoneCustomer::query()
+            ->where('business_id', currentBusinessId())
+            ->where('route_zone_id', $zone->id)
+            ->max('visit_order')) + 1;
+    }
+
+    private function nextWorkDayVisitOrder(RouteWorkDay $workDay): int
+    {
+        return ((int) RouteVisit::query()
+            ->where('business_id', currentBusinessId())
+            ->where('route_work_day_id', $workDay->id)
+            ->max('visit_order')) + 1;
+    }
+
+    private function normalizeRouteCustomerDocument(?string $value): string
+    {
+        $document = strtoupper(preg_replace('/[\s-]+/', '', trim((string) $value)));
+
+        return $document;
     }
 
     private function authorizeBusiness(RouteZone $zone): void

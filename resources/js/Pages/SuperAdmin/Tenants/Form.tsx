@@ -70,6 +70,7 @@ export default function Form({
         manual_price_min_margin_percent?: number | string;
         remember_last_customer_product_price?: boolean;
         enable_credit_sales?: boolean;
+        reserve_stock_on_credit_reservations?: boolean;
         allow_negative_stock?: boolean;
         allow_duplicate_product_codes?: boolean;
         allow_duplicate_product_barcodes?: boolean;
@@ -98,6 +99,7 @@ export default function Form({
         manual_price_min_margin_percent: settings.manual_price_min_margin_percent ?? 0,
         remember_last_customer_product_price: settings.remember_last_customer_product_price ?? false,
         enable_credit_sales: settings.enable_credit_sales ?? false,
+        reserve_stock_on_credit_reservations: settings.reserve_stock_on_credit_reservations ?? true,
         allow_negative_stock: settings.allow_negative_stock ?? false,
         allow_duplicate_product_codes: settings.allow_duplicate_product_codes ?? false,
         allow_duplicate_product_barcodes: settings.allow_duplicate_product_barcodes ?? false,
@@ -375,6 +377,14 @@ export default function Form({
                                 onChange={(checked) => setData('enable_credit_sales', checked)}
                                 label="Habilitar ventas a crédito"
                             />
+                            <div className="mt-3">
+                                <Toggle
+                                    checked={data.reserve_stock_on_credit_reservations}
+                                    onChange={(checked) => setData('reserve_stock_on_credit_reservations', checked)}
+                                    label="Reservar stock en reservas de crédito"
+                                    description="Si está activo, las reservas de crédito apartan inventario y reducen el stock disponible. Si está inactivo, solo se guarda la reserva y el stock se descuenta hasta generar la venta."
+                                />
+                            </div>
                         </div>
                     )}
 

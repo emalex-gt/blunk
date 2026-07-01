@@ -14,6 +14,7 @@ use App\Models\Sale;
 use App\Models\User;
 use App\Support\CashRegister;
 use App\Support\BranchInventory;
+use App\Support\Credits;
 use App\Support\Exports\TableExporter;
 use App\Support\Permissions;
 use App\Support\PriceLists;
@@ -262,13 +263,16 @@ class ReportController extends Controller
         $categoryId = $request->integer('category_id') ?: null;
         $productSearch = trim((string) $request->query('product_search', ''));
         $onlyBelowMinimum = filter_var($request->query('only_below_minimum', true), FILTER_VALIDATE_BOOLEAN);
+        $reserveCreditStock = Credits::reserveStockOnCreditReservations($businessId);
 
         $reservedSubquery = DB::table('credit_receipt_lines')
             ->where('business_id', $businessId)
             ->where('branch_id', $scope->branch->id)
             ->whereIn('status', ['pending', 'partially_invoiced'])
+            ->when(! $reserveCreditStock, fn ($query) => $query->whereRaw('1 = 0'))
+            ->where('qty_reserved', '>', 0)
             ->groupBy('product_id')
-            ->selectRaw('product_id, SUM(qty_pending) as reserved');
+            ->selectRaw('product_id, SUM(LEAST(qty_reserved, qty_pending)) as reserved');
 
         $lastInSubquery = DB::table('stock_movements')
             ->where('business_id', $businessId)
@@ -465,14 +469,17 @@ class ReportController extends Controller
             ->where('branch_id', $scope->branch->id)
             ->whereIn('product_id', $productIds)
             ->pluck('stock', 'product_id');
-        $reservedByProduct = DB::table('credit_receipt_lines')
-            ->where('business_id', $businessId)
-            ->where('branch_id', $scope->branch->id)
-            ->whereIn('product_id', $productIds)
-            ->whereIn('status', ['pending', 'partially_invoiced'])
-            ->groupBy('product_id')
-            ->selectRaw('product_id, SUM(qty_pending) as reserved')
-            ->pluck('reserved', 'product_id');
+        $reservedByProduct = Credits::reserveStockOnCreditReservations($businessId)
+            ? DB::table('credit_receipt_lines')
+                ->where('business_id', $businessId)
+                ->where('branch_id', $scope->branch->id)
+                ->whereIn('product_id', $productIds)
+                ->whereIn('status', ['pending', 'partially_invoiced'])
+                ->where('qty_reserved', '>', 0)
+                ->groupBy('product_id')
+                ->selectRaw('product_id, SUM(LEAST(qty_reserved, qty_pending)) as reserved')
+                ->pluck('reserved', 'product_id')
+            : collect();
         $lastInByProduct = DB::table('stock_movements')
             ->where('business_id', $businessId)
             ->where('branch_id', $scope->branch->id)

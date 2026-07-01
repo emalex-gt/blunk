@@ -28,18 +28,23 @@ class StockAvailability
         $businessId = $product instanceof Product ? (int) $product->business_id : currentBusinessId();
         $branchId ??= BranchInventory::activeBranch($businessId)->id;
 
-        $creditReservations = (float) CreditReceiptLine::query()
-            ->where('business_id', $businessId)
-            ->where('product_id', $productId)
-            ->where('branch_id', $branchId)
-            ->whereIn('status', ['pending', 'partially_invoiced'])
-            ->sum('qty_pending');
+        $creditReservations = Credits::reserveStockOnCreditReservations($businessId)
+            ? (float) CreditReceiptLine::query()
+                ->where('business_id', $businessId)
+                ->where('product_id', $productId)
+                ->where('branch_id', $branchId)
+                ->whereIn('status', ['pending', 'partially_invoiced'])
+                ->where('qty_reserved', '>', 0)
+                ->selectRaw('COALESCE(SUM(LEAST(qty_reserved, qty_pending)), 0) as reserved')
+                ->value('reserved')
+            : 0.0;
 
         $genericReservations = (float) StockReservation::query()
             ->where('business_id', $businessId)
             ->where('product_id', $productId)
             ->where('branch_id', $branchId)
             ->where('status', 'active')
+            ->where('source_type', '!=', 'credit_receipt')
             ->sum('quantity');
 
         $reserved = $creditReservations + $genericReservations;

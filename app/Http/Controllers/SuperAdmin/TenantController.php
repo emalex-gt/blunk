@@ -10,6 +10,7 @@ use App\Models\TenantSetting;
 use App\Models\User;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Support\CloudinaryUploader;
+use App\Support\Credits;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -58,6 +59,7 @@ class TenantController extends Controller
                 'manual_price_min_margin_percent' => 0,
                 'remember_last_customer_product_price' => false,
                 'enable_credit_sales' => false,
+                'reserve_stock_on_credit_reservations' => true,
                 'allow_negative_stock' => false,
                 'allow_duplicate_product_codes' => false,
                 'allow_duplicate_product_barcodes' => false,
@@ -129,6 +131,7 @@ class TenantController extends Controller
                 'manual_price_min_margin_percent' => $business->tenantSetting?->manual_price_min_margin_percent ?? 0,
                 'remember_last_customer_product_price' => $business->tenantSetting?->remember_last_customer_product_price ?? false,
                 'enable_credit_sales' => $business->tenantSetting?->enable_credit_sales ?? false,
+                'reserve_stock_on_credit_reservations' => $business->tenantSetting?->reserve_stock_on_credit_reservations ?? true,
                 'allow_negative_stock' => $business->tenantSetting?->allow_negative_stock ?? false,
                 'allow_duplicate_product_codes' => $business->tenantSetting?->allow_duplicate_product_codes ?? false,
                 'allow_duplicate_product_barcodes' => $business->tenantSetting?->allow_duplicate_product_barcodes ?? false,
@@ -177,10 +180,16 @@ class TenantController extends Controller
                 ]);
             }
 
+            $previousReserveStockOnCreditReservations = $business->tenantSetting?->reserve_stock_on_credit_reservations ?? true;
+
             TenantSetting::updateOrCreate(
                 ['business_id' => $business->id],
                 $data['settings'],
             );
+
+            if ($previousReserveStockOnCreditReservations && ! $data['settings']['reserve_stock_on_credit_reservations']) {
+                Credits::releaseReservationStock($business->id);
+            }
 
             $this->syncModules($business, $data['modules']);
             $this->syncFelSettings($business, $data['fel'], $data['fel_phrases']);
@@ -239,6 +248,7 @@ class TenantController extends Controller
             'manual_price_min_margin_percent' => ['nullable', 'numeric', 'min:0', 'max:999.99'],
             'remember_last_customer_product_price' => ['nullable', 'boolean'],
             'enable_credit_sales' => ['nullable', 'boolean'],
+            'reserve_stock_on_credit_reservations' => ['nullable', 'boolean'],
             'allow_negative_stock' => ['nullable', 'boolean'],
             'allow_duplicate_product_codes' => ['nullable', 'boolean'],
             'allow_duplicate_product_barcodes' => ['nullable', 'boolean'],
@@ -292,6 +302,7 @@ class TenantController extends Controller
                 'manual_price_min_margin_percent' => round((float) ($validated['manual_price_min_margin_percent'] ?? 0), 2),
                 'remember_last_customer_product_price' => (bool) ($validated['remember_last_customer_product_price'] ?? false),
                 'enable_credit_sales' => in_array('credits', $modules, true) && (bool) ($validated['enable_credit_sales'] ?? false),
+                'reserve_stock_on_credit_reservations' => (bool) ($validated['reserve_stock_on_credit_reservations'] ?? true),
                 'allow_negative_stock' => (bool) ($validated['allow_negative_stock'] ?? false),
                 'allow_duplicate_product_codes' => (bool) ($validated['allow_duplicate_product_codes'] ?? false),
                 'allow_duplicate_product_barcodes' => (bool) ($validated['allow_duplicate_product_barcodes'] ?? false),

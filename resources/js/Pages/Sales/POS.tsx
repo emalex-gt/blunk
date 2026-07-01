@@ -1,4 +1,5 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
 import Toast from '@/Components/Toast';
 import { getProductImageUrl } from '@/lib/cloudinary';
 import { useToast } from '@/hooks/useToast';
@@ -54,10 +55,13 @@ type Category = {
 type Customer = {
     id: number;
     name: string;
+    commercial_name: string | null;
     doc_type: string | null;
     doc_number: string | null;
     tax_condition: string | null;
     address: string | null;
+    department: string | null;
+    municipality: string | null;
     phone: string | null;
     country: string;
     is_final_consumer?: boolean;
@@ -77,7 +81,10 @@ type CustomerForm = {
     doc_number: string;
     tax_condition: string;
     name: string;
+    commercial_name: string;
     address: string;
+    department: string;
+    municipality: string;
     phone: string;
     country: string;
     name_locked: boolean;
@@ -217,7 +224,10 @@ function emptyCustomer(country: string): CustomerForm {
         doc_number: country === 'GT' ? 'CF' : '',
         tax_condition: country === 'AR' ? 'Consumidor Final' : '',
         name: country === 'GT' ? 'Consumidor Final' : '',
+        commercial_name: '',
         address: '',
+        department: '',
+        municipality: '',
         phone: '',
         country,
         name_locked: false,
@@ -273,7 +283,10 @@ function isMeaningfulCustomer(customer: CustomerForm) {
         customer.id ||
         customer.doc_number.trim() ||
         customer.name.trim() ||
+        customer.commercial_name.trim() ||
         customer.address.trim() ||
+        customer.department.trim() ||
+        customer.municipality.trim() ||
         customer.phone.trim(),
     );
 }
@@ -505,6 +518,7 @@ export default function POS({
     const [openingFelPrint, setOpeningFelPrint] = useState(false);
     const [nitLookupLoading, setNitLookupLoading] = useState(false);
     const [nitLookupMessage, setNitLookupMessage] = useState('');
+    const [customerSearchResults, setCustomerSearchResults] = useState<Customer[]>([]);
     const [payments, setPayments] = useState<PaymentLine[]>([
         paymentLine('cash', '0.00'),
     ]);
@@ -693,27 +707,73 @@ export default function POS({
         showMessage('Facturando productos a crédito.');
     }, [available_document_types, credit_invoice, productsById, setData, singleDocumentType]);
 
-    const customerMatches = useMemo(() => {
-        const value = [
+    const customerSearchTerm = useMemo(() => {
+        return [
             data.customer.doc_number,
+            data.customer.commercial_name,
             data.customer.name,
-        ].join(' ').toLowerCase().trim();
+        ].join(' ').trim();
+    }, [data.customer.commercial_name, data.customer.doc_number, data.customer.name]);
+
+    useEffect(() => {
+        if (!customerSearchTerm || data.customer.consumidor_final || data.customer.id) {
+            setCustomerSearchResults([]);
+            return;
+        }
+
+        const controller = new AbortController();
+        const timer = window.setTimeout(async () => {
+            try {
+                const response = await fetch(`${route('customers.search')}?search=${encodeURIComponent(customerSearchTerm)}`, {
+                    headers: { Accept: 'application/json' },
+                    signal: controller.signal,
+                });
+                const result = await readJsonResponse(response);
+
+                if (response.ok && Array.isArray(result?.customers)) {
+                    setCustomerSearchResults(result.customers);
+                }
+            } catch (error) {
+                if (!(error instanceof DOMException && error.name === 'AbortError')) {
+                    setCustomerSearchResults([]);
+                }
+            }
+        }, 350);
+
+        return () => {
+            window.clearTimeout(timer);
+            controller.abort();
+        };
+    }, [customerSearchTerm, data.customer.consumidor_final, data.customer.id]);
+
+    const customerMatches = useMemo(() => {
+        const value = customerSearchTerm.toLowerCase();
 
         if (!value || data.customer.consumidor_final) {
             return [];
         }
 
-        return customers
+        const seen = new Set<number>();
+        const sourceCustomers = [...customerSearchResults, ...customers].filter((customer) => {
+            if (seen.has(customer.id)) {
+                return false;
+            }
+
+            seen.add(customer.id);
+            return true;
+        });
+
+        return sourceCustomers
             .filter((customer) =>
-                [customer.name, customer.doc_number]
+                [customer.commercial_name, customer.name, customer.doc_number, customer.phone, customer.address, customer.department, customer.municipality]
                     .filter(Boolean)
                     .some((field) => field!.toLowerCase().includes(value)),
             )
             .slice(0, 5);
-    }, [customers, data.customer.consumidor_final, data.customer.doc_number, data.customer.name]);
+    }, [customerSearchResults, customerSearchTerm, customers, data.customer.consumidor_final]);
     const selectedCreditAccount = useMemo(
-        () => customers.find((customer) => customer.id === data.customer.id)?.credit_account ?? null,
-        [customers, data.customer.id],
+        () => [...customerSearchResults, ...customers].find((customer) => customer.id === data.customer.id)?.credit_account ?? null,
+        [customerSearchResults, customers, data.customer.id],
     );
 
     const cartItemsCount = useMemo(
@@ -1072,7 +1132,10 @@ export default function POS({
             doc_number: customer.doc_number ?? '',
             tax_condition: customer.tax_condition ?? (country === 'AR' ? 'Consumidor Final' : ''),
             name: customer.name,
+            commercial_name: customer.commercial_name ?? '',
             address: customer.address ?? '',
+            department: customer.department ?? '',
+            municipality: customer.municipality ?? '',
             phone: customer.phone ?? '',
             country: customer.country ?? country,
             name_locked: Boolean(customer.name_locked),
@@ -1120,7 +1183,10 @@ export default function POS({
                 doc_number: nit,
                 id: result.customer?.id ?? data.customer.id,
                 name: result.customer?.name || result.name || '',
+                commercial_name: result.customer?.commercial_name || data.customer.commercial_name,
                 address: result.customer?.address || result.address || data.customer.address,
+                department: result.customer?.department || data.customer.department,
+                municipality: result.customer?.municipality || data.customer.municipality,
                 phone: result.customer?.phone || result.phone || data.customer.phone,
                 country: 'GT',
                 name_locked: Boolean(result.customer?.name_locked ?? result.name),
@@ -2061,11 +2127,18 @@ export default function POS({
                                         </div>
 
                                         {data.customer.consumidor_final ? (
+                                            <>
                                             <div className="grid gap-3 md:grid-cols-3">
                                                 <input
                                                     value={data.customer.name}
                                                     onChange={(event) => setCustomerField('name', event.target.value)}
                                                     placeholder="Nombre"
+                                                    className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                />
+                                                <input
+                                                    value={data.customer.commercial_name}
+                                                    onChange={(event) => setCustomerField('commercial_name', event.target.value)}
+                                                    placeholder="Nombre del negocio"
                                                     className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                                                 />
                                                 <input
@@ -2081,6 +2154,18 @@ export default function POS({
                                                     className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                                                 />
                                             </div>
+                                            <div className="grid gap-3 md:grid-cols-2">
+                                                <GuatemalaLocationSelects
+                                                    department={data.customer.department}
+                                                    municipality={data.customer.municipality}
+                                                    onDepartmentChange={(value) => setCustomerField('department', value)}
+                                                    onMunicipalityChange={(value) => setCustomerField('municipality', value)}
+                                                    departmentError={typedErrors['customer.department']}
+                                                    municipalityError={typedErrors['customer.municipality']}
+                                                    compact
+                                                />
+                                            </div>
+                                            </>
                                         ) : (
                                             <>
                                                 <div className="grid gap-3 md:grid-cols-[180px_auto_1fr]">
@@ -2135,6 +2220,12 @@ export default function POS({
                                                 )}
                                                 <div className="grid gap-3 md:grid-cols-2">
                                                     <input
+                                                        value={data.customer.commercial_name}
+                                                        onChange={(event) => setCustomerField('commercial_name', event.target.value)}
+                                                        placeholder="Nombre del negocio"
+                                                        className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                    />
+                                                    <input
                                                         value={data.customer.address}
                                                         onChange={(event) => setCustomerField('address', event.target.value)}
                                                         placeholder="Dirección"
@@ -2145,6 +2236,17 @@ export default function POS({
                                                         onChange={(event) => setCustomerField('phone', event.target.value)}
                                                         placeholder="Teléfono"
                                                         className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                    />
+                                                </div>
+                                                <div className="grid gap-3 md:grid-cols-2">
+                                                    <GuatemalaLocationSelects
+                                                        department={data.customer.department}
+                                                        municipality={data.customer.municipality}
+                                                        onDepartmentChange={(value) => setCustomerField('department', value)}
+                                                        onMunicipalityChange={(value) => setCustomerField('municipality', value)}
+                                                        departmentError={typedErrors['customer.department']}
+                                                        municipalityError={typedErrors['customer.municipality']}
+                                                        compact
                                                     />
                                                 </div>
                                             </>
@@ -2241,7 +2343,7 @@ export default function POS({
                                                 onClick={() => selectCustomer(customer)}
                                                 className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
                                             >
-                                                {customer.name}
+                                                {customer.commercial_name || customer.name}
                                                 {customer.doc_number ? ` · ${customer.doc_number}` : ''}
                                             </button>
                                         ))}

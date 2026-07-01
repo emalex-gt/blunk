@@ -13,6 +13,36 @@ use Throwable;
 
 class CustomerController extends Controller
 {
+    public function search(Request $request): JsonResponse
+    {
+        $businessId = currentBusinessId();
+        $search = trim((string) $request->query('search', ''));
+
+        if ($search === '') {
+            return response()->json(['customers' => []]);
+        }
+
+        $customers = Customer::query()
+            ->where('business_id', $businessId)
+            ->where(function ($query) use ($search) {
+                $query->where('name', 'ilike', "%{$search}%")
+                    ->orWhere('commercial_name', 'ilike', "%{$search}%")
+                    ->orWhere('doc_number', 'ilike', "%{$search}%")
+                    ->orWhere('phone', 'ilike', "%{$search}%")
+                    ->orWhere('address', 'ilike', "%{$search}%")
+                    ->orWhere('department', 'ilike', "%{$search}%")
+                    ->orWhere('municipality', 'ilike', "%{$search}%");
+            })
+            ->with('creditAccount:id,customer_id,credit_limit,current_balance,is_blocked')
+            ->orderBy('name')
+            ->limit(10)
+            ->get(['id', 'name', 'commercial_name', 'doc_type', 'doc_number', 'tax_condition', 'address', 'department', 'municipality', 'phone', 'country', 'is_final_consumer', 'name_locked', 'tax_lookup_verified_at']);
+
+        return response()->json([
+            'customers' => $customers->map(fn (Customer $customer) => $this->customerPayload($customer))->values(),
+        ]);
+    }
+
     public function lookupNit(Request $request): JsonResponse
     {
         return $this->lookupGuatemalaNit($request);
@@ -92,18 +122,28 @@ class CustomerController extends Controller
 
     private function customerPayload(Customer $customer): array
     {
+        $customer->loadMissing('creditAccount:id,customer_id,credit_limit,current_balance,is_blocked');
+
         return [
             'id' => $customer->id,
             'name' => $customer->name,
+            'commercial_name' => $customer->commercial_name,
             'doc_type' => $customer->doc_type,
             'doc_number' => $customer->doc_number,
             'tax_condition' => $customer->tax_condition,
             'address' => $customer->address,
+            'department' => $customer->department,
+            'municipality' => $customer->municipality,
             'phone' => $customer->phone,
             'country' => $customer->country,
             'is_final_consumer' => $customer->is_final_consumer,
             'name_locked' => $customer->name_locked,
             'tax_lookup_verified_at' => $customer->tax_lookup_verified_at?->toIso8601String(),
+            'credit_account' => $customer->creditAccount ? [
+                'credit_limit' => $customer->creditAccount->credit_limit,
+                'current_balance' => $customer->creditAccount->current_balance,
+                'is_blocked' => $customer->creditAccount->is_blocked,
+            ] : null,
         ];
     }
 }
