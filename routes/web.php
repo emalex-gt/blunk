@@ -113,6 +113,9 @@ Route::middleware('auth')->group(function () {
 
     Route::middleware('tenant.active')->group(function () {
         Route::get('/pos', [SaleController::class, 'create'])->middleware(['module:pos', 'permission:pos.view'])->name('sales.create');
+        Route::get('/pos/products/search', [SaleController::class, 'productSearch'])
+            ->middleware(['module:pos', 'permission:pos.view'])
+            ->name('sales.products.search');
         Route::post('/pos/fel/prewarm-token', [SaleController::class, 'prewarmFelToken'])
             ->middleware(['module:pos', 'module:fel_gt', 'permission:pos.view'])
             ->name('sales.fel.prewarm-token');

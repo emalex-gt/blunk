@@ -36,6 +36,7 @@ use App\Support\GuatemalaLocations;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
@@ -61,24 +62,6 @@ class SaleController extends Controller
         $availableDocumentTypes = $this->availableDocumentTypes($business, $tenantSettings, $felSettings, $felModuleEnabled);
         $priceTypes = PriceLists::active($businessId);
         $defaultPriceType = $priceTypes->firstWhere('is_default', true) ?: $priceTypes->first();
-        $productsQuery = Product::query()
-            ->where('business_id', $businessId)
-            ->where('is_active', true)
-            ->with(['prices' => fn ($query) => $query
-                ->where('business_id', $businessId)
-                ->where('is_active', true)
-                ->select(['id', 'product_id', 'price_type_id', 'price'])]);
-        BranchInventory::restrictProductsToBranch($productsQuery, $businessId, $activeBranch->id);
-        $products = $productsQuery
-            ->orderBy('name')
-            ->get(['id', 'category_id', 'name', 'code', 'barcode', 'cost_price', 'sale_price', 'stock', 'min_stock', 'location', 'image_url']);
-        BranchInventory::applyBranchStockAndPrices($products, $businessId, $activeBranch->id);
-        $this->applyBranchPriceListPayload($products, $businessId, $activeBranch->id);
-        $products->each(function (Product $product) use ($activeBranch) {
-            $reserved = StockAvailability::reservedStock($product, null, $activeBranch->id);
-            $product->setAttribute('reserved_stock', $reserved);
-            $product->setAttribute('available_stock', (float) $product->stock - $reserved);
-        });
         $creditInvoice = $this->creditInvoicePayload($request, $businessId);
 
         return Inertia::render('Sales/POS', [
@@ -114,7 +97,7 @@ class SaleController extends Controller
             'credit_sales_available' => Credits::enabled($businessId) && Permissions::userHas($request->user(), Permissions::CREDITS_SALES_CREATE),
             'allow_negative_stock' => (bool) ($tenantSettings?->allow_negative_stock ?? false),
             'credit_invoice' => $creditInvoice,
-            'products' => $products,
+            'products' => [],
             'categories' => Category::query()
                 ->where('business_id', $businessId)
                 ->orderBy('name')
@@ -125,6 +108,133 @@ class SaleController extends Controller
                 ->latest()
                 ->limit(50)
                 ->get(['id', 'name', 'commercial_name', 'doc_type', 'doc_number', 'tax_condition', 'address', 'department', 'municipality', 'phone', 'country', 'is_final_consumer', 'name_locked', 'tax_lookup_verified_at']),
+        ]);
+    }
+
+    public function productSearch(Request $request): JsonResponse
+    {
+        abort_unless(module_enabled('pos'), 403, 'Este módulo no está habilitado para esta empresa.');
+
+        $businessId = currentBusinessId();
+        $activeBranch = BranchInventory::activeBranch($businessId);
+        $search = trim((string) $request->query('q', ''));
+        $categoryId = $request->integer('category_id') ?: null;
+        $ids = collect(explode(',', (string) $request->query('ids', '')))
+            ->map(fn (string $id) => (int) trim($id))
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->take(50)
+            ->values()
+            ->all();
+        $limit = min(max($request->integer('limit', 30), 1), 30);
+
+        if ($search === '' && ! $categoryId && $ids === []) {
+            return response()->json(['products' => []]);
+        }
+
+        $baseQuery = Product::query()
+            ->where('products.business_id', $businessId)
+            ->where('products.is_active', true)
+            ->with(['category:id,name', 'brand:id,name']);
+
+        BranchInventory::restrictProductsToBranch($baseQuery, $businessId, $activeBranch->id);
+
+        if ($ids !== []) {
+            $query = clone $baseQuery;
+            $query->whereIn('products.id', $ids)
+                ->orderBy('products.name');
+            $exactBarcodeMatches = collect();
+            $exactCodeMatches = collect();
+        } else {
+            $normalized = $this->normalizeProductSearchTerm($search);
+            $exactBarcodeMatches = collect();
+            $exactCodeMatches = collect();
+
+            $baseQuery->when($categoryId, fn ($builder) => $builder->where('products.category_id', $categoryId));
+
+            if ($search !== '') {
+                $exactBarcodeMatches = (clone $baseQuery)
+                    ->whereRaw($this->normalizedSql('products.barcode').' = ?', [$normalized])
+                    ->orderBy('products.name')
+                    ->limit(20)
+                    ->get([
+                        'id',
+                        'business_id',
+                        'category_id',
+                        'brand_id',
+                        'name',
+                        'code',
+                        'barcode',
+                        'cost_price',
+                        'sale_price',
+                        'stock',
+                        'min_stock',
+                        'location',
+                        'image_url',
+                    ]);
+                $exactCodeMatches = (clone $baseQuery)
+                    ->whereRaw($this->normalizedSql('products.code').' = ?', [$normalized])
+                    ->orderBy('products.name')
+                    ->limit(20)
+                    ->get([
+                        'id',
+                        'business_id',
+                        'category_id',
+                        'brand_id',
+                        'name',
+                        'code',
+                        'barcode',
+                        'cost_price',
+                        'sale_price',
+                        'stock',
+                        'min_stock',
+                        'location',
+                        'image_url',
+                    ]);
+                $like = "%{$search}%";
+                $query = clone $baseQuery;
+                $query->where(function ($builder) use ($search, $like, $normalized) {
+                    $builder
+                        ->whereRaw($this->normalizedSql('products.code').' = ?', [$normalized])
+                        ->orWhereRaw($this->normalizedSql('products.barcode').' = ?', [$normalized])
+                        ->orWhere('products.code', 'ilike', $like)
+                        ->orWhere('products.barcode', 'ilike', $like)
+                        ->orWhere('products.name', 'ilike', $like)
+                        ->orWhereHas('category', fn ($category) => $category->where('name', 'ilike', $like))
+                        ->orWhereHas('brand', fn ($brand) => $brand->where('name', 'ilike', $like));
+                });
+
+                $query->orderByRaw(
+                    'CASE WHEN '.$this->normalizedSql('products.code').' = ? OR '.$this->normalizedSql('products.barcode').' = ? THEN 0 ELSE 1 END',
+                    [$normalized, $normalized],
+                );
+            } else {
+                $query = clone $baseQuery;
+            }
+
+            $query->orderBy('products.name')->limit($limit);
+        }
+
+        $products = $query->get([
+            'id',
+            'business_id',
+            'category_id',
+            'brand_id',
+            'name',
+            'code',
+            'barcode',
+            'cost_price',
+            'sale_price',
+            'stock',
+            'min_stock',
+            'location',
+            'image_url',
+        ]);
+
+        return response()->json([
+            'products' => $this->posProductPayload($products, $businessId, $activeBranch->id),
+            'exact_barcode_matches' => $this->posProductPayload($exactBarcodeMatches, $businessId, $activeBranch->id),
+            'exact_code_matches' => $this->posProductPayload($exactCodeMatches, $businessId, $activeBranch->id),
         ]);
     }
 
@@ -1429,6 +1539,141 @@ class SaleController extends Controller
             'price_source' => PriceLists::SOURCE_PRICE_LIST,
             'manual_price' => false,
         ];
+    }
+
+    private function posProductPayload(Collection $products, int $businessId, int $branchId): array
+    {
+        if ($products->isEmpty()) {
+            return [];
+        }
+
+        $productIds = $products->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $priceTypes = PriceLists::active($businessId);
+        $priceTypeIds = $priceTypes->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $defaultPriceType = $priceTypes->firstWhere('is_default', true) ?: $priceTypes->first();
+
+        $stockByProduct = DB::table('product_branch_stocks')
+            ->where('business_id', $businessId)
+            ->where('branch_id', $branchId)
+            ->whereIn('product_id', $productIds)
+            ->pluck('stock', 'product_id');
+
+        $creditReservedByProduct = Credits::reserveStockOnCreditReservations($businessId)
+            ? DB::table('credit_receipt_lines')
+                ->where('business_id', $businessId)
+                ->where('branch_id', $branchId)
+                ->whereIn('product_id', $productIds)
+                ->whereIn('status', ['pending', 'partially_invoiced'])
+                ->where('qty_reserved', '>', 0)
+                ->groupBy('product_id')
+                ->selectRaw('product_id, COALESCE(SUM(LEAST(qty_reserved, qty_pending)), 0) as reserved')
+                ->pluck('reserved', 'product_id')
+            : collect();
+
+        $genericReservedByProduct = DB::table('stock_reservations')
+            ->where('business_id', $businessId)
+            ->where('branch_id', $branchId)
+            ->whereIn('product_id', $productIds)
+            ->where('status', 'active')
+            ->where('source_type', '!=', 'credit_receipt')
+            ->groupBy('product_id')
+            ->selectRaw('product_id, COALESCE(SUM(quantity), 0) as reserved')
+            ->pluck('reserved', 'product_id');
+
+        $globalPrices = $priceTypeIds === []
+            ? collect()
+            : DB::table('product_prices')
+                ->where('business_id', $businessId)
+                ->where('is_active', true)
+                ->whereIn('product_id', $productIds)
+                ->whereIn('price_type_id', $priceTypeIds)
+                ->get(['product_id', 'price_type_id', 'price'])
+                ->groupBy('product_id');
+
+        $branchPrices = $priceTypeIds !== [] && BranchInventory::pricingScope($businessId) === 'branch'
+            ? DB::table('branch_product_prices')
+                ->where('business_id', $businessId)
+                ->where('branch_id', $branchId)
+                ->where('is_active', true)
+                ->whereIn('product_id', $productIds)
+                ->whereIn('price_type_id', $priceTypeIds)
+                ->get(['product_id', 'price_type_id', 'price'])
+                ->groupBy('product_id')
+            : collect();
+
+        return $products->map(function (Product $product) use (
+            $stockByProduct,
+            $creditReservedByProduct,
+            $genericReservedByProduct,
+            $globalPrices,
+            $branchPrices,
+            $priceTypes,
+            $defaultPriceType
+        ) {
+            $productId = (int) $product->id;
+            $stock = (float) ($stockByProduct[$productId] ?? 0);
+            $reserved = (float) ($creditReservedByProduct[$productId] ?? 0)
+                + (float) ($genericReservedByProduct[$productId] ?? 0);
+            $globalByType = $globalPrices->get($productId, collect())->keyBy('price_type_id');
+            $branchByType = $branchPrices->get($productId, collect())->keyBy('price_type_id');
+            $prices = $priceTypes->map(function (PriceType $priceType) use ($globalByType, $branchByType, $product, $defaultPriceType) {
+                $branchPrice = $branchByType->get($priceType->id);
+                $globalPrice = $globalByType->get($priceType->id);
+                $price = $branchPrice?->price ?? $globalPrice?->price;
+
+                if ($price === null && $defaultPriceType && (int) $priceType->id === (int) $defaultPriceType->id) {
+                    $price = $product->sale_price;
+                }
+
+                if ($price === null) {
+                    return null;
+                }
+
+                return [
+                    'id' => null,
+                    'product_id' => $product->id,
+                    'price_type_id' => $priceType->id,
+                    'price' => round((float) $price, 2),
+                    'source' => $branchPrice ? 'branch_specific' : 'fallback',
+                ];
+            })->filter()->values();
+            $defaultPayloadPrice = $defaultPriceType
+                ? $prices->firstWhere('price_type_id', $defaultPriceType->id)
+                : $prices->first();
+            $salePrice = $defaultPayloadPrice['price'] ?? (float) $product->sale_price;
+
+            return [
+                'id' => $product->id,
+                'category_id' => $product->category_id,
+                'brand_id' => $product->brand_id,
+                'category_name' => $product->category?->name,
+                'brand_name' => $product->brand?->name,
+                'name' => $product->name,
+                'code' => $product->code,
+                'barcode' => $product->barcode,
+                'cost_price' => (string) $product->cost_price,
+                'sale_price' => (string) $salePrice,
+                'stock' => $stock,
+                'physical_stock' => $stock,
+                'reserved_stock' => $reserved,
+                'available_stock' => $stock - $reserved,
+                'min_stock' => (float) $product->min_stock,
+                'location' => $product->location,
+                'image_url' => $product->image_url,
+                'prices' => $prices,
+                'branch_price_applied' => $defaultPayloadPrice && ($defaultPayloadPrice['source'] ?? null) === 'branch_specific',
+            ];
+        })->values()->all();
+    }
+
+    private function normalizeProductSearchTerm(string $value): string
+    {
+        return mb_strtoupper(preg_replace('/\s+/', ' ', trim($value)) ?? '');
+    }
+
+    private function normalizedSql(string $column): string
+    {
+        return "UPPER(REGEXP_REPLACE(TRIM({$column}), '\\s+', ' ', 'g'))";
     }
 
     private function applyBranchPriceListPayload($products, int $businessId, int $branchId): void

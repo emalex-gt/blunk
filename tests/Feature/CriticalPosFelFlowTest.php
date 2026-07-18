@@ -7,6 +7,7 @@ use App\Models\Branch;
 use App\Models\BranchProductPrice;
 use App\Models\CashMovement;
 use App\Models\CashRegisterSession;
+use App\Models\Category;
 use App\Models\CreditCustomerTransfer;
 use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
@@ -926,13 +927,168 @@ class CriticalPosFelFlowTest extends TestCase
 
         $this->actingAs($user)
             ->withSession(['active_branch_id' => $branchA->id])
-            ->get(route('sales.create'))
-            ->assertInertia(fn (Assert $page) => $page->where('products.0.sale_price', '100.00'));
+            ->get(route('sales.products.search', ['q' => $product->code]))
+            ->assertOk()
+            ->assertJsonPath('products.0.sale_price', '100');
 
         $this->actingAs($user)
             ->withSession(['active_branch_id' => $branchB->id])
+            ->get(route('sales.products.search', ['q' => $product->code]))
+            ->assertOk()
+            ->assertJsonPath('products.0.sale_price', '150');
+    }
+
+    public function test_pos_index_does_not_send_full_product_catalog(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos']);
+
+        for ($i = 0; $i < 120; $i++) {
+            $this->product($business, name: 'Producto '.$i, stock: 1, salePrice: 10);
+        }
+
+        $this->actingAs($user)
             ->get(route('sales.create'))
-            ->assertInertia(fn (Assert $page) => $page->where('products.0.sale_price', '150.00'));
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Sales/POS')
+                ->where('products', [])
+            );
+    }
+
+    public function test_pos_product_search_is_limited_tenant_scoped_and_includes_zero_stock(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos']);
+        [$otherBusiness] = $this->tenant(modules: ['pos']);
+
+        for ($i = 0; $i < 35; $i++) {
+            $this->product($business, name: 'Bomba '.$i, stock: $i === 0 ? 0 : 5, salePrice: 25);
+        }
+        $otherProduct = $this->product($otherBusiness, name: 'Bomba Tenant Ajeno', stock: 5, salePrice: 999);
+
+        $response = $this->actingAs($user)
+            ->get(route('sales.products.search', ['q' => 'Bomba']))
+            ->assertOk();
+
+        $products = $response->json('products');
+
+        $this->assertCount(30, $products);
+        $this->assertNotContains($otherProduct->id, array_column($products, 'id'));
+        $this->assertTrue(collect($products)->contains(fn (array $product) => (float) $product['available_stock'] === 0.0));
+    }
+
+    public function test_pos_product_search_supports_category_filter_without_text_and_combined_with_text(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos']);
+        [$otherBusiness] = $this->tenant(modules: ['pos']);
+        $screws = Category::query()->create(['business_id' => $business->id, 'name' => 'Tornillos']);
+        $tools = Category::query()->create(['business_id' => $business->id, 'name' => 'Herramientas']);
+        $otherTenantCategory = Category::query()->create(['business_id' => $otherBusiness->id, 'name' => 'Tornillos']);
+
+        Product::query()->create($this->productRecord($business, ['name' => 'Tornillo galvanizado', 'code' => 'TOR-001', 'category_id' => $screws->id]));
+        Product::query()->create($this->productRecord($business, ['name' => 'Tornillo negro', 'code' => 'TOR-002', 'category_id' => $screws->id]));
+        Product::query()->create($this->productRecord($business, ['name' => 'Martillo', 'code' => 'MAR-001', 'category_id' => $tools->id]));
+        $otherTenantProduct = Product::query()->create($this->productRecord($otherBusiness, ['name' => 'Tornillo ajeno', 'code' => 'TOR-999', 'category_id' => $otherTenantCategory->id]));
+
+        $categoryResponse = $this->actingAs($user)
+            ->get(route('sales.products.search', ['category_id' => $screws->id]))
+            ->assertOk();
+
+        $this->assertCount(2, $categoryResponse->json('products'));
+        $this->assertNotContains($otherTenantProduct->id, array_column($categoryResponse->json('products'), 'id'));
+
+        $combinedResponse = $this->actingAs($user)
+            ->get(route('sales.products.search', ['q' => 'galvanizado', 'category_id' => $screws->id]))
+            ->assertOk();
+
+        $this->assertCount(1, $combinedResponse->json('products'));
+        $this->assertSame('Tornillo galvanizado', $combinedResponse->json('products.0.name'));
+    }
+
+    public function test_pos_product_search_returns_duplicate_exact_code_matches(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos']);
+
+        Product::query()->create($this->productRecord($business, ['name' => 'Duplicado A', 'code' => 'DUP-001', 'barcode' => null]));
+        Product::query()->create($this->productRecord($business, ['name' => 'Duplicado B', 'code' => 'DUP-001', 'barcode' => null]));
+
+        $response = $this->actingAs($user)
+            ->get(route('sales.products.search', ['q' => 'DUP-001']))
+            ->assertOk();
+
+        $this->assertCount(2, $response->json('products'));
+    }
+
+    public function test_pos_product_search_returns_exact_barcode_matches_separately_and_tenant_scoped(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos']);
+        [$otherBusiness] = $this->tenant(modules: ['pos']);
+        $product = Product::query()->create($this->productRecord($business, ['name' => 'Producto barcode', 'code' => 'CODE-A', 'barcode' => 'BAR-EXACT-001']));
+        $otherProduct = Product::query()->create($this->productRecord($otherBusiness, ['name' => 'Producto ajeno', 'code' => 'CODE-B', 'barcode' => 'BAR-EXACT-001']));
+
+        $response = $this->actingAs($user)
+            ->get(route('sales.products.search', ['q' => 'BAR-EXACT-001']))
+            ->assertOk();
+
+        $this->assertSame($product->id, $response->json('exact_barcode_matches.0.id'));
+        $this->assertNotContains($otherProduct->id, array_column($response->json('exact_barcode_matches'), 'id'));
+    }
+
+    public function test_pos_product_search_returns_multiple_exact_barcode_matches_when_duplicates_exist(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos']);
+
+        Product::query()->create($this->productRecord($business, ['name' => 'Barcode A', 'code' => 'BAR-CODE-A', 'barcode' => 'DUP-BAR-POS']));
+        Product::query()->create($this->productRecord($business, ['name' => 'Barcode B', 'code' => 'BAR-CODE-B', 'barcode' => 'DUP-BAR-POS']));
+
+        $response = $this->actingAs($user)
+            ->get(route('sales.products.search', ['q' => 'DUP-BAR-POS']))
+            ->assertOk();
+
+        $this->assertCount(2, $response->json('exact_barcode_matches'));
+    }
+
+    public function test_pos_enter_flow_only_clears_after_exact_match(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+
+        $this->assertStringContainsString('exactBarcodeMatches = payload.exact_barcode_matches ?? [];', $source);
+        $this->assertStringContainsString('const exactMatches = exactBarcodeMatches.length > 0 ? exactBarcodeMatches : exactCodeMatches;', $source);
+        $this->assertStringContainsString('const product = exactMatches[0];', $source);
+        $this->assertStringNotContainsString('const product = exactMatches[0] ?? results[0]', $source);
+        $this->assertStringContainsString('function clearAfterSuccessfulExactEnterAdd()', $source);
+        $this->assertStringNotContainsString('function clearAndFocusSearch()', $source);
+        $this->assertStringContainsString('onClick={() => handleProductResultClick(product)}', $source);
+        $this->assertStringContainsString("setDuplicateProductSelectionMode('exact-enter');", $source);
+        $this->assertStringContainsString('const productsByIdRef = useRef(productsById);', $source);
+        $this->assertStringContainsString('}, [draftKey, fetchPosProducts]);', $source);
+        $this->assertStringNotContainsString('}, [draftKey, fetchPosProducts, productsById]);', $source);
+        $this->assertStringContainsString('Selecciona un producto de los resultados.', $source);
+    }
+
+    public function test_pos_product_search_includes_reserved_stock_and_respects_credit_reservation_setting(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true, reserveStockOnCreditReservations: true);
+        $product = $this->product($business, stock: 5, salePrice: 100);
+
+        $this->actingAs($user)
+            ->post(route('credits.receipts.store'), $this->creditPayload($product, 2))
+            ->assertSessionHasNoErrors();
+
+        $this->actingAs($user)
+            ->get(route('sales.products.search', ['q' => $product->code]))
+            ->assertOk()
+            ->assertJsonPath('products.0.reserved_stock', 2)
+            ->assertJsonPath('products.0.available_stock', 3);
+
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'reserve_stock_on_credit_reservations' => false,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('sales.products.search', ['q' => $product->code]))
+            ->assertOk()
+            ->assertJsonPath('products.0.reserved_stock', 0)
+            ->assertJsonPath('products.0.available_stock', 5);
     }
 
     public function test_backend_rejects_sale_when_submitted_branch_differs_from_active_branch(): void
@@ -3103,7 +3259,7 @@ class CriticalPosFelFlowTest extends TestCase
     public function test_pos_props_expose_negative_stock_policy_and_zero_available_product(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos'], allowNegativeStock: true);
-        $this->product($business, stock: 0, salePrice: 100);
+        $product = $this->product($business, stock: 0, salePrice: 100);
 
         $this->actingAs($user)
             ->get(route('sales.create'))
@@ -3111,8 +3267,13 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Sales/POS')
                 ->where('allow_negative_stock', true)
-                ->where('products.0.available_stock', fn ($value) => (float) $value === 0.0)
+                ->where('products', [])
             );
+
+        $this->actingAs($user)
+            ->get(route('sales.products.search', ['q' => $product->code]))
+            ->assertOk()
+            ->assertJsonPath('products.0.available_stock', 0);
 
         $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
         $this->assertStringContainsString('const disabledByStock = !allow_negative_stock && outOfStock;', $source);
@@ -3333,6 +3494,7 @@ class CriticalPosFelFlowTest extends TestCase
     {
         return [
             'business_id' => $business->id,
+            'category_id' => $overrides['category_id'] ?? null,
             'name' => $overrides['name'] ?? 'Producto existente',
             'code' => $overrides['code'] ?? 'CODE-'.uniqid(),
             'barcode' => $overrides['barcode'] ?? null,

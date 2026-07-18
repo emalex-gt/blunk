@@ -10,6 +10,7 @@ import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import {
     FormEvent,
     KeyboardEvent,
+    useCallback,
     useEffect,
     useMemo,
     useRef,
@@ -19,12 +20,16 @@ import {
 type Product = {
     id: number;
     category_id: number | null;
+    brand_id?: number | null;
+    category_name?: string | null;
+    brand_name?: string | null;
     name: string;
     code: string | null;
     barcode: string | null;
     cost_price: string;
     sale_price: string;
     stock: number;
+    physical_stock?: number;
     reserved_stock?: number;
     available_stock?: number;
     min_stock: number;
@@ -39,6 +44,13 @@ type ProductPrice = {
     product_id: number;
     price_type_id: number;
     price: string | number;
+};
+
+type PosProductSearchPayload = {
+    products?: Product[];
+    exact_barcode_matches?: Product[];
+    exact_code_matches?: Product[];
+    message?: string;
 };
 
 type PriceType = {
@@ -433,7 +445,7 @@ function isMeaningfulPosDraft(draft: PosDraft) {
 }
 
 export default function POS({
-    products,
+    products = [],
     categories,
     customers,
     hasOpenCashRegister,
@@ -448,7 +460,7 @@ export default function POS({
     credit_invoice = null,
     use_product_images = true,
 }: {
-    products: Product[];
+    products?: Product[];
     categories: Category[];
     customers: Customer[];
     hasOpenCashRegister: boolean;
@@ -519,6 +531,10 @@ export default function POS({
     const [nitLookupLoading, setNitLookupLoading] = useState(false);
     const [nitLookupMessage, setNitLookupMessage] = useState('');
     const [customerSearchResults, setCustomerSearchResults] = useState<Customer[]>([]);
+    const [loadedProducts, setLoadedProducts] = useState<Product[]>(products);
+    const [productSearchResults, setProductSearchResults] = useState<Product[]>([]);
+    const [productSearchLoading, setProductSearchLoading] = useState(false);
+    const [productSearchTouched, setProductSearchTouched] = useState(false);
     const [payments, setPayments] = useState<PaymentLine[]>([
         paymentLine('cash', '0.00'),
     ]);
@@ -528,6 +544,7 @@ export default function POS({
     const [showDiscountModal, setShowDiscountModal] = useState(false);
     const [duplicateProductChoices, setDuplicateProductChoices] = useState<Product[]>([]);
     const [duplicateProductSearchTerm, setDuplicateProductSearchTerm] = useState('');
+    const [duplicateProductSelectionMode, setDuplicateProductSelectionMode] = useState<'exact-enter' | 'normal'>('normal');
     const [manualPriceProductId, setManualPriceProductId] = useState<number | null>(null);
     const [discount, setDiscount] = useState<SaleDiscount | null>(null);
     const [discountForm, setDiscountForm] = useState<SaleDiscount>({
@@ -544,6 +561,8 @@ export default function POS({
     const creditInvoiceLoadedRef = useRef(false);
     const draftLoadInitializedRef = useRef(false);
     const latestDraftRef = useRef<PosDraft | null>(null);
+    const productSearchRequestRef = useRef(0);
+    const draftProductFetchKeyRef = useRef<string | null>(null);
 
     const { data, setData, post, processing, reset, transform, errors } = useForm<{
         note: string;
@@ -631,38 +650,155 @@ export default function POS({
         [country],
     );
 
-    const filteredProducts = useMemo(() => {
-        const value = search.toLowerCase().trim();
-        const categoryProducts = selectedCategoryId
-            ? products.filter((product) => product.category_id === selectedCategoryId)
-            : products;
-
-        if (!value) {
-            return categoryProducts.slice(0, 24);
+    const mergeProducts = useCallback((nextProducts: Product[]) => {
+        if (nextProducts.length === 0) {
+            return;
         }
 
-        return categoryProducts
-            .filter((product) =>
-                [product.name, product.code, product.barcode]
-                    .filter(Boolean)
-                    .some((field) => field!.toLowerCase().includes(value)),
-            )
-            .slice(0, 24);
-    }, [products, search, selectedCategoryId]);
+        setLoadedProducts((current) => {
+            const map = new Map(current.map((product) => [product.id, product]));
+            nextProducts.forEach((product) => map.set(product.id, product));
+
+            return Array.from(map.values());
+        });
+    }, []);
+
+    useEffect(() => {
+        mergeProducts(products);
+    }, [mergeProducts, products]);
+
+    const fetchPosProducts = useCallback(async ({
+        q = '',
+        ids = [],
+        categoryId = null,
+        limit = 30,
+        signal,
+    }: {
+        q?: string;
+        ids?: number[];
+        categoryId?: number | null;
+        limit?: number;
+        signal?: AbortSignal;
+    }): Promise<PosProductSearchPayload> => {
+        const params = new URLSearchParams();
+        const trimmed = q.trim();
+
+        if (trimmed !== '') {
+            params.set('q', trimmed);
+        }
+
+        if (ids.length > 0) {
+            params.set('ids', ids.join(','));
+        }
+
+        if (categoryId) {
+            params.set('category_id', String(categoryId));
+        }
+
+        params.set('limit', String(limit));
+
+        const response = await fetch(`${route('sales.products.search')}?${params.toString()}`, {
+            headers: { Accept: 'application/json' },
+            signal,
+        });
+        const payload = await readJsonResponse(response) as PosProductSearchPayload | null;
+
+        if (!response.ok) {
+            throw new Error(payload?.message ?? 'No se pudieron buscar productos.');
+        }
+
+        const nextProducts = payload?.products ?? [];
+        mergeProducts([
+            ...nextProducts,
+            ...(payload?.exact_barcode_matches ?? []),
+            ...(payload?.exact_code_matches ?? []),
+        ]);
+
+        return {
+            products: nextProducts,
+            exact_barcode_matches: payload?.exact_barcode_matches ?? [],
+            exact_code_matches: payload?.exact_code_matches ?? [],
+        };
+    }, [mergeProducts]);
+
+    useEffect(() => {
+        const value = search.trim();
+
+        if (value === '' && !selectedCategoryId) {
+            setProductSearchResults([]);
+            setProductSearchLoading(false);
+            setProductSearchTouched(false);
+            return;
+        }
+
+        const requestId = productSearchRequestRef.current + 1;
+        productSearchRequestRef.current = requestId;
+        const controller = new AbortController();
+        const timer = window.setTimeout(async () => {
+            setProductSearchLoading(true);
+            setProductSearchTouched(true);
+
+            try {
+                const payload = await fetchPosProducts({
+                    q: value,
+                    categoryId: selectedCategoryId,
+                    signal: controller.signal,
+                });
+
+                if (productSearchRequestRef.current === requestId) {
+                    setProductSearchResults(payload.products ?? []);
+                }
+            } catch (error) {
+                if (!controller.signal.aborted && productSearchRequestRef.current === requestId) {
+                    setProductSearchResults([]);
+                }
+            } finally {
+                if (!controller.signal.aborted && productSearchRequestRef.current === requestId) {
+                    setProductSearchLoading(false);
+                }
+            }
+        }, value === '' ? 0 : 250);
+
+        return () => {
+            controller.abort();
+            window.clearTimeout(timer);
+        };
+    }, [fetchPosProducts, search, selectedCategoryId]);
 
     const productsById = useMemo(
-        () => new Map(products.map((product) => [product.id, product])),
-        [products],
+        () => new Map(loadedProducts.map((product) => [product.id, product])),
+        [loadedProducts],
     );
+    const productsByIdRef = useRef(productsById);
+
+    useEffect(() => {
+        productsByIdRef.current = productsById;
+    }, [productsById]);
 
     const currentRecentProducts = useMemo(
         () =>
             recentProducts
-                .map((product) => productsById.get(product.id))
+                .map((product) => productsById.get(product.id) ?? product)
                 .filter((product): product is Product => Boolean(product))
                 .slice(0, 8),
         [productsById, recentProducts],
     );
+
+    useEffect(() => {
+        if (!credit_invoice || creditInvoiceLoadedRef.current) {
+            return;
+        }
+
+        const missingIds = credit_invoice.lines
+            .map((line) => line.product_id)
+            .filter((id) => !productsById.has(id));
+
+        if (missingIds.length === 0) {
+            return;
+        }
+
+        void fetchPosProducts({ ids: missingIds, limit: 50 }).catch(() => undefined);
+    }, [credit_invoice, fetchPosProducts, productsById]);
 
     useEffect(() => {
         if (!credit_invoice || creditInvoiceLoadedRef.current || productsById.size === 0) {
@@ -907,7 +1043,7 @@ export default function POS({
         };
     }
 
-    function restorePosDraft(draft: PosDraft) {
+    function restorePosDraft(draft: PosDraft, productMap = productsById) {
         let discardedInvalidLines = false;
 
         if (String(draft.branch_id ?? 'default') !== String(draftBranchId)) {
@@ -916,7 +1052,7 @@ export default function POS({
         }
         const restoredCart = draft.cart
             .map<CartItem | null>((item) => {
-                const product = productsById.get(item.product_id);
+                const product = productMap.get(item.product_id);
 
                 if (!product) {
                     discardedInvalidLines = true;
@@ -1051,8 +1187,12 @@ export default function POS({
         showMessage('Descuento aplicado.');
     }
 
-    function clearAndFocusSearch() {
+    function clearAfterSuccessfulExactEnterAdd() {
+        productSearchRequestRef.current += 1;
         setSearch('');
+        setProductSearchResults([]);
+        setProductSearchTouched(false);
+        setProductSearchLoading(false);
         setTimeout(() => {
             searchInputRef.current?.focus();
         }, 0);
@@ -1084,7 +1224,7 @@ export default function POS({
             return [];
         }
 
-        return products
+        return loadedProducts
             .filter((product) =>
                 [product.code, product.barcode]
                     .filter(Boolean)
@@ -1444,7 +1584,7 @@ export default function POS({
         setCart(
             (heldSale.cart ?? [])
                 .map((item) => {
-                    const currentProduct = productsById.get(item.product.id);
+                    const currentProduct = productsById.get(item.product.id) ?? item.product;
 
                     if (!currentProduct) {
                         return null;
@@ -1492,33 +1632,62 @@ export default function POS({
         recoverSale();
     }
 
-    function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    async function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
         if (event.key !== 'Enter') {
             return;
         }
 
         event.preventDefault();
 
-        const exactMatches = exactProductIdentifierMatches(search);
+        const value = search.trim();
+        let results = productSearchResults;
+        let exactBarcodeMatches: Product[] = [];
+        let exactCodeMatches: Product[] = [];
+
+        if (value !== '') {
+            try {
+                setProductSearchLoading(true);
+                const payload = await fetchPosProducts({ q: value, categoryId: selectedCategoryId, limit: 30 });
+                results = payload.products ?? [];
+                exactBarcodeMatches = payload.exact_barcode_matches ?? [];
+                exactCodeMatches = payload.exact_code_matches ?? [];
+                setProductSearchResults(results);
+                setProductSearchTouched(true);
+            } catch {
+                results = [];
+            } finally {
+                setProductSearchLoading(false);
+            }
+        }
+
+        const exactMatches = exactBarcodeMatches.length > 0 ? exactBarcodeMatches : exactCodeMatches;
 
         if (exactMatches.length > 1) {
             setDuplicateProductChoices(exactMatches);
             setDuplicateProductSearchTerm(search.trim());
+            setDuplicateProductSelectionMode('exact-enter');
             showMessage('Hay varios productos con este código. Selecciona cuál deseas vender.');
             return;
         }
 
-        const product = exactMatches[0] ?? filteredProducts[0];
+        const product = exactMatches[0];
 
         if (!product) {
+            if (value !== '') {
+                showMessage(results.length > 0 ? 'Selecciona un producto de los resultados.' : '');
+            }
             return;
         }
 
         const added = addProduct(product);
 
         if (added) {
-            clearAndFocusSearch();
+            clearAfterSuccessfulExactEnterAdd();
         }
+    }
+
+    function handleProductResultClick(product: Product) {
+        addProduct(product);
     }
 
     function selectDuplicateProduct(product: Product) {
@@ -1527,7 +1696,11 @@ export default function POS({
         if (added) {
             setDuplicateProductChoices([]);
             setDuplicateProductSearchTerm('');
-            clearAndFocusSearch();
+            setDuplicateProductSelectionMode('normal');
+
+            if (duplicateProductSelectionMode === 'exact-enter') {
+                clearAfterSuccessfulExactEnterAdd();
+            }
         }
     }
 
@@ -1798,10 +1971,51 @@ export default function POS({
         setRestoreDraft(null);
         setDraftReady(false);
         const draft = loadDraft<PosDraft>(draftKey);
+        const finishDraftInitialization = () => {
+            draftLoadInitializedRef.current = true;
+            focusSearch();
+        };
+        const restoreDraftWithProducts = (productMap = productsByIdRef.current) => {
+            if (isBranchChange) {
+                restorePosDraft(draft as PosDraft, productMap);
+                setDraftReady(true);
+                showMessage('Sucursal cambiada. Se cargÃ³ el borrador de esta sucursal.');
+                toast.success('Sucursal cambiada. Se cargÃ³ el borrador de esta sucursal.');
+            } else {
+                setRestoreDraft(draft);
+            }
+
+            finishDraftInitialization();
+        };
 
         if (draft && isMeaningfulPosDraft(draft)) {
+            const productMap = productsByIdRef.current;
+            const missingProductIds = (draft.cart ?? [])
+                .map((item) => Number(item.product_id))
+                .filter((id) => id > 0 && !productMap.has(id));
+            const missingKey = missingProductIds.sort().join(',');
+
+            if (missingProductIds.length > 0 && draftProductFetchKeyRef.current !== `${draftKey}:${missingKey}`) {
+                draftProductFetchKeyRef.current = `${draftKey}:${missingKey}`;
+                void fetchPosProducts({ ids: missingProductIds, limit: 50 })
+                    .then((payload) => {
+                        const hydratedMap = new Map(productsByIdRef.current);
+                        [
+                            ...(payload.products ?? []),
+                            ...(payload.exact_barcode_matches ?? []),
+                            ...(payload.exact_code_matches ?? []),
+                        ].forEach((product) => hydratedMap.set(product.id, product));
+                        restoreDraftWithProducts(hydratedMap);
+                    })
+                    .catch(() => restoreDraftWithProducts(productsByIdRef.current));
+                return;
+            }
+
+            restoreDraftWithProducts(productMap);
+            return;
+
             if (isBranchChange) {
-                restorePosDraft(draft);
+                restorePosDraft(draft as PosDraft);
                 setDraftReady(true);
                 showMessage('Sucursal cambiada. Se cargó el borrador de esta sucursal.');
                 toast.success('Sucursal cambiada. Se cargó el borrador de esta sucursal.');
@@ -1819,7 +2033,7 @@ export default function POS({
 
         draftLoadInitializedRef.current = true;
         focusSearch();
-    }, [draftKey, productsById]);
+    }, [draftKey, fetchPosProducts]);
 
     useEffect(() => {
         if (!draftReady || restoreDraft) {
@@ -1990,7 +2204,7 @@ export default function POS({
         });
     }
 
-    const productsToShow = search || selectedCategoryId ? filteredProducts : currentRecentProducts;
+    const productsToShow = search || selectedCategoryId ? productSearchResults : currentRecentProducts;
     const showingRecentProducts =
         !search && !selectedCategoryId && currentRecentProducts.length > 0;
     const typedErrors = errors as Record<string, string>;
@@ -2424,7 +2638,13 @@ export default function POS({
                                 </div>
                             )}
 
-                            {(search || selectedCategoryId) && productsToShow.length === 0 && (
+                            {productSearchLoading && (
+                                <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-center text-sm font-semibold text-indigo-700">
+                                    Buscando productos...
+                                </div>
+                            )}
+
+                            {(search || selectedCategoryId) && productSearchTouched && !productSearchLoading && productsToShow.length === 0 && (
                                 <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-slate-500">
                                     {t('pos.no_products_found')}
                                 </div>
@@ -2444,7 +2664,7 @@ export default function POS({
                                             key={product.id}
                                             type="button"
                                             disabled={disabledByStock || processing}
-                                            onClick={() => addProduct(product)}
+                                            onClick={() => handleProductResultClick(product)}
                                             className="flex items-stretch gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-70"
                                         >
                                             {use_product_images && product.image_url ? (
@@ -3264,6 +3484,7 @@ export default function POS({
                                 onClick={() => {
                                     setDuplicateProductChoices([]);
                                     setDuplicateProductSearchTerm('');
+                                    setDuplicateProductSelectionMode('normal');
                                     focusSearch();
                                 }}
                                 className="rounded-lg border border-slate-200 px-3 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-50"
