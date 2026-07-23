@@ -11,13 +11,16 @@ use App\Models\RouteVisit;
 use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
 use App\Models\RouteZoneCustomer;
+use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\BranchInventory;
+use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\GuatemalaLocations;
 use App\Support\Inventory\StockReservationService;
 use App\Support\Permissions;
 use App\Support\PriceLists;
 use App\Support\StockAvailability;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -72,11 +75,11 @@ class RouteController extends Controller
         $search = $request->string('search')->toString();
 
         return Inertia::render('Routes/Zones/Customers', [
-            'zone' => $zone->load(['branch:id,name', 'assignedUser:id,name']),
+            'zone' => $zone->load(['branch:id,name,department,municipality', 'assignedUser:id,name']),
             'assignments' => RouteZoneCustomer::query()
                 ->where('business_id', $businessId)
                 ->where('route_zone_id', $zone->id)
-                ->with('customer:id,name,commercial_name,doc_number,address,department,municipality,phone')
+                ->with('customer:id,name,commercial_name,contact_name,doc_number,address,department,municipality,phone')
                 ->orderByRaw('visit_order IS NULL, visit_order')
                 ->orderBy('id')
                 ->get(),
@@ -132,10 +135,11 @@ class RouteController extends Controller
     public function createZoneCustomer(Request $request, RouteZone $zone): RedirectResponse
     {
         $this->authorizeBusiness($zone);
+        $zone->loadMissing('branch');
 
         $data = $this->validateRouteCustomer($request);
         $result = DB::transaction(function () use ($data, $zone) {
-            $customerResult = $this->findOrCreateRouteCustomer($data);
+            $customerResult = $this->findOrCreateRouteCustomer($data, $zone->branch);
             /** @var Customer $customer */
             $customer = $customerResult['customer'];
             $assignment = $this->assignCustomerToZone($zone, $customer, $data['notes'] ?? null);
@@ -197,6 +201,12 @@ class RouteController extends Controller
     public function preSales(Request $request): Response
     {
         $businessId = currentBusinessId();
+        $sellerId = $request->filled('seller_id')
+            ? User::query()->where('business_id', $businessId)->whereKey($request->integer('seller_id'))->value('id')
+            : null;
+        $zoneId = $request->filled('zone_id')
+            ? RouteZone::query()->where('business_id', $businessId)->whereKey($request->integer('zone_id'))->value('id')
+            : null;
 
         $query = PreSale::query()
             ->where('business_id', $businessId)
@@ -205,14 +215,17 @@ class RouteController extends Controller
             ->latest();
 
         $query->when($request->filled('status'), fn ($query) => $query->where('status', $request->string('status')->toString()));
-        $query->when($request->filled('seller_id'), fn ($query) => $query->where('seller_id', $request->integer('seller_id')));
-        $query->when($request->filled('zone_id'), fn ($query) => $query->where('route_zone_id', $request->integer('zone_id')));
+        $query->when($request->filled('seller_id'), fn ($query) => $sellerId ? $query->where('seller_id', $sellerId) : $query->whereRaw('1 = 0'));
+        $query->when($request->filled('zone_id'), fn ($query) => $zoneId ? $query->where('route_zone_id', $zoneId) : $query->whereRaw('1 = 0'));
         $query->when($request->filled('date'), fn ($query) => $query->whereDate('created_at', $request->date('date')));
-        $query->when($request->filled('customer'), function ($query) use ($request) {
+        $query->when($request->filled('customer'), function ($query) use ($businessId, $request) {
             $search = $request->string('customer')->toString();
             $query->whereHas('customer', fn ($query) => $query
-                ->where('name', 'ilike', "%{$search}%")
-                ->orWhere('doc_number', 'ilike', "%{$search}%"));
+                ->where('business_id', $businessId)
+                ->where(function ($query) use ($search) {
+                    $query->where('name', 'ilike', "%{$search}%")
+                        ->orWhere('doc_number', 'ilike', "%{$search}%");
+                }));
         });
 
         return Inertia::render('Routes/PreSales/Index', [
@@ -249,19 +262,17 @@ class RouteController extends Controller
         $this->authorizeSellerZone($request, $zone);
 
         $today = now()->toDateString();
-        $existing = RouteWorkDay::query()
+        $openWorkDay = RouteWorkDay::query()
             ->where('business_id', currentBusinessId())
+            ->where('branch_id', $zone->branch_id)
             ->where('route_zone_id', $zone->id)
             ->where('seller_id', $request->user()->id)
-            ->whereDate('work_date', $today)
+            ->where('status', 'open')
+            ->oldest('id')
             ->first();
 
-        if ($existing?->status === 'closed') {
-            return back()->withErrors(['work_day' => 'La jornada de esta zona ya fue cerrada.']);
-        }
-
-        $workDay = DB::transaction(function () use ($request, $zone, $today, $existing) {
-            $workDay = $existing ?: RouteWorkDay::query()->create([
+        $workDay = DB::transaction(function () use ($request, $zone, $today, $openWorkDay) {
+            $workDay = $openWorkDay ?: RouteWorkDay::query()->create([
                 'business_id' => currentBusinessId(),
                 'branch_id' => $zone->branch_id,
                 'route_zone_id' => $zone->id,
@@ -299,7 +310,10 @@ class RouteController extends Controller
             return $workDay;
         });
 
-        return redirect()->route('routes.mobile.work-days.show', $workDay)->with('success', 'Jornada iniciada.');
+        return redirect()
+            ->route('routes.mobile.work-days.show', $workDay)
+            ->setStatusCode(303)
+            ->with('success', 'Jornada iniciada.');
     }
 
     public function workDay(Request $request, RouteWorkDay $workDay): Response
@@ -307,10 +321,10 @@ class RouteController extends Controller
         $this->authorizeSellerWorkDay($request, $workDay);
 
         return Inertia::render('Routes/Mobile/WorkDay', [
-            'workDay' => $workDay->load(['zone:id,name', 'branch:id,name']),
+            'workDay' => $workDay->load(['zone:id,name', 'branch:id,name,department,municipality']),
             'visits' => RouteVisit::query()
                 ->where('route_work_day_id', $workDay->id)
-                ->with(['customer:id,name,commercial_name,doc_number,address,department,municipality,phone', 'preSale:id,route_visit_id,status,total'])
+                ->with(['customer:id,name,commercial_name,contact_name,doc_number,address,department,municipality,phone', 'preSale:id,route_visit_id,status,total'])
                 ->orderByRaw('visit_order IS NULL, visit_order')
                 ->orderBy('id')
                 ->get(),
@@ -320,7 +334,7 @@ class RouteController extends Controller
     public function createMobileCustomer(Request $request, RouteWorkDay $workDay): RedirectResponse
     {
         $this->authorizeSellerWorkDay($request, $workDay);
-        $workDay->loadMissing('zone');
+        $workDay->loadMissing('zone', 'branch');
 
         if ($workDay->status !== 'open') {
             throw ValidationException::withMessages([
@@ -333,7 +347,7 @@ class RouteController extends Controller
         $data = $this->validateRouteCustomer($request);
 
         $result = DB::transaction(function () use ($data, $workDay) {
-            $customerResult = $this->findOrCreateRouteCustomer($data);
+            $customerResult = $this->findOrCreateRouteCustomer($data, $workDay->branch);
             /** @var Customer $customer */
             $customer = $customerResult['customer'];
             $assignment = $this->assignCustomerToZone($workDay->zone, $customer, $data['notes'] ?? null);
@@ -360,44 +374,74 @@ class RouteController extends Controller
             $visit->update(['status' => 'in_progress', 'started_at' => now()]);
         }
 
-        $products = Product::query()
-            ->where('business_id', currentBusinessId())
-            ->where('is_active', true)
-            ->when($search, function ($query) use ($search) {
-                $query->where(function ($query) use ($search) {
-                    $query->where('name', 'ilike', "%{$search}%")
-                        ->orWhere('code', 'ilike', "%{$search}%")
-                        ->orWhere('barcode', 'ilike', "%{$search}%");
-                });
-            })
-            ->with('category:id,name')
-            ->orderBy('name')
-            ->limit(30)
-            ->get(['id', 'business_id', 'category_id', 'name', 'code', 'barcode', 'sale_price', 'image_url']);
-
-        BranchInventory::applyBranchStockAndPrices($products, currentBusinessId(), $visit->branch_id);
-        PriceLists::applyBranchPricesToProducts($products, currentBusinessId(), $visit->branch_id);
-
-        $products->each(function (Product $product) use ($visit) {
-            $reserved = StockAvailability::reservedStock($product, null, $visit->branch_id);
-            $stock = StockAvailability::totalStock($product, null, $visit->branch_id);
-            $product->setAttribute('stock', $stock);
-            $product->setAttribute('reserved_stock', $reserved);
-            $product->setAttribute('available_stock', $stock - $reserved);
-        });
-
         return Inertia::render('Routes/Mobile/Visit', [
-            'visit' => $visit->load(['customer:id,name,commercial_name,doc_number,address,department,municipality,phone', 'workDay:id,status,work_date', 'zone:id,name']),
+            'visit' => $visit->load(['customer:id,name,commercial_name,contact_name,doc_number,address,department,municipality,phone', 'workDay:id,status,work_date', 'zone:id,name']),
             'preSale' => PreSale::query()
                 ->where('business_id', currentBusinessId())
                 ->where('route_visit_id', $visit->id)
                 ->where('status', '!=', 'cancelled')
                 ->with('items.product:id,name,code,barcode,image_url')
                 ->first(),
-            'products' => $products,
+            'products' => $search !== '' ? $this->preSaleProductResults($visit, $search) : collect(),
             'filters' => ['search' => $search],
             'allowNegativeStock' => \App\Support\Inventory\StockPolicy::allowsNegativeStockForBusinessId(currentBusinessId()),
+            'allowManualPrice' => $this->preSaleManualPriceEnabled(currentBusinessId()),
         ]);
+    }
+
+    public function visitProductSearch(Request $request, RouteVisit $visit): JsonResponse
+    {
+        $this->authorizeSellerVisit($request, $visit);
+
+        $search = $request->string('q')->trim()->toString();
+
+        if ($search === '') {
+            return response()->json(['products' => []]);
+        }
+
+        return response()->json([
+            'products' => $this->preSaleProductResults($visit, $search)->values(),
+        ]);
+    }
+
+    public function resolveNit(Request $request): JsonResponse
+    {
+        $request->validate([
+            'nit' => ['required', 'string', 'max:50'],
+        ]);
+
+        $business = Business::query()->findOrFail(currentBusinessId());
+
+        try {
+            $resolved = GuatemalaNitCustomerResolver::resolve($business, (string) $request->query('nit'), allowCache: true);
+            /** @var Customer $customer */
+            $customer = $resolved['customer'];
+
+            return response()->json([
+                'customer' => [
+                    'id' => $customer->id,
+                    'name' => $customer->name,
+                    'commercial_name' => $customer->commercial_name,
+                    'contact_name' => $customer->contact_name,
+                    'doc_number' => $customer->doc_number,
+                    'phone' => $customer->phone,
+                    'address' => $customer->address,
+                    'department' => $customer->department,
+                    'municipality' => $customer->municipality,
+                    'tax_lookup_verified_at' => $customer->tax_lookup_verified_at?->toIso8601String(),
+                ],
+                'source' => $resolved['source'],
+            ]);
+        } catch (ValidationException $exception) {
+            $message = $exception->errors()['nit'][0]
+                ?? $exception->errors()['to_customer_doc_number'][0]
+                ?? 'No se pudo validar el NIT. Verifica el número e inténtalo nuevamente.';
+
+            return response()->json([
+                'message' => $message,
+                'errors' => ['nit' => [$message]],
+            ], 422);
+        }
     }
 
     public function savePreSale(Request $request, RouteVisit $visit, StockReservationService $reservations): RedirectResponse
@@ -411,6 +455,8 @@ class RouteController extends Controller
             'items.*.product_id' => ['required', 'integer'],
             'items.*.quantity' => ['required', 'numeric', 'gt:0'],
             'items.*.price_type_id' => ['nullable', 'integer'],
+            'items.*.unit_price' => ['nullable', 'numeric', 'gt:0'],
+            'items.*.manual_price' => ['nullable', 'boolean'],
             'items.*.discount' => ['nullable', 'numeric', 'min:0'],
             'items.*.notes' => ['nullable', 'string'],
         ]);
@@ -465,13 +511,29 @@ class RouteController extends Controller
 
             $subtotal = 0.0;
             $discountTotal = 0.0;
+            $configuredPriceTypeId = $this->preSalePriceTypeId(currentBusinessId());
+            $manualPriceEnabled = $this->preSaleManualPriceEnabled(currentBusinessId());
 
             foreach ($data['items'] as $row) {
                 $product = $products->get((int) $row['product_id']);
-                $price = PriceLists::priceForProduct($product, $row['price_type_id'] ?? null, $visit->branch_id);
+                $price = PriceLists::priceForProduct($product, $configuredPriceTypeId, $visit->branch_id);
                 $quantity = (float) $row['quantity'];
                 $discount = round((float) ($row['discount'] ?? 0), 2);
-                $lineSubtotal = round($quantity * (float) $price['price'], 2);
+                $manualPrice = (bool) ($row['manual_price'] ?? false);
+                $unitPrice = round((float) ($price['price'] ?? $product->sale_price), 2);
+
+                if ($manualPrice) {
+                    if (! $manualPriceEnabled) {
+                        throw ValidationException::withMessages([
+                            'items' => 'El precio manual no está permitido para preventas.',
+                        ]);
+                    }
+
+                    $unitPrice = round((float) ($row['unit_price'] ?? 0), 2);
+                    $this->validatePreSaleManualPrice($product, $unitPrice);
+                }
+
+                $lineSubtotal = round($quantity * $unitPrice, 2);
                 $lineTotal = max(0, round($lineSubtotal - $discount, 2));
 
                 $item = $preSale->items()->create([
@@ -479,7 +541,9 @@ class RouteController extends Controller
                     'product_id' => $product->id,
                     'price_type_id' => $price['price_type_id'],
                     'quantity' => $quantity,
-                    'unit_price' => $price['price'],
+                    'unit_price' => $unitPrice,
+                    'original_price' => $price['price'],
+                    'manual_price' => $manualPrice,
                     'discount' => $discount,
                     'total' => $lineTotal,
                     'notes' => $row['notes'] ?? null,
@@ -614,11 +678,112 @@ class RouteController extends Controller
         return $data;
     }
 
+    private function preSaleProductResults(RouteVisit $visit, string $search)
+    {
+        $businessId = currentBusinessId();
+        $query = Product::query()
+            ->where('business_id', $businessId)
+            ->where('is_active', true)
+            ->when($search !== '', function ($query) use ($businessId, $search) {
+                $query->where(function ($query) use ($businessId, $search) {
+                    $query->where('name', 'ilike', "%{$search}%")
+                        ->orWhere('code', 'ilike', "%{$search}%")
+                        ->orWhere('barcode', 'ilike', "%{$search}%")
+                        ->orWhereHas('category', fn ($category) => $category
+                            ->where('business_id', $businessId)
+                            ->where('name', 'ilike', "%{$search}%"))
+                        ->orWhereHas('brand', fn ($brand) => $brand
+                            ->where('business_id', $businessId)
+                            ->where('name', 'ilike', "%{$search}%"));
+                });
+            })
+            ->with([
+                'category' => fn ($query) => $query
+                    ->where('business_id', $businessId)
+                    ->select('id', 'business_id', 'name'),
+                'brand' => fn ($query) => $query
+                    ->where('business_id', $businessId)
+                    ->select('id', 'business_id', 'name'),
+            ]);
+
+        BranchInventory::restrictProductsToBranch($query, $businessId, $visit->branch_id);
+
+        $products = $query
+            ->orderBy('name')
+            ->limit(30)
+            ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'sale_price', 'image_url']);
+
+        $priceTypeId = $this->preSalePriceTypeId($businessId);
+
+        return $products->map(function (Product $product) use ($businessId, $visit, $priceTypeId) {
+            BranchInventory::ensureProductInBranch($product, $visit->branch_id);
+            $stock = StockAvailability::totalStock($product, null, $visit->branch_id);
+            $reserved = StockAvailability::reservedStock($product, null, $visit->branch_id);
+            $price = PriceLists::priceForProduct($product, $priceTypeId, $visit->branch_id);
+
+            return [
+                'id' => $product->id,
+                'business_id' => $businessId,
+                'category_id' => $product->category_id,
+                'brand_id' => $product->brand_id,
+                'category_name' => $product->category?->name,
+                'brand_name' => $product->brand?->name,
+                'name' => $product->name,
+                'code' => $product->code,
+                'barcode' => $product->barcode,
+                'sale_price' => $price['price'],
+                'price_type_id' => $price['price_type_id'],
+                'image_url' => $product->image_url,
+                'stock' => $stock,
+                'reserved_stock' => $reserved,
+                'available_stock' => $stock - $reserved,
+            ];
+        });
+    }
+
+    private function preSalePriceTypeId(int $businessId): ?int
+    {
+        $priceTypeId = TenantSetting::query()
+            ->where('business_id', $businessId)
+            ->value('pre_sale_price_type_id');
+
+        if (! $priceTypeId) {
+            return null;
+        }
+
+        return (int) $priceTypeId;
+    }
+
+    private function preSaleManualPriceEnabled(int $businessId): bool
+    {
+        $settings = TenantSetting::query()
+            ->where('business_id', $businessId)
+            ->first(['allow_manual_price', 'pre_sale_allow_manual_price']);
+
+        return (bool) ($settings?->allow_manual_price) && (bool) ($settings?->pre_sale_allow_manual_price);
+    }
+
+    private function validatePreSaleManualPrice(Product $product, float $unitPrice): void
+    {
+        $minMargin = (float) TenantSetting::query()
+            ->where('business_id', $product->business_id)
+            ->value('manual_price_min_margin_percent');
+        $cost = (float) ($product->cost_price ?? 0);
+        $minimum = $cost > 0 ? round($cost * (1 + ($minMargin / 100)), 2) : 0;
+
+        if ($unitPrice <= 0 || ($minimum > 0 && $unitPrice < $minimum)) {
+            throw ValidationException::withMessages([
+                'items' => 'Este precio no está permitido.',
+            ]);
+        }
+    }
+
     private function validateRouteCustomer(Request $request, bool $requireAnyName = true): array
     {
         $data = $request->validate([
             'name' => ['nullable', 'string', 'max:255'],
             'commercial_name' => ['nullable', 'string', 'max:255'],
+            'contact_name' => ['nullable', 'string', 'max:255'],
             'doc_number' => ['nullable', 'string', 'max:50'],
             'phone' => ['nullable', 'string', 'max:50'],
             'address' => ['nullable', 'string', 'max:255'],
@@ -631,6 +796,7 @@ class RouteController extends Controller
 
         $data['name'] = trim((string) ($data['name'] ?? ''));
         $data['commercial_name'] = trim((string) ($data['commercial_name'] ?? ''));
+        $data['contact_name'] = trim((string) ($data['contact_name'] ?? ''));
         if ($requireAnyName && $data['name'] === '' && $data['commercial_name'] === '') {
             throw ValidationException::withMessages([
                 'name' => 'Debes ingresar nombre o nombre del negocio.',
@@ -652,11 +818,33 @@ class RouteController extends Controller
         return $data;
     }
 
-    private function findOrCreateRouteCustomer(array $data): array
+    private function routeCustomerBranchLocationDefaults(?Branch $branch): array
+    {
+        $department = trim((string) ($branch?->department ?? ''));
+        $municipality = trim((string) ($branch?->municipality ?? ''));
+
+        if (
+            $this->currentBusinessCountry() === 'GT'
+            && (
+                ! GuatemalaLocations::isValidDepartment($department)
+                || ! GuatemalaLocations::isValidMunicipality($department, $municipality)
+            )
+        ) {
+            return ['department' => '', 'municipality' => ''];
+        }
+
+        return [
+            'department' => $department,
+            'municipality' => $municipality,
+        ];
+    }
+
+    private function findOrCreateRouteCustomer(array $data, ?Branch $defaultBranch = null): array
     {
         $businessId = currentBusinessId();
         $docNumber = $data['doc_number'];
         $isFinalConsumer = $docNumber === '' || $docNumber === 'CF';
+        $branchDefaults = $this->routeCustomerBranchLocationDefaults($defaultBranch);
 
         if (! $isFinalConsumer) {
             $existing = Customer::query()
@@ -669,7 +857,45 @@ class RouteController extends Controller
                 ->first();
 
             if ($existing) {
+                $payload = [];
+
+                if (blank($existing->name) && $data['name'] !== '') {
+                    $payload['name'] = $data['name'];
+                }
+
+                if (blank($existing->commercial_name) && $data['commercial_name'] !== '') {
+                    $payload['commercial_name'] = $data['commercial_name'];
+                }
+
+                if (blank($existing->contact_name) && $data['contact_name'] !== '') {
+                    $payload['contact_name'] = $data['contact_name'];
+                }
+
+                foreach (['address', 'department', 'municipality', 'phone'] as $field) {
+                    if (
+                        in_array($field, ['department', 'municipality'], true)
+                        && $data[$field] !== ''
+                        && $data[$field] === $branchDefaults[$field]
+                    ) {
+                        continue;
+                    }
+
+                    if (blank($existing->{$field}) && $data[$field] !== '') {
+                        $payload[$field] = $data[$field];
+                    }
+                }
+
+                if ($payload !== []) {
+                    $existing->forceFill($payload)->save();
+                }
+
                 return ['customer' => $existing, 'created' => false];
+            }
+        }
+
+        foreach (['department', 'municipality'] as $field) {
+            if ($data[$field] === '' && $branchDefaults[$field] !== '') {
+                $data[$field] = $branchDefaults[$field];
             }
         }
 
@@ -677,6 +903,7 @@ class RouteController extends Controller
             'business_id' => $businessId,
             'name' => $data['name'],
             'commercial_name' => $data['commercial_name'] !== '' ? $data['commercial_name'] : null,
+            'contact_name' => $data['contact_name'] !== '' ? $data['contact_name'] : null,
             'doc_type' => $isFinalConsumer ? 'CF' : 'NIT',
             'doc_number' => $isFinalConsumer ? 'CF' : $docNumber,
             'address' => $data['address'] !== '' ? $data['address'] : null,
@@ -694,6 +921,7 @@ class RouteController extends Controller
     {
         $payload = [
             'commercial_name' => $data['commercial_name'] !== '' ? $data['commercial_name'] : null,
+            'contact_name' => $data['contact_name'] !== '' ? $data['contact_name'] : null,
             'address' => $data['address'] !== '' ? $data['address'] : null,
             'department' => $data['department'] !== '' ? $data['department'] : null,
             'municipality' => $data['municipality'] !== '' ? $data['municipality'] : null,

@@ -132,10 +132,28 @@ class SaleController extends Controller
             return response()->json(['products' => []]);
         }
 
+        if ($categoryId && ! Category::query()
+            ->where('business_id', $businessId)
+            ->whereKey($categoryId)
+            ->exists()) {
+            return response()->json([
+                'products' => [],
+                'exact_barcode_matches' => [],
+                'exact_code_matches' => [],
+            ]);
+        }
+
         $baseQuery = Product::query()
             ->where('products.business_id', $businessId)
             ->where('products.is_active', true)
-            ->with(['category:id,name', 'brand:id,name']);
+            ->with([
+                'category' => fn ($category) => $category
+                    ->where('business_id', $businessId)
+                    ->select('id', 'business_id', 'name'),
+                'brand' => fn ($brand) => $brand
+                    ->where('business_id', $businessId)
+                    ->select('id', 'business_id', 'name'),
+            ]);
 
         BranchInventory::restrictProductsToBranch($baseQuery, $businessId, $activeBranch->id);
 
@@ -193,15 +211,19 @@ class SaleController extends Controller
                     ]);
                 $like = "%{$search}%";
                 $query = clone $baseQuery;
-                $query->where(function ($builder) use ($search, $like, $normalized) {
+                $query->where(function ($builder) use ($businessId, $like, $normalized) {
                     $builder
                         ->whereRaw($this->normalizedSql('products.code').' = ?', [$normalized])
                         ->orWhereRaw($this->normalizedSql('products.barcode').' = ?', [$normalized])
                         ->orWhere('products.code', 'ilike', $like)
                         ->orWhere('products.barcode', 'ilike', $like)
                         ->orWhere('products.name', 'ilike', $like)
-                        ->orWhereHas('category', fn ($category) => $category->where('name', 'ilike', $like))
-                        ->orWhereHas('brand', fn ($brand) => $brand->where('name', 'ilike', $like));
+                        ->orWhereHas('category', fn ($category) => $category
+                            ->where('business_id', $businessId)
+                            ->where('name', 'ilike', $like))
+                        ->orWhereHas('brand', fn ($brand) => $brand
+                            ->where('business_id', $businessId)
+                            ->where('name', 'ilike', $like));
                 });
 
                 $query->orderByRaw(
@@ -229,7 +251,10 @@ class SaleController extends Controller
             'min_stock',
             'location',
             'image_url',
-        ]);
+        ])->where('business_id', $businessId)->values();
+
+        $exactBarcodeMatches = $exactBarcodeMatches->where('business_id', $businessId)->values();
+        $exactCodeMatches = $exactCodeMatches->where('business_id', $businessId)->values();
 
         return response()->json([
             'products' => $this->posProductPayload($products, $businessId, $activeBranch->id),

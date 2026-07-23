@@ -19,6 +19,7 @@ import {
 
 type Product = {
     id: number;
+    business_id?: number | string | null;
     category_id: number | null;
     brand_id?: number | null;
     category_name?: string | null;
@@ -191,7 +192,7 @@ type PosDraft = {
     discount_reason: string;
 };
 
-const recentProductsKey = 'pos_recent_products';
+const unsafeRecentProductsKey = 'pos_recent_products';
 
 const basePaymentMethods = [
     { value: 'cash', label: 'Efectivo' },
@@ -226,6 +227,14 @@ function loadJson<T>(key: string, fallback: T): T {
     } catch {
         return fallback;
     }
+}
+
+function uniqueRecentProductIds(items: Array<number | { id?: number | string | null }>): number[] {
+    const ids = items
+        .map((item) => typeof item === 'number' ? item : Number(item.id ?? 0))
+        .filter((id) => Number.isInteger(id) && id > 0);
+
+    return Array.from(new Set(ids)).slice(0, 8);
 }
 
 function emptyCustomer(country: string): CustomerForm {
@@ -512,6 +521,10 @@ export default function POS({
     const manualPriceMinMargin = Number(price_settings.manual_price_min_margin_percent ?? 0);
     const country = business?.country ?? 'GT';
     const draftKey = useMemo(() => makeDraftKey('pos', businessId, userId, activeBranchId), [activeBranchId, businessId, userId]);
+    const recentProductsKey = useMemo(
+        () => `pos_recent_products:${businessId ?? 'unknown'}:${userId ?? 'unknown'}:${activeBranchId ?? 'default'}`,
+        [activeBranchId, businessId, userId],
+    );
     const heldSaleKey = useMemo(() => `${draftKey}_held`, [draftKey]);
     const draftBranchId = activeBranchId ?? 'default';
     const [search, setSearch] = useState('');
@@ -519,7 +532,7 @@ export default function POS({
     const [cart, setCart] = useState<CartItem[]>([]);
     const [message, setMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
-    const [recentProducts, setRecentProducts] = useState<Product[]>([]);
+    const [recentProductIds, setRecentProductIds] = useState<number[]>([]);
     const [hasHeldSale, setHasHeldSale] = useState(false);
     const [showCheckoutModal, setShowCheckoutModal] = useState(false);
     const [splitPayment, setSplitPayment] = useState(false);
@@ -563,6 +576,7 @@ export default function POS({
     const latestDraftRef = useRef<PosDraft | null>(null);
     const productSearchRequestRef = useRef(0);
     const draftProductFetchKeyRef = useRef<string | null>(null);
+    const recentProductFetchKeyRef = useRef<string | null>(null);
 
     const { data, setData, post, processing, reset, transform, errors } = useForm<{
         note: string;
@@ -777,12 +791,25 @@ export default function POS({
 
     const currentRecentProducts = useMemo(
         () =>
-            recentProducts
-                .map((product) => productsById.get(product.id) ?? product)
+            recentProductIds
+                .map((id) => productsById.get(id))
                 .filter((product): product is Product => Boolean(product))
+                .filter((product) => !product.business_id || String(product.business_id) === String(businessId))
                 .slice(0, 8),
-        [productsById, recentProducts],
+        [businessId, productsById, recentProductIds],
     );
+
+    useEffect(() => {
+        const missingIds = recentProductIds.filter((id) => !productsById.has(id));
+        const fetchKey = `${recentProductsKey}:${missingIds.join(',')}`;
+
+        if (missingIds.length === 0 || recentProductFetchKeyRef.current === fetchKey) {
+            return;
+        }
+
+        recentProductFetchKeyRef.current = fetchKey;
+        void fetchPosProducts({ ids: missingIds, limit: 30 }).catch(() => undefined);
+    }, [fetchPosProducts, productsById, recentProductIds, recentProductsKey]);
 
     useEffect(() => {
         if (!credit_invoice || creditInvoiceLoadedRef.current) {
@@ -1240,10 +1267,10 @@ export default function POS({
     }
 
     function saveRecentProduct(product: Product) {
-        setRecentProducts((current) => {
+        setRecentProductIds((current) => {
             const next = [
-                product,
-                ...current.filter((item) => item.id !== product.id),
+                product.id,
+                ...current.filter((id) => id !== product.id),
             ].slice(0, 8);
 
             localStorage.setItem(recentProductsKey, JSON.stringify(next));
@@ -1256,6 +1283,14 @@ export default function POS({
         setData('customer', {
             ...data.customer,
             [field]: value,
+        });
+    }
+
+    function setCustomerLocation(department: string, municipality: string) {
+        setData('customer', {
+            ...data.customer,
+            department,
+            municipality,
         });
     }
 
@@ -1958,9 +1993,10 @@ export default function POS({
     }
 
     useEffect(() => {
-        setRecentProducts(loadJson<Product[]>(recentProductsKey, []));
+        localStorage.removeItem(unsafeRecentProductsKey);
+        setRecentProductIds(uniqueRecentProductIds(loadJson<Array<number | { id?: number | string | null }>>(recentProductsKey, [])));
         setHasHeldSale(Boolean(localStorage.getItem(heldSaleKey)));
-    }, [heldSaleKey]);
+    }, [heldSaleKey, recentProductsKey]);
 
     useEffect(() => {
         setData('branch_id', activeBranchId);
@@ -2374,6 +2410,7 @@ export default function POS({
                                                     municipality={data.customer.municipality}
                                                     onDepartmentChange={(value) => setCustomerField('department', value)}
                                                     onMunicipalityChange={(value) => setCustomerField('municipality', value)}
+                                                    onLocationChange={setCustomerLocation}
                                                     departmentError={typedErrors['customer.department']}
                                                     municipalityError={typedErrors['customer.municipality']}
                                                     compact
@@ -2458,6 +2495,7 @@ export default function POS({
                                                         municipality={data.customer.municipality}
                                                         onDepartmentChange={(value) => setCustomerField('department', value)}
                                                         onMunicipalityChange={(value) => setCustomerField('municipality', value)}
+                                                        onLocationChange={setCustomerLocation}
                                                         departmentError={typedErrors['customer.department']}
                                                         municipalityError={typedErrors['customer.municipality']}
                                                         compact

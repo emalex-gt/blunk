@@ -3,17 +3,26 @@
 namespace Tests\Feature;
 
 use App\Models\Branch;
+use App\Models\BranchProductPrice;
 use App\Models\Business;
+use App\Models\CashMovement;
 use App\Models\Customer;
+use App\Models\CustomerAccountMovement;
+use App\Models\CustomerCreditAccount;
+use App\Models\CustomerCreditPayment;
+use App\Models\ElectronicDocument;
 use App\Models\PreSale;
 use App\Models\PriceType;
 use App\Models\Product;
+use App\Models\ProductBranch;
 use App\Models\ProductBranchStock;
 use App\Models\ProductPrice;
 use App\Models\RouteVisit;
 use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
 use App\Models\RouteZoneCustomer;
+use App\Models\Sale;
+use App\Models\StockMovement;
 use App\Models\StockReservation;
 use App\Models\TenantModule;
 use App\Models\TenantSetting;
@@ -22,6 +31,8 @@ use App\Support\BranchInventory;
 use App\Support\Permissions;
 use App\Support\StockAvailability;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
 class RoutesPreSalesTest extends TestCase
@@ -103,6 +114,70 @@ class RoutesPreSalesTest extends TestCase
             'notes' => 'Frente al parque',
             'is_active' => true,
         ]);
+    }
+
+    public function test_route_customer_creation_persists_fiscal_commercial_and_contact_names(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $zone = $this->zone($business, $branch, $seller);
+
+        $this->actingAs($admin)
+            ->post(route('routes.zones.customers.create', $zone), [
+                'name' => 'INVERSIONES BONGO SOCIEDAD ANONIMA',
+                'commercial_name' => 'Bongo Repuestos',
+                'contact_name' => 'Carlos Perez',
+                'doc_number' => ' 33100-4X700 ',
+                'phone' => '5555-1111',
+                'address' => 'Zona 1',
+                'department' => 'Guatemala',
+                'municipality' => 'Guatemala',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $customer = Customer::query()
+            ->where('business_id', $business->id)
+            ->where('doc_number', '331004X700')
+            ->firstOrFail();
+
+        $this->assertSame('INVERSIONES BONGO SOCIEDAD ANONIMA', $customer->name);
+        $this->assertSame('Bongo Repuestos', $customer->commercial_name);
+        $this->assertSame('Carlos Perez', $customer->contact_name);
+        $this->assertSame('Guatemala', $customer->department);
+        $this->assertSame('Guatemala', $customer->municipality);
+    }
+
+    public function test_route_customer_reuses_existing_nit_and_only_fills_empty_fields(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $zone = $this->zone($business, $branch, $seller);
+        $existing = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => '',
+            'commercial_name' => 'Nombre comercial existente',
+            'doc_type' => 'NIT',
+            'doc_number' => '1234567',
+            'country' => 'GT',
+        ]);
+
+        $this->actingAs($admin)
+            ->post(route('routes.zones.customers.create', $zone), [
+                'name' => 'NOMBRE FISCAL DESDE NIT',
+                'commercial_name' => 'Nombre comercial nuevo',
+                'contact_name' => 'Contacto nuevo',
+                'doc_number' => ' 123-4567 ',
+                'address' => 'Direccion nueva',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $existing->refresh();
+
+        $this->assertSame('NOMBRE FISCAL DESDE NIT', $existing->name);
+        $this->assertSame('Nombre comercial existente', $existing->commercial_name);
+        $this->assertSame('Contacto nuevo', $existing->contact_name);
+        $this->assertSame('Direccion nueva', $existing->address);
+        $this->assertSame(1, Customer::query()->where('business_id', $business->id)->where('doc_number', '1234567')->count());
     }
 
     public function test_customer_display_name_prefers_commercial_name(): void
@@ -290,6 +365,187 @@ class RoutesPreSalesTest extends TestCase
             ->assertSessionHasErrors('branch_id');
     }
 
+    public function test_work_zone_button_start_route_creates_work_day_visits_and_redirects_to_work_day(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $zone = $this->zone($business, $branch, $seller);
+        $customer = $this->customer($business, 'Cliente ruta inicio');
+        RouteZoneCustomer::query()->create([
+            'business_id' => $business->id,
+            'route_zone_id' => $zone->id,
+            'customer_id' => $customer->id,
+            'visit_order' => 1,
+            'is_active' => true,
+        ]);
+
+        $response = $this->actingAs($seller)
+            ->post(route('routes.mobile.zones.work-day.start', $zone));
+
+        $workDay = RouteWorkDay::query()
+            ->where('business_id', $business->id)
+            ->where('route_zone_id', $zone->id)
+            ->where('seller_id', $seller->id)
+            ->firstOrFail();
+
+        $response
+            ->assertStatus(303)
+            ->assertRedirect(route('routes.mobile.work-days.show', $workDay));
+
+        $this->assertSame(1, RouteVisit::query()->where('route_work_day_id', $workDay->id)->count());
+        $this->assertDatabaseHas('route_visits', [
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'route_work_day_id' => $workDay->id,
+            'customer_id' => $customer->id,
+            'seller_id' => $seller->id,
+            'status' => 'pending',
+        ]);
+    }
+
+    public function test_work_zone_button_start_route_resumes_existing_open_work_day_without_duplicates(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $zone = $this->zone($business, $branch, $seller);
+        $customer = $this->customer($business, 'Cliente ruta resume');
+        RouteZoneCustomer::query()->create([
+            'business_id' => $business->id,
+            'route_zone_id' => $zone->id,
+            'customer_id' => $customer->id,
+            'visit_order' => 1,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.zones.work-day.start', $zone))
+            ->assertStatus(303);
+
+        $workDay = RouteWorkDay::query()->where('route_zone_id', $zone->id)->firstOrFail();
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.zones.work-day.start', $zone))
+            ->assertStatus(303)
+            ->assertRedirect(route('routes.mobile.work-days.show', $workDay));
+
+        $this->assertSame(1, RouteWorkDay::query()
+            ->where('business_id', $business->id)
+            ->where('route_zone_id', $zone->id)
+            ->where('seller_id', $seller->id)
+            ->count());
+        $this->assertSame(1, RouteVisit::query()->where('route_work_day_id', $workDay->id)->count());
+    }
+
+    public function test_seller_can_start_same_route_again_after_closing_work_day_same_day(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $zone = $this->zone($business, $branch, $seller);
+        $customer = $this->customer($business, 'Cliente ruta multiple');
+        RouteZoneCustomer::query()->create([
+            'business_id' => $business->id,
+            'route_zone_id' => $zone->id,
+            'customer_id' => $customer->id,
+            'visit_order' => 1,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.zones.work-day.start', $zone))
+            ->assertStatus(303);
+
+        $firstWorkDay = RouteWorkDay::query()->where('route_zone_id', $zone->id)->firstOrFail();
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.zones.work-day.start', $zone))
+            ->assertStatus(303)
+            ->assertRedirect(route('routes.mobile.work-days.show', $firstWorkDay));
+
+        $this->assertSame(1, RouteWorkDay::query()->where('route_zone_id', $zone->id)->count());
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.work-days.close', $firstWorkDay))
+            ->assertRedirect(route('routes.mobile.zones'));
+
+        $firstWorkDay->refresh();
+        $this->assertSame('closed', $firstWorkDay->status);
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.zones.work-day.start', $zone))
+            ->assertStatus(303);
+
+        $secondWorkDay = RouteWorkDay::query()
+            ->where('route_zone_id', $zone->id)
+            ->where('status', 'open')
+            ->firstOrFail();
+
+        $this->assertNotSame($firstWorkDay->id, $secondWorkDay->id);
+        $this->assertSame(2, RouteWorkDay::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->where('route_zone_id', $zone->id)
+            ->where('seller_id', $seller->id)
+            ->whereDate('work_date', now()->toDateString())
+            ->count());
+        $this->assertSame('closed', $firstWorkDay->refresh()->status);
+        $this->assertSame(1, RouteWorkDay::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->where('route_zone_id', $zone->id)
+            ->where('seller_id', $seller->id)
+            ->where('status', 'open')
+            ->count());
+        $this->assertSame(1, RouteVisit::query()->where('route_work_day_id', $secondWorkDay->id)->count());
+    }
+
+    public function test_work_day_migration_closes_duplicate_open_rows_before_creating_unique_open_index(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $zone = $this->zone($business, $branch, $seller);
+
+        if (in_array(DB::getDriverName(), ['pgsql', 'sqlite'], true)) {
+            DB::statement('DROP INDEX IF EXISTS route_work_days_unique_open');
+        }
+
+        $olderWorkDay = RouteWorkDay::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'route_zone_id' => $zone->id,
+            'seller_id' => $seller->id,
+            'work_date' => now()->toDateString(),
+            'status' => 'open',
+            'started_at' => now()->subMinutes(30),
+            'created_at' => now()->subMinutes(30),
+            'updated_at' => now()->subMinutes(30),
+        ]);
+        $latestWorkDay = RouteWorkDay::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'route_zone_id' => $zone->id,
+            'seller_id' => $seller->id,
+            'work_date' => now()->toDateString(),
+            'status' => 'open',
+            'started_at' => now()->subMinutes(5),
+            'created_at' => now()->subMinutes(5),
+            'updated_at' => now()->subMinutes(5),
+        ]);
+
+        $migration = include database_path('migrations/2026_07_23_000001_allow_multiple_route_work_days_per_day.php');
+        $migration->up();
+
+        $this->assertSame('closed', $olderWorkDay->refresh()->status);
+        $this->assertNotNull($olderWorkDay->closed_at);
+        $this->assertSame('open', $latestWorkDay->refresh()->status);
+        $this->assertSame(1, RouteWorkDay::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->where('route_zone_id', $zone->id)
+            ->where('seller_id', $seller->id)
+            ->where('status', 'open')
+            ->count());
+    }
+
     public function test_seller_without_branch_cannot_start_work_day(): void
     {
         [$business, , $branch] = $this->tenant(role: 'owner');
@@ -335,6 +591,92 @@ class RoutesPreSalesTest extends TestCase
             'visit_order' => 1,
             'notes' => 'Local 4',
         ]);
+    }
+
+    public function test_route_mobile_new_customer_defaults_to_branch_location(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $branch->update([
+            'department' => 'Huehuetenango',
+            'municipality' => 'Huehuetenango',
+        ]);
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $zone = $this->zone($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.zones.work-day.start', $zone))->assertRedirect();
+        $workDay = RouteWorkDay::query()->where('route_zone_id', $zone->id)->firstOrFail();
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.work-days.customers.store', $workDay), [
+                'name' => 'Cliente default ubicacion',
+                'doc_number' => '121212',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $customer = Customer::query()->where('business_id', $business->id)->where('doc_number', '121212')->firstOrFail();
+
+        $this->assertSame('Huehuetenango', $customer->department);
+        $this->assertSame('Huehuetenango', $customer->municipality);
+    }
+
+    public function test_route_mobile_new_customer_can_override_branch_location(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $branch->update([
+            'department' => 'Huehuetenango',
+            'municipality' => 'Huehuetenango',
+        ]);
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $zone = $this->zone($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.zones.work-day.start', $zone))->assertRedirect();
+        $workDay = RouteWorkDay::query()->where('route_zone_id', $zone->id)->firstOrFail();
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.work-days.customers.store', $workDay), [
+                'name' => 'Cliente override ubicacion',
+                'doc_number' => '343434',
+                'department' => 'Guatemala',
+                'municipality' => 'Guatemala',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $customer = Customer::query()->where('business_id', $business->id)->where('doc_number', '343434')->firstOrFail();
+
+        $this->assertSame('Guatemala', $customer->department);
+        $this->assertSame('Guatemala', $customer->municipality);
+    }
+
+    public function test_route_customer_existing_nit_is_not_overwritten_by_branch_location_defaults(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $branch->update([
+            'department' => 'Huehuetenango',
+            'municipality' => 'Huehuetenango',
+        ]);
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $zone = $this->zone($business, $branch, $seller);
+        $existing = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente existente',
+            'doc_type' => 'NIT',
+            'doc_number' => '555888',
+            'country' => 'GT',
+        ]);
+
+        $this->actingAs($admin)
+            ->post(route('routes.zones.customers.create', $zone), [
+                'name' => 'Cliente existente',
+                'doc_number' => '555888',
+                'department' => 'Huehuetenango',
+                'municipality' => 'Huehuetenango',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $existing->refresh();
+
+        $this->assertNull($existing->department);
+        $this->assertNull($existing->municipality);
     }
 
     public function test_seller_can_create_customer_with_only_commercial_name_from_open_work_day(): void
@@ -620,6 +962,300 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($otherSeller)->get(route('routes.mobile.work-days.show', $workDay))->assertForbidden();
         $this->actingAs($otherSeller)->get(route('routes.mobile.visits.show', $visit))->assertForbidden();
+    }
+
+    public function test_seller_cannot_access_another_business_route_zone_or_visit(): void
+    {
+        [$businessA, , $branchA] = $this->tenant(role: 'owner');
+        $sellerA = $this->user($businessA, $branchA, 'pre_seller');
+        [$businessB, , $branchB] = $this->tenant(role: 'owner');
+        $sellerB = $this->user($businessB, $branchB, 'pre_seller');
+        $zoneB = $this->zone($businessB, $branchB, $sellerB, 'Ruta negocio B');
+        $visitB = $this->startedVisit($businessB, $branchB, $sellerB, 'Cliente negocio B');
+
+        $this->actingAs($sellerA)
+            ->post(route('routes.mobile.zones.work-day.start', $zoneB))
+            ->assertForbidden();
+
+        $this->actingAs($sellerA)
+            ->get(route('routes.mobile.visits.show', $visitB))
+            ->assertForbidden();
+    }
+
+    public function test_pre_sale_reservation_is_not_disabled_by_credit_reservation_setting(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner', allowNegativeStock: false);
+        TenantModule::query()->create([
+            'business_id' => $business->id,
+            'module' => 'pos',
+            'is_enabled' => true,
+            'enabled_at' => now(),
+        ]);
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'reserve_stock_on_credit_reservations' => false,
+        ]);
+
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'items' => [['product_id' => $product->id, 'quantity' => 4]],
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame(4.0, (float) StockReservation::query()
+            ->where('source_type', 'pre_sale')
+            ->where('product_id', $product->id)
+            ->where('status', 'active')
+            ->value('quantity'));
+        $this->assertSame(6.0, StockAvailability::availableStock($product, null, $branch->id));
+
+        $this->actingAs($admin)
+            ->get(route('sales.products.search', ['q' => $product->code]))
+            ->assertOk()
+            ->assertJsonPath('products.0.available_stock', 6);
+    }
+
+    public function test_pre_sale_has_no_sale_fel_cash_ar_or_physical_stock_side_effects(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'items' => [['product_id' => $product->id, 'quantity' => 4]],
+        ])->assertSessionHasNoErrors();
+
+        $workDay = RouteWorkDay::query()->where('business_id', $business->id)->firstOrFail();
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.work-days.close', $workDay))
+            ->assertRedirect(route('routes.mobile.zones'));
+
+        $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, ElectronicDocument::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerCreditAccount::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerAccountMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerCreditPayment::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(10.0, (float) ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+        $this->assertSame(4.0, (float) StockReservation::query()
+            ->where('business_id', $business->id)
+            ->where('source_type', 'pre_sale')
+            ->where('status', 'active')
+            ->sum('quantity'));
+    }
+
+    public function test_pre_sale_product_search_respects_branch_product_assignment(): void
+    {
+        [$business, , $branchA] = $this->tenant(role: 'owner');
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'products_shared_across_branches' => false,
+        ]);
+        $branchB = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal B',
+            'code' => 'B',
+            'is_active' => true,
+        ]);
+        $seller = $this->user($business, $branchA, 'pre_seller');
+        $visit = $this->startedVisit($business, $branchA, $seller);
+        $productA = $this->product($business, $branchA, stock: 5);
+        $productB = $this->product($business, $branchB, stock: 5);
+        ProductBranch::query()->updateOrCreate(
+            ['business_id' => $business->id, 'branch_id' => $branchA->id, 'product_id' => $productA->id],
+            ['is_active' => true],
+        );
+        ProductBranch::query()->updateOrCreate(
+            ['business_id' => $business->id, 'branch_id' => $branchB->id, 'product_id' => $productB->id],
+            ['is_active' => true],
+        );
+
+        $this->actingAs($seller)
+            ->get(route('routes.mobile.visits.show', [$visit, 'search' => 'Producto ruta']))
+            ->assertOk()
+            ->assertSee($productA->name)
+            ->assertDontSee($productB->name);
+    }
+
+    public function test_route_nit_resolution_returns_existing_customer_without_creating_duplicate(): void
+    {
+        [$business, $admin] = $this->tenant(role: 'owner');
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'NOMBRE FISCAL EXISTENTE',
+            'commercial_name' => 'Comercial Existente',
+            'contact_name' => 'Contacto Existente',
+            'doc_type' => 'NIT',
+            'doc_number' => '998877',
+            'phone' => '5555-2222',
+            'address' => 'Zona 10',
+            'department' => 'Guatemala',
+            'municipality' => 'Guatemala',
+            'country' => 'GT',
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson(route('routes.resolve-nit', ['nit' => ' 998-877 ']))
+            ->assertOk()
+            ->assertJsonPath('source', 'existing')
+            ->assertJsonPath('customer.id', $customer->id)
+            ->assertJsonPath('customer.name', 'NOMBRE FISCAL EXISTENTE')
+            ->assertJsonPath('customer.contact_name', 'Contacto Existente');
+
+        $this->assertSame(1, Customer::query()->where('business_id', $business->id)->where('doc_number', '998877')->count());
+    }
+
+    public function test_pre_sale_product_search_and_save_use_configured_price_type(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $visit = $this->startedVisit($business, $branch, $seller);
+        $product = $this->product($business, $branch, stock: 8, salePrice: 100);
+        $preSalePriceType = PriceType::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Preventa',
+            'is_default' => false,
+            'is_active' => true,
+        ]);
+        ProductPrice::query()->create([
+            'business_id' => $business->id,
+            'product_id' => $product->id,
+            'price_type_id' => $preSalePriceType->id,
+            'price' => 75,
+            'is_active' => true,
+        ]);
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'pre_sale_price_type_id' => $preSalePriceType->id,
+        ]);
+
+        $this->actingAs($seller)
+            ->getJson(route('routes.mobile.visits.products.search', [$visit, 'q' => $product->code]))
+            ->assertOk()
+            ->assertJsonPath('products.0.id', $product->id)
+            ->assertJsonPath('products.0.price_type_id', $preSalePriceType->id)
+            ->assertJsonPath('products.0.sale_price', 75);
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'items' => [['product_id' => $product->id, 'quantity' => 2, 'discount' => 0]],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $item = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail()->items()->firstOrFail();
+        $this->assertSame($preSalePriceType->id, (int) $item->price_type_id);
+        $this->assertSame(75.0, (float) $item->unit_price);
+        $this->assertSame(150.0, (float) $item->total);
+    }
+
+    public function test_pre_sale_branch_pricing_uses_active_visit_branch(): void
+    {
+        [$business, , $branchA] = $this->tenant(role: 'owner');
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'pricing_scope' => 'branch',
+        ]);
+        $branchB = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal B',
+            'code' => 'B',
+            'is_active' => true,
+        ]);
+        $seller = $this->user($business, $branchA, 'pre_seller');
+        $visit = $this->startedVisit($business, $branchA, $seller);
+        $product = $this->product($business, $branchA, stock: 8, salePrice: 100);
+        $priceType = PriceType::query()->where('business_id', $business->id)->where('is_default', true)->firstOrFail();
+
+        BranchProductPrice::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branchA->id,
+            'product_id' => $product->id,
+            'price_type_id' => $priceType->id,
+            'price' => 120,
+            'is_active' => true,
+        ]);
+        BranchProductPrice::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branchB->id,
+            'product_id' => $product->id,
+            'price_type_id' => $priceType->id,
+            'price' => 150,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($seller)
+            ->getJson(route('routes.mobile.visits.products.search', [$visit, 'q' => $product->code]))
+            ->assertOk()
+            ->assertJsonPath('products.0.sale_price', 120);
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'items' => [['product_id' => $product->id, 'quantity' => 1]],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $item = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail()->items()->firstOrFail();
+        $this->assertSame(120.0, (float) $item->unit_price);
+        $this->assertSame(120.0, (float) $item->original_price);
+    }
+
+    public function test_pre_sale_manual_price_requires_global_and_pre_sale_setting(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $visit = $this->startedVisit($business, $branch, $seller);
+        $product = $this->product($business, $branch, stock: 8, salePrice: 100);
+
+        $this->actingAs($seller)
+            ->get(route('routes.mobile.visits.show', $visit))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/Mobile/Visit')
+                ->where('allowManualPrice', false));
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'items' => [[
+                    'product_id' => $product->id,
+                    'quantity' => 1,
+                    'unit_price' => 80,
+                    'manual_price' => true,
+                ]],
+            ])
+            ->assertSessionHasErrors('items');
+
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'allow_manual_price' => true,
+            'pre_sale_allow_manual_price' => true,
+            'manual_price_min_margin_percent' => 20,
+        ]);
+
+        $this->actingAs($seller)
+            ->get(route('routes.mobile.visits.show', $visit))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/Mobile/Visit')
+                ->where('allowManualPrice', true));
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'items' => [[
+                    'product_id' => $product->id,
+                    'quantity' => 1,
+                    'unit_price' => 70,
+                    'manual_price' => true,
+                ]],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $item = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail()->items()->firstOrFail();
+        $this->assertTrue((bool) $item->manual_price);
+        $this->assertSame(70.0, (float) $item->unit_price);
+        $this->assertSame(100.0, (float) $item->original_price);
     }
 
     public function test_admin_can_view_pre_sales(): void

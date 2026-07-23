@@ -4,6 +4,7 @@ namespace App\Http\Controllers\SuperAdmin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Business;
+use App\Models\PriceType;
 use App\Models\TenantModule;
 use App\Models\TenantFelSetting;
 use App\Models\TenantSetting;
@@ -58,6 +59,8 @@ class TenantController extends Controller
                 'allow_manual_price' => false,
                 'manual_price_min_margin_percent' => 0,
                 'remember_last_customer_product_price' => false,
+                'pre_sale_price_type_id' => null,
+                'pre_sale_allow_manual_price' => false,
                 'enable_credit_sales' => false,
                 'reserve_stock_on_credit_reservations' => true,
                 'allow_negative_stock' => false,
@@ -69,6 +72,7 @@ class TenantController extends Controller
             'felSettings' => $this->defaultFelSettings(),
             'availableModules' => $this->availableModulesPayload(),
             'enabledModules' => $this->defaultEnabledModules(),
+            'priceTypes' => [],
         ]);
     }
 
@@ -130,6 +134,8 @@ class TenantController extends Controller
                 'allow_manual_price' => $business->tenantSetting?->allow_manual_price ?? false,
                 'manual_price_min_margin_percent' => $business->tenantSetting?->manual_price_min_margin_percent ?? 0,
                 'remember_last_customer_product_price' => $business->tenantSetting?->remember_last_customer_product_price ?? false,
+                'pre_sale_price_type_id' => $business->tenantSetting?->pre_sale_price_type_id,
+                'pre_sale_allow_manual_price' => $business->tenantSetting?->pre_sale_allow_manual_price ?? false,
                 'enable_credit_sales' => $business->tenantSetting?->enable_credit_sales ?? false,
                 'reserve_stock_on_credit_reservations' => $business->tenantSetting?->reserve_stock_on_credit_reservations ?? true,
                 'allow_negative_stock' => $business->tenantSetting?->allow_negative_stock ?? false,
@@ -145,6 +151,12 @@ class TenantController extends Controller
                 ->pluck('module')
                 ->values()
                 ->all(),
+            'priceTypes' => PriceType::query()
+                ->where('business_id', $business->id)
+                ->where('is_active', true)
+                ->orderByDesc('is_default')
+                ->orderBy('name')
+                ->get(['id', 'name', 'is_default']),
         ]);
     }
 
@@ -247,6 +259,8 @@ class TenantController extends Controller
             'allow_manual_price' => ['nullable', 'boolean'],
             'manual_price_min_margin_percent' => ['nullable', 'numeric', 'min:0', 'max:999.99'],
             'remember_last_customer_product_price' => ['nullable', 'boolean'],
+            'pre_sale_price_type_id' => ['nullable', 'integer'],
+            'pre_sale_allow_manual_price' => ['nullable', 'boolean'],
             'enable_credit_sales' => ['nullable', 'boolean'],
             'reserve_stock_on_credit_reservations' => ['nullable', 'boolean'],
             'allow_negative_stock' => ['nullable', 'boolean'],
@@ -280,6 +294,17 @@ class TenantController extends Controller
 
         $modules = $validated['modules'] ?? $this->defaultEnabledModules();
         $branchesModuleEnabled = in_array('branches', $modules, true);
+        $preSalePriceTypeId = $validated['pre_sale_price_type_id'] ?? null;
+
+        if ($business && $preSalePriceTypeId) {
+            $preSalePriceTypeId = PriceType::query()
+                ->where('business_id', $business->id)
+                ->where('is_active', true)
+                ->findOrFail($preSalePriceTypeId)
+                ->id;
+        } else {
+            $preSalePriceTypeId = null;
+        }
 
         $payload = [
             'tenant' => [
@@ -301,6 +326,9 @@ class TenantController extends Controller
                 'allow_manual_price' => (bool) ($validated['allow_manual_price'] ?? false),
                 'manual_price_min_margin_percent' => round((float) ($validated['manual_price_min_margin_percent'] ?? 0), 2),
                 'remember_last_customer_product_price' => (bool) ($validated['remember_last_customer_product_price'] ?? false),
+                'pre_sale_price_type_id' => $preSalePriceTypeId,
+                'pre_sale_allow_manual_price' => (bool) ($validated['allow_manual_price'] ?? false)
+                    && (bool) ($validated['pre_sale_allow_manual_price'] ?? false),
                 'enable_credit_sales' => in_array('credits', $modules, true) && (bool) ($validated['enable_credit_sales'] ?? false),
                 'reserve_stock_on_credit_reservations' => (bool) ($validated['reserve_stock_on_credit_reservations'] ?? true),
                 'allow_negative_stock' => (bool) ($validated['allow_negative_stock'] ?? false),

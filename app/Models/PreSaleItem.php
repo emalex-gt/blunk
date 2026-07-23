@@ -14,6 +14,8 @@ class PreSaleItem extends Model
         'price_type_id',
         'quantity',
         'unit_price',
+        'original_price',
+        'manual_price',
         'discount',
         'total',
         'notes',
@@ -22,6 +24,8 @@ class PreSaleItem extends Model
     protected $casts = [
         'quantity' => 'decimal:4',
         'unit_price' => 'decimal:2',
+        'original_price' => 'decimal:2',
+        'manual_price' => 'boolean',
         'discount' => 'decimal:2',
         'total' => 'decimal:2',
     ];

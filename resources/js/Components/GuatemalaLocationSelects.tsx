@@ -5,6 +5,7 @@ type Props = {
     municipality: string;
     onDepartmentChange: (value: string) => void;
     onMunicipalityChange: (value: string) => void;
+    onLocationChange?: (department: string, municipality: string) => void;
     departmentError?: string;
     municipalityError?: string;
     disabled?: boolean;
@@ -16,6 +17,7 @@ export default function GuatemalaLocationSelects({
     municipality,
     onDepartmentChange,
     onMunicipalityChange,
+    onLocationChange,
     departmentError,
     municipalityError,
     disabled = false,
@@ -35,8 +37,19 @@ export default function GuatemalaLocationSelects({
                     value={department}
                     disabled={disabled}
                     onChange={(event) => {
-                        onDepartmentChange(event.target.value);
-                        if (!municipalitiesByDepartment[event.target.value]?.includes(municipality)) {
+                        const nextDepartment = event.target.value;
+                        const nextMunicipality = municipalitiesByDepartment[nextDepartment]?.includes(municipality)
+                            ? municipality
+                            : '';
+
+                        if (onLocationChange) {
+                            onLocationChange(nextDepartment, nextMunicipality);
+
+                            return;
+                        }
+
+                        onDepartmentChange(nextDepartment);
+                        if (nextMunicipality !== municipality) {
                             onMunicipalityChange('');
                         }
                     }}

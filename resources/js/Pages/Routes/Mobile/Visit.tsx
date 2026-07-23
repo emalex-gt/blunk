@@ -1,7 +1,7 @@
-import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
+import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, Link, router, useForm } from '@inertiajs/react';
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 type Product = {
     id: number;
@@ -13,9 +13,28 @@ type Product = {
     stock: number;
     reserved_stock: number;
     available_stock: number;
+    price_type_id?: number | null;
 };
-type Item = { product_id: number; name: string; quantity: number; discount: number };
-type ExistingItem = { product_id: number; quantity: string; discount: string; product?: { name: string } };
+
+type Item = {
+    product_id: number;
+    name: string;
+    code: string | null;
+    barcode: string | null;
+    quantity: number;
+    unit_price: number;
+    discount: number;
+    manual_price?: boolean;
+};
+
+type ExistingItem = {
+    product_id: number;
+    quantity: string;
+    unit_price: string;
+    discount: string;
+    manual_price?: boolean;
+    product?: { name: string; code: string | null; barcode: string | null };
+};
 
 export default function Visit({
     visit,
@@ -23,39 +42,103 @@ export default function Visit({
     products,
     filters,
     allowNegativeStock,
+    allowManualPrice,
 }: {
-    visit: { id: number; customer: { name: string; commercial_name: string | null; doc_number: string | null; address: string | null; department: string | null; municipality: string | null; phone: string | null }; work_day?: { status: string }; zone?: { name: string } };
+    visit: {
+        id: number;
+        customer: {
+            name: string;
+            commercial_name: string | null;
+            contact_name: string | null;
+            doc_number: string | null;
+            address: string | null;
+            department: string | null;
+            municipality: string | null;
+            phone: string | null;
+        };
+        work_day?: { status: string };
+        zone?: { name: string };
+    };
     preSale: { id: number; status: string; notes: string | null; items: ExistingItem[] } | null;
     products: Product[];
     filters: { search?: string };
     allowNegativeStock: boolean;
+    allowManualPrice: boolean;
 }) {
     const initialItems = (preSale?.items ?? []).map((item) => ({
         product_id: item.product_id,
         name: item.product?.name ?? 'Producto',
+        code: item.product?.code ?? null,
+        barcode: item.product?.barcode ?? null,
         quantity: Number(item.quantity),
+        unit_price: Number(item.unit_price ?? 0),
         discount: Number(item.discount ?? 0),
+        manual_price: Boolean(item.manual_price),
     }));
     const form = useForm<{ notes: string; items: Item[] }>({ notes: preSale?.notes ?? '', items: initialItems });
     const [editingCustomer, setEditingCustomer] = useState(false);
+    const [searchTerm, setSearchTerm] = useState(filters.search ?? '');
+    const [productResults, setProductResults] = useState<Product[]>(products);
+    const [searchLoading, setSearchLoading] = useState(false);
+    const [searchTouched, setSearchTouched] = useState(Boolean(filters.search));
+    const searchRequestRef = useRef(0);
     const customerForm = useForm({
         commercial_name: visit.customer.commercial_name ?? '',
+        contact_name: visit.customer.contact_name ?? '',
         phone: visit.customer.phone ?? '',
         address: visit.customer.address ?? '',
         department: visit.customer.department ?? '',
         municipality: visit.customer.municipality ?? '',
         notes: '',
     });
-    const total = useMemo(() => form.data.items.reduce((sum, item) => {
-        const product = products.find((product) => product.id === item.product_id);
-        return sum + (Number(product?.sale_price ?? 0) * item.quantity) - item.discount;
-    }, 0), [form.data.items, products]);
 
-    const search = (event: FormEvent<HTMLFormElement>) => {
-        event.preventDefault();
-        const value = (event.currentTarget.elements.namedItem('search') as HTMLInputElement).value;
-        router.get(route('routes.mobile.visits.show', visit.id), { search: value }, { preserveState: true });
-    };
+    const total = useMemo(() => form.data.items.reduce((sum, item) => {
+        return sum + (Number(item.unit_price ?? 0) * item.quantity) - item.discount;
+    }, 0), [form.data.items]);
+
+    useEffect(() => {
+        const value = searchTerm.trim();
+        const requestId = searchRequestRef.current + 1;
+        searchRequestRef.current = requestId;
+
+        if (value === '') {
+            setProductResults([]);
+            setSearchLoading(false);
+            setSearchTouched(false);
+            return;
+        }
+
+        const controller = new AbortController();
+        const timer = window.setTimeout(async () => {
+            setSearchLoading(true);
+            setSearchTouched(true);
+
+            try {
+                const response = await fetch(`${route('routes.mobile.visits.products.search', visit.id)}?q=${encodeURIComponent(value)}`, {
+                    headers: { Accept: 'application/json' },
+                    signal: controller.signal,
+                });
+                const payload = await response.json();
+
+                if (response.ok && searchRequestRef.current === requestId) {
+                    setProductResults(payload.products ?? []);
+                }
+            } catch {
+                if (!controller.signal.aborted && searchRequestRef.current === requestId) {
+                    setProductResults([]);
+                }
+            } finally {
+                if (!controller.signal.aborted && searchRequestRef.current === requestId) {
+                    setSearchLoading(false);
+                }
+            }
+        }, 250);
+
+        return () => {
+            controller.abort();
+            window.clearTimeout(timer);
+        };
+    }, [searchTerm, visit.id]);
 
     const addProduct = (product: Product) => {
         if (!allowNegativeStock && product.available_stock <= 0) {
@@ -64,11 +147,28 @@ export default function Visit({
 
         const existing = form.data.items.find((item) => item.product_id === product.id);
         if (existing) {
-            form.setData('items', form.data.items.map((item) => item.product_id === product.id ? { ...item, quantity: item.quantity + 1 } : item));
+            form.setData('items', form.data.items.map((item) => (
+                item.product_id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+            )));
             return;
         }
 
-        form.setData('items', [...form.data.items, { product_id: product.id, name: product.name, quantity: 1, discount: 0 }]);
+        form.setData('items', [...form.data.items, {
+            product_id: product.id,
+            name: product.name,
+            code: product.code,
+            barcode: product.barcode,
+            quantity: 1,
+            unit_price: Number(product.sale_price ?? 0),
+            discount: 0,
+            manual_price: false,
+        }]);
+    };
+
+    const updateItem = (index: number, payload: Partial<Item>) => {
+        form.setData('items', form.data.items.map((row, rowIndex) => (
+            rowIndex === index ? { ...row, ...payload } : row
+        )));
     };
 
     const submit = () => {
@@ -92,11 +192,17 @@ export default function Visit({
                         Volver
                     </Link>
                     <h1 className="mt-2 text-2xl font-semibold text-slate-950">{visit.customer.commercial_name || visit.customer.name}</h1>
-                    <p className="mt-1 text-sm text-slate-600">{[visit.customer.department, visit.customer.municipality].filter(Boolean).join(', ')} {visit.customer.address ? `· ${visit.customer.address}` : ''}</p>
+                    <p className="mt-1 text-sm text-slate-600">
+                        {[visit.customer.department, visit.customer.municipality].filter(Boolean).join(', ')}
+                        {visit.customer.address ? ` · ${visit.customer.address}` : ''}
+                    </p>
                     <button type="button" onClick={() => setEditingCustomer((value) => !value)} className="mt-3 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-200">
                         Editar cliente
                     </button>
-                    <p className="text-sm text-slate-500">{visit.customer.doc_number ?? '-'} · {visit.zone?.name}</p>
+                    <p className="text-sm text-slate-500">
+                        {visit.customer.doc_number ?? '-'} · {visit.zone?.name}
+                        {visit.customer.contact_name ? ` · ${visit.customer.contact_name}` : ''}
+                    </p>
                 </div>
 
                 {editingCustomer && (
@@ -106,6 +212,10 @@ export default function Visit({
                             <label className="block text-sm font-medium text-slate-700">
                                 Nombre del negocio
                                 <input value={customerForm.data.commercial_name} onChange={(event) => customerForm.setData('commercial_name', event.target.value)} className="mt-1 w-full rounded-xl border-slate-200 text-base" />
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                                Encargado / contacto
+                                <input value={customerForm.data.contact_name} onChange={(event) => customerForm.setData('contact_name', event.target.value)} className="mt-1 w-full rounded-xl border-slate-200 text-base" />
                             </label>
                             <label className="block text-sm font-medium text-slate-700">
                                 Teléfono
@@ -131,13 +241,23 @@ export default function Visit({
                     </form>
                 )}
 
-                <form onSubmit={search} className="flex gap-2 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
-                    <input name="search" defaultValue={filters.search ?? ''} placeholder="Buscar producto, código o barra" className="min-w-0 flex-1 rounded-lg border-slate-200 text-sm" />
-                    <button className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Buscar</button>
-                </form>
+                <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
+                    <input
+                        value={searchTerm}
+                        onChange={(event) => setSearchTerm(event.target.value)}
+                        placeholder="Buscar producto, código, barra, categoría o marca"
+                        className="w-full rounded-lg border-slate-200 text-sm"
+                    />
+                    {searchLoading && (
+                        <p className="mt-2 text-sm font-semibold text-indigo-700">Buscando productos...</p>
+                    )}
+                    {searchTouched && !searchLoading && productResults.length === 0 && (
+                        <p className="mt-2 text-sm text-slate-500">Sin resultados</p>
+                    )}
+                </div>
 
                 <div className="space-y-2">
-                    {products.map((product) => {
+                    {productResults.map((product) => {
                         const disabled = !allowNegativeStock && product.available_stock <= 0;
                         return (
                             <button
@@ -168,15 +288,56 @@ export default function Visit({
                     {form.data.items.length === 0 && <p className="mt-2 text-sm text-slate-500">Agrega productos para guardar la preventa.</p>}
                     <div className="mt-3 space-y-3">
                         {form.data.items.map((item, index) => (
-                            <div key={item.product_id} className="rounded-lg bg-slate-50 p-3">
-                                <div className="flex items-center justify-between gap-3">
-                                    <p className="font-medium text-slate-900">{item.name}</p>
-                                    <button onClick={() => form.setData('items', form.data.items.filter((_, i) => i !== index))} className="text-sm font-semibold text-red-600">Quitar</button>
+                            <div key={item.product_id} className="rounded-xl bg-slate-50 p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <p className="text-xs text-slate-500">{item.code ?? item.barcode ?? '-'}</p>
+                                        <p className="font-medium text-slate-900">{item.name}</p>
+                                    </div>
+                                    <button type="button" onClick={() => form.setData('items', form.data.items.filter((_, i) => i !== index))} className="text-sm font-semibold text-red-600">
+                                        Eliminar
+                                    </button>
                                 </div>
-                                <div className="mt-2 grid grid-cols-2 gap-2">
-                                    <input type="number" min="0.0001" step="0.0001" value={item.quantity} onChange={(event) => form.setData('items', form.data.items.map((row, i) => i === index ? { ...row, quantity: Number(event.target.value) } : row))} className="rounded-lg border-slate-200 text-sm" />
-                                    <input type="number" min="0" step="0.01" value={item.discount} onChange={(event) => form.setData('items', form.data.items.map((row, i) => i === index ? { ...row, discount: Number(event.target.value) } : row))} className="rounded-lg border-slate-200 text-sm" placeholder="Descuento" />
+                                <div className="mt-3 grid grid-cols-3 gap-2 text-xs font-semibold text-slate-500">
+                                    <span>Cant.</span>
+                                    <span>Precio</span>
+                                    <span>Subtotal</span>
                                 </div>
+                                <div className="mt-1 grid grid-cols-3 gap-2">
+                                    <div className="flex items-center rounded-lg border border-slate-200 bg-white">
+                                        <button type="button" onClick={() => updateItem(index, { quantity: Math.max(1, item.quantity - 1) })} className="px-3 py-2 text-sm font-bold text-slate-700">-</button>
+                                        <input
+                                            type="number"
+                                            min="0.0001"
+                                            step="0.0001"
+                                            value={item.quantity}
+                                            onChange={(event) => updateItem(index, { quantity: Number(event.target.value) })}
+                                            className="min-w-0 flex-1 border-0 p-2 text-center text-sm"
+                                        />
+                                        <button type="button" onClick={() => updateItem(index, { quantity: item.quantity + 1 })} className="px-3 py-2 text-sm font-bold text-slate-700">+</button>
+                                    </div>
+                                    <input
+                                        type="number"
+                                        min="0.01"
+                                        step="0.01"
+                                        value={item.unit_price}
+                                        disabled={!allowManualPrice}
+                                        onChange={(event) => updateItem(index, { unit_price: Number(event.target.value), manual_price: true })}
+                                        className="rounded-lg border-slate-200 text-sm disabled:bg-slate-100"
+                                    />
+                                    <div className="rounded-lg bg-white px-3 py-2 text-right text-sm font-semibold text-slate-900">
+                                        Q {Math.max(0, (item.quantity * item.unit_price) - item.discount).toFixed(2)}
+                                    </div>
+                                </div>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={item.discount}
+                                    onChange={(event) => updateItem(index, { discount: Number(event.target.value) })}
+                                    className="mt-2 w-full rounded-lg border-slate-200 text-sm"
+                                    placeholder="Descuento"
+                                />
                             </div>
                         ))}
                     </div>

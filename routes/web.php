@@ -249,6 +249,12 @@ Route::middleware('auth')->group(function () {
             Route::get('/mobile/visits/{visit}', [RouteController::class, 'visit'])
                 ->middleware('permission:routes.pre_sales.view')
                 ->name('mobile.visits.show');
+            Route::get('/mobile/visits/{visit}/products/search', [RouteController::class, 'visitProductSearch'])
+                ->middleware('permission:routes.pre_sales.view')
+                ->name('mobile.visits.products.search');
+            Route::get('/resolve-nit', [RouteController::class, 'resolveNit'])
+                ->middleware('permission:any:routes.work|routes.assign_customers')
+                ->name('resolve-nit');
             Route::put('/mobile/visits/{visit}/customer', [RouteController::class, 'updateVisitCustomer'])
                 ->middleware('permission:routes.work')
                 ->name('mobile.visits.customer.update');

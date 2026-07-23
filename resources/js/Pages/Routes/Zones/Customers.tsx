@@ -3,27 +3,31 @@ import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
 import { Head, Link, router, useForm } from '@inertiajs/react';
 import { FormEvent, useState } from 'react';
 
-type Customer = { id: number; name: string; commercial_name: string | null; doc_number: string | null; address: string | null; department: string | null; municipality: string | null; phone: string | null };
+type Customer = { id: number; name: string; commercial_name: string | null; contact_name: string | null; doc_number: string | null; address: string | null; department: string | null; municipality: string | null; phone: string | null };
 type Assignment = { id: number; customer: Customer; visit_order: number | null; notes: string | null; is_active: boolean };
-type Zone = { id: number; name: string; branch?: { name: string }; assigned_user?: { name: string } | null };
+type Zone = { id: number; name: string; branch?: { name: string; department: string | null; municipality: string | null }; assigned_user?: { name: string } | null };
 
 export default function Customers({ zone, assignments, availableCustomers, filters }: { zone: Zone; assignments: Assignment[]; availableCustomers: Customer[]; filters: { search?: string } }) {
     const form = useForm({ customer_id: '', visit_order: '', notes: '' });
     const [creatingCustomer, setCreatingCustomer] = useState(false);
     const [editingAssignmentId, setEditingAssignmentId] = useState<number | null>(null);
+    const branchDepartment = zone.branch?.department ?? '';
+    const branchMunicipality = zone.branch?.municipality ?? '';
     const customerForm = useForm({
         name: '',
         commercial_name: '',
+        contact_name: '',
         doc_number: '',
         phone: '',
         address: '',
-        department: '',
-        municipality: '',
+        department: branchDepartment,
+        municipality: branchMunicipality,
         notes: '',
     });
     const editCustomerForm = useForm({
         name: '',
         commercial_name: '',
+        contact_name: '',
         doc_number: '',
         phone: '',
         address: '',
@@ -31,6 +35,8 @@ export default function Customers({ zone, assignments, availableCustomers, filte
         municipality: '',
         notes: '',
     });
+    const [nitLookupLoading, setNitLookupLoading] = useState(false);
+    const [nitLookupError, setNitLookupError] = useState('');
 
     const submit = (event: FormEvent) => {
         event.preventDefault();
@@ -42,6 +48,9 @@ export default function Customers({ zone, assignments, availableCustomers, filte
 
     const createCustomer = (event: FormEvent) => {
         event.preventDefault();
+        if (nitLookupLoading) {
+            return;
+        }
         customerForm.post(route('routes.zones.customers.create', zone.id), {
             preserveScroll: true,
             onSuccess: () => {
@@ -56,6 +65,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
         editCustomerForm.setData({
             name: assignment.customer.name ?? '',
             commercial_name: assignment.customer.commercial_name ?? '',
+            contact_name: assignment.customer.contact_name ?? '',
             doc_number: assignment.customer.doc_number ?? '',
             phone: assignment.customer.phone ?? '',
             address: assignment.customer.address ?? '',
@@ -73,6 +83,45 @@ export default function Customers({ zone, assignments, availableCustomers, filte
         });
     };
 
+    async function resolveNitForCreate() {
+        const nit = customerForm.data.doc_number.trim();
+
+        if (!nit || nit.toUpperCase() === 'CF') {
+            return;
+        }
+
+        setNitLookupLoading(true);
+        setNitLookupError('');
+
+        try {
+            const response = await fetch(`${route('routes.resolve-nit')}?nit=${encodeURIComponent(nit)}`, {
+                headers: { Accept: 'application/json' },
+            });
+            const payload = await response.json();
+
+            if (!response.ok) {
+                throw new Error(payload?.message ?? 'No se pudo validar el NIT.');
+            }
+
+            const customer = payload.customer ?? {};
+            customerForm.setData({
+                ...customerForm.data,
+                name: customer.name ?? customerForm.data.name,
+                commercial_name: customerForm.data.commercial_name || customer.commercial_name || '',
+                contact_name: customerForm.data.contact_name || customer.contact_name || '',
+                doc_number: customer.doc_number ?? customerForm.data.doc_number,
+                phone: customerForm.data.phone || customer.phone || '',
+                address: customerForm.data.address || customer.address || '',
+                department: customerForm.data.department || customer.department || '',
+                municipality: customerForm.data.municipality || customer.municipality || '',
+            });
+        } catch (error) {
+            setNitLookupError(error instanceof Error ? error.message : 'No se pudo validar el NIT.');
+        } finally {
+            setNitLookupLoading(false);
+        }
+    }
+
     return (
         <AuthenticatedLayout>
             <Head title={`Clientes ${zone.name}`} />
@@ -85,7 +134,16 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                     <div className="flex flex-wrap gap-2">
                         <button
                             type="button"
-                            onClick={() => setCreatingCustomer((value) => !value)}
+                            onClick={() => {
+                                setCreatingCustomer((value) => !value);
+                                if (!creatingCustomer && !customerForm.data.department && !customerForm.data.municipality) {
+                                    customerForm.setData({
+                                        ...customerForm.data,
+                                        department: branchDepartment,
+                                        municipality: branchMunicipality,
+                                    });
+                                }
+                            }}
                             className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm"
                         >
                             Nuevo cliente
@@ -124,7 +182,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                         </div>
                         <div className="grid gap-3 md:grid-cols-2">
                             <label className="text-sm font-medium text-slate-700">
-                                Nombre
+                                Nombre fiscal
                                 <input
                                     value={customerForm.data.name}
                                     onChange={(event) => customerForm.setData('name', event.target.value)}
@@ -141,13 +199,24 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                 />
                             </label>
                             <label className="text-sm font-medium text-slate-700">
+                                Encargado / contacto
+                                <input
+                                    value={customerForm.data.contact_name}
+                                    onChange={(event) => customerForm.setData('contact_name', event.target.value)}
+                                    className="mt-1 w-full rounded-lg border-slate-200 text-sm"
+                                />
+                            </label>
+                            <label className="text-sm font-medium text-slate-700">
                                 NIT / documento
                                 <input
                                     value={customerForm.data.doc_number}
                                     onChange={(event) => customerForm.setData('doc_number', event.target.value)}
+                                    onBlur={resolveNitForCreate}
                                     placeholder="CF si queda vacío"
                                     className="mt-1 w-full rounded-lg border-slate-200 text-sm"
                                 />
+                                {nitLookupLoading && <span className="mt-1 block text-xs font-semibold text-indigo-600">Consultando NIT...</span>}
+                                {nitLookupError && <span className="mt-1 block text-xs font-semibold text-red-600">{nitLookupError}</span>}
                                 {customerForm.errors.doc_number && <span className="mt-1 block text-xs text-red-600">{customerForm.errors.doc_number}</span>}
                             </label>
                             <label className="text-sm font-medium text-slate-700">
@@ -193,7 +262,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                             >
                                 Cancelar
                             </button>
-                            <button disabled={customerForm.processing} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">
+                            <button disabled={customerForm.processing || nitLookupLoading} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
                                 Crear y asignar
                             </button>
                         </div>
@@ -224,7 +293,10 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                     </td>
                                     <td className="px-4 py-3 font-medium text-slate-900">
                                         {assignment.customer.commercial_name || assignment.customer.name}
-                                        <div className="text-xs text-slate-500">{assignment.customer.name} {assignment.customer.doc_number ? `· ${assignment.customer.doc_number}` : ''}</div>
+                                        <div className="text-xs text-slate-500">
+                                            {assignment.customer.name} {assignment.customer.doc_number ? `· ${assignment.customer.doc_number}` : ''}
+                                            {assignment.customer.contact_name ? ` · ${assignment.customer.contact_name}` : ''}
+                                        </div>
                                     </td>
                                     <td className="px-4 py-3">
                                         {assignment.customer.department || assignment.customer.municipality ? (
@@ -249,13 +321,17 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                             <form onSubmit={(event) => updateCustomer(event, assignment)} className="rounded-lg border border-slate-200 bg-white p-4">
                                                 <div className="grid gap-3 md:grid-cols-2">
                                                     <label className="text-sm font-medium text-slate-700">
-                                                        Nombre
+                                                        Nombre fiscal
                                                         <input value={editCustomerForm.data.name} onChange={(event) => editCustomerForm.setData('name', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
                                                         {editCustomerForm.errors.name && <span className="mt-1 block text-xs text-red-600">{editCustomerForm.errors.name}</span>}
                                                     </label>
                                                     <label className="text-sm font-medium text-slate-700">
                                                         Nombre del negocio
                                                         <input value={editCustomerForm.data.commercial_name} onChange={(event) => editCustomerForm.setData('commercial_name', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
+                                                    </label>
+                                                    <label className="text-sm font-medium text-slate-700">
+                                                        Encargado / contacto
+                                                        <input value={editCustomerForm.data.contact_name} onChange={(event) => editCustomerForm.setData('contact_name', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
                                                     </label>
                                                     <label className="text-sm font-medium text-slate-700">
                                                         NIT / documento

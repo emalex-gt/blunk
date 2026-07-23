@@ -1,4 +1,5 @@
 import InputError from '@/Components/InputError';
+import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
 import TextInput from '@/Components/TextInput';
 import SuperAdminLayout from '@/Layouts/SuperAdminLayout';
 import { Link, router, useForm } from '@inertiajs/react';
@@ -18,6 +19,8 @@ type Branch = {
     name: string;
     code: string | null;
     address: string | null;
+    department: string | null;
+    municipality: string | null;
     phone: string | null;
     logo_url: string | null;
     fel_establishment_code: string | null;
@@ -38,6 +41,8 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
         name: '',
         code: '',
         address: '',
+        department: '',
+        municipality: '',
         phone: '',
         fel_establishment_code: '',
         fel_establishment_name: '',
@@ -62,6 +67,8 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
             name: '',
             code: '',
             address: '',
+            department: '',
+            municipality: '',
             phone: '',
             fel_establishment_code: '',
             fel_establishment_name: '',
@@ -85,6 +92,8 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
             name: branch.name,
             code: branch.code ?? '',
             address: branch.address ?? '',
+            department: branch.department ?? '',
+            municipality: branch.municipality ?? '',
             phone: branch.phone ?? '',
             fel_establishment_code: branch.fel_establishment_code ?? '',
             fel_establishment_name: branch.fel_establishment_name ?? '',
@@ -164,6 +173,7 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
                                     <th className="px-4 py-3">Sucursal</th>
                                     <th className="px-4 py-3">Código</th>
                                     <th className="px-4 py-3">Dirección</th>
+                                    <th className="px-4 py-3">Ubicación</th>
                                     <th className="px-4 py-3">Teléfono</th>
                                     <th className="px-4 py-3">Estado</th>
                                     <th className="px-4 py-3 text-right">Acciones</th>
@@ -172,7 +182,7 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
                             <tbody className="divide-y divide-gray-100">
                                 {branches.length === 0 ? (
                                     <tr>
-                                        <td colSpan={6} className="px-4 py-12 text-center text-gray-500">
+                                        <td colSpan={7} className="px-4 py-12 text-center text-gray-500">
                                             No hay sucursales creadas.
                                         </td>
                                     </tr>
@@ -192,6 +202,7 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
                                         </td>
                                         <td className="px-4 py-3 text-gray-600">{branch.code ?? '-'}</td>
                                         <td className="px-4 py-3 text-gray-600">{branch.address ?? '-'}</td>
+                                        <td className="px-4 py-3 text-gray-600">{[branch.department, branch.municipality].filter(Boolean).join(', ') || '-'}</td>
                                         <td className="px-4 py-3 text-gray-600">{branch.phone ?? '-'}</td>
                                         <td className="px-4 py-3">
                                             <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${branch.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
@@ -239,6 +250,25 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
                             <Field label="Dirección" error={form.errors.address}>
                                 <TextInput className={inputClass} value={form.data.address} onChange={(event) => form.setData('address', event.target.value)} />
                             </Field>
+                            {tenant.country === 'GT' ? (
+                                <GuatemalaLocationSelects
+                                    department={form.data.department}
+                                    municipality={form.data.municipality}
+                                    onDepartmentChange={(value) => form.setData('department', value)}
+                                    onMunicipalityChange={(value) => form.setData('municipality', value)}
+                                    departmentError={form.errors.department}
+                                    municipalityError={form.errors.municipality}
+                                />
+                            ) : (
+                                <div className="grid grid-cols-2 gap-3">
+                                    <Field label="Departamento" error={form.errors.department}>
+                                        <TextInput className={inputClass} value={form.data.department} onChange={(event) => form.setData('department', event.target.value)} />
+                                    </Field>
+                                    <Field label="Municipio" error={form.errors.municipality}>
+                                        <TextInput className={inputClass} value={form.data.municipality} onChange={(event) => form.setData('municipality', event.target.value)} />
+                                    </Field>
+                                </div>
+                            )}
                             <Field label="Teléfono" error={form.errors.phone}>
                                 <TextInput className={inputClass} value={form.data.phone} onChange={(event) => form.setData('phone', event.target.value)} />
                             </Field>

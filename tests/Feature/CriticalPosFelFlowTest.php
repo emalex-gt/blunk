@@ -1004,6 +1004,140 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('Tornillo galvanizado', $combinedResponse->json('products.0.name'));
     }
 
+    public function test_pos_product_search_does_not_leak_other_tenant_product_by_name_code_or_barcode(): void
+    {
+        [$businessA, $userA] = $this->tenant(modules: ['pos']);
+        [$businessB, $userB] = $this->tenant(modules: ['pos']);
+
+        $myjProduct = Product::query()->create($this->productRecord($businessA, [
+            'name' => 'Producto MyJ',
+            'code' => 'MYJ-CODE',
+            'barcode' => 'MYJ-BAR',
+        ]));
+        $ferrymasProduct = Product::query()->create($this->productRecord($businessB, [
+            'name' => 'BOMBA FERRYMAS SECRETA',
+            'code' => 'FERRY-CODE-001',
+            'barcode' => 'FERRY-BAR-001',
+        ]));
+
+        foreach (['BOMBA FERRYMAS SECRETA', 'FERRY-CODE-001', 'FERRY-BAR-001'] as $term) {
+            $response = $this->actingAs($userA)
+                ->get(route('sales.products.search', ['q' => $term]))
+                ->assertOk();
+
+            $this->assertNotContains($ferrymasProduct->id, array_column($response->json('products'), 'id'));
+            $this->assertNotContains($ferrymasProduct->id, array_column($response->json('exact_barcode_matches'), 'id'));
+            $this->assertNotContains($ferrymasProduct->id, array_column($response->json('exact_code_matches'), 'id'));
+        }
+
+        $this->actingAs($userA)
+            ->get(route('sales.products.search', ['q' => 'MYJ-CODE']))
+            ->assertOk()
+            ->assertJsonPath('products.0.id', $myjProduct->id);
+
+        $this->actingAs($userB)
+            ->get(route('sales.products.search', ['q' => 'FERRY-CODE-001']))
+            ->assertOk()
+            ->assertJsonPath('products.0.id', $ferrymasProduct->id);
+    }
+
+    public function test_pos_product_search_prevents_orwhere_tenant_leakage(): void
+    {
+        [, $userA] = $this->tenant(modules: ['pos']);
+        [$businessB] = $this->tenant(modules: ['pos']);
+        $ferrymasProduct = Product::query()->create($this->productRecord($businessB, [
+            'name' => 'Tornillo Ferrymas',
+            'code' => 'OR-LEAK-CODE',
+            'barcode' => 'OR-LEAK-BAR',
+        ]));
+
+        $response = $this->actingAs($userA)
+            ->get(route('sales.products.search', ['q' => 'OR-LEAK']))
+            ->assertOk();
+
+        $this->assertSame([], $response->json('products'));
+        $this->assertNotContains($ferrymasProduct->id, array_column($response->json('products'), 'id'));
+    }
+
+    public function test_pos_product_search_rejects_category_from_another_tenant(): void
+    {
+        [$businessA, $userA] = $this->tenant(modules: ['pos']);
+        [$businessB] = $this->tenant(modules: ['pos']);
+        $categoryB = Category::query()->create(['business_id' => $businessB->id, 'name' => 'Categoria Ferrymas']);
+        $productB = Product::query()->create($this->productRecord($businessB, [
+            'name' => 'Producto categoria ajena',
+            'code' => 'CAT-LEAK',
+            'category_id' => $categoryB->id,
+        ]));
+        $productA = Product::query()->create($this->productRecord($businessA, [
+            'name' => 'Producto propio',
+            'code' => 'CAT-OWN',
+        ]));
+
+        $response = $this->actingAs($userA)
+            ->get(route('sales.products.search', ['category_id' => $categoryB->id]))
+            ->assertOk();
+
+        $this->assertSame([], $response->json('products'));
+        $this->assertNotContains($productB->id, array_column($response->json('products'), 'id'));
+        $this->assertNotContains($productA->id, array_column($response->json('products'), 'id'));
+    }
+
+    public function test_pos_product_search_fetch_by_ids_is_tenant_scoped(): void
+    {
+        [$businessA, $userA] = $this->tenant(modules: ['pos']);
+        [$businessB] = $this->tenant(modules: ['pos']);
+        $productA = Product::query()->create($this->productRecord($businessA, ['name' => 'Producto A', 'code' => 'ID-A']));
+        $productB = Product::query()->create($this->productRecord($businessB, ['name' => 'Producto B', 'code' => 'ID-B']));
+
+        $response = $this->actingAs($userA)
+            ->get(route('sales.products.search', ['ids' => "{$productA->id},{$productB->id}"]))
+            ->assertOk();
+
+        $this->assertContains($productA->id, array_column($response->json('products'), 'id'));
+        $this->assertNotContains($productB->id, array_column($response->json('products'), 'id'));
+    }
+
+    public function test_pos_product_search_uses_only_current_tenant_price_and_stock(): void
+    {
+        [$businessA, $userA] = $this->tenant(modules: ['pos', 'branches']);
+        [$businessB] = $this->tenant(modules: ['pos', 'branches']);
+        TenantSetting::query()->whereIn('business_id', [$businessA->id, $businessB->id])->update([
+            'pricing_scope' => 'branch',
+        ]);
+        $branchA = BranchInventory::defaultBranch($businessA->id);
+        $branchB = BranchInventory::defaultBranch($businessB->id);
+        $productA = $this->product($businessA, name: 'Producto aislado', stock: 3, salePrice: 10);
+        $productB = $this->product($businessB, name: 'Producto aislado Ferrymas', stock: 99, salePrice: 999);
+        $priceTypeA = PriceType::query()->where('business_id', $businessA->id)->where('is_default', true)->firstOrFail();
+        $priceTypeB = PriceType::query()->where('business_id', $businessB->id)->where('is_default', true)->firstOrFail();
+
+        BranchProductPrice::query()->create([
+            'business_id' => $businessA->id,
+            'branch_id' => $branchA->id,
+            'product_id' => $productA->id,
+            'price_type_id' => $priceTypeA->id,
+            'price' => 10,
+            'is_active' => true,
+        ]);
+        BranchProductPrice::query()->create([
+            'business_id' => $businessB->id,
+            'branch_id' => $branchB->id,
+            'product_id' => $productB->id,
+            'price_type_id' => $priceTypeB->id,
+            'price' => 999,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($userA)
+            ->withSession(['active_branch_id' => $branchB->id])
+            ->get(route('sales.products.search', ['q' => $productA->code]))
+            ->assertOk()
+            ->assertJsonPath('products.0.id', $productA->id)
+            ->assertJsonPath('products.0.sale_price', '10')
+            ->assertJsonPath('products.0.stock', 3);
+    }
+
     public function test_pos_product_search_returns_duplicate_exact_code_matches(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos']);
@@ -1063,6 +1197,23 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringContainsString('}, [draftKey, fetchPosProducts]);', $source);
         $this->assertStringNotContainsString('}, [draftKey, fetchPosProducts, productsById]);', $source);
         $this->assertStringContainsString('Selecciona un producto de los resultados.', $source);
+    }
+
+    public function test_pos_recent_products_are_scoped_and_rehydrated_without_stale_payloads(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+
+        $this->assertStringContainsString('const recentProductsKey = useMemo(', $source);
+        $this->assertStringContainsString("pos_recent_products:\${businessId ?? 'unknown'}:\${userId ?? 'unknown'}:\${activeBranchId ?? 'default'}", $source);
+        $this->assertStringContainsString('setRecentProductIds(uniqueRecentProductIds', $source);
+        $this->assertStringContainsString('localStorage.removeItem(unsafeRecentProductsKey);', $source);
+        $this->assertStringContainsString('void fetchPosProducts({ ids: missingIds, limit: 30 })', $source);
+        $this->assertStringContainsString('.map((id) => productsById.get(id))', $source);
+        $this->assertStringContainsString('String(product.business_id) === String(businessId)', $source);
+        $this->assertStringContainsString('product.id,', $source);
+        $this->assertStringNotContainsString("const recentProductsKey = 'pos_recent_products';", $source);
+        $this->assertStringNotContainsString('productsById.get(product.id) ?? product', $source);
+        $this->assertStringNotContainsString('setRecentProducts(loadJson<Product[]>(recentProductsKey', $source);
     }
 
     public function test_pos_product_search_includes_reserved_stock_and_respects_credit_reservation_setting(): void

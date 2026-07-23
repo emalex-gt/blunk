@@ -13,6 +13,7 @@ class Customer extends Model
         'business_id',
         'name',
         'commercial_name',
+        'contact_name',
         'doc_type',
         'doc_number',
         'tax_condition',

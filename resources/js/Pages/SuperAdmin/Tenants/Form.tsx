@@ -46,6 +46,12 @@ type AvailableModule = {
     plan_hint: string;
 };
 
+type PriceTypeOption = {
+    id: number;
+    name: string;
+    is_default?: boolean;
+};
+
 const countryOptions = [
     { value: 'GT', label: 'Guatemala', symbol: 'Q' },
     { value: 'AR', label: 'Argentina', symbol: '$' },
@@ -57,6 +63,7 @@ export default function Form({
     felSettings,
     availableModules,
     enabledModules,
+    priceTypes = [],
 }: {
     tenant: Tenant | null;
     settings: {
@@ -69,6 +76,8 @@ export default function Form({
         allow_manual_price?: boolean;
         manual_price_min_margin_percent?: number | string;
         remember_last_customer_product_price?: boolean;
+        pre_sale_price_type_id?: number | null;
+        pre_sale_allow_manual_price?: boolean;
         enable_credit_sales?: boolean;
         reserve_stock_on_credit_reservations?: boolean;
         allow_negative_stock?: boolean;
@@ -80,6 +89,7 @@ export default function Form({
     felSettings: FelSettings;
     availableModules: AvailableModule[];
     enabledModules: string[];
+    priceTypes?: PriceTypeOption[];
 }) {
     const editing = Boolean(tenant);
     const { data, setData, post, processing, errors } = useForm({
@@ -98,6 +108,8 @@ export default function Form({
         allow_manual_price: settings.allow_manual_price ?? false,
         manual_price_min_margin_percent: settings.manual_price_min_margin_percent ?? 0,
         remember_last_customer_product_price: settings.remember_last_customer_product_price ?? false,
+        pre_sale_price_type_id: settings.pre_sale_price_type_id ?? '',
+        pre_sale_allow_manual_price: settings.pre_sale_allow_manual_price ?? false,
         enable_credit_sales: settings.enable_credit_sales ?? false,
         reserve_stock_on_credit_reservations: settings.reserve_stock_on_credit_reservations ?? true,
         allow_negative_stock: settings.allow_negative_stock ?? false,
@@ -469,7 +481,12 @@ export default function Form({
                         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                             <Toggle
                                 checked={data.allow_manual_price}
-                                onChange={(checked) => setData('allow_manual_price', checked)}
+                                onChange={(checked) => {
+                                    setData('allow_manual_price', checked);
+                                    if (!checked) {
+                                        setData('pre_sale_allow_manual_price', false);
+                                    }
+                                }}
                                 label="Permitir precio manual"
                             />
                             <Field label="Margen mínimo sobre costo para precio manual" error={errors.manual_price_min_margin_percent}>
@@ -486,6 +503,41 @@ export default function Form({
                                 checked={data.remember_last_customer_product_price}
                                 onChange={(checked) => setData('remember_last_customer_product_price', checked)}
                                 label="Recordar último precio por cliente y producto"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="mb-4">
+                            <h3 className="text-base font-semibold text-gray-900">Configuración de preventas</h3>
+                            <p className="mt-1 text-sm text-gray-500">
+                                Define el precio usado por los preventistas al crear pedidos.
+                            </p>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <Field label="Tipo de precio para preventas" error={errors.pre_sale_price_type_id}>
+                                <select
+                                    className={inputClass}
+                                    value={data.pre_sale_price_type_id}
+                                    onChange={(event) => setData('pre_sale_price_type_id', event.target.value)}
+                                >
+                                    <option value="">Precio predeterminado</option>
+                                    {priceTypes.map((priceType) => (
+                                        <option key={priceType.id} value={priceType.id}>
+                                            {priceType.name}{priceType.is_default ? ' (predeterminado)' : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="mt-1 text-xs text-slate-500">
+                                    Este será el precio usado por los preventistas al crear pedidos.
+                                </p>
+                            </Field>
+                            <Toggle
+                                checked={Boolean(data.allow_manual_price && data.pre_sale_allow_manual_price)}
+                                onChange={(checked) => setData('pre_sale_allow_manual_price', checked)}
+                                label="Permitir precio manual en preventas"
+                                description="Solo aplica si el precio manual está habilitado globalmente."
+                                disabled={!data.allow_manual_price}
                             />
                         </div>
                     </div>
@@ -720,17 +772,20 @@ function Toggle({
     onChange,
     label,
     description,
+    disabled = false,
 }: {
     checked: boolean;
     onChange: (checked: boolean) => void;
     label: string;
     description?: string;
+    disabled?: boolean;
 }) {
     return (
-        <label className="flex items-start gap-3 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700">
+        <label className={`flex items-start gap-3 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 ${disabled ? 'opacity-60' : ''}`}>
             <input
                 type="checkbox"
                 checked={checked}
+                disabled={disabled}
                 onChange={(e) => onChange(e.target.checked)}
                 className="mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
             />

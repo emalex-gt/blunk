@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\Business;
 use App\Support\CloudinaryUploader;
+use App\Support\GuatemalaLocations;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -40,6 +41,8 @@ class TenantBranchController extends Controller
                     'name',
                     'code',
                     'address',
+                    'department',
+                    'municipality',
                     'phone',
                     'logo_url',
                     'fel_establishment_code',
@@ -142,6 +145,8 @@ class TenantBranchController extends Controller
                     ->ignore($branch),
             ],
             'address' => ['nullable', 'string', 'max:255'],
+            'department' => ['nullable', 'string', 'max:100'],
+            'municipality' => ['nullable', 'string', 'max:100'],
             'phone' => ['nullable', 'string', 'max:50'],
             'fel_establishment_code' => $felRule,
             'fel_establishment_name' => $felRule,
@@ -164,11 +169,30 @@ class TenantBranchController extends Controller
             'fel_country.required' => 'El país FEL es obligatorio.',
         ]);
 
+        $department = trim((string) ($data['department'] ?? ''));
+        $municipality = trim((string) ($data['municipality'] ?? ''));
+
+        if ($business->country === 'GT') {
+            if (! GuatemalaLocations::isValidDepartment($department)) {
+                throw ValidationException::withMessages([
+                    'department' => 'Selecciona un departamento válido.',
+                ]);
+            }
+
+            if (! GuatemalaLocations::isValidMunicipality($department, $municipality)) {
+                throw ValidationException::withMessages([
+                    'municipality' => 'Selecciona un municipio válido para el departamento.',
+                ]);
+            }
+        }
+
         return [
             'business_id' => $business->id,
             'name' => $data['name'],
             'code' => $data['code'] ?? null,
             'address' => $data['address'] ?? null,
+            'department' => $department !== '' ? $department : null,
+            'municipality' => $municipality !== '' ? $municipality : null,
             'phone' => $data['phone'] ?? null,
             'fel_establishment_code' => $data['fel_establishment_code'] ?? null,
             'fel_establishment_name' => $data['fel_establishment_name'] ?? null,

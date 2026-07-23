@@ -13,6 +13,8 @@ class Branch extends Model
         'name',
         'code',
         'address',
+        'department',
+        'municipality',
         'phone',
         'logo_url',
         'logo_public_id',

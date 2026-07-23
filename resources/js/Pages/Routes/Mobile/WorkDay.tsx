@@ -7,31 +7,78 @@ type Visit = {
     id: number;
     status: string;
     visit_order: number | null;
-    customer: { name: string; commercial_name: string | null; doc_number: string | null; address: string | null; department: string | null; municipality: string | null; phone: string | null };
+    customer: { name: string; commercial_name: string | null; contact_name: string | null; doc_number: string | null; address: string | null; department: string | null; municipality: string | null; phone: string | null };
     pre_sale?: { id: number; status: string; total: string } | null;
 };
 
-export default function WorkDay({ workDay, visits }: { workDay: { id: number; status: string; zone?: { name: string }; branch?: { name: string } }; visits: Visit[] }) {
+export default function WorkDay({ workDay, visits }: { workDay: { id: number; status: string; zone?: { name: string }; branch?: { name: string; department: string | null; municipality: string | null } }; visits: Visit[] }) {
     const mapHref = (visit: Visit) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(visit.customer.address || visit.customer.name)}`;
+    const branchDepartment = workDay.branch?.department ?? '';
+    const branchMunicipality = workDay.branch?.municipality ?? '';
     const [showCustomerForm, setShowCustomerForm] = useState(false);
     const customerForm = useForm({
         name: '',
         commercial_name: '',
+        contact_name: '',
         doc_number: '',
         phone: '',
         address: '',
-        department: '',
-        municipality: '',
+        department: branchDepartment,
+        municipality: branchMunicipality,
         notes: '',
         work_day: '',
     });
+    const [nitLookupLoading, setNitLookupLoading] = useState(false);
+    const [nitLookupError, setNitLookupError] = useState('');
 
     const createCustomer = (event: FormEvent) => {
         event.preventDefault();
+        if (nitLookupLoading) {
+            return;
+        }
         customerForm.post(route('routes.mobile.work-days.customers.store', workDay.id), {
             preserveScroll: true,
         });
     };
+
+    async function resolveNitForCreate() {
+        const nit = customerForm.data.doc_number.trim();
+
+        if (!nit || nit.toUpperCase() === 'CF') {
+            return;
+        }
+
+        setNitLookupLoading(true);
+        setNitLookupError('');
+
+        try {
+            const response = await fetch(`${route('routes.resolve-nit')}?nit=${encodeURIComponent(nit)}`, {
+                headers: { Accept: 'application/json' },
+            });
+            const payload = await response.json();
+
+            if (!response.ok) {
+                throw new Error(payload?.message ?? 'No se pudo validar el NIT.');
+            }
+
+            const customer = payload.customer ?? {};
+            customerForm.setData({
+                ...customerForm.data,
+                name: customer.name ?? customerForm.data.name,
+                commercial_name: customerForm.data.commercial_name || customer.commercial_name || '',
+                contact_name: customerForm.data.contact_name || customer.contact_name || '',
+                doc_number: customer.doc_number ?? customerForm.data.doc_number,
+                phone: customerForm.data.phone || customer.phone || '',
+                address: customerForm.data.address || customer.address || '',
+                department: customerForm.data.department || customer.department || '',
+                municipality: customerForm.data.municipality || customer.municipality || '',
+            });
+        } catch (error) {
+            setNitLookupError(error instanceof Error ? error.message : 'No se pudo validar el NIT.');
+        } finally {
+            setNitLookupLoading(false);
+        }
+    }
 
     return (
         <AuthenticatedLayout>
@@ -44,7 +91,16 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
                 {workDay.status === 'open' && (
                     <button
                         type="button"
-                        onClick={() => setShowCustomerForm((value) => !value)}
+                        onClick={() => {
+                            setShowCustomerForm((value) => !value);
+                            if (!showCustomerForm && !customerForm.data.department && !customerForm.data.municipality) {
+                                customerForm.setData({
+                                    ...customerForm.data,
+                                    department: branchDepartment,
+                                    municipality: branchMunicipality,
+                                });
+                            }
+                        }}
                         className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-base font-semibold text-white shadow-sm"
                     >
                         Nuevo cliente
@@ -62,7 +118,7 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
                         )}
                         <div className="space-y-3">
                             <label className="block text-sm font-medium text-slate-700">
-                                Nombre
+                                Nombre fiscal
                                 <input
                                     value={customerForm.data.name}
                                     onChange={(event) => customerForm.setData('name', event.target.value)}
@@ -79,13 +135,24 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
                                 />
                             </label>
                             <label className="block text-sm font-medium text-slate-700">
+                                Encargado / contacto
+                                <input
+                                    value={customerForm.data.contact_name}
+                                    onChange={(event) => customerForm.setData('contact_name', event.target.value)}
+                                    className="mt-1 w-full rounded-xl border-slate-200 text-base"
+                                />
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
                                 NIT
                                 <input
                                     value={customerForm.data.doc_number}
                                     onChange={(event) => customerForm.setData('doc_number', event.target.value)}
+                                    onBlur={resolveNitForCreate}
                                     placeholder="Opcional"
                                     className="mt-1 w-full rounded-xl border-slate-200 text-base"
                                 />
+                                {nitLookupLoading && <span className="mt-1 block text-xs font-semibold text-indigo-600">Consultando NIT...</span>}
+                                {nitLookupError && <span className="mt-1 block text-xs font-semibold text-red-600">{nitLookupError}</span>}
                             </label>
                             <label className="block text-sm font-medium text-slate-700">
                                 Teléfono
@@ -129,7 +196,7 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
                             >
                                 Cancelar
                             </button>
-                            <button disabled={customerForm.processing} className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white">
+                            <button disabled={customerForm.processing || nitLookupLoading} className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60">
                                 Crear cliente
                             </button>
                         </div>
@@ -142,7 +209,10 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
                             <div>
                                 <p className="text-xs font-semibold uppercase text-slate-400">#{visit.visit_order ?? '-'}</p>
                                 <h2 className="text-lg font-semibold text-slate-950">{visit.customer.commercial_name || visit.customer.name}</h2>
-                                <p className="text-sm text-slate-500">{visit.customer.name}{visit.customer.doc_number ? ` · NIT ${visit.customer.doc_number}` : ''}</p>
+                                <p className="text-sm text-slate-500">
+                                    {visit.customer.name}{visit.customer.doc_number ? ` · NIT ${visit.customer.doc_number}` : ''}
+                                    {visit.customer.contact_name ? ` · ${visit.customer.contact_name}` : ''}
+                                </p>
                             </div>
                             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{visit.status}</span>
                         </div>
