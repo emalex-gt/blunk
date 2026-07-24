@@ -79,7 +79,13 @@ class SaleController extends Controller
                 ->where('status', 'open')
                 ->exists(),
             'branches_enabled' => $branchesEnabled,
-            'active_branch' => $branchesEnabled ? $activeBranch : null,
+            'active_branch' => $activeBranch ? [
+                'id' => $activeBranch->id,
+                'name' => $activeBranch->name,
+                'code' => $activeBranch->code,
+                'department' => $activeBranch->department,
+                'municipality' => $activeBranch->municipality,
+            ] : null,
             'price_types' => $priceTypes->map(fn (PriceType $priceType) => [
                 'id' => $priceType->id,
                 'name' => $priceType->name,
@@ -1577,33 +1583,7 @@ class SaleController extends Controller
         $priceTypeIds = $priceTypes->pluck('id')->map(fn ($id) => (int) $id)->all();
         $defaultPriceType = $priceTypes->firstWhere('is_default', true) ?: $priceTypes->first();
 
-        $stockByProduct = DB::table('product_branch_stocks')
-            ->where('business_id', $businessId)
-            ->where('branch_id', $branchId)
-            ->whereIn('product_id', $productIds)
-            ->pluck('stock', 'product_id');
-
-        $creditReservedByProduct = Credits::reserveStockOnCreditReservations($businessId)
-            ? DB::table('credit_receipt_lines')
-                ->where('business_id', $businessId)
-                ->where('branch_id', $branchId)
-                ->whereIn('product_id', $productIds)
-                ->whereIn('status', ['pending', 'partially_invoiced'])
-                ->where('qty_reserved', '>', 0)
-                ->groupBy('product_id')
-                ->selectRaw('product_id, COALESCE(SUM(LEAST(qty_reserved, qty_pending)), 0) as reserved')
-                ->pluck('reserved', 'product_id')
-            : collect();
-
-        $genericReservedByProduct = DB::table('stock_reservations')
-            ->where('business_id', $businessId)
-            ->where('branch_id', $branchId)
-            ->whereIn('product_id', $productIds)
-            ->where('status', 'active')
-            ->where('source_type', '!=', 'credit_receipt')
-            ->groupBy('product_id')
-            ->selectRaw('product_id, COALESCE(SUM(quantity), 0) as reserved')
-            ->pluck('reserved', 'product_id');
+        $stockBreakdown = StockAvailability::getBreakdownForProducts($businessId, $branchId, $productIds);
 
         $globalPrices = $priceTypeIds === []
             ? collect()
@@ -1627,18 +1607,16 @@ class SaleController extends Controller
             : collect();
 
         return $products->map(function (Product $product) use (
-            $stockByProduct,
-            $creditReservedByProduct,
-            $genericReservedByProduct,
+            $stockBreakdown,
             $globalPrices,
             $branchPrices,
             $priceTypes,
             $defaultPriceType
         ) {
             $productId = (int) $product->id;
-            $stock = (float) ($stockByProduct[$productId] ?? 0);
-            $reserved = (float) ($creditReservedByProduct[$productId] ?? 0)
-                + (float) ($genericReservedByProduct[$productId] ?? 0);
+            $breakdown = $stockBreakdown->get($productId, []);
+            $stock = (float) ($breakdown['physical_stock'] ?? 0);
+            $reserved = (float) ($breakdown['reserved_total'] ?? 0);
             $globalByType = $globalPrices->get($productId, collect())->keyBy('price_type_id');
             $branchByType = $branchPrices->get($productId, collect())->keyBy('price_type_id');
             $prices = $priceTypes->map(function (PriceType $priceType) use ($globalByType, $branchByType, $product, $defaultPriceType) {
@@ -1681,7 +1659,11 @@ class SaleController extends Controller
                 'stock' => $stock,
                 'physical_stock' => $stock,
                 'reserved_stock' => $reserved,
-                'available_stock' => $stock - $reserved,
+                'reserved_total' => $reserved,
+                'reserved_pre_sales' => (float) ($breakdown['reserved_pre_sales'] ?? 0),
+                'reserved_credit_reservations' => (float) ($breakdown['reserved_credit_reservations'] ?? 0),
+                'reserved_other' => (float) ($breakdown['reserved_other'] ?? 0),
+                'available_stock' => (float) ($breakdown['available_stock'] ?? ($stock - $reserved)),
                 'min_stock' => (float) $product->min_stock,
                 'location' => $product->location,
                 'image_url' => $product->image_url,
@@ -1825,7 +1807,6 @@ class SaleController extends Controller
             $name = $name !== '' ? $name : ($commercialName !== '' ? $commercialName : 'Consumidor Final');
             $payload = [
                 'name' => $name,
-                'commercial_name' => $commercialName !== '' ? $commercialName : null,
                 'doc_type' => 'CF',
                 'doc_number' => 'CF',
                 'tax_condition' => null,
@@ -1844,6 +1825,10 @@ class SaleController extends Controller
                     ->find($customerData['id']);
 
                 if ($customer) {
+                    if ($commercialName !== '') {
+                        $payload['commercial_name'] = $commercialName;
+                    }
+
                     $customer->update($payload);
 
                     return $customer;
@@ -1863,6 +1848,7 @@ class SaleController extends Controller
 
             return Customer::create([
                 'business_id' => $businessId,
+                'commercial_name' => $commercialName !== '' ? $commercialName : null,
                 ...$payload,
             ]);
         }
@@ -1951,7 +1937,6 @@ class SaleController extends Controller
 
         $payload = [
             'name' => $name,
-            'commercial_name' => $commercialName !== '' ? $commercialName : null,
             'doc_type' => $docType,
             'doc_number' => $docNumber !== '' ? $docNumber : null,
             'tax_condition' => $customerData['tax_condition'] ?? null,
@@ -1967,6 +1952,10 @@ class SaleController extends Controller
         ];
 
         if (isset($customer)) {
+            if ($commercialName !== '') {
+                $payload['commercial_name'] = $commercialName;
+            }
+
             $customer->update($payload);
 
             return $customer;
@@ -1974,6 +1963,7 @@ class SaleController extends Controller
 
         return Customer::create([
             'business_id' => $businessId,
+            'commercial_name' => $commercialName !== '' ? $commercialName : null,
             ...$payload,
         ]);
     }

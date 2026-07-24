@@ -6,12 +6,15 @@ use App\Models\Branch;
 use App\Models\BranchProductPrice;
 use App\Models\Business;
 use App\Models\CashMovement;
+use App\Models\CreditReceipt;
+use App\Models\CreditReceiptLine;
 use App\Models\Customer;
 use App\Models\CustomerAccountMovement;
 use App\Models\CustomerCreditAccount;
 use App\Models\CustomerCreditPayment;
 use App\Models\ElectronicDocument;
 use App\Models\PreSale;
+use App\Models\PreSaleItem;
 use App\Models\PriceType;
 use App\Models\Product;
 use App\Models\ProductBranch;
@@ -924,6 +927,325 @@ class RoutesPreSalesTest extends TestCase
         ])->assertSessionHasErrors('pre_sale');
     }
 
+    public function test_without_sale_requires_reason_and_note_and_has_no_financial_or_stock_side_effects(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.without-sale', $visit), [])
+            ->assertSessionHasErrors(['no_sale_reason', 'no_sale_note']);
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'no_sale_reason' => 'Tienda cerrada',
+                'no_sale_note' => 'El local estaba cerrado.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $visit->refresh();
+
+        $this->assertSame('without_sale', $visit->status);
+        $this->assertSame('Tienda cerrada', $visit->no_sale_reason);
+        $this->assertSame('El local estaba cerrado.', $visit->no_sale_note);
+        $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, ElectronicDocument::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerCreditAccount::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerAccountMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(10.0, (float) ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+    }
+
+    public function test_without_sale_visit_can_become_draft_pre_sale_while_work_day_is_open(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'no_sale_reason' => 'Cliente surtido',
+                'no_sale_note' => 'Pidió revisar después.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'items' => [['product_id' => $product->id, 'quantity' => 4]],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $visit->refresh();
+        $preSale = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail();
+
+        $this->assertSame('with_pre_sale', $visit->status);
+        $this->assertNull($visit->no_sale_reason);
+        $this->assertNull($visit->no_sale_note);
+        $this->assertSame('draft', $preSale->status);
+        $this->assertSame(1, $preSale->items()->count());
+        $this->assertSame(1, StockReservation::query()->where('business_id', $business->id)->where('status', 'active')->count());
+        $this->assertSame(6.0, StockAvailability::availableStock($product, null, $branch->id));
+        $this->assertSame(10.0, (float) ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+        $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, ElectronicDocument::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerCreditAccount::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerAccountMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_draft_pre_sale_to_without_sale_to_new_draft_pre_sale_updates_visit_state(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'items' => [['product_id' => $product->id, 'quantity' => 3]],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $oldPreSale = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail();
+        $this->assertSame('with_pre_sale', $visit->refresh()->status);
+        $this->assertSame(1, StockReservation::query()->where('business_id', $business->id)->where('status', 'active')->count());
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'no_sale_reason' => 'No quiso comprar',
+                'no_sale_note' => 'Al final me llamo que no queria nada',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $visit->refresh();
+        $this->assertSame('without_sale', $visit->status);
+        $this->assertSame('No quiso comprar', $visit->no_sale_reason);
+        $this->assertSame('Al final me llamo que no queria nada', $visit->no_sale_note);
+        $this->assertSame('cancelled', $oldPreSale->refresh()->status);
+        $this->assertSame(0, StockReservation::query()->where('business_id', $business->id)->where('status', 'active')->count());
+        $this->assertSame(1, StockReservation::query()->where('business_id', $business->id)->where('status', 'released')->count());
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'items' => [['product_id' => $product->id, 'quantity' => 2]],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $visit->refresh();
+        $newPreSale = PreSale::query()
+            ->where('route_visit_id', $visit->id)
+            ->where('status', 'draft')
+            ->firstOrFail();
+
+        $this->assertNotSame($oldPreSale->id, $newPreSale->id);
+        $this->assertSame('with_pre_sale', $visit->status);
+        $this->assertNull($visit->no_sale_reason);
+        $this->assertNull($visit->no_sale_note);
+        $this->assertSame('cancelled', $oldPreSale->refresh()->status);
+        $this->assertSame('draft', $newPreSale->status);
+        $this->assertSame(1, $newPreSale->items()->count());
+        $this->assertSame(1, StockReservation::query()->where('business_id', $business->id)->where('status', 'active')->count());
+        $this->assertSame(1, StockReservation::query()->where('business_id', $business->id)->where('status', 'released')->count());
+        $this->assertSame(8.0, StockAvailability::availableStock($product, null, $branch->id));
+        $this->assertSame(10.0, (float) ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+        $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, ElectronicDocument::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerCreditAccount::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerAccountMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_failed_pre_sale_save_keeps_without_sale_reason_and_note(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'no_sale_reason' => 'No encontrado',
+                'no_sale_note' => 'No estaba el encargado.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'items' => [],
+            ])
+            ->assertSessionHasErrors('items');
+
+        $visit->refresh();
+
+        $this->assertSame('without_sale', $visit->status);
+        $this->assertSame('No encontrado', $visit->no_sale_reason);
+        $this->assertSame('No estaba el encargado.', $visit->no_sale_note);
+        $this->assertSame(0, PreSale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, StockReservation::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_closed_work_day_without_sale_visit_cannot_become_pre_sale(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+        $workDay = $visit->workDay;
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'no_sale_reason' => 'Tienda cerrada',
+                'no_sale_note' => 'Cerrado por inventario.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $workDay->forceFill(['status' => 'closed', 'closed_at' => now()])->save();
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'items' => [['product_id' => $product->id, 'quantity' => 1]],
+            ])
+            ->assertSessionHasErrors('pre_sale');
+
+        $visit->refresh();
+
+        $this->assertSame('without_sale', $visit->status);
+        $this->assertSame('Tienda cerrada', $visit->no_sale_reason);
+        $this->assertSame(0, PreSale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, StockReservation::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_without_sale_with_draft_pre_sale_cancels_draft_and_releases_reservations(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'items' => [['product_id' => $product->id, 'quantity' => 4]],
+        ])->assertSessionHasNoErrors();
+
+        $preSale = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail();
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'no_sale_reason' => 'No quiso comprar',
+                'no_sale_note' => 'El cliente decidió no comprar hoy.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('without_sale', $visit->refresh()->status);
+        $this->assertSame('No quiso comprar', $visit->no_sale_reason);
+        $this->assertSame('El cliente decidió no comprar hoy.', $visit->no_sale_note);
+        $this->assertSame('cancelled', $preSale->refresh()->status);
+        $this->assertNotNull($preSale->cancelled_at);
+        $this->assertSame(0, $preSale->items()->count());
+        $this->assertSame(0, StockReservation::query()->where('business_id', $business->id)->where('status', 'active')->count());
+        $this->assertSame(1, StockReservation::query()->where('business_id', $business->id)->where('status', 'released')->count());
+        $this->assertSame(10.0, (float) ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+        $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, ElectronicDocument::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerCreditAccount::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerAccountMovement::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_without_sale_is_blocked_for_submitted_pre_sale_and_keeps_reservation_active(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'items' => [['product_id' => $product->id, 'quantity' => 4]],
+        ])->assertSessionHasNoErrors();
+
+        $preSale = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail();
+        $preSale->forceFill(['status' => 'submitted', 'submitted_at' => now()])->save();
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'no_sale_reason' => 'Pedido para otro día',
+                'no_sale_note' => 'Quiere comprar mañana.',
+            ])
+            ->assertSessionHasErrors('pre_sale');
+
+        $this->assertSame('submitted', $preSale->refresh()->status);
+        $this->assertSame('with_pre_sale', $visit->refresh()->status);
+        $this->assertNull($visit->no_sale_reason);
+        $this->assertSame(1, StockReservation::query()->where('business_id', $business->id)->where('status', 'active')->count());
+        $this->assertSame(0, StockReservation::query()->where('business_id', $business->id)->where('status', 'released')->count());
+    }
+
+    public function test_seller_cannot_mark_another_business_visit_without_sale(): void
+    {
+        [$businessA, , $branchA] = $this->tenant(role: 'owner');
+        $sellerA = $this->user($businessA, $branchA, 'pre_seller');
+        [$businessB, , $branchB] = $this->tenant(role: 'owner');
+        $sellerB = $this->user($businessB, $branchB, 'pre_seller');
+        $visitB = $this->startedVisit($businessB, $branchB, $sellerB);
+
+        $this->actingAs($sellerA)
+            ->post(route('routes.mobile.visits.without-sale', $visitB), [
+                'no_sale_reason' => 'No encontrado',
+                'no_sale_note' => 'No aplica.',
+            ])
+            ->assertForbidden();
+
+        $this->assertSame('pending', $visitB->refresh()->status);
+        $this->assertNull($visitB->no_sale_reason);
+    }
+
+    public function test_mobile_pre_sale_source_hides_discount_input_and_requires_confirmations(): void
+    {
+        $visitSource = file_get_contents(resource_path('js/Pages/Routes/Mobile/Visit.tsx'));
+        $workDaySource = file_get_contents(resource_path('js/Pages/Routes/Mobile/WorkDay.tsx'));
+
+        $this->assertStringNotContainsString('placeholder="Descuento"', $visitSource);
+        $this->assertStringNotContainsString('item.discount', $visitSource);
+        $this->assertStringContainsString('¿Guardar la preventa de', $visitSource);
+        $this->assertStringContainsString('¿Estás seguro de editar la orden de', $visitSource);
+        $this->assertStringContainsString('Sí, guardar', $visitSource);
+        $this->assertStringContainsString('Sí, editar', $visitSource);
+        $this->assertStringContainsString('Esta visita está marcada como sin venta. Si guardas una preventa, se quitará ese estado.', $visitSource);
+        $this->assertStringContainsString('Esta visita está marcada como sin venta. Al guardar la preventa, se quitará ese estado. ¿Deseas continuar?', $visitSource);
+        $this->assertStringContainsString('Jornada cerrada. Ya no se puede editar la visita.', $visitSource);
+        $this->assertStringContainsString("only: ['visit', 'preSale']", $visitSource);
+        $this->assertStringContainsString('preserveState: false', $visitSource);
+        $this->assertStringContainsString('¿Finalizar la ruta?', $workDaySource);
+        $this->assertStringContainsString('Al finalizar la ruta, las preventas quedarán enviadas y ya no se podrán editar. ¿Deseas continuar?', $workDaySource);
+        $this->assertStringContainsString('Sí, finalizar ruta', $workDaySource);
+        $this->assertStringContainsString('Motivo', $workDaySource);
+        $this->assertStringContainsString('Observación', $workDaySource);
+        $this->assertStringContainsString('Este cliente ya tiene productos agregados. Si marcas la visita como sin venta, se eliminará la preventa actual y se liberará el stock reservado. ¿Deseas continuar?', $workDaySource);
+        $this->assertStringContainsString('La preventa ya fue enviada y no se puede cambiar a sin venta.', $workDaySource);
+        $this->assertStringContainsString('Confirmar sin venta', $workDaySource);
+        $this->assertStringContainsString("visit.status === 'without_sale' && (visit.no_sale_reason || visit.no_sale_note)", $workDaySource);
+    }
+
     public function test_pre_sale_reservation_reduces_available_stock_and_negative_stock_policy_controls_over_reservation(): void
     {
         [$business, , $branch] = $this->tenant(role: 'owner', allowNegativeStock: false);
@@ -1274,6 +1596,235 @@ class RoutesPreSalesTest extends TestCase
             ->assertSee($visit->customer->name);
     }
 
+    public function test_stock_breakdown_counts_pre_sales_and_credit_reservations_when_enabled(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'items' => [['product_id' => $product->id, 'quantity' => 4]],
+        ])->assertSessionHasNoErrors();
+
+        $this->creditReservation($business, $branch, $product, 1);
+
+        $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
+
+        $this->assertSame(10.0, $breakdown['physical_stock']);
+        $this->assertSame(4.0, $breakdown['reserved_pre_sales']);
+        $this->assertSame(1.0, $breakdown['reserved_credit_reservations']);
+        $this->assertSame(5.0, $breakdown['reserved_total']);
+        $this->assertSame(5.0, $breakdown['available_stock']);
+    }
+
+    public function test_reservation_explain_shows_three_pre_sales_can_reserve_four_units(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+
+        foreach ([1, 1, 2] as $index => $quantity) {
+            $visit = $this->startedVisit($business, $branch, $seller, 'Cliente '.($index + 1));
+            $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'items' => [['product_id' => $product->id, 'quantity' => $quantity]],
+            ])->assertSessionHasNoErrors();
+        }
+
+        $response = $this->actingAs($admin)->getJson(route('inventory.products.reservations', $product));
+
+        $response->assertOk()
+            ->assertJsonPath('reserved_pre_sales', 4)
+            ->assertJsonPath('reserved_total', 4)
+            ->assertJsonCount(3, 'pre_sale_reservations')
+            ->assertJsonPath('orphan_or_ignored_reservations', []);
+
+        $this->assertSame(4.0, (float) collect($response->json('pre_sale_reservations'))->sum('quantity'));
+    }
+
+    public function test_cancelled_pre_sale_active_reservation_is_excluded_and_reported_as_ignored(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->manualPreSaleReservation($business, $branch, $admin, $product, 3);
+        $preSale->update(['status' => 'cancelled', 'cancelled_at' => now()]);
+
+        $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
+
+        $this->assertSame(0.0, $breakdown['reserved_pre_sales']);
+        $this->assertSame(10.0, $breakdown['available_stock']);
+
+        $this->actingAs($admin)
+            ->getJson(route('inventory.products.reservations', $product))
+            ->assertOk()
+            ->assertJsonCount(0, 'pre_sale_reservations')
+            ->assertJsonPath('orphan_or_ignored_reservations.0.reason', 'invalid_pre_sale_status');
+    }
+
+    public function test_missing_pre_sale_item_active_reservation_is_excluded_and_reported_as_ignored(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->manualPreSaleReservation($business, $branch, $admin, $product, 3);
+        $preSale->items()->delete();
+
+        $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
+
+        $this->assertSame(0.0, $breakdown['reserved_pre_sales']);
+        $this->assertSame(10.0, $breakdown['available_stock']);
+
+        $this->actingAs($admin)
+            ->getJson(route('inventory.products.reservations', $product))
+            ->assertOk()
+            ->assertJsonCount(0, 'pre_sale_reservations')
+            ->assertJsonPath('orphan_or_ignored_reservations.0.reason', 'missing_pre_sale_item');
+    }
+
+    public function test_without_sale_visit_active_reservation_is_excluded_from_breakdown(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'items' => [['product_id' => $product->id, 'quantity' => 3]],
+        ])->assertSessionHasNoErrors();
+
+        $visit->update(['status' => 'without_sale']);
+
+        $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
+
+        $this->assertSame(0.0, $breakdown['reserved_pre_sales']);
+
+        $this->actingAs($admin)
+            ->getJson(route('inventory.products.reservations', $product))
+            ->assertOk()
+            ->assertJsonPath('orphan_or_ignored_reservations.0.reason', 'visit_without_sale');
+    }
+
+    public function test_stock_breakdown_excludes_credit_reservations_when_setting_is_disabled(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'reserve_stock_on_credit_reservations' => false,
+        ]);
+        $product = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'items' => [['product_id' => $product->id, 'quantity' => 4]],
+        ])->assertSessionHasNoErrors();
+
+        $this->creditReservation($business, $branch, $product, 1);
+
+        $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
+
+        $this->assertSame(4.0, $breakdown['reserved_pre_sales']);
+        $this->assertSame(0.0, $breakdown['reserved_credit_reservations']);
+        $this->assertSame(4.0, $breakdown['reserved_total']);
+        $this->assertSame(6.0, $breakdown['available_stock']);
+    }
+
+    public function test_cancelled_draft_pre_sale_releases_reserved_stock(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'items' => [['product_id' => $product->id, 'quantity' => 4]],
+        ])->assertSessionHasNoErrors();
+
+        $preSale = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail();
+
+        $this->actingAs($admin)->post(route('routes.pre-sales.cancel', $preSale))
+            ->assertSessionHasNoErrors();
+
+        $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
+
+        $this->assertSame(0.0, $breakdown['reserved_pre_sales']);
+        $this->assertSame(10.0, $breakdown['available_stock']);
+    }
+
+    public function test_submitted_pre_sale_still_counts_as_reserved_stock(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'items' => [['product_id' => $product->id, 'quantity' => 4]],
+        ])->assertSessionHasNoErrors();
+
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay))
+            ->assertRedirect();
+
+        $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
+
+        $this->assertSame(4.0, $breakdown['reserved_pre_sales']);
+        $this->assertSame(6.0, $breakdown['available_stock']);
+    }
+
+    public function test_pre_sale_save_revalidates_current_reserved_stock_before_saving(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch, stock: 5);
+        $firstVisit = $this->startedVisit($business, $branch, $seller, 'Cliente A');
+        $secondVisit = $this->startedVisit($business, $branch, $seller, 'Cliente B');
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $firstVisit), [
+            'items' => [['product_id' => $product->id, 'quantity' => 5]],
+        ])->assertSessionHasNoErrors();
+
+        $this->actingAs($seller)
+            ->from(route('routes.mobile.visits.show', $secondVisit))
+            ->post(route('routes.mobile.visits.pre-sale.store', $secondVisit), [
+                'items' => [['product_id' => $product->id, 'quantity' => 1]],
+            ])
+            ->assertRedirect(route('routes.mobile.visits.show', $secondVisit))
+            ->assertSessionHasErrors(['items' => 'No hay suficiente stock disponible.']);
+
+        $this->assertSame(1, PreSale::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_stock_breakdown_is_branch_and_tenant_scoped(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        [$otherBusiness, $otherSeller, $otherBranch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+
+        StockReservation::query()->create([
+            'business_id' => $otherBusiness->id,
+            'branch_id' => $otherBranch->id,
+            'product_id' => $product->id,
+            'source_type' => 'manual_test',
+            'source_id' => 1,
+            'source_item_id' => null,
+            'quantity' => 9,
+            'status' => 'active',
+            'created_by' => $otherSeller->id,
+        ]);
+
+        ProductBranchStock::query()->updateOrCreate(
+            ['business_id' => $business->id, 'branch_id' => $otherBranch->id, 'product_id' => $product->id],
+            ['stock' => 99],
+        );
+
+        $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
+
+        $this->assertSame(10.0, $breakdown['physical_stock']);
+        $this->assertSame(0.0, $breakdown['reserved_total']);
+        $this->assertSame(10.0, $breakdown['available_stock']);
+
+        $this->actingAs($admin)
+            ->getJson(route('inventory.products.reservations', $product))
+            ->assertOk()
+            ->assertJsonPath('reserved_total', 0)
+            ->assertJsonPath('pre_sale_reservations', [])
+            ->assertJsonPath('orphan_or_ignored_reservations', []);
+    }
+
     public function test_customer_search_finds_commercial_name_and_is_business_scoped(): void
     {
         [$business, $admin] = $this->tenant(role: 'owner');
@@ -1422,6 +1973,85 @@ class RoutesPreSalesTest extends TestCase
         );
 
         return $product;
+    }
+
+    private function manualPreSaleReservation(Business $business, Branch $branch, User $seller, Product $product, float $quantity): PreSale
+    {
+        $customer = $this->customer($business, 'Cliente reserva '.uniqid());
+
+        $preSale = PreSale::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'seller_id' => $seller->id,
+            'status' => 'draft',
+            'subtotal' => $quantity * 100,
+            'discount_total' => 0,
+            'total' => $quantity * 100,
+        ]);
+
+        $item = PreSaleItem::query()->create([
+            'business_id' => $business->id,
+            'pre_sale_id' => $preSale->id,
+            'product_id' => $product->id,
+            'quantity' => $quantity,
+            'unit_price' => 100,
+            'discount' => 0,
+            'total' => $quantity * 100,
+        ]);
+
+        StockReservation::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+            'source_type' => 'pre_sale',
+            'source_id' => $preSale->id,
+            'source_item_id' => $item->id,
+            'quantity' => $quantity,
+            'status' => 'active',
+            'created_by' => $seller->id,
+        ]);
+
+        return $preSale;
+    }
+
+    private function creditReservation(Business $business, Branch $branch, Product $product, int $quantity): CreditReceiptLine
+    {
+        $customer = $this->customer($business, 'Cliente crédito '.uniqid());
+
+        $receipt = CreditReceipt::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'customer_doc_type' => $customer->doc_type,
+            'customer_doc_number' => $customer->doc_number,
+            'receipt_number' => random_int(1000, 9999),
+            'status' => 'pending',
+            'subtotal' => $quantity * 100,
+            'discount_amount' => 0,
+            'total' => $quantity * 100,
+            'pending_total' => $quantity * 100,
+        ]);
+
+        return CreditReceiptLine::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'credit_receipt_id' => $receipt->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'sku' => $product->code,
+            'quantity' => $quantity,
+            'qty_reserved' => $quantity,
+            'qty_invoiced' => 0,
+            'qty_cancelled' => 0,
+            'qty_pending' => $quantity,
+            'unit_price' => 100,
+            'discount_amount' => 0,
+            'line_total' => $quantity * 100,
+            'pending_total' => $quantity * 100,
+            'status' => 'pending',
+        ]);
     }
 
     private function startedVisit(Business $business, Branch $branch, User $seller, string $customerName = 'Cliente ruta'): RouteVisit

@@ -1,3 +1,4 @@
+import ConfirmDialog from '@/Components/ConfirmDialog';
 import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, Link, router, useForm } from '@inertiajs/react';
@@ -23,7 +24,6 @@ type Item = {
     barcode: string | null;
     quantity: number;
     unit_price: number;
-    discount: number;
     manual_price?: boolean;
 };
 
@@ -31,10 +31,17 @@ type ExistingItem = {
     product_id: number;
     quantity: string;
     unit_price: string;
-    discount: string;
     manual_price?: boolean;
     product?: { name: string; code: string | null; barcode: string | null };
 };
+
+type Confirmation = {
+    kind: 'save' | 'edit';
+    title: string;
+    message: string;
+    details?: string;
+    confirmLabel: string;
+} | null;
 
 export default function Visit({
     visit,
@@ -46,6 +53,9 @@ export default function Visit({
 }: {
     visit: {
         id: number;
+        status: string;
+        no_sale_reason: string | null;
+        no_sale_note: string | null;
         customer: {
             name: string;
             commercial_name: string | null;
@@ -72,10 +82,17 @@ export default function Visit({
         barcode: item.product?.barcode ?? null,
         quantity: Number(item.quantity),
         unit_price: Number(item.unit_price ?? 0),
-        discount: Number(item.discount ?? 0),
         manual_price: Boolean(item.manual_price),
     }));
     const form = useForm<{ notes: string; items: Item[] }>({ notes: preSale?.notes ?? '', items: initialItems });
+    const customerDisplayName = visit.customer.commercial_name || visit.customer.name || 'cliente';
+    const workDayIsOpen = visit.work_day?.status === 'open';
+    const visitIsWithoutSale = visit.status === 'without_sale';
+    const existingDraftCanBeEdited = Boolean(preSale && preSale.status === 'draft' && visit.work_day?.status === 'open');
+    const [editingPreSale, setEditingPreSale] = useState(!preSale);
+    const canModifyPreSale = workDayIsOpen && (!preSale || (existingDraftCanBeEdited && editingPreSale));
+    const preSaleIsFrozen = Boolean(preSale && (preSale.status !== 'draft' || visit.work_day?.status !== 'open'));
+    const [confirmation, setConfirmation] = useState<Confirmation>(null);
     const [editingCustomer, setEditingCustomer] = useState(false);
     const [searchTerm, setSearchTerm] = useState(filters.search ?? '');
     const [productResults, setProductResults] = useState<Product[]>(products);
@@ -93,7 +110,7 @@ export default function Visit({
     });
 
     const total = useMemo(() => form.data.items.reduce((sum, item) => {
-        return sum + (Number(item.unit_price ?? 0) * item.quantity) - item.discount;
+        return sum + (Number(item.unit_price ?? 0) * item.quantity);
     }, 0), [form.data.items]);
 
     useEffect(() => {
@@ -160,7 +177,6 @@ export default function Visit({
             barcode: product.barcode,
             quantity: 1,
             unit_price: Number(product.sale_price ?? 0),
-            discount: 0,
             manual_price: false,
         }]);
     };
@@ -172,7 +188,62 @@ export default function Visit({
     };
 
     const submit = () => {
-        form.post(route('routes.mobile.visits.pre-sale.store', visit.id), { preserveScroll: true });
+        if (!canModifyPreSale || form.processing || form.data.items.length === 0) {
+            return;
+        }
+
+        form.post(route('routes.mobile.visits.pre-sale.store', visit.id), {
+            preserveScroll: true,
+            onSuccess: () => {
+                setEditingPreSale(false);
+                setConfirmation(null);
+                router.visit(window.location.href, {
+                    method: 'get',
+                    only: ['visit', 'preSale'],
+                    preserveScroll: true,
+                    preserveState: false,
+                });
+            },
+        });
+    };
+
+    const requestSavePreSale = () => {
+        const saveMessage = visitIsWithoutSale
+            ? 'Esta visita está marcada como sin venta. Al guardar la preventa, se quitará ese estado. ¿Deseas continuar?'
+            : `¿Guardar la preventa de ${customerDisplayName}?`;
+
+        setConfirmation({
+            kind: 'save',
+            title: 'Guardar preventa',
+            message: saveMessage,
+            details: `${form.data.items.length} producto${form.data.items.length === 1 ? '' : 's'} · Total Q ${total.toFixed(2)}`,
+            confirmLabel: 'Sí, guardar',
+        });
+    };
+
+    const requestEditPreSale = () => {
+        if (!existingDraftCanBeEdited) {
+            return;
+        }
+
+        setConfirmation({
+            kind: 'edit',
+            title: 'Editar orden',
+            message: `¿Estás seguro de editar la orden de ${customerDisplayName}?`,
+            confirmLabel: 'Sí, editar',
+        });
+    };
+
+    const confirmAction = () => {
+        if (confirmation?.kind === 'save') {
+            submit();
+            return;
+        }
+
+        if (confirmation?.kind === 'edit') {
+            setEditingPreSale(true);
+            setConfirmation(null);
+        }
     };
 
     const updateCustomer = (event: FormEvent) => {
@@ -199,6 +270,26 @@ export default function Visit({
                     <button type="button" onClick={() => setEditingCustomer((value) => !value)} className="mt-3 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-200">
                         Editar cliente
                     </button>
+                    {existingDraftCanBeEdited && !editingPreSale && (
+                        <button type="button" onClick={requestEditPreSale} className="ml-2 mt-3 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm">
+                            Editar orden
+                        </button>
+                    )}
+                    {preSaleIsFrozen && (
+                        <p className="mt-3 rounded-xl bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
+                            Preventa enviada. Ya no se puede editar.
+                        </p>
+                    )}
+                    {visitIsWithoutSale && workDayIsOpen && (
+                        <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                            Esta visita está marcada como sin venta. Si guardas una preventa, se quitará ese estado.
+                        </p>
+                    )}
+                    {!workDayIsOpen && !preSale && (
+                        <p className="mt-3 rounded-xl bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
+                            Jornada cerrada. Ya no se puede editar la visita.
+                        </p>
+                    )}
                     <p className="text-sm text-slate-500">
                         {visit.customer.doc_number ?? '-'} · {visit.zone?.name}
                         {visit.customer.contact_name ? ` · ${visit.customer.contact_name}` : ''}
@@ -241,6 +332,8 @@ export default function Visit({
                     </form>
                 )}
 
+                {canModifyPreSale && (
+                    <>
                 <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
                     <input
                         value={searchTerm}
@@ -282,6 +375,8 @@ export default function Visit({
                         );
                     })}
                 </div>
+                    </>
+                )}
 
                 <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
                     <h2 className="font-semibold text-slate-950">Preventa</h2>
@@ -294,9 +389,11 @@ export default function Visit({
                                         <p className="text-xs text-slate-500">{item.code ?? item.barcode ?? '-'}</p>
                                         <p className="font-medium text-slate-900">{item.name}</p>
                                     </div>
-                                    <button type="button" onClick={() => form.setData('items', form.data.items.filter((_, i) => i !== index))} className="text-sm font-semibold text-red-600">
-                                        Eliminar
-                                    </button>
+                                    {canModifyPreSale && (
+                                        <button type="button" onClick={() => form.setData('items', form.data.items.filter((_, i) => i !== index))} className="text-sm font-semibold text-red-600">
+                                            Eliminar
+                                        </button>
+                                    )}
                                 </div>
                                 <div className="mt-3 grid grid-cols-3 gap-2 text-xs font-semibold text-slate-500">
                                     <span>Cant.</span>
@@ -305,39 +402,31 @@ export default function Visit({
                                 </div>
                                 <div className="mt-1 grid grid-cols-3 gap-2">
                                     <div className="flex items-center rounded-lg border border-slate-200 bg-white">
-                                        <button type="button" onClick={() => updateItem(index, { quantity: Math.max(1, item.quantity - 1) })} className="px-3 py-2 text-sm font-bold text-slate-700">-</button>
+                                        <button type="button" disabled={!canModifyPreSale} onClick={() => updateItem(index, { quantity: Math.max(1, item.quantity - 1) })} className="px-3 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">-</button>
                                         <input
                                             type="number"
                                             min="0.0001"
                                             step="0.0001"
                                             value={item.quantity}
+                                            disabled={!canModifyPreSale}
                                             onChange={(event) => updateItem(index, { quantity: Number(event.target.value) })}
-                                            className="min-w-0 flex-1 border-0 p-2 text-center text-sm"
+                                            className="min-w-0 flex-1 border-0 p-2 text-center text-sm disabled:bg-slate-100"
                                         />
-                                        <button type="button" onClick={() => updateItem(index, { quantity: item.quantity + 1 })} className="px-3 py-2 text-sm font-bold text-slate-700">+</button>
+                                        <button type="button" disabled={!canModifyPreSale} onClick={() => updateItem(index, { quantity: item.quantity + 1 })} className="px-3 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">+</button>
                                     </div>
                                     <input
                                         type="number"
                                         min="0.01"
                                         step="0.01"
                                         value={item.unit_price}
-                                        disabled={!allowManualPrice}
+                                        disabled={!allowManualPrice || !canModifyPreSale}
                                         onChange={(event) => updateItem(index, { unit_price: Number(event.target.value), manual_price: true })}
                                         className="rounded-lg border-slate-200 text-sm disabled:bg-slate-100"
                                     />
                                     <div className="rounded-lg bg-white px-3 py-2 text-right text-sm font-semibold text-slate-900">
-                                        Q {Math.max(0, (item.quantity * item.unit_price) - item.discount).toFixed(2)}
+                                        Q {(item.quantity * item.unit_price).toFixed(2)}
                                     </div>
                                 </div>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={item.discount}
-                                    onChange={(event) => updateItem(index, { discount: Number(event.target.value) })}
-                                    className="mt-2 w-full rounded-lg border-slate-200 text-sm"
-                                    placeholder="Descuento"
-                                />
                             </div>
                         ))}
                     </div>
@@ -352,8 +441,8 @@ export default function Visit({
                             <span className="text-xl font-bold text-slate-950">Q {total.toFixed(2)}</span>
                         </div>
                         <button
-                            disabled={form.processing || form.data.items.length === 0}
-                            onClick={submit}
+                            disabled={form.processing || form.data.items.length === 0 || !canModifyPreSale}
+                            onClick={requestSavePreSale}
                             className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
                         >
                             Guardar preventa
@@ -361,6 +450,16 @@ export default function Visit({
                     </div>
                 </div>
             </div>
+            <ConfirmDialog
+                open={confirmation !== null}
+                title={confirmation?.title ?? ''}
+                message={confirmation?.message ?? ''}
+                details={confirmation?.details}
+                confirmLabel={confirmation?.confirmLabel ?? 'Confirmar'}
+                processing={form.processing}
+                onCancel={() => setConfirmation(null)}
+                onConfirm={confirmAction}
+            />
         </AuthenticatedLayout>
     );
 }

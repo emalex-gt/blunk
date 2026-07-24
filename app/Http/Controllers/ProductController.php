@@ -351,6 +351,20 @@ class ProductController extends Controller
         ]);
     }
 
+    public function reservations(Request $request, Product $product): JsonResponse
+    {
+        $businessId = currentBusinessId();
+        abort_unless((int) $product->business_id === $businessId, 403);
+
+        $activeBranch = BranchInventory::activeBranch($businessId);
+
+        return response()->json(StockAvailability::explainProductReservations(
+            $businessId,
+            (int) $activeBranch->id,
+            $product,
+        ));
+    }
+
     private function validatedProduct(Request $request, ?Product $product = null): array
     {
         $rules = [

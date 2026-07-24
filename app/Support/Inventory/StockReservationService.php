@@ -7,6 +7,7 @@ use App\Models\Business;
 use App\Models\PreSale;
 use App\Models\PreSaleItem;
 use App\Models\Product;
+use App\Models\ProductBranchStock;
 use App\Models\StockReservation;
 use App\Support\StockAvailability;
 use Illuminate\Support\Collection;
@@ -105,6 +106,45 @@ class StockReservationService
             ->groupBy('product_id')
             ->pluck('reserved', 'product_id')
             ->map(fn ($quantity) => (float) $quantity);
+    }
+
+    public function lockStockRowsForReservation(int $businessId, int $branchId, array $productIds): void
+    {
+        $productIds = collect($productIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+
+        if ($productIds === []) {
+            return;
+        }
+
+        Product::query()
+            ->where('business_id', $businessId)
+            ->whereIn('id', $productIds)
+            ->orderBy('id')
+            ->get(['id', 'business_id', 'stock'])
+            ->each(function (Product $product) use ($branchId) {
+                ProductBranchStock::query()->firstOrCreate(
+                    [
+                        'business_id' => $product->business_id,
+                        'branch_id' => $branchId,
+                        'product_id' => $product->id,
+                    ],
+                    ['stock' => 0],
+                );
+            });
+
+        ProductBranchStock::query()
+            ->where('business_id', $businessId)
+            ->where('branch_id', $branchId)
+            ->whereIn('product_id', $productIds)
+            ->orderBy('product_id')
+            ->lockForUpdate()
+            ->get(['id']);
     }
 
     public function assertAvailableForReservation(

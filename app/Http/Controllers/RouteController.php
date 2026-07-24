@@ -324,7 +324,13 @@ class RouteController extends Controller
             'workDay' => $workDay->load(['zone:id,name', 'branch:id,name,department,municipality']),
             'visits' => RouteVisit::query()
                 ->where('route_work_day_id', $workDay->id)
-                ->with(['customer:id,name,commercial_name,contact_name,doc_number,address,department,municipality,phone', 'preSale:id,route_visit_id,status,total'])
+                ->with([
+                    'customer:id,name,commercial_name,contact_name,doc_number,address,department,municipality,phone',
+                    'preSale' => fn ($query) => $query
+                        ->select('id', 'route_visit_id', 'status', 'total')
+                        ->where('status', '!=', 'cancelled')
+                        ->withCount('items'),
+                ])
                 ->orderByRaw('visit_order IS NULL, visit_order')
                 ->orderBy('id')
                 ->get(),
@@ -499,6 +505,16 @@ class RouteController extends Controller
                 ->groupBy(fn ($item) => (int) $item['product_id'])
                 ->map(fn ($items) => $items->sum(fn ($item) => (float) $item['quantity']));
 
+            if ($products->count() !== $quantitiesByProduct->count()) {
+                throw ValidationException::withMessages(['items' => 'Uno de los productos no existe o está inactivo.']);
+            }
+
+            $reservations->lockStockRowsForReservation(
+                currentBusinessId(),
+                $visit->branch_id,
+                $quantitiesByProduct->keys()->all(),
+            );
+
             foreach ($quantitiesByProduct as $productId => $quantity) {
                 $product = $products->get($productId);
                 if (! $product) {
@@ -563,6 +579,8 @@ class RouteController extends Controller
 
             $visit->update([
                 'status' => 'with_pre_sale',
+                'no_sale_reason' => null,
+                'no_sale_note' => null,
                 'finished_at' => now(),
             ]);
         });
@@ -607,17 +625,66 @@ class RouteController extends Controller
         return back()->with('success', 'Preventa cancelada y reserva liberada.');
     }
 
-    public function withoutSale(Request $request, RouteVisit $visit): RedirectResponse
+    public function withoutSale(Request $request, RouteVisit $visit, StockReservationService $reservations): RedirectResponse
     {
         $this->authorizeSellerVisit($request, $visit);
-        $this->assertVisitEditable($visit);
+        $visit->loadMissing('workDay');
 
-        $visit->update([
-            'status' => 'without_sale',
-            'finished_at' => now(),
+        if ($visit->workDay->status !== 'open') {
+            throw ValidationException::withMessages([
+                'pre_sale' => 'La jornada está cerrada. La visita ya no se puede editar.',
+            ]);
+        }
+
+        $data = $request->validate([
+            'no_sale_reason' => ['required', 'string', 'in:Tienda cerrada,Cliente surtido,No quiso comprar,Sin presupuesto,Encargado ausente,Pedido para otro día,No encontrado,Otro'],
+            'no_sale_note' => ['required', 'string', 'min:3', 'max:1000'],
+        ], [
+            'no_sale_reason.required' => 'Selecciona un motivo.',
+            'no_sale_reason.in' => 'Selecciona un motivo válido.',
+            'no_sale_note.required' => 'Ingresa una observación.',
+            'no_sale_note.min' => 'La observación debe tener al menos 3 caracteres.',
         ]);
 
-        return back()->with('success', 'Visita marcada sin compra.');
+        $submittedExists = PreSale::query()
+            ->where('business_id', currentBusinessId())
+            ->where('route_visit_id', $visit->id)
+            ->where('status', '!=', 'draft')
+            ->where('status', '!=', 'cancelled')
+            ->exists();
+
+        if ($submittedExists) {
+            throw ValidationException::withMessages([
+                'pre_sale' => 'La preventa ya fue enviada y no se puede cambiar a sin venta.',
+            ]);
+        }
+
+        DB::transaction(function () use ($visit, $data, $reservations) {
+            $preSale = PreSale::query()
+                ->where('business_id', currentBusinessId())
+                ->where('route_visit_id', $visit->id)
+                ->where('status', 'draft')
+                ->lockForUpdate()
+                ->first();
+
+            if ($preSale) {
+                $reservations->releasePreSaleReservations($preSale);
+                $preSale->items()->delete();
+                $preSale->update([
+                    'status' => 'cancelled',
+                    'cancelled_at' => now(),
+                ]);
+            }
+
+            $visit->update([
+                'status' => 'without_sale',
+                'no_sale_reason' => $data['no_sale_reason'],
+                'no_sale_note' => $data['no_sale_note'],
+                'finished_at' => now(),
+            ]);
+        });
+
+        return back()->with('success', 'Visita marcada sin venta.');
     }
 
     public function closeWorkDay(Request $request, RouteWorkDay $workDay): RedirectResponse
@@ -714,11 +781,17 @@ class RouteController extends Controller
             ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'sale_price', 'image_url']);
 
         $priceTypeId = $this->preSalePriceTypeId($businessId);
+        $stockBreakdown = StockAvailability::getBreakdownForProducts(
+            $businessId,
+            $visit->branch_id,
+            $products->pluck('id')->all(),
+        );
 
-        return $products->map(function (Product $product) use ($businessId, $visit, $priceTypeId) {
+        return $products->map(function (Product $product) use ($businessId, $visit, $priceTypeId, $stockBreakdown) {
             BranchInventory::ensureProductInBranch($product, $visit->branch_id);
-            $stock = StockAvailability::totalStock($product, null, $visit->branch_id);
-            $reserved = StockAvailability::reservedStock($product, null, $visit->branch_id);
+            $breakdown = $stockBreakdown->get((int) $product->id, []);
+            $stock = (float) ($breakdown['physical_stock'] ?? 0);
+            $reserved = (float) ($breakdown['reserved_total'] ?? 0);
             $price = PriceLists::priceForProduct($product, $priceTypeId, $visit->branch_id);
 
             return [
@@ -736,7 +809,11 @@ class RouteController extends Controller
                 'image_url' => $product->image_url,
                 'stock' => $stock,
                 'reserved_stock' => $reserved,
-                'available_stock' => $stock - $reserved,
+                'reserved_total' => $reserved,
+                'reserved_pre_sales' => (float) ($breakdown['reserved_pre_sales'] ?? 0),
+                'reserved_credit_reservations' => (float) ($breakdown['reserved_credit_reservations'] ?? 0),
+                'reserved_other' => (float) ($breakdown['reserved_other'] ?? 0),
+                'available_stock' => (float) ($breakdown['available_stock'] ?? ($stock - $reserved)),
             ];
         });
     }

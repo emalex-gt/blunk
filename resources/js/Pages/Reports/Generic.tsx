@@ -7,7 +7,7 @@ import { FormEvent, useMemo, useState } from 'react';
 type Column = {
     key: string;
     label: string;
-    type?: 'money' | 'number' | 'link';
+    type?: 'money' | 'number' | 'link' | 'reservations';
     link_label?: string;
 };
 
@@ -52,6 +52,35 @@ type Props = {
     maxRangeLabel?: string;
 };
 
+type ReservationRow = {
+    reservation_id?: number;
+    pre_sale_id?: number;
+    credit_receipt_id?: number;
+    visit_id?: number | null;
+    customer_name?: string | null;
+    customer_commercial_name?: string | null;
+    route_zone_name?: string | null;
+    seller_name?: string | null;
+    pre_sale_status?: string | null;
+    visit_status?: string | null;
+    status?: string | null;
+    quantity: number;
+    reason?: string;
+    created_at?: string;
+};
+
+type ReservationExplanation = {
+    physical_stock: number;
+    reserved_pre_sales: number;
+    reserved_credit_reservations: number;
+    reserved_other: number;
+    reserved_total: number;
+    available_stock: number;
+    pre_sale_reservations: ReservationRow[];
+    credit_reservations: ReservationRow[];
+    orphan_or_ignored_reservations: ReservationRow[];
+};
+
 const paymentMethods = [
     { value: 'all', label: 'Todas' },
     { value: 'cash', label: 'Efectivo' },
@@ -78,6 +107,9 @@ export default function GenericReport({
     const business = usePage().props.business as { country?: string | null } | null;
     const country = business?.country ?? 'GT';
     const [form, setForm] = useState<Record<string, string>>(() => stringifyFilters(filters));
+    const [reservationExplanation, setReservationExplanation] = useState<ReservationExplanation | null>(null);
+    const [reservationLoading, setReservationLoading] = useState(false);
+    const [reservationError, setReservationError] = useState<string | null>(null);
     const visibleSummary = summary.filter((item) => !item.hidden);
     const data = rows?.data ?? [];
 
@@ -97,6 +129,36 @@ export default function GenericReport({
 
     function clear() {
         router.get(route(routeName), {}, { preserveScroll: true });
+    }
+
+    async function openReservationExplanation(row: Record<string, unknown>) {
+        const url = row.reservations_url;
+        if (!url) {
+            return;
+        }
+
+        setReservationExplanation(null);
+        setReservationError(null);
+        setReservationLoading(true);
+
+        try {
+            const response = await fetch(String(url), {
+                headers: {
+                    Accept: 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+            });
+
+            if (!response.ok) {
+                throw new Error('No se pudo consultar el detalle de reservas.');
+            }
+
+            setReservationExplanation(await response.json());
+        } catch (error) {
+            setReservationError(error instanceof Error ? error.message : 'No se pudo consultar el detalle de reservas.');
+        } finally {
+            setReservationLoading(false);
+        }
     }
 
     return (
@@ -274,7 +336,7 @@ export default function GenericReport({
                                             <tr key={index} className="hover:bg-slate-50/70">
                                                 {columns.map((column) => (
                                                     <td key={column.key} className="whitespace-nowrap px-4 py-3 text-slate-700">
-                                                        {renderCell(row[column.key], column, country)}
+                                                        {renderCell(row, column, country, openReservationExplanation)}
                                                     </td>
                                                 ))}
                                             </tr>
@@ -308,6 +370,19 @@ export default function GenericReport({
                     </section>
                 </div>
             </div>
+
+            {(reservationLoading || reservationExplanation || reservationError) && (
+                <ReservationModal
+                    loading={reservationLoading}
+                    explanation={reservationExplanation}
+                    error={reservationError}
+                    onClose={() => {
+                        setReservationExplanation(null);
+                        setReservationError(null);
+                        setReservationLoading(false);
+                    }}
+                />
+            )}
         </AuthenticatedLayout>
     );
 }
@@ -330,13 +405,38 @@ function exportUrl(routeName: string, format: 'excel' | 'pdf', form: Record<stri
     });
 }
 
-function renderCell(value: unknown, column: Column, country: string): ReactNode {
+function renderCell(
+    row: Record<string, unknown>,
+    column: Column,
+    country: string,
+    onExplainReservations: (row: Record<string, unknown>) => void,
+): ReactNode {
+    const value = row[column.key];
+
     if (column.type === 'link') {
         return value ? (
             <Link href={String(value)} className="font-semibold text-indigo-600 hover:text-indigo-800">
                 {column.link_label ?? 'Ver'}
             </Link>
         ) : '-';
+    }
+
+    if (column.type === 'reservations') {
+        const quantity = Number(value ?? 0);
+
+        if (quantity <= 0 || !row.reservations_url) {
+            return formatCell(value, { ...column, type: 'number' }, country);
+        }
+
+        return (
+            <button
+                type="button"
+                onClick={() => onExplainReservations(row)}
+                className="font-semibold text-indigo-600 underline-offset-2 hover:text-indigo-800 hover:underline"
+            >
+                {formatCell(value, { ...column, type: 'number' }, country)}
+            </button>
+        );
     }
 
     return formatCell(value, column, country);
@@ -412,5 +512,108 @@ function SelectField({
                 {children}
             </select>
         </label>
+    );
+}
+
+function ReservationModal({
+    loading,
+    explanation,
+    error,
+    onClose,
+}: {
+    loading: boolean;
+    explanation: ReservationExplanation | null;
+    error: string | null;
+    onClose: () => void;
+}) {
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+            <div className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-xl">
+                <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+                    <div>
+                        <h3 className="text-base font-semibold text-slate-950">Detalle de reservas</h3>
+                        <p className="text-xs text-slate-500">Reservado es cantidad de unidades, no cantidad de preventas.</p>
+                    </div>
+                    <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                        Cerrar
+                    </button>
+                </div>
+
+                <div className="max-h-[calc(90vh-72px)] overflow-y-auto p-5">
+                    {loading && <p className="text-sm text-slate-500">Consultando reservas...</p>}
+                    {error && <p className="rounded-lg bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</p>}
+                    {explanation && (
+                        <div className="space-y-5">
+                            <div className="grid gap-3 sm:grid-cols-3">
+                                <Metric label="Stock físico" value={explanation.physical_stock} />
+                                <Metric label="Reservado total" value={explanation.reserved_total} />
+                                <Metric label="Disponible" value={explanation.available_stock} />
+                                <Metric label="Preventas" value={explanation.reserved_pre_sales} />
+                                <Metric label="Crédito" value={explanation.reserved_credit_reservations} />
+                                <Metric label="Otro" value={explanation.reserved_other} />
+                            </div>
+
+                            <ReservationSection title="Preventas" rows={explanation.pre_sale_reservations} />
+                            <ReservationSection title="Crédito" rows={explanation.credit_reservations} />
+                            {explanation.orphan_or_ignored_reservations.length > 0 && (
+                                <ReservationSection title="Reservas ignoradas / diagnóstico" rows={explanation.orphan_or_ignored_reservations} showReason />
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function Metric({ label, value }: { label: string; value: number }) {
+    return (
+        <div className="rounded-lg border border-slate-200 p-3">
+            <div className="text-xs font-semibold uppercase text-slate-500">{label}</div>
+            <div className="mt-1 text-lg font-semibold text-slate-950">{Number(value ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}</div>
+        </div>
+    );
+}
+
+function ReservationSection({ title, rows, showReason = false }: { title: string; rows: ReservationRow[]; showReason?: boolean }) {
+    return (
+        <section>
+            <h4 className="text-sm font-semibold text-slate-900">{title}</h4>
+            {rows.length === 0 ? (
+                <p className="mt-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-500">Sin reservas.</p>
+            ) : (
+                <div className="mt-2 overflow-x-auto rounded-lg border border-slate-200">
+                    <table className="min-w-full text-sm">
+                        <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
+                            <tr>
+                                <th className="px-3 py-2">Cliente</th>
+                                <th className="px-3 py-2">Ruta / documento</th>
+                                <th className="px-3 py-2">Estado</th>
+                                <th className="px-3 py-2">Cantidad</th>
+                                {showReason && <th className="px-3 py-2">Motivo</th>}
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {rows.map((row, index) => (
+                                <tr key={`${row.reservation_id ?? row.pre_sale_id ?? row.credit_receipt_id ?? index}-${index}`}>
+                                    <td className="px-3 py-2 text-slate-700">
+                                        {row.customer_commercial_name || row.customer_name || '-'}
+                                        {row.customer_commercial_name && row.customer_name && (
+                                            <div className="text-xs text-slate-500">{row.customer_name}</div>
+                                        )}
+                                    </td>
+                                    <td className="px-3 py-2 text-slate-700">
+                                        {row.route_zone_name || (row.credit_receipt_id ? `Crédito #${row.credit_receipt_id}` : row.pre_sale_id ? `Preventa #${row.pre_sale_id}` : '-')}
+                                    </td>
+                                    <td className="px-3 py-2 text-slate-700">{row.pre_sale_status || row.visit_status || row.status || '-'}</td>
+                                    <td className="px-3 py-2 text-slate-700">{Number(row.quantity ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}</td>
+                                    {showReason && <td className="px-3 py-2 text-slate-700">{row.reason ?? '-'}</td>}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </section>
     );
 }

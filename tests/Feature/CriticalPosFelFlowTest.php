@@ -3547,6 +3547,94 @@ class CriticalPosFelFlowTest extends TestCase
             );
     }
 
+    public function test_pos_receives_active_branch_location_defaults(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos']);
+        BranchInventory::defaultBranchForBusiness($business)->update([
+            'department' => 'Guatemala',
+            'municipality' => 'Guatemala',
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('sales.create'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Sales/POS')
+                ->where('active_branch.department', 'Guatemala')
+                ->where('active_branch.municipality', 'Guatemala')
+            );
+    }
+
+    public function test_pos_customer_sale_saves_department_and_municipality(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 100, customer: [
+                'name' => 'Cliente POS',
+                'doc_type' => 'NIT',
+                'doc_number' => '57289085',
+                'address' => 'Ciudad',
+                'department' => 'Guatemala',
+                'municipality' => 'Guatemala',
+                'phone' => '5555-1111',
+            ]))
+            ->assertSessionHasNoErrors();
+
+        $customer = Customer::query()
+            ->where('business_id', $business->id)
+            ->where('doc_number', '57289085')
+            ->firstOrFail();
+
+        $this->assertSame('Guatemala', $customer->department);
+        $this->assertSame('Guatemala', $customer->municipality);
+
+        $sale = Sale::query()->where('business_id', $business->id)->firstOrFail();
+        $this->assertSame('Guatemala', $sale->customer_department);
+        $this->assertSame('Guatemala', $sale->customer_municipality);
+    }
+
+    public function test_pos_customer_update_does_not_clear_existing_commercial_name_when_payload_is_empty(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $customer = Customer::create([
+            'business_id' => $business->id,
+            'name' => 'Cliente Fiscal',
+            'commercial_name' => 'Negocio existente',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+            'country' => 'GT',
+        ]);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 100, customer: [
+                'id' => $customer->id,
+                'name' => 'Cliente Fiscal Actualizado',
+                'commercial_name' => '',
+                'doc_type' => 'NIT',
+                'doc_number' => '57289085',
+                'department' => 'Guatemala',
+                'municipality' => 'Guatemala',
+            ]))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('Negocio existente', $customer->refresh()->commercial_name);
+    }
+
+    public function test_pos_customer_form_does_not_render_business_name_field_but_routes_still_do(): void
+    {
+        $posSource = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+        $routeWorkDaySource = file_get_contents(resource_path('js/Pages/Routes/Mobile/WorkDay.tsx'));
+        $routeVisitSource = file_get_contents(resource_path('js/Pages/Routes/Mobile/Visit.tsx'));
+
+        $this->assertStringNotContainsString('Nombre del negocio', $posSource);
+        $this->assertStringContainsString('Nombre del negocio', $routeWorkDaySource.$routeVisitSource);
+    }
+
     private function tenant(
         string $country = 'GT',
         array $modules = [],

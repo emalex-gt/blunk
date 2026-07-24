@@ -1,15 +1,29 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
-import { Head, Link, router, useForm } from '@inertiajs/react';
+import ConfirmDialog from '@/Components/ConfirmDialog';
+import { Head, Link, useForm } from '@inertiajs/react';
 import { FormEvent, useState } from 'react';
 
 type Visit = {
     id: number;
     status: string;
+    no_sale_reason: string | null;
+    no_sale_note: string | null;
     visit_order: number | null;
     customer: { name: string; commercial_name: string | null; contact_name: string | null; doc_number: string | null; address: string | null; department: string | null; municipality: string | null; phone: string | null };
-    pre_sale?: { id: number; status: string; total: string } | null;
+    pre_sale?: { id: number; status: string; total: string; items_count?: number } | null;
 };
+
+const noSaleReasons = [
+    'Tienda cerrada',
+    'Cliente surtido',
+    'No quiso comprar',
+    'Sin presupuesto',
+    'Encargado ausente',
+    'Pedido para otro día',
+    'No encontrado',
+    'Otro',
+];
 
 export default function WorkDay({ workDay, visits }: { workDay: { id: number; status: string; zone?: { name: string }; branch?: { name: string; department: string | null; municipality: string | null } }; visits: Visit[] }) {
     const mapHref = (visit: Visit) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(visit.customer.address || visit.customer.name)}`;
@@ -30,6 +44,14 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
     });
     const [nitLookupLoading, setNitLookupLoading] = useState(false);
     const [nitLookupError, setNitLookupError] = useState('');
+    const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+    const closeForm = useForm({});
+    const [noSaleVisit, setNoSaleVisit] = useState<Visit | null>(null);
+    const noSaleForm = useForm({
+        no_sale_reason: '',
+        no_sale_note: '',
+        pre_sale: '',
+    });
 
     const createCustomer = (event: FormEvent) => {
         event.preventDefault();
@@ -79,6 +101,44 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
             setNitLookupLoading(false);
         }
     }
+
+    const closeWorkDay = () => {
+        closeForm.post(route('routes.mobile.work-days.close', workDay.id), {
+            preserveScroll: true,
+            onFinish: () => setShowCloseConfirm(false),
+        });
+    };
+
+    const submittedPreSaleMessage = 'La preventa ya fue enviada y no se puede cambiar a sin venta.';
+    const visitHasDraftPreSaleItems = (visit: Visit | null) => Boolean(visit?.pre_sale?.status === 'draft' && (visit.pre_sale.items_count ?? 0) > 0);
+    const visitHasSubmittedPreSale = (visit: Visit) => Boolean(visit.pre_sale && visit.pre_sale.status !== 'draft');
+
+    const openNoSaleModal = (visit: Visit) => {
+        if (visitHasSubmittedPreSale(visit)) {
+            return;
+        }
+
+        noSaleForm.clearErrors();
+        noSaleForm.setData({
+            no_sale_reason: visit.no_sale_reason ?? '',
+            no_sale_note: visit.no_sale_note ?? '',
+            pre_sale: '',
+        });
+        setNoSaleVisit(visit);
+    };
+
+    const confirmNoSale = (event: FormEvent) => {
+        event.preventDefault();
+
+        if (!noSaleVisit) {
+            return;
+        }
+
+        noSaleForm.post(route('routes.mobile.visits.without-sale', noSaleVisit.id), {
+            preserveScroll: true,
+            onSuccess: () => setNoSaleVisit(null),
+        });
+    };
 
     return (
         <AuthenticatedLayout>
@@ -222,6 +282,17 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
                                 Preventa: Q {Number(visit.pre_sale.total).toFixed(2)} · {visit.pre_sale.status}
                             </p>
                         )}
+                        {visit.status === 'without_sale' && (visit.no_sale_reason || visit.no_sale_note) && (
+                            <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                                Sin venta: {visit.no_sale_reason}
+                                {visit.no_sale_note ? ` · ${visit.no_sale_note}` : ''}
+                            </p>
+                        )}
+                        {visit.pre_sale && visitHasSubmittedPreSale(visit) && (
+                            <p className="mt-2 rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">
+                                {submittedPreSaleMessage}
+                            </p>
+                        )}
                         <div className="mt-4 grid grid-cols-2 gap-2">
                             <a href={mapHref(visit)} target="_blank" className="rounded-xl bg-slate-100 px-3 py-3 text-center text-sm font-semibold text-slate-700">
                                 Abrir Maps
@@ -230,10 +301,12 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
                                 Crear/Editar preventa
                             </Link>
                             <button
-                                onClick={() => router.post(route('routes.mobile.visits.without-sale', visit.id), {}, { preserveScroll: true })}
-                                className="col-span-2 rounded-xl bg-white px-3 py-3 text-sm font-semibold text-slate-700 ring-1 ring-slate-200"
+                                type="button"
+                                disabled={visit.status === 'without_sale' || visitHasSubmittedPreSale(visit)}
+                                onClick={() => openNoSaleModal(visit)}
+                                className="col-span-2 rounded-xl bg-white px-3 py-3 text-sm font-semibold text-slate-700 ring-1 ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                                Sin compra
+                                Sin venta
                             </button>
                         </div>
                     </div>
@@ -241,14 +314,91 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
                 <div className="fixed inset-x-0 bottom-0 border-t border-slate-200 bg-white p-4">
                     <div className="mx-auto max-w-xl">
                         <button
-                            onClick={() => router.post(route('routes.mobile.work-days.close', workDay.id))}
-                            className="w-full rounded-xl bg-slate-950 px-4 py-3 text-base font-semibold text-white"
+                            type="button"
+                            disabled={closeForm.processing}
+                            onClick={() => setShowCloseConfirm(true)}
+                            className="w-full rounded-xl bg-slate-950 px-4 py-3 text-base font-semibold text-white disabled:opacity-60"
                         >
-                            Cerrar jornada
+                            {closeForm.processing ? 'Cerrando...' : 'Cerrar jornada'}
                         </button>
                     </div>
                 </div>
             </div>
+            <ConfirmDialog
+                open={showCloseConfirm}
+                title="¿Finalizar la ruta?"
+                message="Al finalizar la ruta, las preventas quedarán enviadas y ya no se podrán editar. ¿Deseas continuar?"
+                confirmLabel="Sí, finalizar ruta"
+                processing={closeForm.processing}
+                onCancel={() => setShowCloseConfirm(false)}
+                onConfirm={closeWorkDay}
+            />
+            {noSaleVisit && (
+                <div className="fixed inset-0 z-50 flex items-end bg-slate-950/40 p-4 sm:items-center sm:justify-center">
+                    <form onSubmit={confirmNoSale} className="w-full max-w-lg rounded-2xl bg-white p-4 shadow-xl">
+                        <div>
+                            <h2 className="text-lg font-semibold text-slate-950">Sin venta</h2>
+                            <p className="mt-1 text-sm text-slate-500">{noSaleVisit.customer.commercial_name || noSaleVisit.customer.name}</p>
+                        </div>
+
+                        {visitHasDraftPreSaleItems(noSaleVisit) && (
+                            <div className="mt-4 rounded-xl bg-amber-50 px-3 py-3 text-sm font-semibold text-amber-800">
+                                Este cliente ya tiene productos agregados. Si marcas la visita como sin venta, se eliminará la preventa actual y se liberará el stock reservado. ¿Deseas continuar?
+                            </div>
+                        )}
+
+                        {noSaleForm.errors.pre_sale && (
+                            <div className="mt-4 rounded-xl bg-red-50 px-3 py-3 text-sm font-semibold text-red-700">{noSaleForm.errors.pre_sale}</div>
+                        )}
+
+                        <div className="mt-4 space-y-3">
+                            <label className="block text-sm font-medium text-slate-700">
+                                Motivo
+                                <select
+                                    value={noSaleForm.data.no_sale_reason}
+                                    onChange={(event) => noSaleForm.setData('no_sale_reason', event.target.value)}
+                                    className="mt-1 w-full rounded-xl border-slate-200 text-base"
+                                >
+                                    <option value="">Selecciona un motivo</option>
+                                    {noSaleReasons.map((reason) => (
+                                        <option key={reason} value={reason}>
+                                            {reason}
+                                        </option>
+                                    ))}
+                                </select>
+                                {noSaleForm.errors.no_sale_reason && <span className="mt-1 block text-xs font-semibold text-red-600">{noSaleForm.errors.no_sale_reason}</span>}
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                                Observación
+                                <textarea
+                                    value={noSaleForm.data.no_sale_note}
+                                    onChange={(event) => noSaleForm.setData('no_sale_note', event.target.value)}
+                                    className="mt-1 w-full rounded-xl border-slate-200 text-base"
+                                    rows={3}
+                                />
+                                {noSaleForm.errors.no_sale_note && <span className="mt-1 block text-xs font-semibold text-red-600">{noSaleForm.errors.no_sale_note}</span>}
+                            </label>
+                        </div>
+
+                        <div className="mt-5 grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setNoSaleVisit(null)}
+                                className="rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-700 ring-1 ring-slate-200"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={noSaleForm.processing}
+                                className="rounded-xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                            >
+                                {noSaleForm.processing ? 'Guardando...' : 'Confirmar sin venta'}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
         </AuthenticatedLayout>
     );
 }

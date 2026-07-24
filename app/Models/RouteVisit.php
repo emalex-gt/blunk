@@ -17,6 +17,8 @@ class RouteVisit extends Model
         'seller_id',
         'visit_order',
         'status',
+        'no_sale_reason',
+        'no_sale_note',
         'started_at',
         'finished_at',
         'notes',

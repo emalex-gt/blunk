@@ -237,7 +237,7 @@ function uniqueRecentProductIds(items: Array<number | { id?: number | string | n
     return Array.from(new Set(ids)).slice(0, 8);
 }
 
-function emptyCustomer(country: string): CustomerForm {
+function emptyCustomer(country: string, defaults: Partial<Pick<CustomerForm, 'department' | 'municipality'>> = {}): CustomerForm {
     return {
         id: null,
         consumidor_final: country === 'GT',
@@ -247,8 +247,8 @@ function emptyCustomer(country: string): CustomerForm {
         name: country === 'GT' ? 'Consumidor Final' : '',
         commercial_name: '',
         address: '',
-        department: '',
-        municipality: '',
+        department: defaults.department ?? '',
+        municipality: defaults.municipality ?? '',
         phone: '',
         country,
         name_locked: false,
@@ -334,6 +334,12 @@ function quantityError(value: number | string | null | undefined) {
 
 function quantityNumber(value: number | string | null | undefined) {
     return quantityError(value) ? 0 : Number(normalizeQuantity(value));
+}
+
+function fiscalCustomerPayload(customer: CustomerForm) {
+    const { commercial_name: _commercialName, ...payload } = customer;
+
+    return payload;
 }
 
 function roundMoney(value: number) {
@@ -505,12 +511,25 @@ export default function POS({
         };
         enabled_modules?: string[];
         branches_enabled?: boolean;
-        active_branch?: { id: number; name: string; code: string | null } | null;
+        active_branch?: {
+            id: number;
+            name: string;
+            code: string | null;
+            department?: string | null;
+            municipality?: string | null;
+        } | null;
     };
     const business = pageProps.business ?? null;
     const businessId = pageProps.current_business_id ?? business?.id ?? null;
     const userId = pageProps.auth?.user?.id ?? null;
     const activeBranchId = pageProps.active_branch?.id ?? null;
+    const activeBranchLocationDefaults = useMemo(
+        () => ({
+            department: pageProps.active_branch?.department ?? '',
+            municipality: pageProps.active_branch?.municipality ?? '',
+        }),
+        [pageProps.active_branch?.department, pageProps.active_branch?.municipality],
+    );
     const canApplyDiscount = (pageProps.enabled_modules ?? []).includes('discounts')
         && (Boolean(pageProps.auth?.user?.is_super_admin)
             || (pageProps.auth?.permissions ?? []).includes('sales.discount.apply'));
@@ -520,6 +539,10 @@ export default function POS({
             || (pageProps.auth?.permissions ?? []).includes('pos.manual_price'));
     const manualPriceMinMargin = Number(price_settings.manual_price_min_margin_percent ?? 0);
     const country = business?.country ?? 'GT';
+    const defaultCustomer = useMemo(
+        () => emptyCustomer(country, activeBranchLocationDefaults),
+        [activeBranchLocationDefaults, country],
+    );
     const draftKey = useMemo(() => makeDraftKey('pos', businessId, userId, activeBranchId), [activeBranchId, businessId, userId]);
     const recentProductsKey = useMemo(
         () => `pos_recent_products:${businessId ?? 'unknown'}:${userId ?? 'unknown'}:${activeBranchId ?? 'default'}`,
@@ -598,7 +621,7 @@ export default function POS({
     }>({
         note: '',
         branch_id: activeBranchId,
-        customer: emptyCustomer(country),
+        customer: defaultCustomer,
         document_type: 'receipt',
         payment_condition: 'paid',
         payments: [],
@@ -1159,7 +1182,7 @@ export default function POS({
         setMessage('');
         setData('note', '');
         setData('branch_id', activeBranchId);
-        setData('customer', emptyCustomer(country));
+        setData('customer', defaultCustomer);
         setShowCheckoutModal(false);
         setSplitPayment(false);
         setPaymentCondition('paid');
@@ -1358,7 +1381,7 @@ export default function POS({
                 doc_number: nit,
                 id: result.customer?.id ?? data.customer.id,
                 name: result.customer?.name || result.name || '',
-                commercial_name: result.customer?.commercial_name || data.customer.commercial_name,
+                commercial_name: data.customer.commercial_name,
                 address: result.customer?.address || result.address || data.customer.address,
                 department: result.customer?.department || data.customer.department,
                 municipality: result.customer?.municipality || data.customer.municipality,
@@ -1650,7 +1673,7 @@ export default function POS({
                 })
                 .filter((item): item is CartItem => Boolean(item)),
         );
-        setData('customer', heldSale.customer || emptyCustomer(country));
+        setData('customer', heldSale.customer || defaultCustomer);
         localStorage.removeItem(heldSaleKey);
         setHasHeldSale(false);
         setSearch('');
@@ -1812,7 +1835,7 @@ export default function POS({
             router.post(route('credits.receipts.store'), {
                 note: data.note,
                 branch_id: activeBranchId,
-                customer: data.customer,
+                customer: fiscalCustomerPayload(data.customer),
                 items: cart.map((item) => ({
                     product_id: item.product.id,
                     quantity: quantityNumber(item.quantity),
@@ -1837,7 +1860,7 @@ export default function POS({
                     latestDraftRef.current = null;
                     reset();
                     setData('branch_id', activeBranchId);
-                    setData('customer', emptyCustomer(country));
+                    setData('customer', defaultCustomer);
                     focusSearch();
 
                     if (flash?.credit_print_url) {
@@ -1904,7 +1927,7 @@ export default function POS({
         transform(() => ({
             note: data.note,
             branch_id: activeBranchId,
-            customer: data.customer,
+            customer: fiscalCustomerPayload(data.customer),
             document_type: effectiveDocumentType,
             payment_condition: paymentCondition,
             payments: (paymentCondition === 'credit' ? [] : finalPayments).map((payment) => ({
@@ -1957,7 +1980,7 @@ export default function POS({
                     : 'Venta guardada correctamente.';
                 reset();
                 setData('branch_id', activeBranchId);
-                setData('customer', emptyCustomer(country));
+                setData('customer', defaultCustomer);
                 focusSearch();
 
                 if (effectiveDocumentType === 'receipt' && receiptSaleId) {
@@ -2339,7 +2362,7 @@ export default function POS({
                                             <button
                                                 type="button"
                                                 onClick={() => {
-                                                    setData('customer', emptyCustomer('GT'));
+                                                    setData('customer', emptyCustomer('GT', activeBranchLocationDefaults));
                                                     setNitLookupMessage('');
                                                 }}
                                                 className={[
@@ -2355,7 +2378,7 @@ export default function POS({
                                                 type="button"
                                                 onClick={() => {
                                                     setData('customer', {
-                                                        ...emptyCustomer('GT'),
+                                                        ...emptyCustomer('GT', activeBranchLocationDefaults),
                                                         consumidor_final: false,
                                                         doc_type: 'NIT',
                                                         doc_number: '',
@@ -2383,12 +2406,6 @@ export default function POS({
                                                     value={data.customer.name}
                                                     onChange={(event) => setCustomerField('name', event.target.value)}
                                                     placeholder="Nombre"
-                                                    className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
-                                                />
-                                                <input
-                                                    value={data.customer.commercial_name}
-                                                    onChange={(event) => setCustomerField('commercial_name', event.target.value)}
-                                                    placeholder="Nombre del negocio"
                                                     className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                                                 />
                                                 <input
@@ -2470,12 +2487,6 @@ export default function POS({
                                                     </div>
                                                 )}
                                                 <div className="grid gap-3 md:grid-cols-2">
-                                                    <input
-                                                        value={data.customer.commercial_name}
-                                                        onChange={(event) => setCustomerField('commercial_name', event.target.value)}
-                                                        placeholder="Nombre del negocio"
-                                                        className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
-                                                    />
                                                     <input
                                                         value={data.customer.address}
                                                         onChange={(event) => setCustomerField('address', event.target.value)}

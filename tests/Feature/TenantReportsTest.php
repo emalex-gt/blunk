@@ -6,11 +6,16 @@ use App\Models\Business;
 use App\Models\Branch;
 use App\Models\CashExpense;
 use App\Models\CashRegisterSession;
+use App\Models\CreditReceipt;
+use App\Models\CreditReceiptLine;
 use App\Models\Customer;
+use App\Models\PreSale;
+use App\Models\PreSaleItem;
 use App\Models\PriceType;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
 use App\Models\ProductPrice;
+use App\Models\StockReservation;
 use App\Models\Purchase;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -72,6 +77,54 @@ class TenantReportsTest extends TestCase
                 ->where('rows.data.0.stock', 5)
                 ->where('rows.data.0.available', 5)
                 ->where('branch.id', $main->id));
+    }
+
+    public function test_inventory_report_includes_reserved_breakdown_and_available_stock(): void
+    {
+        [$business, $user, $main] = $this->tenant();
+        $product = $this->product($business, $main, stock: 10);
+        $preSale = PreSale::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $main->id,
+            'customer_id' => $this->customer($business)->id,
+            'seller_id' => $user->id,
+            'status' => 'draft',
+            'subtotal' => 400,
+            'discount_total' => 0,
+            'total' => 400,
+        ]);
+        $preSaleItem = PreSaleItem::query()->create([
+            'business_id' => $business->id,
+            'pre_sale_id' => $preSale->id,
+            'product_id' => $product->id,
+            'quantity' => 4,
+            'unit_price' => 100,
+            'discount' => 0,
+            'total' => 400,
+        ]);
+        StockReservation::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $main->id,
+            'product_id' => $product->id,
+            'source_type' => 'pre_sale',
+            'source_id' => $preSale->id,
+            'source_item_id' => $preSaleItem->id,
+            'quantity' => 4,
+            'status' => 'active',
+            'created_by' => $user->id,
+        ]);
+        $this->creditReservation($business, $main, $product, 1);
+
+        $this->actingAs($user)
+            ->get(route('reports.inventory'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('rows.data.0.physical_stock', 10)
+                ->where('rows.data.0.reserved_pre_sales', 4)
+                ->where('rows.data.0.reserved_credit_reservations', 1)
+                ->where('rows.data.0.reserved_total', 5)
+                ->where('rows.data.0.available', 5));
     }
 
     public function test_daily_report_cash_summary_uses_branch_cash_movements(): void
@@ -540,6 +593,56 @@ class TenantReportsTest extends TestCase
         );
 
         return $product;
+    }
+
+    private function customer(Business $business, string $name = 'Cliente reporte'): Customer
+    {
+        return Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => $name,
+            'doc_type' => 'NIT',
+            'doc_number' => (string) random_int(1000000, 9999999),
+            'country' => 'GT',
+        ]);
+    }
+
+    private function creditReservation(Business $business, Branch $branch, Product $product, int $quantity): CreditReceiptLine
+    {
+        $customer = $this->customer($business, 'Cliente crédito '.uniqid());
+
+        $receipt = CreditReceipt::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'customer_doc_type' => $customer->doc_type,
+            'customer_doc_number' => $customer->doc_number,
+            'receipt_number' => random_int(1000, 9999),
+            'status' => 'pending',
+            'subtotal' => $quantity * 100,
+            'discount_amount' => 0,
+            'total' => $quantity * 100,
+            'pending_total' => $quantity * 100,
+        ]);
+
+        return CreditReceiptLine::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'credit_receipt_id' => $receipt->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'sku' => $product->code,
+            'quantity' => $quantity,
+            'qty_reserved' => $quantity,
+            'qty_invoiced' => 0,
+            'qty_cancelled' => 0,
+            'qty_pending' => $quantity,
+            'unit_price' => 100,
+            'discount_amount' => 0,
+            'line_total' => $quantity * 100,
+            'pending_total' => $quantity * 100,
+            'status' => 'pending',
+        ]);
     }
 
     private function sale(

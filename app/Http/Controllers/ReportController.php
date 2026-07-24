@@ -265,7 +265,33 @@ class ReportController extends Controller
         $onlyBelowMinimum = filter_var($request->query('only_below_minimum', true), FILTER_VALIDATE_BOOLEAN);
         $reserveCreditStock = Credits::reserveStockOnCreditReservations($businessId);
 
-        $reservedSubquery = DB::table('credit_receipt_lines')
+        $preSaleReservedSubquery = DB::table('stock_reservations')
+            ->join('pre_sales', function ($join) {
+                $join->on('pre_sales.id', '=', 'stock_reservations.source_id')
+                    ->whereColumn('pre_sales.business_id', 'stock_reservations.business_id')
+                    ->whereColumn('pre_sales.branch_id', 'stock_reservations.branch_id')
+                    ->where('stock_reservations.source_type', 'pre_sale');
+            })
+            ->join('pre_sale_items', function ($join) {
+                $join->on('pre_sale_items.id', '=', 'stock_reservations.source_item_id')
+                    ->whereColumn('pre_sale_items.pre_sale_id', 'pre_sales.id')
+                    ->whereColumn('pre_sale_items.business_id', 'stock_reservations.business_id')
+                    ->whereColumn('pre_sale_items.product_id', 'stock_reservations.product_id');
+            })
+            ->leftJoin('route_visits', function ($join) {
+                $join->on('route_visits.id', '=', 'pre_sales.route_visit_id')
+                    ->whereColumn('route_visits.business_id', 'pre_sales.business_id')
+                    ->whereColumn('route_visits.branch_id', 'pre_sales.branch_id');
+            })
+            ->where('stock_reservations.business_id', $businessId)
+            ->where('stock_reservations.branch_id', $scope->branch->id)
+            ->where('stock_reservations.status', 'active')
+            ->whereIn('pre_sales.status', ['draft', 'submitted'])
+            ->where(fn ($query) => $query->whereNull('route_visits.id')->orWhere('route_visits.status', '!=', 'without_sale'))
+            ->groupBy('stock_reservations.product_id')
+            ->selectRaw('stock_reservations.product_id, SUM(stock_reservations.quantity) as reserved');
+
+        $creditReservedSubquery = DB::table('credit_receipt_lines')
             ->where('business_id', $businessId)
             ->where('branch_id', $scope->branch->id)
             ->whereIn('status', ['pending', 'partially_invoiced'])
@@ -273,6 +299,14 @@ class ReportController extends Controller
             ->where('qty_reserved', '>', 0)
             ->groupBy('product_id')
             ->selectRaw('product_id, SUM(LEAST(qty_reserved, qty_pending)) as reserved');
+
+        $otherReservedSubquery = DB::table('stock_reservations')
+            ->where('business_id', $businessId)
+            ->where('branch_id', $scope->branch->id)
+            ->where('status', 'active')
+            ->whereNotIn('source_type', ['pre_sale', 'credit_receipt'])
+            ->groupBy('product_id')
+            ->selectRaw('product_id, SUM(quantity) as reserved');
 
         $lastInSubquery = DB::table('stock_movements')
             ->where('business_id', $businessId)
@@ -289,7 +323,9 @@ class ReportController extends Controller
                     ->where('pbs.business_id', '=', $businessId)
                     ->where('pbs.branch_id', '=', $scope->branch->id);
             })
-            ->leftJoinSub($reservedSubquery, 'reserved_lines', fn ($join) => $join->on('reserved_lines.product_id', '=', 'products.id'))
+            ->leftJoinSub($preSaleReservedSubquery, 'reserved_pre_sales', fn ($join) => $join->on('reserved_pre_sales.product_id', '=', 'products.id'))
+            ->leftJoinSub($creditReservedSubquery, 'reserved_credit', fn ($join) => $join->on('reserved_credit.product_id', '=', 'products.id'))
+            ->leftJoinSub($otherReservedSubquery, 'reserved_other', fn ($join) => $join->on('reserved_other.product_id', '=', 'products.id'))
             ->leftJoinSub($lastInSubquery, 'last_in', fn ($join) => $join->on('last_in.product_id', '=', 'products.id'))
             ->when($categoryId, fn ($query) => $query->where('products.category_id', $categoryId))
             ->when($productSearch !== '', function ($query) use ($productSearch) {
@@ -299,8 +335,8 @@ class ReportController extends Controller
                         ->orWhere('products.barcode', 'ilike', "%{$productSearch}%");
                 });
             })
-            ->when($onlyBelowMinimum, fn ($query) => $query->whereRaw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_lines.reserved, 0)) <= products.min_stock'))
-            ->orderByRaw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_lines.reserved, 0)) ASC')
+            ->when($onlyBelowMinimum, fn ($query) => $query->whereRaw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_pre_sales.reserved, 0) - COALESCE(reserved_credit.reserved, 0) - COALESCE(reserved_other.reserved, 0)) <= products.min_stock'))
+            ->orderByRaw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_pre_sales.reserved, 0) - COALESCE(reserved_credit.reserved, 0) - COALESCE(reserved_other.reserved, 0)) ASC')
             ->orderBy('products.name')
             ->paginate($this->reportPerPage($request), [
                 'products.id',
@@ -309,9 +345,12 @@ class ReportController extends Controller
                 DB::raw("COALESCE(categories.name, '-') as category"),
                 'products.min_stock as minimum',
                 DB::raw('COALESCE(pbs.stock, 0) as stock'),
-                DB::raw('COALESCE(reserved_lines.reserved, 0) as reserved'),
-                DB::raw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_lines.reserved, 0)) as available'),
-                DB::raw('GREATEST(products.min_stock - (COALESCE(pbs.stock, 0) - COALESCE(reserved_lines.reserved, 0)), 0) as suggested_missing'),
+                DB::raw('COALESCE(reserved_pre_sales.reserved, 0) as reserved_pre_sales'),
+                DB::raw('COALESCE(reserved_credit.reserved, 0) as reserved_credit_reservations'),
+                DB::raw('COALESCE(reserved_other.reserved, 0) as reserved_other'),
+                DB::raw('(COALESCE(reserved_pre_sales.reserved, 0) + COALESCE(reserved_credit.reserved, 0) + COALESCE(reserved_other.reserved, 0)) as reserved_total'),
+                DB::raw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_pre_sales.reserved, 0) - COALESCE(reserved_credit.reserved, 0) - COALESCE(reserved_other.reserved, 0)) as available'),
+                DB::raw('GREATEST(products.min_stock - (COALESCE(pbs.stock, 0) - COALESCE(reserved_pre_sales.reserved, 0) - COALESCE(reserved_credit.reserved, 0) - COALESCE(reserved_other.reserved, 0)), 0) as suggested_missing'),
                 'last_in.last_in_at',
             ])
             ->withQueryString()
@@ -320,12 +359,18 @@ class ReportController extends Controller
                 'code' => $row->code,
                 'category' => $row->category,
                 'minimum' => (float) $row->minimum,
+                'physical_stock' => (float) $row->stock,
                 'stock' => (float) $row->stock,
-                'reserved' => (float) $row->reserved,
+                'reserved_pre_sales' => (float) $row->reserved_pre_sales,
+                'reserved_credit_reservations' => (float) $row->reserved_credit_reservations,
+                'reserved_other' => (float) $row->reserved_other,
+                'reserved_total' => (float) $row->reserved_total,
+                'reserved' => (float) $row->reserved_total,
                 'available' => (float) $row->available,
                 'suggested_missing' => (float) $row->suggested_missing,
                 'last_in_at' => $row->last_in_at ? Carbon::parse($row->last_in_at)->timezone(tenantTimezone())->format('Y-m-d H:i') : '-',
                 'cardex_url' => route('products.stock-history', $row->id),
+                'reservations_url' => route('inventory.products.reservations', $row->id),
             ]);
 
         return $this->report('Stock bajo', 'reports.low-stock', [
@@ -333,8 +378,11 @@ class ReportController extends Controller
             ['key' => 'code', 'label' => 'Código/SKU'],
             ['key' => 'category', 'label' => 'Categoría'],
             ['key' => 'minimum', 'label' => 'Mínimo', 'type' => 'number'],
-            ['key' => 'stock', 'label' => 'Existencia', 'type' => 'number'],
-            ['key' => 'reserved', 'label' => 'Reservado', 'type' => 'number'],
+            ['key' => 'physical_stock', 'label' => 'Stock físico', 'type' => 'number'],
+            ['key' => 'reserved_pre_sales', 'label' => 'Reservado preventas', 'type' => 'number'],
+            ['key' => 'reserved_credit_reservations', 'label' => 'Reservado crédito', 'type' => 'number'],
+            ['key' => 'reserved_other', 'label' => 'Reservado otro', 'type' => 'number'],
+            ['key' => 'reserved_total', 'label' => 'Reservado total', 'type' => 'reservations'],
             ['key' => 'available', 'label' => 'Disponible', 'type' => 'number'],
             ['key' => 'suggested_missing', 'label' => 'Faltante sugerido', 'type' => 'number'],
             ['key' => 'last_in_at', 'label' => 'Último ingreso'],
@@ -464,22 +512,7 @@ class ReportController extends Controller
             ->withQueryString();
 
         $productIds = $products->getCollection()->pluck('id')->all();
-        $stockByProduct = DB::table('product_branch_stocks')
-            ->where('business_id', $businessId)
-            ->where('branch_id', $scope->branch->id)
-            ->whereIn('product_id', $productIds)
-            ->pluck('stock', 'product_id');
-        $reservedByProduct = Credits::reserveStockOnCreditReservations($businessId)
-            ? DB::table('credit_receipt_lines')
-                ->where('business_id', $businessId)
-                ->where('branch_id', $scope->branch->id)
-                ->whereIn('product_id', $productIds)
-                ->whereIn('status', ['pending', 'partially_invoiced'])
-                ->where('qty_reserved', '>', 0)
-                ->groupBy('product_id')
-                ->selectRaw('product_id, SUM(LEAST(qty_reserved, qty_pending)) as reserved')
-                ->pluck('reserved', 'product_id')
-            : collect();
+        $stockBreakdown = StockAvailability::getBreakdownForProducts($businessId, $scope->branch->id, $productIds);
         $lastInByProduct = DB::table('stock_movements')
             ->where('business_id', $businessId)
             ->where('branch_id', $scope->branch->id)
@@ -489,9 +522,8 @@ class ReportController extends Controller
             ->selectRaw('product_id, MAX(created_at) as last_in_at')
             ->pluck('last_in_at', 'product_id');
 
-        $products->getCollection()->transform(function (Product $product) use ($stockByProduct, $reservedByProduct, $lastInByProduct) {
-            $stock = (float) ($stockByProduct[$product->id] ?? 0);
-            $reserved = (float) ($reservedByProduct[$product->id] ?? 0);
+        $products->getCollection()->transform(function (Product $product) use ($stockBreakdown, $lastInByProduct) {
+            $breakdown = $stockBreakdown->get((int) $product->id, []);
             $lastIn = $lastInByProduct[$product->id] ?? null;
 
             return [
@@ -499,11 +531,17 @@ class ReportController extends Controller
                 'name' => $product->name,
                 'code' => $product->code ?: $product->barcode,
                 'category' => $product->category?->name ?: '-',
-                'stock' => $stock,
-                'reserved' => $reserved,
-                'available' => $stock - $reserved,
+                'physical_stock' => (float) ($breakdown['physical_stock'] ?? 0),
+                'stock' => (float) ($breakdown['physical_stock'] ?? 0),
+                'reserved_pre_sales' => (float) ($breakdown['reserved_pre_sales'] ?? 0),
+                'reserved_credit_reservations' => (float) ($breakdown['reserved_credit_reservations'] ?? 0),
+                'reserved_other' => (float) ($breakdown['reserved_other'] ?? 0),
+                'reserved_total' => (float) ($breakdown['reserved_total'] ?? 0),
+                'reserved' => (float) ($breakdown['reserved_total'] ?? 0),
+                'available' => (float) ($breakdown['available_stock'] ?? 0),
                 'last_in_at' => $lastIn ? Carbon::parse($lastIn)->timezone(tenantTimezone())->format('Y-m-d H:i') : '-',
                 'cardex_url' => route('products.stock-history', $product->id),
+                'reservations_url' => route('inventory.products.reservations', $product->id),
             ];
         });
 
@@ -511,8 +549,10 @@ class ReportController extends Controller
             ['key' => 'name', 'label' => 'Nombre del producto'],
             ['key' => 'code', 'label' => 'Código/SKU'],
             ['key' => 'category', 'label' => 'Categoría'],
-            ['key' => 'stock', 'label' => 'Existencia', 'type' => 'number'],
-            ['key' => 'reserved', 'label' => 'Reservado', 'type' => 'number'],
+            ['key' => 'physical_stock', 'label' => 'Stock físico', 'type' => 'number'],
+            ['key' => 'reserved_pre_sales', 'label' => 'Reservado preventas', 'type' => 'number'],
+            ['key' => 'reserved_credit_reservations', 'label' => 'Reservado crédito', 'type' => 'number'],
+            ['key' => 'reserved_total', 'label' => 'Reservado total', 'type' => 'reservations'],
             ['key' => 'available', 'label' => 'Disponible', 'type' => 'number'],
             ['key' => 'last_in_at', 'label' => 'Fecha último ingreso'],
             ['key' => 'cardex_url', 'label' => 'Acción', 'type' => 'link', 'link_label' => 'Ver cardex'],

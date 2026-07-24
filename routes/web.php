@@ -331,6 +331,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/products/check-identity', [ProductController::class, 'checkIdentity'])->middleware('permission:products.view')->name('products.check-identity');
             Route::post('/products', [ProductController::class, 'store'])->middleware('permission:products.create')->name('products.store');
             Route::get('/products/{product}/stock-history', [ProductController::class, 'stockHistory'])->middleware('permission:products.view')->name('products.stock-history');
+            Route::get('/inventory/products/{product}/reservations', [ProductController::class, 'reservations'])->middleware('permission:any:inventory.view|products.view|reports.inventory.view')->name('inventory.products.reservations');
             Route::put('/products/{product}', [ProductController::class, 'update'])->middleware('permission:products.update')->name('products.update');
 
             Route::get('/stock', [StockController::class, 'index'])->middleware('permission:inventory.view')->name('stock.index');
