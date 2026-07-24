@@ -8,6 +8,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PreSale extends Model
 {
+    public const STATUS_DRAFT = 'draft';
+    public const STATUS_SUBMITTED = 'submitted';
+    public const STATUS_PROCESSING = 'processing';
+    public const STATUS_CANCELLED = 'cancelled';
+
     protected $fillable = [
         'business_id',
         'branch_id',
@@ -22,7 +27,12 @@ class PreSale extends Model
         'total',
         'notes',
         'submitted_at',
+        'processing_started_at',
+        'processing_user_id',
         'cancelled_at',
+        'cancelled_by',
+        'cancellation_reason',
+        'cancellation_note',
     ];
 
     protected $casts = [
@@ -30,6 +40,7 @@ class PreSale extends Model
         'discount_total' => 'decimal:2',
         'total' => 'decimal:2',
         'submitted_at' => 'datetime',
+        'processing_started_at' => 'datetime',
         'cancelled_at' => 'datetime',
     ];
 
@@ -51,6 +62,16 @@ class PreSale extends Model
     public function seller(): BelongsTo
     {
         return $this->belongsTo(User::class, 'seller_id');
+    }
+
+    public function processingUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'processing_user_id');
+    }
+
+    public function cancelledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cancelled_by');
     }
 
     public function workDay(): BelongsTo

@@ -201,38 +201,150 @@ class RouteController extends Controller
     public function preSales(Request $request): Response
     {
         $businessId = currentBusinessId();
+        $status = $request->string('status')->toString();
+        $status = in_array($status, ['draft', 'submitted', 'processing', 'cancelled'], true) ? $status : null;
+        $dateFrom = $request->date('date_from')?->startOfDay();
+        $dateTo = $request->date('date_to')?->endOfDay();
+        $branchId = $request->filled('branch_id')
+            ? Branch::query()->where('business_id', $businessId)->whereKey($request->integer('branch_id'))->value('id')
+            : null;
         $sellerId = $request->filled('seller_id')
             ? User::query()->where('business_id', $businessId)->whereKey($request->integer('seller_id'))->value('id')
             : null;
         $zoneId = $request->filled('zone_id')
             ? RouteZone::query()->where('business_id', $businessId)->whereKey($request->integer('zone_id'))->value('id')
             : null;
+        $customerSearch = trim((string) $request->query('customer', ''));
+        $productSearch = trim((string) $request->query('product_search', ''));
 
         $query = PreSale::query()
             ->where('business_id', $businessId)
-            ->with(['customer:id,name,doc_number', 'seller:id,name', 'zone:id,name', 'branch:id,name'])
+            ->with(['customer:id,name,commercial_name,contact_name,doc_number', 'seller:id,name', 'zone:id,name', 'branch:id,name', 'workDay:id,work_date,status'])
+            ->select('pre_sales.*')
+            ->selectSub(function ($query) use ($businessId) {
+                $query->from('stock_reservations')
+                    ->selectRaw('COALESCE(SUM(quantity), 0)')
+                    ->whereColumn('stock_reservations.source_id', 'pre_sales.id')
+                    ->where('stock_reservations.business_id', $businessId)
+                    ->where('stock_reservations.source_type', 'pre_sale')
+                    ->where('stock_reservations.status', 'active');
+            }, 'reserved_quantity_total')
             ->withCount('items')
-            ->latest();
+            ->latest('submitted_at')
+            ->latest('id');
 
-        $query->when($request->filled('status'), fn ($query) => $query->where('status', $request->string('status')->toString()));
+        $query->when($status, fn ($query) => $query->where('status', $status));
+        $query->when(! $status, fn ($query) => $query->whereIn('status', ['submitted', 'processing']));
+        $query->when($request->filled('branch_id'), fn ($query) => $branchId ? $query->where('branch_id', $branchId) : $query->whereRaw('1 = 0'));
         $query->when($request->filled('seller_id'), fn ($query) => $sellerId ? $query->where('seller_id', $sellerId) : $query->whereRaw('1 = 0'));
         $query->when($request->filled('zone_id'), fn ($query) => $zoneId ? $query->where('route_zone_id', $zoneId) : $query->whereRaw('1 = 0'));
-        $query->when($request->filled('date'), fn ($query) => $query->whereDate('created_at', $request->date('date')));
-        $query->when($request->filled('customer'), function ($query) use ($businessId, $request) {
-            $search = $request->string('customer')->toString();
+        $query->when($dateFrom, fn ($query) => $query->where('created_at', '>=', $dateFrom));
+        $query->when($dateTo, fn ($query) => $query->where('created_at', '<=', $dateTo));
+        $query->when($customerSearch !== '', function ($query) use ($businessId, $customerSearch) {
             $query->whereHas('customer', fn ($query) => $query
                 ->where('business_id', $businessId)
-                ->where(function ($query) use ($search) {
-                    $query->where('name', 'ilike', "%{$search}%")
-                        ->orWhere('doc_number', 'ilike', "%{$search}%");
+                ->where(function ($query) use ($customerSearch) {
+                    $query->where('name', 'ilike', "%{$customerSearch}%")
+                        ->orWhere('commercial_name', 'ilike', "%{$customerSearch}%")
+                        ->orWhere('contact_name', 'ilike', "%{$customerSearch}%")
+                        ->orWhere('doc_number', 'ilike', "%{$customerSearch}%");
+                }));
+        });
+        $query->when($productSearch !== '', function ($query) use ($businessId, $productSearch) {
+            $query->whereHas('items.product', fn ($query) => $query
+                ->where('business_id', $businessId)
+                ->where(function ($query) use ($productSearch) {
+                    $query->where('name', 'ilike', "%{$productSearch}%")
+                        ->orWhere('code', 'ilike', "%{$productSearch}%")
+                        ->orWhere('barcode', 'ilike', "%{$productSearch}%");
                 }));
         });
 
         return Inertia::render('Routes/PreSales/Index', [
             'preSales' => $query->paginate(25)->withQueryString(),
-            'filters' => $request->only(['status', 'seller_id', 'zone_id', 'date', 'customer']),
+            'filters' => [
+                'status' => $status ?? '',
+                'branch_id' => $request->query('branch_id', ''),
+                'seller_id' => $request->query('seller_id', ''),
+                'zone_id' => $request->query('zone_id', ''),
+                'date_from' => $request->query('date_from', ''),
+                'date_to' => $request->query('date_to', ''),
+                'customer' => $customerSearch,
+                'product_search' => $productSearch,
+            ],
+            'branches' => Branch::query()->where('business_id', $businessId)->where('is_active', true)->orderBy('name')->get(['id', 'name']),
             'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
             'zones' => RouteZone::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
+        ]);
+    }
+
+    public function showPreSale(PreSale $preSale): Response
+    {
+        abort_unless((int) $preSale->business_id === currentBusinessId(), 403);
+        abort_unless(Permissions::userHas(request()->user(), Permissions::ROUTES_PRE_SALES_ADMIN_VIEW), 403);
+
+        $preSale->load([
+            'branch:id,name',
+            'zone:id,name',
+            'seller:id,name',
+            'customer:id,name,commercial_name,contact_name,doc_number,address,phone',
+            'workDay:id,work_date,status,started_at,closed_at',
+            'visit:id,status,visit_order,no_sale_reason,no_sale_note,started_at,finished_at',
+            'items.product:id,business_id,name,code,barcode,image_url',
+        ]);
+
+        $productIds = $preSale->items->pluck('product_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $stockBreakdown = StockAvailability::getBreakdownForProducts((int) $preSale->business_id, (int) $preSale->branch_id, $productIds);
+        $reservedByItem = DB::table('stock_reservations')
+            ->where('business_id', $preSale->business_id)
+            ->where('branch_id', $preSale->branch_id)
+            ->where('source_type', 'pre_sale')
+            ->where('source_id', $preSale->id)
+            ->where('status', 'active')
+            ->groupBy('source_item_id')
+            ->selectRaw('source_item_id, COALESCE(SUM(quantity), 0) as quantity')
+            ->pluck('quantity', 'source_item_id');
+
+        return Inertia::render('Routes/PreSales/Show', [
+            'preSale' => [
+                'id' => $preSale->id,
+                'status' => $preSale->status,
+                'created_at' => $preSale->created_at?->toIso8601String(),
+                'submitted_at' => $preSale->submitted_at?->toIso8601String(),
+                'processing_started_at' => $preSale->processing_started_at?->toIso8601String(),
+                'cancelled_at' => $preSale->cancelled_at?->toIso8601String(),
+                'cancellation_reason' => $preSale->cancellation_reason,
+                'cancellation_note' => $preSale->cancellation_note,
+                'notes' => $preSale->notes,
+                'subtotal' => (float) $preSale->subtotal,
+                'discount_total' => (float) $preSale->discount_total,
+                'total' => (float) $preSale->total,
+                'branch' => $preSale->branch,
+                'zone' => $preSale->zone,
+                'seller' => $preSale->seller,
+                'customer' => $preSale->customer,
+                'work_day' => $preSale->workDay,
+                'visit' => $preSale->visit,
+                'items' => $preSale->items->map(function ($item) use ($stockBreakdown, $reservedByItem) {
+                    $breakdown = $stockBreakdown->get((int) $item->product_id, []);
+
+                    return [
+                        'id' => $item->id,
+                        'product_id' => $item->product_id,
+                        'product_code' => $item->product?->code ?: $item->product?->barcode,
+                        'product_barcode' => $item->product?->barcode,
+                        'product_name' => $item->product?->name,
+                        'quantity' => (float) $item->quantity,
+                        'reserved_quantity' => (float) ($reservedByItem[$item->id] ?? 0),
+                        'unit_price' => (float) $item->unit_price,
+                        'discount' => (float) $item->discount,
+                        'total' => (float) $item->total,
+                        'physical_stock' => (float) ($breakdown['physical_stock'] ?? 0),
+                        'reserved_total' => (float) ($breakdown['reserved_total'] ?? 0),
+                        'available_stock' => (float) ($breakdown['available_stock'] ?? 0),
+                    ];
+                })->values(),
+            ],
         ]);
     }
 
@@ -608,21 +720,95 @@ class RouteController extends Controller
         abort_unless((int) $preSale->business_id === currentBusinessId(), 403);
         abort_unless((int) $preSale->seller_id === (int) $request->user()->id || Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_ADMIN_VIEW), 403);
 
-        if ($preSale->status !== 'draft' || $preSale->workDay?->status !== 'open') {
+        if ($preSale->status === PreSale::STATUS_DRAFT) {
+            if ($preSale->workDay?->status !== 'open') {
+                throw ValidationException::withMessages([
+                    'pre_sale' => 'Solo se pueden cancelar preventas en borrador con jornada abierta.',
+                ]);
+            }
+
+            DB::transaction(function () use ($preSale, $reservations, $request) {
+                $reservations->releasePreSaleReservations($preSale);
+                $preSale->update([
+                    'status' => PreSale::STATUS_CANCELLED,
+                    'cancelled_at' => now(),
+                    'cancelled_by' => $request->user()->id,
+                ]);
+            });
+
+            return back()->with('success', 'Preventa cancelada y reserva liberada.');
+        }
+
+        abort_unless(Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_ADMIN_VIEW), 403);
+
+        if (! in_array($preSale->status, [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING], true)) {
             throw ValidationException::withMessages([
-                'pre_sale' => 'Solo se pueden cancelar preventas en borrador con jornada abierta.',
+                'pre_sale' => 'Solo se pueden cancelar preventas enviadas o en preparación.',
             ]);
         }
 
-        DB::transaction(function () use ($preSale, $reservations) {
-            $reservations->releasePreSaleReservations($preSale);
-            $preSale->update([
-                'status' => 'cancelled',
+        $data = $request->validate([
+            'cancellation_reason' => ['required', 'string', 'in:Cliente canceló,Producto no disponible,Duplicada,Error de captura,Otro'],
+            'cancellation_note' => ['required', 'string', 'min:3', 'max:1000'],
+        ], [
+            'cancellation_reason.required' => 'Selecciona un motivo de cancelación.',
+            'cancellation_reason.in' => 'Selecciona un motivo de cancelación válido.',
+            'cancellation_note.required' => 'Ingresa una observación de cancelación.',
+            'cancellation_note.min' => 'La observación debe tener al menos 3 caracteres.',
+        ]);
+
+        DB::transaction(function () use ($preSale, $reservations, $request, $data) {
+            $lockedPreSale = PreSale::query()
+                ->where('business_id', currentBusinessId())
+                ->whereKey($preSale->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (! in_array($lockedPreSale->status, [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING], true)) {
+                throw ValidationException::withMessages([
+                    'pre_sale' => 'Solo se pueden cancelar preventas enviadas o en preparación.',
+                ]);
+            }
+
+            $reservations->releasePreSaleReservations($lockedPreSale);
+            $lockedPreSale->update([
+                'status' => PreSale::STATUS_CANCELLED,
                 'cancelled_at' => now(),
+                'cancelled_by' => $request->user()->id,
+                'cancellation_reason' => $data['cancellation_reason'],
+                'cancellation_note' => $data['cancellation_note'],
             ]);
         });
 
         return back()->with('success', 'Preventa cancelada y reserva liberada.');
+    }
+
+    public function markPreSaleProcessing(Request $request, PreSale $preSale): RedirectResponse
+    {
+        abort_unless((int) $preSale->business_id === currentBusinessId(), 403);
+        abort_unless(Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_ADMIN_VIEW), 403);
+
+        DB::transaction(function () use ($preSale, $request) {
+            $lockedPreSale = PreSale::query()
+                ->where('business_id', currentBusinessId())
+                ->whereKey($preSale->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($lockedPreSale->status !== PreSale::STATUS_SUBMITTED) {
+                throw ValidationException::withMessages([
+                    'pre_sale' => 'Solo se pueden marcar en preparación las preventas enviadas.',
+                ]);
+            }
+
+            $lockedPreSale->update([
+                'status' => PreSale::STATUS_PROCESSING,
+                'processing_started_at' => now(),
+                'processing_user_id' => $request->user()->id,
+            ]);
+        });
+
+        return back()->with('success', 'Preventa marcada en preparación.');
     }
 
     public function withoutSale(Request $request, RouteVisit $visit, StockReservationService $reservations): RedirectResponse
@@ -1210,7 +1396,7 @@ class RouteController extends Controller
         $submittedExists = PreSale::query()
             ->where('business_id', currentBusinessId())
             ->where('route_visit_id', $visit->id)
-            ->where('status', 'submitted')
+            ->whereIn('status', [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING])
             ->exists();
 
         if ($submittedExists) {

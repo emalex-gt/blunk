@@ -1589,11 +1589,174 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
             'items' => [['product_id' => $product->id, 'quantity' => 1]],
         ])->assertSessionHasNoErrors();
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay))->assertRedirect();
 
         $this->actingAs($admin)
             ->get(route('routes.pre-sales.index'))
             ->assertOk()
             ->assertSee($visit->customer->name);
+    }
+
+    public function test_admin_queue_lists_submitted_pre_sales_and_excludes_other_tenants(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 2, customerName: 'Cliente visible');
+
+        [$otherBusiness, , $otherBranch] = $this->tenant(role: 'owner');
+        $otherSeller = $this->user($otherBusiness, $otherBranch, 'pre_seller');
+        $otherProduct = $this->product($otherBusiness, $otherBranch);
+        $this->submittedPreSale($otherBusiness, $otherBranch, $otherSeller, $otherProduct, customerName: 'Cliente oculto');
+
+        $this->actingAs($admin)
+            ->get(route('routes.pre-sales.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/PreSales/Index')
+                ->where('preSales.data.0.id', $preSale->id)
+                ->where('preSales.data.0.items_count', 1)
+                ->where('preSales.data.0.reserved_quantity_total', '2.0000')
+                ->where('preSales.total', 1));
+    }
+
+    public function test_admin_queue_filters_by_branch_zone_seller_status_customer_and_product(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $otherBranch = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal filtro',
+            'code' => 'FILTRO',
+            'is_active' => true,
+        ]);
+        $sellerA = $this->user($business, $branch, 'pre_seller');
+        $sellerB = $this->user($business, $otherBranch, 'pre_seller');
+        $productA = $this->product($business, $branch, stock: 10);
+        $productB = $this->product($business, $otherBranch, stock: 10);
+        $target = $this->submittedPreSale($business, $branch, $sellerA, $productA, customerName: 'Cliente filtro');
+        $this->submittedPreSale($business, $otherBranch, $sellerB, $productB, customerName: 'Cliente otro');
+
+        $this->actingAs($admin)
+            ->get(route('routes.pre-sales.index', [
+                'branch_id' => $branch->id,
+                'zone_id' => $target->route_zone_id,
+                'seller_id' => $sellerA->id,
+                'status' => 'submitted',
+                'customer' => 'filtro',
+                'product_search' => $productA->code,
+            ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('preSales.total', 1)
+                ->where('preSales.data.0.id', $target->id));
+    }
+
+    public function test_pre_sale_detail_shows_products_and_stock_reservation_info(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 3);
+
+        $this->actingAs($admin)
+            ->get(route('routes.pre-sales.show', $preSale))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/PreSales/Show')
+                ->where('preSale.id', $preSale->id)
+                ->where('preSale.items.0.product_name', $product->name)
+                ->where('preSale.items.0.quantity', 3)
+                ->where('preSale.items.0.reserved_quantity', 3)
+                ->where('preSale.items.0.physical_stock', 10)
+                ->where('preSale.items.0.reserved_total', 3)
+                ->where('preSale.items.0.available_stock', 7));
+    }
+
+    public function test_admin_can_mark_submitted_pre_sale_as_processing_without_mutating_stock_or_financial_rows(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 4);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.processing', $preSale))
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('success', 'Preventa marcada en preparación.');
+
+        $preSale->refresh();
+        $this->assertSame('processing', $preSale->status);
+        $this->assertNotNull($preSale->processing_started_at);
+        $this->assertSame($admin->id, $preSale->processing_user_id);
+        $this->assertSame(1, StockReservation::query()->where('business_id', $business->id)->where('status', 'active')->count());
+        $this->assertSame(10.0, (float) ProductBranchStock::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, ElectronicDocument::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerCreditAccount::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerAccountMovement::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_admin_can_cancel_submitted_pre_sale_with_reason_and_release_reservations_without_stock_or_financial_mutations(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 4);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.cancel', $preSale), [
+                'cancellation_reason' => 'Cliente canceló',
+                'cancellation_note' => 'Cliente pidió anular el pedido.',
+            ])
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('success', 'Preventa cancelada y reserva liberada.');
+
+        $preSale->refresh();
+        $this->assertSame('cancelled', $preSale->status);
+        $this->assertSame($admin->id, $preSale->cancelled_by);
+        $this->assertSame('Cliente canceló', $preSale->cancellation_reason);
+        $this->assertSame('Cliente pidió anular el pedido.', $preSale->cancellation_note);
+        $this->assertSame(0, StockReservation::query()->where('business_id', $business->id)->where('status', 'active')->count());
+        $this->assertSame(1, StockReservation::query()->where('business_id', $business->id)->where('status', 'released')->count());
+        $this->assertSame(10.0, (float) ProductBranchStock::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, ElectronicDocument::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerCreditAccount::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerAccountMovement::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_pre_seller_cannot_access_admin_pre_sale_queue_or_actions(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product);
+
+        $this->actingAs($seller)->get(route('routes.pre-sales.index'))->assertForbidden();
+        $this->actingAs($seller)->get(route('routes.pre-sales.show', $preSale))->assertForbidden();
+        $this->actingAs($seller)->post(route('routes.pre-sales.processing', $preSale))->assertForbidden();
+    }
+
+    public function test_processing_pre_sale_cannot_be_edited_by_mobile_pre_seller(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product);
+
+        $this->actingAs($admin)->post(route('routes.pre-sales.processing', $preSale))->assertSessionHasNoErrors();
+
+        $this->actingAs($seller)
+            ->from(route('routes.mobile.visits.show', $preSale->visit))
+            ->post(route('routes.mobile.visits.pre-sale.store', $preSale->visit), [
+                'items' => [['product_id' => $product->id, 'quantity' => 1]],
+            ])
+            ->assertRedirect(route('routes.mobile.visits.show', $preSale->visit))
+            ->assertSessionHasErrors('pre_sale');
+
+        $this->assertSame('processing', $preSale->refresh()->status);
     }
 
     public function test_stock_breakdown_counts_pre_sales_and_credit_reservations_when_enabled(): void
@@ -2013,6 +2176,29 @@ class RoutesPreSalesTest extends TestCase
         ]);
 
         return $preSale;
+    }
+
+    private function submittedPreSale(
+        Business $business,
+        Branch $branch,
+        User $seller,
+        Product $product,
+        float $quantity = 1,
+        string $customerName = 'Cliente enviado',
+    ): PreSale {
+        $visit = $this->startedVisit($business, $branch, $seller, $customerName);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'items' => [['product_id' => $product->id, 'quantity' => $quantity]],
+        ])->assertSessionHasNoErrors();
+
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay))
+            ->assertRedirect();
+
+        return PreSale::query()
+            ->where('business_id', $business->id)
+            ->where('route_visit_id', $visit->id)
+            ->firstOrFail();
     }
 
     private function creditReservation(Business $business, Branch $branch, Product $product, int $quantity): CreditReceiptLine

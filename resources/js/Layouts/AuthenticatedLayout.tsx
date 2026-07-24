@@ -73,7 +73,7 @@ export default function Authenticated({
         hasModule('credits') && canViewCredits ? { label: 'Reservas pendientes', href: route('credits.index'), active: route().current('credits.index') || route().current('credits.customers.*') || route().current('credits.receipts.*') } : null,
         hasModule('routes') && can('routes.work') ? { label: 'Mis rutas', href: route('routes.mobile.zones'), active: route().current('routes.mobile.*') } : null,
         hasModule('routes') && can('routes.manage') ? { label: 'Rutas', href: route('routes.zones.index'), active: route().current('routes.zones.*') } : null,
-        hasModule('routes') && (can('routes.pre_sales.admin_view') || can('routes.pre_sales.view')) ? { label: 'Preventas', href: route('routes.pre-sales.index'), active: route().current('routes.pre-sales.*') } : null,
+        hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Preventas enviadas', href: route('routes.pre-sales.index'), active: route().current('routes.pre-sales.*') } : null,
     ].filter(Boolean) as NavItem[];
 
     const reportItems: NavItem[] = [

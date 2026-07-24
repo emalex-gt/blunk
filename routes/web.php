@@ -228,8 +228,14 @@ Route::middleware('auth')->group(function () {
                 ->name('zones.customers.destroy');
 
             Route::get('/pre-sales', [RouteController::class, 'preSales'])
-                ->middleware('permission:any:routes.pre_sales.admin_view|routes.pre_sales.view')
+                ->middleware('permission:routes.pre_sales.admin_view')
                 ->name('pre-sales.index');
+            Route::get('/pre-sales/{preSale}', [RouteController::class, 'showPreSale'])
+                ->middleware('permission:routes.pre_sales.admin_view')
+                ->name('pre-sales.show');
+            Route::post('/pre-sales/{preSale}/processing', [RouteController::class, 'markPreSaleProcessing'])
+                ->middleware('permission:routes.pre_sales.admin_view')
+                ->name('pre-sales.processing');
 
             Route::get('/mobile/zones', [RouteController::class, 'mobileZones'])
                 ->middleware('permission:routes.work')
