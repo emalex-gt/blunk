@@ -40,6 +40,7 @@ use App\Services\Fel\Providers\Digifact\DigifactNucJsonBuilder;
 use App\Support\BranchInventory;
 use App\Support\Credits;
 use App\Support\FelPhraseRenderer;
+use App\Support\ManualPricePolicy;
 use App\Support\Permissions;
 use App\Support\StockAvailability;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -683,6 +684,135 @@ class CriticalPosFelFlowTest extends TestCase
         $response->assertSessionHasErrors(['items' => 'Este precio no está permitido.']);
         $this->assertStringNotContainsString('costo', mb_strtolower(session('errors')->first('items')));
         $this->assertStringNotContainsString('margen', mb_strtolower(session('errors')->first('items')));
+    }
+
+    public function test_manual_price_policy_cost_markup_enforces_minimum_and_generates_steps(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register'], role: 'cashier', allowManualPrice: true);
+        $settings = TenantSetting::query()->where('business_id', $business->id)->firstOrFail();
+        $settings->update([
+            'manual_price_percentage_mode' => ManualPricePolicy::MODE_COST_MARKUP,
+            'manual_price_min_markup_percent' => 15,
+            'manual_price_min_margin_percent' => 15,
+        ]);
+        Permissions::assignDirectPermissions($user, [Permissions::POS_MANUAL_PRICE]);
+        $product = $this->product($business, stock: 10, salePrice: 200);
+        $product->update(['cost_price' => 100]);
+        $this->openCashRegister($business, $user);
+
+        $this
+            ->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 114.99, itemOverrides: [
+                'manual_price' => true,
+                'price_source' => 'manual',
+                'unit_price' => 114.99,
+            ]))
+            ->assertSessionHasErrors(['items']);
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertSame([15.0, 20.0, 25.0, 30.0, 50.0], ManualPricePolicy::percentageSteps($settings->refresh()));
+
+        $this
+            ->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 115, itemOverrides: [
+                'manual_price' => true,
+                'price_source' => 'manual',
+                'unit_price' => 115,
+            ]))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('115.00', (string) SaleItem::query()->firstOrFail()->unit_price);
+    }
+
+    public function test_manual_price_policy_price_discount_enforces_max_discount(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register'], role: 'cashier', allowManualPrice: true);
+        $settings = TenantSetting::query()->where('business_id', $business->id)->firstOrFail();
+        $settings->update([
+            'manual_price_percentage_mode' => ManualPricePolicy::MODE_PRICE_DISCOUNT,
+            'manual_price_max_discount_percent' => 10,
+        ]);
+        Permissions::assignDirectPermissions($user, [Permissions::POS_MANUAL_PRICE]);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $product->update(['cost_price' => 1]);
+        $this->openCashRegister($business, $user);
+
+        $this
+            ->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 89.99, itemOverrides: [
+                'manual_price' => true,
+                'price_source' => 'manual',
+                'unit_price' => 89.99,
+            ]))
+            ->assertSessionHasErrors(['items']);
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertSame([2.0, 5.0, 10.0], ManualPricePolicy::percentageSteps($settings->refresh()));
+
+        $this
+            ->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 90, itemOverrides: [
+                'manual_price' => true,
+                'price_source' => 'manual',
+                'unit_price' => 90,
+            ]))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('90.00', (string) SaleItem::query()->firstOrFail()->unit_price);
+    }
+
+    public function test_manual_price_policy_none_hides_percentage_controls_but_allows_fixed_manual_price(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register'], role: 'cashier', allowManualPrice: true);
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'manual_price_percentage_mode' => ManualPricePolicy::MODE_NONE,
+            'manual_price_min_markup_percent' => 99,
+            'manual_price_min_margin_percent' => 99,
+        ]);
+        Permissions::assignDirectPermissions($user, [Permissions::POS_MANUAL_PRICE]);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $this
+            ->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 70, itemOverrides: [
+                'manual_price' => true,
+                'price_source' => 'manual',
+                'unit_price' => 70,
+            ]))
+            ->assertSessionHasNoErrors();
+
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+        $this->assertStringContainsString("manualPricePolicy.mode !== 'none'", $source);
+        $this->assertStringContainsString('priceFromManualPercentage', $source);
+    }
+
+    public function test_manual_percentage_calculation_supports_custom_markup_and_discount(): void
+    {
+        [$business] = $this->tenant(modules: ['pos'], role: 'owner', allowManualPrice: true);
+        $settings = TenantSetting::query()->where('business_id', $business->id)->firstOrFail();
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $product->update(['cost_price' => 100]);
+
+        $settings->update([
+            'manual_price_percentage_mode' => ManualPricePolicy::MODE_COST_MARKUP,
+            'manual_price_min_markup_percent' => 15,
+            'manual_price_min_margin_percent' => 15,
+        ]);
+
+        $this->assertSame(120.0, ManualPricePolicy::calculateFromPercentage($settings->refresh(), $product->refresh(), 20));
+
+        $settings->update([
+            'manual_price_percentage_mode' => ManualPricePolicy::MODE_PRICE_DISCOUNT,
+            'manual_price_max_discount_percent' => 10,
+        ]);
+
+        $this->assertSame(90.0, ManualPricePolicy::calculateFromPercentage($settings->refresh(), $product->refresh(), 10, 100));
     }
 
     public function test_role_permission_and_super_admin_bypass_permission_checks(): void
@@ -3236,7 +3366,7 @@ class CriticalPosFelFlowTest extends TestCase
         $line = CreditReceiptLine::query()->firstOrFail();
 
         $payload = $this->salePayload($product, quantity: 2, total: 200, customer: [
-            'name' => 'Cliente crÃ©dito',
+            'name' => 'Cliente crédito',
             'doc_type' => 'NIT',
             'doc_number' => '57289085',
         ], itemOverrides: ['credit_line_id' => $line->id]);
@@ -3261,7 +3391,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->openCashRegister($business, $user);
 
         $payload = $this->salePayload($product, quantity: 2, total: 200, customer: [
-            'name' => 'Cliente crÃ©dito',
+            'name' => 'Cliente crédito',
             'doc_type' => 'NIT',
             'doc_number' => '57289085',
         ], itemOverrides: ['credit_line_id' => $line->id]);

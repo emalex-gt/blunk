@@ -17,6 +17,7 @@ use App\Support\BranchInventory;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\GuatemalaLocations;
 use App\Support\Inventory\StockReservationService;
+use App\Support\ManualPricePolicy;
 use App\Support\Permissions;
 use App\Support\PriceLists;
 use App\Support\StockAvailability;
@@ -1221,6 +1222,15 @@ class RouteController extends Controller
 
     private function validatePreSaleManualPrice(Product $product, float $unitPrice): void
     {
+        $settings = TenantSetting::query()
+            ->where('business_id', $product->business_id)
+            ->first();
+        $mainPrice = PriceLists::priceForProduct($product, $this->preSalePriceTypeId((int) $product->business_id))['price'];
+
+        ManualPricePolicy::validateUnitPrice($settings, $product, $unitPrice, (float) $mainPrice);
+
+        return;
+
         $minMargin = (float) TenantSetting::query()
             ->where('business_id', $product->business_id)
             ->value('manual_price_min_margin_percent');

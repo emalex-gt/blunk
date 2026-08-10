@@ -75,6 +75,9 @@ export default function Form({
         pricing_scope?: 'global' | 'branch';
         allow_manual_price?: boolean;
         manual_price_min_margin_percent?: number | string;
+        manual_price_percentage_mode?: 'cost_markup' | 'price_discount' | 'none';
+        manual_price_min_markup_percent?: number | string;
+        manual_price_max_discount_percent?: number | string;
         remember_last_customer_product_price?: boolean;
         pre_sale_price_type_id?: number | null;
         pre_sale_allow_manual_price?: boolean;
@@ -107,6 +110,9 @@ export default function Form({
         pricing_scope: settings.pricing_scope ?? 'global',
         allow_manual_price: settings.allow_manual_price ?? false,
         manual_price_min_margin_percent: settings.manual_price_min_margin_percent ?? 0,
+        manual_price_percentage_mode: settings.manual_price_percentage_mode ?? 'cost_markup',
+        manual_price_min_markup_percent: settings.manual_price_min_markup_percent ?? settings.manual_price_min_margin_percent ?? 0,
+        manual_price_max_discount_percent: settings.manual_price_max_discount_percent ?? 0,
         remember_last_customer_product_price: settings.remember_last_customer_product_price ?? false,
         pre_sale_price_type_id: settings.pre_sale_price_type_id ?? '',
         pre_sale_allow_manual_price: settings.pre_sale_allow_manual_price ?? false,
@@ -473,9 +479,9 @@ export default function Form({
 
                     <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
                         <div className="mb-4">
-                            <h3 className="text-base font-semibold text-gray-900">Precios en POS</h3>
+                            <h3 className="text-base font-semibold text-gray-900">Precio manual</h3>
                             <p className="mt-1 text-sm text-gray-500">
-                                Controla si se permiten precios manuales y si el POS recuerda el último precio por cliente y producto.
+                                Define cómo se calculan los porcentajes rápidos y porcentajes manuales en el POS. El precio manual directo también respetará este límite.
                             </p>
                         </div>
                         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -489,16 +495,46 @@ export default function Form({
                                 }}
                                 label="Permitir precio manual"
                             />
-                            <Field label="Margen mínimo sobre costo para precio manual" error={errors.manual_price_min_margin_percent}>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={data.manual_price_min_margin_percent}
-                                    onChange={(event) => setData('manual_price_min_margin_percent', event.target.value)}
+                            <Field label="Modo de porcentajes" error={errors.manual_price_percentage_mode}>
+                                <select
                                     className={inputClass}
-                                />
+                                    value={data.manual_price_percentage_mode}
+                                    onChange={(event) => setData('manual_price_percentage_mode', event.target.value as 'cost_markup' | 'price_discount' | 'none')}
+                                >
+                                    <option value="cost_markup">Porcentaje sobre costo</option>
+                                    <option value="price_discount">Descuento sobre precio principal</option>
+                                    <option value="none">No usar porcentajes</option>
+                                </select>
                             </Field>
+                            {data.manual_price_percentage_mode === 'cost_markup' && (
+                                <Field label="Margen mínimo sobre costo (%)" error={errors.manual_price_min_markup_percent || errors.manual_price_min_margin_percent}>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        max="500"
+                                        step="0.01"
+                                        value={data.manual_price_min_markup_percent}
+                                        onChange={(event) => {
+                                            setData('manual_price_min_markup_percent', event.target.value);
+                                            setData('manual_price_min_margin_percent', event.target.value);
+                                        }}
+                                        className={inputClass}
+                                    />
+                                </Field>
+                            )}
+                            {data.manual_price_percentage_mode === 'price_discount' && (
+                                <Field label="Descuento máximo permitido (%)" error={errors.manual_price_max_discount_percent}>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        max="100"
+                                        step="0.01"
+                                        value={data.manual_price_max_discount_percent}
+                                        onChange={(event) => setData('manual_price_max_discount_percent', event.target.value)}
+                                        className={inputClass}
+                                    />
+                                </Field>
+                            )}
                             <Toggle
                                 checked={data.remember_last_customer_product_price}
                                 onChange={(checked) => setData('remember_last_customer_product_price', checked)}

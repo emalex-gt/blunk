@@ -29,6 +29,7 @@ use App\Support\BusinessLogo;
 use App\Support\Credits;
 use App\Support\FelPhraseRenderer;
 use App\Support\Inventory\StockPolicy;
+use App\Support\ManualPricePolicy;
 use App\Support\Permissions;
 use App\Support\PriceLists;
 use App\Support\StockAvailability;
@@ -95,6 +96,10 @@ class SaleController extends Controller
             'price_settings' => [
                 'allow_manual_price' => (bool) ($tenantSettings?->allow_manual_price ?? false),
                 'manual_price_min_margin_percent' => (float) ($tenantSettings?->manual_price_min_margin_percent ?? 0),
+                'manual_price_percentage_mode' => ManualPricePolicy::mode($tenantSettings),
+                'manual_price_min_markup_percent' => ManualPricePolicy::minMarkupPercent($tenantSettings),
+                'manual_price_max_discount_percent' => ManualPricePolicy::maxDiscountPercent($tenantSettings),
+                'manual_price_percentage_steps' => ManualPricePolicy::percentageSteps($tenantSettings),
                 'can_use_manual_price' => Permissions::canUseManualPrice(request()->user()),
                 'remember_last_customer_product_price' => (bool) ($tenantSettings?->remember_last_customer_product_price ?? false),
             ],
@@ -1511,6 +1516,7 @@ class SaleController extends Controller
             }
 
             $unitPrice = round((float) ($item['unit_price'] ?? 0), 2);
+            ManualPricePolicy::validateUnitPrice($settings, $product, $unitPrice, $originalPrice);
 
             if ($unitPrice <= 0) {
                 throw ValidationException::withMessages([
@@ -1520,7 +1526,7 @@ class SaleController extends Controller
 
             $minMarginPercent = max(0.0, (float) ($settings?->manual_price_min_margin_percent ?? 0));
             $cost = round((float) ($product->cost_price ?? 0), 2);
-            $minimumPrice = round($cost * (1 + ($minMarginPercent / 100)), 2);
+            $minimumPrice = 0.0;
 
             if ($minimumPrice > 0 && $unitPrice < $minimumPrice) {
                 throw ValidationException::withMessages([
