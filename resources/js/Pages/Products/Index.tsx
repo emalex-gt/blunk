@@ -487,11 +487,11 @@ export default function ProductIndex({
         >
             <Head title={t('products.products')} />
 
-            <div className="mx-auto grid max-w-[1800px] gap-5 px-5 py-5 lg:grid-cols-[380px_1fr] sm:px-6">
+            <div className="mx-auto grid max-w-[1800px] gap-5 px-4 py-5 sm:px-5 lg:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)] 2xl:grid-cols-[420px_minmax(0,1fr)]">
                 <form
                     onSubmit={submit}
                     autoComplete="off"
-                    className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]"
+                    className="min-w-0 space-y-4 rounded-2xl border border-slate-200/80 bg-white/95 p-4 shadow-[0_8px_30px_rgba(15,23,42,0.06)] 2xl:p-5"
                 >
                     <h3 className="text-base font-semibold text-slate-950">
                         {editing ? t('products.form_edit') : t('products.form_new')}
@@ -798,9 +798,9 @@ export default function ProductIndex({
                     )}
                 </form>
 
-                <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
-                    <form onSubmit={applySearch} className="mb-4 grid gap-2 lg:grid-cols-[1fr_180px_180px_180px_150px_150px_auto]">
-                        <TextInput className="w-full" placeholder={t('products.search_placeholder')} value={search} onChange={(e) => setSearch(e.target.value)} />
+                <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 p-4 shadow-[0_8px_30px_rgba(15,23,42,0.06)] 2xl:p-5">
+                    <form onSubmit={applySearch} className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-[minmax(18rem,1fr)_150px_150px_150px_130px_140px_auto]">
+                        <TextInput className="w-full sm:col-span-2 xl:col-span-3 2xl:col-span-1" placeholder={t('products.search_placeholder')} value={search} onChange={(e) => setSearch(e.target.value)} />
                         <select
                             value={filterState.category_id}
                             onChange={(event) => updateFilter('category_id', event.target.value)}
@@ -850,7 +850,7 @@ export default function ProductIndex({
                             <option value="50">50 por página</option>
                             <option value="100">100 por página</option>
                         </select>
-                        <PrimaryButton>{t('actions.search')}</PrimaryButton>
+                        <PrimaryButton className="justify-center xl:col-span-3 2xl:col-span-1">{t('actions.search')}</PrimaryButton>
                     </form>
 
                     {identityMatches.length > 0 && (
@@ -914,19 +914,19 @@ export default function ProductIndex({
                     )}
 
                     <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-slate-100 text-sm">
+                        <table className="min-w-full table-fixed divide-y divide-slate-100 text-[11px] xl:text-xs 2xl:table-auto 2xl:text-sm">
                             <thead>
                                 <tr className="bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                    {use_product_images && <th className="py-2 pr-3">{t('products.image')}</th>}
-                                    <th className="py-2 pr-3">{t('products.product')}</th>
-                                    <th className="px-3 py-2">{t('products.category')}</th>
-                                    <th className="px-3 py-2">Marca</th>
-                                    <th className="px-3 py-2">{t('common.code')}</th>
-                                    <th className="px-3 py-2">{t('common.barcode')}</th>
-                                    <th className="px-3 py-2">{t('stock.stock')}</th>
-                                    <th className="px-3 py-2">{t('common.location')}</th>
-                                    <th className="px-3 py-2">{t('products.price')}</th>
-                                    <th className="py-2 pl-3"></th>
+                                    {use_product_images && <th className="hidden py-2 pr-3 2xl:table-cell">{t('products.image')}</th>}
+                                    <th className="w-[30%] py-2 pr-2 2xl:w-auto 2xl:pr-3">{t('products.product')}</th>
+                                    <th className="hidden px-3 py-2 2xl:table-cell">{t('products.category')}</th>
+                                    <th className="hidden px-3 py-2 2xl:table-cell">Marca</th>
+                                    <th className="w-[12%] px-1.5 py-2 2xl:w-auto 2xl:px-3">{t('common.code')}</th>
+                                    <th className="w-[15%] px-1.5 py-2 2xl:w-auto 2xl:px-3">{t('common.barcode')}</th>
+                                    <th className="w-[7%] px-1.5 py-2 2xl:w-auto 2xl:px-3">{t('stock.stock')}</th>
+                                    <th className="w-[13%] px-1.5 py-2 2xl:w-auto 2xl:px-3">{t('common.location')}</th>
+                                    <th className="w-[10%] px-1.5 py-2 2xl:w-auto 2xl:px-3">{t('products.price')}</th>
+                                    <th className="w-[13%] py-2 pl-1.5 2xl:w-auto 2xl:pl-3"></th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
@@ -936,7 +936,7 @@ export default function ProductIndex({
                                         className={`transition-colors ${identityMatchIds.has(product.id) ? 'bg-amber-50 ring-1 ring-inset ring-amber-200' : 'hover:bg-indigo-50/30'}`}
                                     >
                                         {use_product_images && (
-                                            <td className="py-3 pr-3">
+                                            <td className="hidden py-3 pr-3 2xl:table-cell">
                                                 {product.image_url ? (
                                                     <img
                                                         src={getProductImageUrl(product.image_url, 96) ?? ''}
@@ -951,24 +951,45 @@ export default function ProductIndex({
                                                 )}
                                             </td>
                                         )}
-                                        <td className="py-3 pr-3 font-medium text-slate-950">{product.name}</td>
-                                        <td className="px-3 py-3 text-slate-600">{product.category?.name ?? '-'}</td>
-                                        <td className="px-3 py-3 text-slate-600">{product.brand?.name ?? '-'}</td>
-                                        <td className="px-3 py-3 text-slate-600">{product.code ?? '-'}</td>
-                                        <td className="px-3 py-3 text-slate-600">{product.barcode ?? '-'}</td>
-                                        <td className="px-3 py-3 text-slate-950">{product.stock}</td>
-                                        <td className="px-3 py-3 text-slate-600">{product.product_location?.name ?? product.location ?? '-'}</td>
-                                        <td className="whitespace-nowrap px-3 py-3 text-slate-950">
+                                        <td className="py-2.5 pr-2 align-top 2xl:py-3 2xl:pr-3">
+                                            <div className="line-clamp-2 font-semibold leading-4 text-slate-950 2xl:leading-5" title={product.name}>
+                                                {product.name}
+                                            </div>
+                                            {(product.category?.name || product.brand?.name) && (
+                                                <div className="mt-1 line-clamp-2 text-[10px] leading-3.5 text-slate-500 xl:text-[11px] xl:leading-4 2xl:hidden">
+                                                    {[product.category?.name && `Categoría: ${product.category.name}`, product.brand?.name && `Marca: ${product.brand.name}`].filter(Boolean).join(' · ')}
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td className="hidden px-3 py-3 text-slate-600 2xl:table-cell">{product.category?.name ?? '-'}</td>
+                                        <td className="hidden px-3 py-3 text-slate-600 2xl:table-cell">{product.brand?.name ?? '-'}</td>
+                                        <td className="px-1.5 py-2.5 text-slate-600 2xl:px-3 2xl:py-3">
+                                            <span className="line-clamp-2 break-words" title={product.code ?? '-'}>
+                                                {product.code ?? '-'}
+                                            </span>
+                                        </td>
+                                        <td className="px-1.5 py-2.5 text-slate-600 2xl:px-3 2xl:py-3">
+                                            <span className="line-clamp-2 break-words" title={product.barcode ?? '-'}>
+                                                {product.barcode ?? '-'}
+                                            </span>
+                                        </td>
+                                        <td className="whitespace-nowrap px-1.5 py-2.5 text-slate-950 2xl:px-3 2xl:py-3">{product.stock}</td>
+                                        <td className="px-1.5 py-2.5 text-slate-600 2xl:px-3 2xl:py-3">
+                                            <span className="line-clamp-2" title={product.product_location?.name ?? product.location ?? '-'}>
+                                                {product.product_location?.name ?? product.location ?? '-'}
+                                            </span>
+                                        </td>
+                                        <td className="whitespace-nowrap px-1.5 py-2.5 text-slate-950 2xl:px-3 2xl:py-3">
                                             {formatCurrency(product.sale_price, country)}
                                         </td>
-                                        <td className="py-3 pl-3 text-right">
+                                        <td className="whitespace-nowrap py-2.5 pl-1.5 text-right 2xl:py-3 2xl:pl-3">
                                             <Link
                                                 href={route('products.stock-history', product.id)}
-                                                className="mr-3 rounded-lg px-2 py-1 text-sm font-medium text-indigo-600 hover:bg-indigo-50"
+                                                className="mr-1 rounded-lg px-1 py-1 font-medium text-indigo-600 hover:bg-indigo-50 xl:mr-2 xl:px-2"
                                             >
                                                 Historial
                                             </Link>
-                                            <button type="button" onClick={() => edit(product)} className="rounded-lg px-2 py-1 text-sm font-medium text-indigo-600 hover:bg-indigo-50">
+                                            <button type="button" onClick={() => edit(product)} className="rounded-lg px-1 py-1 font-medium text-indigo-600 hover:bg-indigo-50 xl:px-2">
                                                 {t('actions.edit')}
                                             </button>
                                         </td>
