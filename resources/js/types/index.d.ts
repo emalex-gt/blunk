@@ -35,6 +35,20 @@ export interface TenantSettings {
     show_other_branches_stock_in_pos?: boolean;
 }
 
+export interface TenantFeatures {
+    enable_credit_sales: boolean;
+    enable_credit_reservations: boolean;
+    reserve_stock_on_credit_reservations: boolean;
+    fel_enabled: boolean;
+    routes_enabled: boolean;
+    reports_enabled: boolean;
+    inventory_enabled: boolean;
+    branches_enabled: boolean;
+    purchases_enabled: boolean;
+    cash_register_enabled: boolean;
+    pos_enabled: boolean;
+}
+
 export type PageProps<
     T extends Record<string, unknown> = Record<string, unknown>,
 > = T & {
@@ -46,6 +60,7 @@ export type PageProps<
     current_business: Business | null;
     available_businesses: Pick<Business, 'id' | 'name'>[] | null;
     tenant_settings: TenantSettings | null;
+    features: TenantFeatures;
     currency_format: CurrencyFormat;
     use_product_images: boolean;
 };

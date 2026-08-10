@@ -52,6 +52,7 @@ class HandleInertiaRequests extends Middleware
                 'currency_format' => Currency::forCountry('GT'),
                 'subscription_status' => null,
                 'enabled_modules' => [],
+                'features' => $this->guestFeatures(),
                 'branches_enabled' => false,
                 'branch_can_switch' => false,
                 'active_branch' => null,
@@ -169,6 +170,7 @@ class HandleInertiaRequests extends Middleware
                 ? Business::query()->with('latestSubscription')->find($businessId)?->latestSubscription?->status
                 : null,
             'enabled_modules' => fn () => $user && $businessId ? enabled_modules($businessId) : [],
+            'features' => fn () => $user && $businessId ? $this->tenantFeatures($businessId) : $this->guestFeatures(),
             'branches_enabled' => fn () => $user && $businessId ? BranchInventory::branchesEnabled($businessId) : false,
             'branch_can_switch' => fn () => $user && $businessId ? BranchInventory::canSwitchBranches($user) : false,
             'active_branch' => function () use ($businessId, $user) {
@@ -218,5 +220,59 @@ class HandleInertiaRequests extends Middleware
                 'cash_closing_print_id' => fn () => $request->session()->get('cash_closing_print_id'),
             ],
         ]);
+    }
+
+    /**
+     * @return array<string, bool>
+     */
+    private function guestFeatures(): array
+    {
+        return [
+            'enable_credit_sales' => false,
+            'enable_credit_reservations' => false,
+            'reserve_stock_on_credit_reservations' => false,
+            'fel_enabled' => false,
+            'routes_enabled' => false,
+            'reports_enabled' => false,
+            'inventory_enabled' => false,
+            'branches_enabled' => false,
+            'purchases_enabled' => false,
+            'cash_register_enabled' => false,
+            'pos_enabled' => false,
+        ];
+    }
+
+    /**
+     * @return array<string, bool>
+     */
+    private function tenantFeatures(int $businessId): array
+    {
+        $modules = enabled_modules($businessId);
+        $hasModule = fn (string $module): bool => in_array($module, $modules, true);
+        $settings = TenantSetting::query()
+            ->where('business_id', $businessId)
+            ->first();
+        $business = Business::query()
+            ->select('id', 'country')
+            ->find($businessId);
+        $felSettings = $business?->country === 'GT'
+            ? TenantFelSetting::query()->where('business_id', $businessId)->first()
+            : null;
+
+        $creditReservationsEnabled = $hasModule('credits') && (bool) ($settings?->enable_credit_reservations);
+
+        return [
+            'enable_credit_sales' => $hasModule('credits') && (bool) ($settings?->enable_credit_sales),
+            'enable_credit_reservations' => $creditReservationsEnabled,
+            'reserve_stock_on_credit_reservations' => $creditReservationsEnabled && (bool) ($settings?->reserve_stock_on_credit_reservations ?? true),
+            'fel_enabled' => $hasModule('fel_gt') && (bool) ($felSettings?->enabled) && (bool) ($felSettings?->isConfigured()),
+            'routes_enabled' => $hasModule('routes'),
+            'reports_enabled' => $hasModule('reports'),
+            'inventory_enabled' => $hasModule('inventory'),
+            'branches_enabled' => $hasModule('branches'),
+            'purchases_enabled' => $hasModule('purchases'),
+            'cash_register_enabled' => $hasModule('cash_register'),
+            'pos_enabled' => $hasModule('pos'),
+        ];
     }
 }

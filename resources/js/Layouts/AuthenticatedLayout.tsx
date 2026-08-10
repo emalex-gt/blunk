@@ -19,6 +19,20 @@ type BranchOption = {
     code: string | null;
 };
 
+type TenantFeatures = {
+    enable_credit_sales?: boolean;
+    enable_credit_reservations?: boolean;
+    reserve_stock_on_credit_reservations?: boolean;
+    fel_enabled?: boolean;
+    routes_enabled?: boolean;
+    reports_enabled?: boolean;
+    inventory_enabled?: boolean;
+    branches_enabled?: boolean;
+    purchases_enabled?: boolean;
+    cash_register_enabled?: boolean;
+    pos_enabled?: boolean;
+};
+
 export default function Authenticated({
     header,
     children,
@@ -26,6 +40,7 @@ export default function Authenticated({
     const user = usePage().props.auth.user;
     const permissions = ((usePage().props.auth as { permissions?: string[] })?.permissions ?? []);
     const enabledModules = (usePage().props.enabled_modules as string[] | undefined) ?? [];
+    const features = (usePage().props.features as TenantFeatures | undefined) ?? {};
     const currentBusinessId = usePage().props.current_business_id as number | null;
     const availableBusinesses = usePage().props.available_businesses as { id: number; name: string }[] | null;
     const branchesEnabled = Boolean(usePage().props.branches_enabled);
@@ -41,6 +56,17 @@ export default function Authenticated({
     const canManageUsers = Boolean(user?.is_super_admin) || ['owner', 'admin'].includes(user?.role ?? '');
     const canViewCredits = Boolean(user?.is_super_admin) || permissions.includes('credits.view');
     const hasModule = (module: string) => enabledModules.includes(module);
+    const featureEnabled = (feature: keyof TenantFeatures, module?: string) => {
+        const explicit = features[feature];
+
+        if (typeof explicit === 'boolean') {
+            return explicit;
+        }
+
+        return module ? hasModule(module) : false;
+    };
+    const creditSalesEnabled = featureEnabled('enable_credit_sales', 'credits');
+    const creditReservationsEnabled = featureEnabled('enable_credit_reservations', 'credits');
     const settingsVisible = false;
     const administrationVisible = canManageUsers;
     const can = (permission: string) => Boolean(user?.is_super_admin) || permissions.includes(permission);
@@ -53,9 +79,8 @@ export default function Authenticated({
         (hasModule('branches') && route().current('inventory.transfers.*')) ||
         (hasModule('purchases') && route().current('purchases.*')) ||
         (hasModule('cash_register') && route().current('cash-register.*')) ||
-        (hasModule('credits') && route().current('credits.*')) ||
-        (hasModule('routes') && route().current('routes.*')) ||
-        (hasModule('fel_gt') && route().current('fel.reconciliation.*'));
+        ((creditSalesEnabled || creditReservationsEnabled) && route().current('credits.*')) ||
+        (hasModule('routes') && route().current('routes.*'));
     const settingsActive = false;
     const administrationActive = canManageUsers && route().current('users.*');
     const reportsActive = route().current('reports.*');
@@ -67,10 +92,9 @@ export default function Authenticated({
         hasModule('inventory') ? { label: t('nav.stock'), href: route('stock.quick'), active: route().current('stock.*') } : null,
         hasModule('branches') ? { label: 'Traslados', href: route('inventory.transfers.index'), active: route().current('inventory.transfers.*') } : null,
         hasModule('cash_register') ? { label: 'Caja', href: route('cash-register.index'), active: route().current('cash-register.*') } : null,
-        hasModule('fel_gt') && can('fel.reconcile') ? { label: 'Reconciliación FEL', href: route('fel.reconciliation.index'), active: route().current('fel.reconciliation.*') } : null,
-        hasModule('credits') && can('credits.accounts.view') ? { label: 'Cuentas por cobrar', href: route('credits.accounts.index'), active: route().current('credits.accounts.*') } : null,
-        hasModule('credits') && (can('credits.payments.view') || can('credits.payments.create')) ? { label: 'Abonos', href: route('credits.payments.index'), active: route().current('credits.payments.*') } : null,
-        hasModule('credits') && canViewCredits ? { label: 'Reservas pendientes', href: route('credits.index'), active: route().current('credits.index') || route().current('credits.customers.*') || route().current('credits.receipts.*') } : null,
+        creditSalesEnabled && can('credits.accounts.view') ? { label: 'Cuentas por cobrar', href: route('credits.accounts.index'), active: route().current('credits.accounts.*') } : null,
+        creditSalesEnabled && (can('credits.payments.view') || can('credits.payments.create')) ? { label: 'Abonos', href: route('credits.payments.index'), active: route().current('credits.payments.*') } : null,
+        creditReservationsEnabled && canViewCredits ? { label: 'Reservas pendientes', href: route('credits.index'), active: route().current('credits.index') || route().current('credits.customers.*') || route().current('credits.receipts.*') } : null,
         hasModule('routes') && can('routes.work') ? { label: 'Mis rutas', href: route('routes.mobile.zones'), active: route().current('routes.mobile.*') } : null,
         hasModule('routes') && can('routes.manage') ? { label: 'Rutas', href: route('routes.zones.index'), active: route().current('routes.zones.*') } : null,
         hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Preventas enviadas', href: route('routes.pre-sales.index'), active: route().current('routes.pre-sales.*') } : null,
