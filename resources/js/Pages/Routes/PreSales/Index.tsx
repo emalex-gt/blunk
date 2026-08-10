@@ -18,7 +18,9 @@ type PreSale = {
     total: string;
     created_at: string;
     submitted_at?: string | null;
+    picked_at?: string | null;
     reserved_quantity_total?: string | number;
+    picked_quantity_total?: string | number;
     items_count: number;
     customer?: { name: string; commercial_name?: string | null; contact_name?: string | null; doc_number: string | null };
     seller?: { name: string };
@@ -36,9 +38,10 @@ type Props = {
 };
 
 const statuses = [
-    { value: '', label: 'Enviadas y en preparación' },
+    { value: '', label: 'Enviadas, en preparación y listas' },
     { value: 'submitted', label: 'Enviadas' },
     { value: 'processing', label: 'En preparación' },
+    { value: 'picked', label: 'Listas para facturar' },
     { value: 'cancelled', label: 'Canceladas' },
     { value: 'draft', label: 'Borradores' },
 ];
@@ -145,6 +148,7 @@ export default function Index({ preSales, filters, branches, sellers, zones }: P
                                     <th className="px-4 py-3">Cliente</th>
                                     <th className="px-4 py-3">Items</th>
                                     <th className="px-4 py-3">Reservado</th>
+                                    <th className="px-4 py-3">Preparado</th>
                                     <th className="px-4 py-3">Total</th>
                                     <th className="px-4 py-3">Estado</th>
                                     <th className="px-4 py-3">Acciones</th>
@@ -153,7 +157,7 @@ export default function Index({ preSales, filters, branches, sellers, zones }: P
                             <tbody className="divide-y divide-slate-100">
                                 {preSales.data.length === 0 ? (
                                     <tr>
-                                        <td colSpan={10} className="px-4 py-10 text-center text-slate-500">No hay preventas para los filtros seleccionados.</td>
+                                        <td colSpan={11} className="px-4 py-10 text-center text-slate-500">No hay preventas para los filtros seleccionados.</td>
                                     </tr>
                                 ) : preSales.data.map((preSale) => (
                                     <tr key={preSale.id} className="hover:bg-slate-50/70">
@@ -172,6 +176,10 @@ export default function Index({ preSales, filters, branches, sellers, zones }: P
                                         </td>
                                         <td className="px-4 py-3">{preSale.items_count}</td>
                                         <td className="px-4 py-3">{formatNumber(preSale.reserved_quantity_total)}</td>
+                                        <td className="px-4 py-3">
+                                            {formatNumber(preSale.picked_quantity_total)}
+                                            {preSale.picked_at && <div className="text-xs text-slate-500">{formatDate(preSale.picked_at)}</div>}
+                                        </td>
                                         <td className="px-4 py-3">Q {Number(preSale.total).toFixed(2)}</td>
                                         <td className="px-4 py-3"><StatusBadge status={preSale.status} /></td>
                                         <td className="whitespace-nowrap px-4 py-3">
@@ -183,6 +191,11 @@ export default function Index({ preSales, filters, branches, sellers, zones }: P
                                                     <button type="button" onClick={() => markProcessing(preSale)} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">
                                                         Marcar en preparación
                                                     </button>
+                                                )}
+                                                {['submitted', 'processing'].includes(preSale.status) && (
+                                                    <Link href={route('routes.pre-sales.pick', preSale.id)} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700">
+                                                        Preparar pedido
+                                                    </Link>
                                                 )}
                                                 {['submitted', 'processing'].includes(preSale.status) && (
                                                     <button type="button" onClick={() => setCancelTarget(preSale)} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700">
@@ -264,6 +277,7 @@ function StatusBadge({ status }: { status: string }) {
     const styles: Record<string, string> = {
         submitted: 'bg-sky-50 text-sky-700',
         processing: 'bg-amber-50 text-amber-700',
+        picked: 'bg-emerald-50 text-emerald-700',
         cancelled: 'bg-red-50 text-red-700',
         draft: 'bg-slate-100 text-slate-700',
     };
@@ -271,6 +285,7 @@ function StatusBadge({ status }: { status: string }) {
     const labels: Record<string, string> = {
         submitted: 'Enviada',
         processing: 'En preparación',
+        picked: 'Listo para facturar',
         cancelled: 'Cancelada',
         draft: 'Borrador',
     };

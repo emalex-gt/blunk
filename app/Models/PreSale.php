@@ -11,6 +11,7 @@ class PreSale extends Model
     public const STATUS_DRAFT = 'draft';
     public const STATUS_SUBMITTED = 'submitted';
     public const STATUS_PROCESSING = 'processing';
+    public const STATUS_PICKED = 'picked';
     public const STATUS_CANCELLED = 'cancelled';
 
     protected $fillable = [
@@ -29,6 +30,8 @@ class PreSale extends Model
         'submitted_at',
         'processing_started_at',
         'processing_user_id',
+        'picked_at',
+        'picked_by',
         'cancelled_at',
         'cancelled_by',
         'cancellation_reason',
@@ -41,6 +44,7 @@ class PreSale extends Model
         'total' => 'decimal:2',
         'submitted_at' => 'datetime',
         'processing_started_at' => 'datetime',
+        'picked_at' => 'datetime',
         'cancelled_at' => 'datetime',
     ];
 
@@ -72,6 +76,11 @@ class PreSale extends Model
     public function cancelledBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'cancelled_by');
+    }
+
+    public function pickedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'picked_by');
     }
 
     public function workDay(): BelongsTo

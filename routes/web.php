@@ -236,6 +236,12 @@ Route::middleware('auth')->group(function () {
             Route::post('/pre-sales/{preSale}/processing', [RouteController::class, 'markPreSaleProcessing'])
                 ->middleware('permission:routes.pre_sales.admin_view')
                 ->name('pre-sales.processing');
+            Route::get('/pre-sales/{preSale}/pick', [RouteController::class, 'pickPreSale'])
+                ->middleware('permission:routes.pre_sales.pick')
+                ->name('pre-sales.pick');
+            Route::post('/pre-sales/{preSale}/pick', [RouteController::class, 'storePreSalePicking'])
+                ->middleware('permission:routes.pre_sales.pick')
+                ->name('pre-sales.pick.store');
 
             Route::get('/mobile/zones', [RouteController::class, 'mobileZones'])
                 ->middleware('permission:routes.work')

@@ -13,16 +13,19 @@ class PreSaleItem extends Model
         'product_id',
         'price_type_id',
         'quantity',
+        'picked_quantity',
         'unit_price',
         'original_price',
         'manual_price',
         'discount',
         'total',
         'notes',
+        'picking_note',
     ];
 
     protected $casts = [
         'quantity' => 'decimal:4',
+        'picked_quantity' => 'decimal:4',
         'unit_price' => 'decimal:2',
         'original_price' => 'decimal:2',
         'manual_price' => 'boolean',

@@ -10,6 +10,8 @@ type PreSaleItem = {
     product_barcode?: string | null;
     product_name?: string | null;
     quantity: number;
+    picked_quantity?: number | null;
+    picking_note?: string | null;
     reserved_quantity: number;
     unit_price: number;
     discount: number;
@@ -25,6 +27,8 @@ type PreSale = {
     created_at?: string | null;
     submitted_at?: string | null;
     processing_started_at?: string | null;
+    picked_at?: string | null;
+    picked_by?: Related | null;
     cancelled_at?: string | null;
     cancellation_reason?: string | null;
     cancellation_note?: string | null;
@@ -85,6 +89,11 @@ export default function Show({ preSale }: Props) {
                             </button>
                         )}
                         {['submitted', 'processing'].includes(preSale.status) && (
+                            <Link href={route('routes.pre-sales.pick', preSale.id)} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+                                Preparar pedido
+                            </Link>
+                        )}
+                        {['submitted', 'processing'].includes(preSale.status) && (
                             <button onClick={() => setCancelOpen(true)} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">
                                 Cancelar preventa
                             </button>
@@ -113,6 +122,8 @@ export default function Show({ preSale }: Props) {
                         <Info label="Creada" value={formatDate(preSale.created_at)} />
                         <Info label="Enviada" value={formatDate(preSale.submitted_at)} />
                         <Info label="En preparación" value={formatDate(preSale.processing_started_at)} />
+                        <Info label="Lista para facturar" value={formatDate(preSale.picked_at)} />
+                        <Info label="Preparada por" value={preSale.picked_by?.name} />
                         <Info label="Cancelada" value={formatDate(preSale.cancelled_at)} />
                         {preSale.cancellation_reason && <Info label="Motivo cancelación" value={preSale.cancellation_reason} />}
                     </InfoCard>
@@ -137,6 +148,7 @@ export default function Show({ preSale }: Props) {
                                     <th className="px-4 py-3">Producto</th>
                                     <th className="px-4 py-3">Solicitado</th>
                                     <th className="px-4 py-3">Reservado</th>
+                                    <th className="px-4 py-3">Preparado</th>
                                     <th className="px-4 py-3">Precio</th>
                                     <th className="px-4 py-3">Subtotal</th>
                                     <th className="px-4 py-3">Stock físico</th>
@@ -154,6 +166,10 @@ export default function Show({ preSale }: Props) {
                                         <td className="px-4 py-3 font-medium text-slate-900">{item.product_name}</td>
                                         <td className="px-4 py-3">{formatNumber(item.quantity)}</td>
                                         <td className="px-4 py-3">{formatNumber(item.reserved_quantity)}</td>
+                                        <td className="px-4 py-3">
+                                            {item.picked_quantity === null || item.picked_quantity === undefined ? '-' : formatNumber(item.picked_quantity)}
+                                            {item.picking_note && <div className="text-xs text-slate-500">{item.picking_note}</div>}
+                                        </td>
                                         <td className="px-4 py-3">Q {formatMoney(item.unit_price)}</td>
                                         <td className="px-4 py-3">Q {formatMoney(item.total)}</td>
                                         <td className="px-4 py-3">{formatNumber(item.physical_stock)}</td>
@@ -164,7 +180,7 @@ export default function Show({ preSale }: Props) {
                             </tbody>
                             <tfoot className="bg-slate-50 text-sm font-semibold text-slate-900">
                                 <tr>
-                                    <td colSpan={5} className="px-4 py-3 text-right">Total</td>
+                                    <td colSpan={6} className="px-4 py-3 text-right">Total</td>
                                     <td className="px-4 py-3">Q {formatMoney(preSale.total)}</td>
                                     <td colSpan={3}></td>
                                 </tr>
@@ -230,6 +246,7 @@ function statusLabel(status: string) {
         draft: 'Borrador',
         submitted: 'Enviada',
         processing: 'En preparación',
+        picked: 'Listo para facturar',
         cancelled: 'Cancelada',
     };
 

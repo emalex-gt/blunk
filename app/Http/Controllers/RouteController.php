@@ -202,7 +202,7 @@ class RouteController extends Controller
     {
         $businessId = currentBusinessId();
         $status = $request->string('status')->toString();
-        $status = in_array($status, ['draft', 'submitted', 'processing', 'cancelled'], true) ? $status : null;
+        $status = in_array($status, ['draft', 'submitted', 'processing', 'picked', 'cancelled'], true) ? $status : null;
         $dateFrom = $request->date('date_from')?->startOfDay();
         $dateTo = $request->date('date_to')?->endOfDay();
         $branchId = $request->filled('branch_id')
@@ -229,12 +229,17 @@ class RouteController extends Controller
                     ->where('stock_reservations.source_type', 'pre_sale')
                     ->where('stock_reservations.status', 'active');
             }, 'reserved_quantity_total')
+            ->selectSub(function ($query) {
+                $query->from('pre_sale_items')
+                    ->selectRaw('COALESCE(SUM(picked_quantity), 0)')
+                    ->whereColumn('pre_sale_items.pre_sale_id', 'pre_sales.id');
+            }, 'picked_quantity_total')
             ->withCount('items')
             ->latest('submitted_at')
             ->latest('id');
 
         $query->when($status, fn ($query) => $query->where('status', $status));
-        $query->when(! $status, fn ($query) => $query->whereIn('status', ['submitted', 'processing']));
+        $query->when(! $status, fn ($query) => $query->whereIn('status', ['submitted', 'processing', 'picked']));
         $query->when($request->filled('branch_id'), fn ($query) => $branchId ? $query->where('branch_id', $branchId) : $query->whereRaw('1 = 0'));
         $query->when($request->filled('seller_id'), fn ($query) => $sellerId ? $query->where('seller_id', $sellerId) : $query->whereRaw('1 = 0'));
         $query->when($request->filled('zone_id'), fn ($query) => $zoneId ? $query->where('route_zone_id', $zoneId) : $query->whereRaw('1 = 0'));
@@ -287,6 +292,8 @@ class RouteController extends Controller
             'branch:id,name',
             'zone:id,name',
             'seller:id,name',
+            'processingUser:id,name',
+            'pickedBy:id,name',
             'customer:id,name,commercial_name,contact_name,doc_number,address,phone',
             'workDay:id,work_date,status,started_at,closed_at',
             'visit:id,status,visit_order,no_sale_reason,no_sale_note,started_at,finished_at',
@@ -312,6 +319,9 @@ class RouteController extends Controller
                 'created_at' => $preSale->created_at?->toIso8601String(),
                 'submitted_at' => $preSale->submitted_at?->toIso8601String(),
                 'processing_started_at' => $preSale->processing_started_at?->toIso8601String(),
+                'processing_user' => $preSale->processingUser,
+                'picked_at' => $preSale->picked_at?->toIso8601String(),
+                'picked_by' => $preSale->pickedBy,
                 'cancelled_at' => $preSale->cancelled_at?->toIso8601String(),
                 'cancellation_reason' => $preSale->cancellation_reason,
                 'cancellation_note' => $preSale->cancellation_note,
@@ -335,6 +345,8 @@ class RouteController extends Controller
                         'product_barcode' => $item->product?->barcode,
                         'product_name' => $item->product?->name,
                         'quantity' => (float) $item->quantity,
+                        'picked_quantity' => $item->picked_quantity !== null ? (float) $item->picked_quantity : null,
+                        'picking_note' => $item->picking_note,
                         'reserved_quantity' => (float) ($reservedByItem[$item->id] ?? 0),
                         'unit_price' => (float) $item->unit_price,
                         'discount' => (float) $item->discount,
@@ -346,6 +358,181 @@ class RouteController extends Controller
                 })->values(),
             ],
         ]);
+    }
+
+    public function pickPreSale(PreSale $preSale): Response
+    {
+        abort_unless((int) $preSale->business_id === currentBusinessId(), 403);
+        abort_unless(Permissions::userHas(request()->user(), Permissions::ROUTES_PRE_SALES_PICK), 403);
+
+        if (! in_array($preSale->status, [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING], true)) {
+            throw ValidationException::withMessages([
+                'pre_sale' => 'La preventa cambió de estado. Actualiza la página e intenta de nuevo.',
+            ]);
+        }
+
+        $preSale->load([
+            'branch:id,name',
+            'zone:id,name',
+            'seller:id,name',
+            'customer:id,name,commercial_name,contact_name,doc_number,address,phone',
+            'items.product:id,business_id,name,code,barcode,image_url',
+        ]);
+
+        $productIds = $preSale->items->pluck('product_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $stockBreakdown = StockAvailability::getBreakdownForProducts((int) $preSale->business_id, (int) $preSale->branch_id, $productIds);
+        $reservedByItem = DB::table('stock_reservations')
+            ->where('business_id', $preSale->business_id)
+            ->where('branch_id', $preSale->branch_id)
+            ->where('source_type', 'pre_sale')
+            ->where('source_id', $preSale->id)
+            ->where('status', 'active')
+            ->groupBy('source_item_id')
+            ->selectRaw('source_item_id, COALESCE(SUM(quantity), 0) as quantity')
+            ->pluck('quantity', 'source_item_id');
+
+        return Inertia::render('Routes/PreSales/Pick', [
+            'preSale' => [
+                'id' => $preSale->id,
+                'status' => $preSale->status,
+                'submitted_at' => $preSale->submitted_at?->toIso8601String(),
+                'processing_started_at' => $preSale->processing_started_at?->toIso8601String(),
+                'branch' => $preSale->branch,
+                'zone' => $preSale->zone,
+                'seller' => $preSale->seller,
+                'customer' => $preSale->customer,
+                'items' => $preSale->items->map(function ($item) use ($stockBreakdown, $reservedByItem) {
+                    $breakdown = $stockBreakdown->get((int) $item->product_id, []);
+                    $requestedQuantity = (float) $item->quantity;
+                    $reservedQuantity = (float) ($reservedByItem[$item->id] ?? 0);
+
+                    return [
+                        'id' => $item->id,
+                        'product_id' => $item->product_id,
+                        'product_code' => $item->product?->code ?: $item->product?->barcode,
+                        'product_barcode' => $item->product?->barcode,
+                        'product_name' => $item->product?->name,
+                        'quantity' => $requestedQuantity,
+                        'reserved_quantity' => $reservedQuantity,
+                        'picked_quantity' => $item->picked_quantity !== null
+                            ? (float) $item->picked_quantity
+                            : min($requestedQuantity, $reservedQuantity),
+                        'picking_note' => $item->picking_note,
+                        'unit_price' => (float) $item->unit_price,
+                        'physical_stock' => (float) ($breakdown['physical_stock'] ?? 0),
+                        'reserved_total' => (float) ($breakdown['reserved_total'] ?? 0),
+                        'available_stock' => (float) ($breakdown['available_stock'] ?? 0),
+                    ];
+                })->values(),
+            ],
+        ]);
+    }
+
+    public function storePreSalePicking(Request $request, PreSale $preSale, StockReservationService $reservations): RedirectResponse
+    {
+        abort_unless((int) $preSale->business_id === currentBusinessId(), 403);
+        abort_unless(Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_PICK), 403);
+
+        $data = $request->validate([
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.id' => ['required', 'integer'],
+            'items.*.picked_quantity' => ['required', 'numeric', 'min:0'],
+            'items.*.picking_note' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        DB::transaction(function () use ($request, $preSale, $data, $reservations) {
+            $lockedPreSale = PreSale::query()
+                ->where('business_id', currentBusinessId())
+                ->whereKey($preSale->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (! in_array($lockedPreSale->status, [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING], true)) {
+                if ($lockedPreSale->status === PreSale::STATUS_PICKED) {
+                    throw ValidationException::withMessages([
+                        'pre_sale' => 'Esta preventa ya está lista para facturar y no se puede cancelar desde esta fase.',
+                    ]);
+                }
+
+                throw ValidationException::withMessages([
+                    'pre_sale' => 'La preventa cambió de estado. Actualiza la página e intenta de nuevo.',
+                ]);
+            }
+
+            $rows = collect($data['items'])->keyBy(fn ($row) => (int) $row['id']);
+            $items = $lockedPreSale->items()
+                ->whereIn('id', $rows->keys()->all())
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+
+            if ($items->count() !== $lockedPreSale->items()->count() || $items->count() !== $rows->count()) {
+                throw ValidationException::withMessages([
+                    'pre_sale' => 'La preventa cambió de estado. Actualiza la página e intenta de nuevo.',
+                ]);
+            }
+
+            $reservations->lockStockRowsForReservation(
+                (int) $lockedPreSale->business_id,
+                (int) $lockedPreSale->branch_id,
+                $items->pluck('product_id')->map(fn ($id) => (int) $id)->unique()->values()->all(),
+            );
+
+            $reservationRows = DB::table('stock_reservations')
+                ->where('business_id', $lockedPreSale->business_id)
+                ->where('branch_id', $lockedPreSale->branch_id)
+                ->where('source_type', 'pre_sale')
+                ->where('source_id', $lockedPreSale->id)
+                ->where('status', 'active')
+                ->whereIn('source_item_id', $items->keys()->all())
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get(['source_item_id', 'quantity']);
+            $reservedByItem = $reservationRows
+                ->groupBy('source_item_id')
+                ->map(fn ($rows) => $rows->sum(fn ($row) => (float) $row->quantity));
+
+            $preparedQuantity = 0.0;
+
+            foreach ($rows as $itemId => $row) {
+                $item = $items->get($itemId);
+                $pickedQuantity = round((float) $row['picked_quantity'], 4);
+                $requestedQuantity = round((float) $item->quantity, 4);
+                $reservedQuantity = round((float) ($reservedByItem[$itemId] ?? 0), 4);
+
+                if ($pickedQuantity > $requestedQuantity || $pickedQuantity > $reservedQuantity) {
+                    throw ValidationException::withMessages([
+                        'items' => 'La cantidad preparada no puede exceder lo solicitado ni lo reservado.',
+                    ]);
+                }
+
+                $preparedQuantity += $pickedQuantity;
+
+                $item->update([
+                    'picked_quantity' => $pickedQuantity,
+                    'picking_note' => $row['picking_note'] ?? null,
+                ]);
+
+                $reservations->syncPreSaleItemPickedReservation($item, $pickedQuantity);
+            }
+
+            if ($preparedQuantity <= 0) {
+                throw ValidationException::withMessages([
+                    'items' => 'No puedes marcar como listo un pedido sin productos preparados. Cancela la preventa si no se preparará.',
+                ]);
+            }
+
+            $lockedPreSale->update([
+                'status' => PreSale::STATUS_PICKED,
+                'picked_at' => now(),
+                'picked_by' => $request->user()->id,
+            ]);
+        });
+
+        return redirect()
+            ->route('routes.pre-sales.show', $preSale)
+            ->with('success', 'Preventa lista para facturar.');
     }
 
     public function mobileZones(Request $request): Response|RedirectResponse
@@ -740,6 +927,12 @@ class RouteController extends Controller
         }
 
         abort_unless(Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_ADMIN_VIEW), 403);
+
+        if ($preSale->status === PreSale::STATUS_PICKED) {
+            throw ValidationException::withMessages([
+                'pre_sale' => 'Esta preventa ya está lista para facturar y no se puede cancelar desde esta fase.',
+            ]);
+        }
 
         if (! in_array($preSale->status, [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING], true)) {
             throw ValidationException::withMessages([
@@ -1396,7 +1589,7 @@ class RouteController extends Controller
         $submittedExists = PreSale::query()
             ->where('business_id', currentBusinessId())
             ->where('route_visit_id', $visit->id)
-            ->whereIn('status', [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING])
+            ->whereIn('status', [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING, PreSale::STATUS_PICKED])
             ->exists();
 
         if ($submittedExists) {

@@ -53,7 +53,7 @@ class StockAvailability
             ->where('stock_reservations.branch_id', $branchId)
             ->whereIn('stock_reservations.product_id', $productIds)
             ->where('stock_reservations.status', 'active')
-            ->whereIn('pre_sales.status', ['draft', 'submitted'])
+            ->whereIn('pre_sales.status', ['draft', 'submitted', 'processing', 'picked'])
             ->where(fn ($query) => $query->whereNull('route_visits.id')->orWhere('route_visits.status', '!=', 'without_sale'))
             ->groupBy('stock_reservations.product_id')
             ->selectRaw('stock_reservations.product_id, COALESCE(SUM(stock_reservations.quantity), 0) as reserved')
@@ -194,7 +194,7 @@ class StockAvailability
             ->where('stock_reservations.branch_id', $branchId)
             ->where('stock_reservations.product_id', $productId)
             ->where('stock_reservations.status', 'active')
-            ->whereIn('pre_sales.status', ['draft', 'submitted'])
+            ->whereIn('pre_sales.status', ['draft', 'submitted', 'processing', 'picked'])
             ->where(fn ($query) => $query->whereNull('route_visits.id')->orWhere('route_visits.status', '!=', 'without_sale'))
             ->orderBy('stock_reservations.created_at')
             ->limit(100)
@@ -293,7 +293,7 @@ class StockAvailability
             ->where('stock_reservations.status', 'active')
             ->where(function ($query) {
                 $query->whereNull('pre_sales.id')
-                    ->orWhereNotIn('pre_sales.status', ['draft', 'submitted'])
+                    ->orWhereNotIn('pre_sales.status', ['draft', 'submitted', 'processing', 'picked'])
                     ->orWhereNull('pre_sale_items.id')
                     ->orWhereColumn('pre_sale_items.pre_sale_id', '!=', 'pre_sales.id')
                     ->orWhere('route_visits.status', 'without_sale');
@@ -334,7 +334,7 @@ class StockAvailability
             return 'missing_pre_sale';
         }
 
-        if (! in_array($row->pre_sale_status, ['draft', 'submitted'], true)) {
+        if (! in_array($row->pre_sale_status, ['draft', 'submitted', 'processing', 'picked'], true)) {
             return 'invalid_pre_sale_status';
         }
 

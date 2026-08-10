@@ -77,6 +77,64 @@ class StockReservationService
             ]);
     }
 
+    public function syncPreSaleItemPickedReservation(PreSaleItem $item, int|float $pickedQuantity): void
+    {
+        $preSale = $item->preSale()->firstOrFail();
+        $pickedQuantity = round((float) $pickedQuantity, 4);
+
+        $reservations = StockReservation::query()
+            ->where('business_id', $item->business_id)
+            ->where('branch_id', $preSale->branch_id)
+            ->where('source_type', self::SOURCE_PRE_SALE)
+            ->where('source_id', $preSale->id)
+            ->where('source_item_id', $item->id)
+            ->where('status', 'active')
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        $reservedQuantity = round((float) $reservations->sum(fn (StockReservation $reservation) => (float) $reservation->quantity), 4);
+
+        if ($pickedQuantity > $reservedQuantity) {
+            throw ValidationException::withMessages([
+                'items' => 'La reserva de stock cambió. Actualiza la página e intenta de nuevo.',
+            ]);
+        }
+
+        if ($pickedQuantity <= 0) {
+            $reservations->each->update([
+                'status' => 'released',
+                'released_at' => now(),
+            ]);
+
+            return;
+        }
+
+        $remaining = $pickedQuantity;
+
+        foreach ($reservations as $reservation) {
+            $reservationQuantity = (float) $reservation->quantity;
+
+            if ($remaining <= 0) {
+                $reservation->update([
+                    'status' => 'released',
+                    'released_at' => now(),
+                ]);
+
+                continue;
+            }
+
+            if ($reservationQuantity > $remaining) {
+                $reservation->update(['quantity' => round($remaining, 4)]);
+                $remaining = 0;
+
+                continue;
+            }
+
+            $remaining = round($remaining - $reservationQuantity, 4);
+        }
+    }
+
     public function activeReservedQuantity(Business|int $business, Branch|int $branch, Product|int $product): float
     {
         $businessId = $business instanceof Business ? (int) $business->id : (int) $business;

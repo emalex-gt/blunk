@@ -1697,6 +1697,250 @@ class RoutesPreSalesTest extends TestCase
         $this->assertSame(0, CustomerAccountMovement::query()->where('business_id', $business->id)->count());
     }
 
+    public function test_admin_can_open_picking_form_for_submitted_pre_sale(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 3);
+
+        $this->actingAs($admin)
+            ->get(route('routes.pre-sales.pick', $preSale))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/PreSales/Pick')
+                ->where('preSale.id', $preSale->id)
+                ->where('preSale.items.0.quantity', 3)
+                ->where('preSale.items.0.reserved_quantity', 3)
+                ->where('preSale.items.0.picked_quantity', 3));
+    }
+
+    public function test_admin_can_pick_submitted_pre_sale_and_reduce_reservation_without_stock_or_financial_mutations(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 4);
+        $item = $preSale->items()->firstOrFail();
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'items' => [[
+                    'id' => $item->id,
+                    'picked_quantity' => 2,
+                    'picking_note' => 'Solo dos disponibles en bodega.',
+                ]],
+            ])
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('success', 'Preventa lista para facturar.');
+
+        $preSale->refresh();
+        $item->refresh();
+        $this->assertSame(PreSale::STATUS_PICKED, $preSale->status);
+        $this->assertNotNull($preSale->picked_at);
+        $this->assertSame($admin->id, $preSale->picked_by);
+        $this->assertSame(2.0, (float) $item->picked_quantity);
+        $this->assertSame('Solo dos disponibles en bodega.', $item->picking_note);
+        $this->assertSame(2.0, (float) StockReservation::query()->where('source_item_id', $item->id)->where('status', 'active')->sum('quantity'));
+        $this->assertSame(10.0, (float) ProductBranchStock::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, ElectronicDocument::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerCreditAccount::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerAccountMovement::query()->where('business_id', $business->id)->count());
+
+        $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
+        $this->assertSame(2.0, $breakdown['reserved_pre_sales']);
+        $this->assertSame(8.0, $breakdown['available_stock']);
+    }
+
+    public function test_admin_can_pick_processing_pre_sale(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 2);
+        $item = $preSale->items()->firstOrFail();
+
+        $this->actingAs($admin)->post(route('routes.pre-sales.processing', $preSale))->assertSessionHasNoErrors();
+
+        $this->actingAs($admin)
+            ->get(route('routes.pre-sales.pick', $preSale))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/PreSales/Pick')
+                ->where('preSale.status', PreSale::STATUS_PROCESSING));
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'items' => [['id' => $item->id, 'picked_quantity' => 2]],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(PreSale::STATUS_PICKED, $preSale->refresh()->status);
+    }
+
+    public function test_picking_zero_for_one_line_releases_that_line_but_requires_another_prepared_line(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $firstProduct = $this->product($business, $branch, stock: 10);
+        $secondProduct = $this->product($business, $branch, stock: 10);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'items' => [
+                ['product_id' => $firstProduct->id, 'quantity' => 2],
+                ['product_id' => $secondProduct->id, 'quantity' => 3],
+            ],
+        ])->assertSessionHasNoErrors();
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay))->assertRedirect();
+
+        $preSale = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail();
+        $items = $preSale->items()->orderBy('id')->get();
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'items' => [
+                    ['id' => $items[0]->id, 'picked_quantity' => 0],
+                    ['id' => $items[1]->id, 'picked_quantity' => 1],
+                ],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(0.0, (float) StockReservation::query()->where('source_item_id', $items[0]->id)->where('status', 'active')->sum('quantity'));
+        $this->assertSame(1.0, (float) StockReservation::query()->where('source_item_id', $items[1]->id)->where('status', 'active')->sum('quantity'));
+        $this->assertSame(1, StockReservation::query()->where('source_item_id', $items[0]->id)->where('status', 'released')->count());
+    }
+
+    public function test_picking_rejects_empty_or_excess_quantities(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 3);
+        $item = $preSale->items()->firstOrFail();
+
+        $this->actingAs($admin)
+            ->from(route('routes.pre-sales.pick', $preSale))
+            ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'items' => [['id' => $item->id, 'picked_quantity' => 0]],
+            ])
+            ->assertRedirect(route('routes.pre-sales.pick', $preSale))
+            ->assertSessionHasErrors(['items' => 'No puedes marcar como listo un pedido sin productos preparados. Cancela la preventa si no se preparará.']);
+
+        $this->actingAs($admin)
+            ->from(route('routes.pre-sales.pick', $preSale))
+            ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'items' => [['id' => $item->id, 'picked_quantity' => 4]],
+            ])
+            ->assertRedirect(route('routes.pre-sales.pick', $preSale))
+            ->assertSessionHasErrors('items');
+
+        StockReservation::query()
+            ->where('source_item_id', $item->id)
+            ->where('status', 'active')
+            ->update(['quantity' => 1]);
+
+        $this->actingAs($admin)
+            ->from(route('routes.pre-sales.pick', $preSale))
+            ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'items' => [['id' => $item->id, 'picked_quantity' => 2]],
+            ])
+            ->assertRedirect(route('routes.pre-sales.pick', $preSale))
+            ->assertSessionHasErrors('items');
+
+        $this->assertSame(PreSale::STATUS_SUBMITTED, $preSale->refresh()->status);
+    }
+
+    public function test_cancelled_pre_sale_cannot_be_picked(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 2);
+        $item = $preSale->items()->firstOrFail();
+
+        $this->actingAs($admin)->post(route('routes.pre-sales.cancel', $preSale), [
+            'cancellation_reason' => 'Otro',
+            'cancellation_note' => 'Cliente ya no quiere el pedido.',
+        ])->assertSessionHasNoErrors();
+
+        $this->actingAs($admin)
+            ->from(route('routes.pre-sales.show', $preSale))
+            ->get(route('routes.pre-sales.pick', $preSale))
+            ->assertRedirect(route('routes.pre-sales.show', $preSale))
+            ->assertSessionHasErrors('pre_sale');
+
+        $this->actingAs($admin)
+            ->from(route('routes.pre-sales.show', $preSale))
+            ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'items' => [['id' => $item->id, 'picked_quantity' => 1]],
+            ])
+            ->assertRedirect(route('routes.pre-sales.show', $preSale))
+            ->assertSessionHasErrors('pre_sale');
+
+        $this->assertSame(PreSale::STATUS_CANCELLED, $preSale->refresh()->status);
+    }
+
+    public function test_picked_pre_sale_cannot_be_cancelled_or_edited_by_mobile_seller(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 2);
+        $item = $preSale->items()->firstOrFail();
+
+        $this->actingAs($admin)->post(route('routes.pre-sales.pick.store', $preSale), [
+            'items' => [['id' => $item->id, 'picked_quantity' => 2]],
+        ])->assertSessionHasNoErrors();
+
+        $this->actingAs($admin)
+            ->from(route('routes.pre-sales.show', $preSale))
+            ->post(route('routes.pre-sales.cancel', $preSale), [
+                'cancellation_reason' => 'Otro',
+                'cancellation_note' => 'No se debe cancelar.',
+            ])
+            ->assertRedirect(route('routes.pre-sales.show', $preSale))
+            ->assertSessionHasErrors(['pre_sale' => 'Esta preventa ya está lista para facturar y no se puede cancelar desde esta fase.']);
+
+        $this->actingAs($seller)
+            ->from(route('routes.mobile.visits.show', $preSale->visit))
+            ->post(route('routes.mobile.visits.pre-sale.store', $preSale->visit), [
+                'items' => [['product_id' => $product->id, 'quantity' => 1]],
+            ])
+            ->assertRedirect(route('routes.mobile.visits.show', $preSale->visit))
+            ->assertSessionHasErrors('pre_sale');
+
+        $this->assertSame(PreSale::STATUS_PICKED, $preSale->refresh()->status);
+    }
+
+    public function test_pre_seller_and_other_tenant_cannot_pick_pre_sales(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product);
+        $item = $preSale->items()->firstOrFail();
+
+        [$otherBusiness, $otherAdmin] = $this->tenant(role: 'owner');
+
+        $this->actingAs($seller)->get(route('routes.pre-sales.pick', $preSale))->assertForbidden();
+        $this->actingAs($seller)->post(route('routes.pre-sales.pick.store', $preSale), [
+            'items' => [['id' => $item->id, 'picked_quantity' => 1]],
+        ])->assertForbidden();
+
+        $this->actingAs($otherAdmin)->get(route('routes.pre-sales.pick', $preSale))->assertForbidden();
+        $this->actingAs($otherAdmin)->post(route('routes.pre-sales.pick.store', $preSale), [
+            'items' => [['id' => $item->id, 'picked_quantity' => 1]],
+        ])->assertForbidden();
+
+        $this->assertSame($business->id, $preSale->business_id);
+        $this->assertNotSame($otherBusiness->id, $preSale->business_id);
+        $this->assertSame(PreSale::STATUS_SUBMITTED, $preSale->refresh()->status);
+    }
+
     public function test_admin_can_cancel_submitted_pre_sale_with_reason_and_release_reservations_without_stock_or_financial_mutations(): void
     {
         [$business, $admin, $branch] = $this->tenant(role: 'owner');
