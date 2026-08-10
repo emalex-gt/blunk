@@ -567,6 +567,7 @@ export default function POS({
     const [nitLookupLoading, setNitLookupLoading] = useState(false);
     const [nitLookupMessage, setNitLookupMessage] = useState('');
     const [customerSearchResults, setCustomerSearchResults] = useState<Customer[]>([]);
+    const [customerEditing, setCustomerEditing] = useState(false);
     const [loadedProducts, setLoadedProducts] = useState<Product[]>(products);
     const [productSearchResults, setProductSearchResults] = useState<Product[]>([]);
     const [productSearchLoading, setProductSearchLoading] = useState(false);
@@ -1191,6 +1192,7 @@ export default function POS({
         setDocumentType(singleDocumentType ?? (availableCheckoutTypes[0] ?? 'receipt'));
         setPayments([paymentLine(mainPaymentMethod, '0.00')]);
         setDiscount(null);
+        setCustomerEditing(false);
     }
 
     function clearPosDraftAndState() {
@@ -1341,6 +1343,9 @@ export default function POS({
             name_locked: Boolean(customer.name_locked),
             tax_lookup_verified_at: customer.tax_lookup_verified_at ?? null,
         });
+        setCustomerSearchResults([]);
+        setNitLookupMessage('');
+        setCustomerEditing(false);
     }
 
     function handleCustomerKeyDown(event: KeyboardEvent<HTMLInputElement | HTMLSelectElement>) {
@@ -1393,6 +1398,7 @@ export default function POS({
                 tax_lookup_verified_at: result.customer?.tax_lookup_verified_at ?? result.tax_lookup_verified_at ?? null,
             });
             setNitLookupMessage(result.name ? 'Nombre obtenido automáticamente' : 'No se encontró nombre para el NIT.');
+            setCustomerEditing(false);
         } catch (error) {
             const message = error instanceof Error ? error.message : 'No se pudo consultar el NIT.';
             setNitLookupMessage(message);
@@ -1472,12 +1478,11 @@ export default function POS({
         }
 
         const nextItems = existing
-            ? items.map((item) =>
-                  item.product.id === product.id
-                      ? { ...item, quantity: String(quantityNumber(item.quantity) + 1) }
-                      : item,
-              )
-            : [...items, buildCartItem(product)];
+            ? [
+                { ...existing, quantity: String(quantityNumber(existing.quantity) + 1) },
+                ...items.filter((item) => item.product.id !== product.id),
+            ]
+            : [buildCartItem(product), ...items];
 
         cartRef.current = nextItems;
         setCart(nextItems);
@@ -1863,6 +1868,7 @@ export default function POS({
                     reset();
                     setData('branch_id', activeBranchId);
                     setData('customer', defaultCustomer);
+                    setCustomerEditing(false);
                     focusSearch();
 
                     if (flash?.credit_print_url) {
@@ -1983,6 +1989,7 @@ export default function POS({
                 reset();
                 setData('branch_id', activeBranchId);
                 setData('customer', defaultCustomer);
+                setCustomerEditing(false);
                 focusSearch();
 
                 if (effectiveDocumentType === 'receipt' && receiptSaleId) {
@@ -2302,7 +2309,10 @@ export default function POS({
         typedErrors['customer.doc_number'],
         typedErrors['customer.address'],
         typedErrors['customer.phone'],
+        typedErrors['customer.department'],
+        typedErrors['customer.municipality'],
     ].filter(Boolean);
+    const hasCustomerFieldErrors = customerModalErrors.length > 0;
     const paymentModalErrors = Object.entries(typedErrors)
         .filter(([key]) => key === 'payments' || key.startsWith('payments.'))
         .map(([, value]) => value);
@@ -2322,6 +2332,23 @@ export default function POS({
         customerModalErrors.length > 0 ||
         paymentModalErrors.length > 0 ||
         Boolean(documentError || cashRegisterError || errors.items || invoiceNitNeedsVerification || invoiceCuiDisabled);
+    const customerFormExpanded = customerEditing || hasCustomerFieldErrors || nitLookupLoading;
+    const customerTypeLabel = country === 'GT'
+        ? (data.customer.consumidor_final ? 'Consumidor Final' : (data.customer.doc_type || 'NIT'))
+        : (data.customer.doc_type || 'Cliente');
+    const customerDisplayName = data.customer.commercial_name || data.customer.name || customerTypeLabel;
+    const customerLocationSummary = [data.customer.department, data.customer.municipality]
+        .filter(Boolean)
+        .join(', ');
+    const customerDetailSummary = [data.customer.address, data.customer.phone]
+        .filter(Boolean)
+        .join(' · ');
+
+    useEffect(() => {
+        if (hasCustomerFieldErrors || nitLookupLoading) {
+            setCustomerEditing(true);
+        }
+    }, [hasCustomerFieldErrors, nitLookupLoading]);
 
     function paymentFieldError(index: number, field: keyof PaymentLine) {
         return typedErrors[`payments.${index}.${field}`];
@@ -2383,6 +2410,38 @@ export default function POS({
                                     )}
                                 </div>
 
+                                {!customerFormExpanded ? (
+                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                                    Cliente: {customerTypeLabel}
+                                                </span>
+                                                {!data.customer.consumidor_final && data.customer.doc_number && (
+                                                    <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-600">
+                                                        NIT: {data.customer.doc_number}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="mt-0.5 truncate text-sm font-semibold text-slate-900" title={customerDisplayName}>
+                                                {customerDisplayName}
+                                            </div>
+                                            {(customerLocationSummary || customerDetailSummary) && (
+                                                <div className="mt-0.5 line-clamp-1 text-xs text-slate-500">
+                                                    {[customerLocationSummary, customerDetailSummary].filter(Boolean).join(' · ')}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setCustomerEditing(true)}
+                                            className="h-9 w-full shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-indigo-700 shadow-sm hover:border-indigo-200 hover:bg-indigo-50 sm:w-auto"
+                                        >
+                                            Editar cliente
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <>
                                 {country === 'GT' ? (
                                     <div className="space-y-3">
                                         <div className="flex flex-wrap gap-2">
@@ -2391,6 +2450,7 @@ export default function POS({
                                                 onClick={() => {
                                                     setData('customer', emptyCustomer('GT', activeBranchLocationDefaults));
                                                     setNitLookupMessage('');
+                                                    setCustomerEditing(true);
                                                 }}
                                                 className={[
                                                     'rounded-full border px-4 py-2 text-sm font-semibold transition',
@@ -2414,6 +2474,7 @@ export default function POS({
                                                         tax_lookup_verified_at: null,
                                                     });
                                                     setNitLookupMessage('');
+                                                    setCustomerEditing(true);
                                                 }}
                                                 className={[
                                                     'rounded-full border px-4 py-2 text-sm font-semibold transition',
@@ -2622,6 +2683,17 @@ export default function POS({
                                             />
                                         </div>
                                     </div>
+                                )}
+                                        <div className="mt-3 flex justify-end">
+                                            <button
+                                                type="button"
+                                                onClick={() => setCustomerEditing(false)}
+                                                className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                                            >
+                                                Listo
+                                            </button>
+                                        </div>
+                                    </>
                                 )}
 
                                 {customerMatches.length > 0 && (
@@ -2907,14 +2979,14 @@ export default function POS({
                                 {cart.map((item) => (
                                     <div
                                         key={item.product.id}
-                                        className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 border-b border-slate-100 py-3 last:border-b-0 2xl:grid-cols-[minmax(0,1fr)_144px_170px_112px_32px] 2xl:items-center 2xl:gap-3"
+                                        className="space-y-2 border-b border-slate-100 py-2 last:border-b-0"
                                     >
-                                        <div className="col-span-2 flex min-w-0 items-start justify-between gap-2 2xl:col-span-1 2xl:block">
-                                            <div className="min-w-0 text-sm">
-                                                <div className="truncate text-xs font-normal text-gray-500" title={item.product.barcode || item.product.code || ''}>
+                                        <div className="flex min-w-0 items-start justify-between gap-2">
+                                            <div className="min-w-0 text-[13px]">
+                                                <div className="truncate text-[11px] font-normal text-gray-500" title={item.product.barcode || item.product.code || ''}>
                                                     {item.product.barcode || item.product.code || t('common.code')}
                                                 </div>
-                                                <div className="line-clamp-2 font-semibold leading-5 text-slate-900" title={item.product.name}>
+                                                <div className="line-clamp-2 break-words font-semibold leading-4 text-slate-900" title={item.product.name}>
                                                     {item.product.name}
                                                 </div>
                                             </div>
@@ -2925,117 +2997,136 @@ export default function POS({
                                             )}
                                         </div>
 
-                                        <div className="flex shrink-0 flex-col">
-                                            <div className="flex items-center">
-                                                <button
-                                                    type="button"
-                                                    disabled={processing}
-                                                    onClick={() => changeQuantity(item.product.id, -1)}
-                                                    className="h-9 w-9 rounded-l-md border border-slate-300 text-base font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                                >
-                                                    -
-                                                </button>
-                                                <input
-                                                    type="text"
-                                                    min="1"
-                                                    max={Math.floor(item.max_quantity ?? item.product.available_stock ?? item.product.stock)}
-                                                    step="1"
-                                                    inputMode="numeric"
-                                                    pattern="[0-9]*"
-                                                    value={item.quantity}
-                                                    onChange={(event) =>
-                                                        updateQuantity(
-                                                            item.product.id,
-                                                            event.target.value,
-                                                        )
-                                                    }
-                                                    onWheel={(event) => event.currentTarget.blur()}
-                                                    className={`h-9 w-20 border-y bg-white text-center text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 ${
-                                                        quantityError(item.quantity) ? 'border-red-300 text-red-700' : 'border-slate-300'
-                                                    }`}
-                                                />
-                                                <button
-                                                    type="button"
-                                                    disabled={processing}
-                                                    onClick={() => changeQuantity(item.product.id, 1)}
-                                                    className="h-9 w-9 rounded-r-md border border-slate-300 text-base font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                                >
-                                                    +
-                                                </button>
-                                            </div>
-                                            {quantityError(item.quantity) && (
-                                                <p className="mt-1 text-xs font-semibold text-red-600">
-                                                    {integerQuantityMessage}
-                                                </p>
-                                            )}
-                                        </div>
-
-                                        <div className="col-span-2 flex min-w-0 flex-col gap-1 sm:col-span-1 2xl:col-span-1">
-                                            {price_types.length > 1 && !item.locked_credit_line && (
-                                                <select
-                                                    value={item.price_type_id ?? ''}
-                                                    onChange={(event) => changeLinePriceType(item.product.id, Number(event.target.value))}
-                                                    className="h-8 rounded-lg border-slate-200 bg-white text-xs font-semibold text-slate-700 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-                                                >
-                                                    {price_types.map((priceType) => (
-                                                        <option key={priceType.id} value={priceType.id}>
-                                                            {priceType.name}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            )}
-                                            <div className="flex items-center gap-2">
-                                                {item.manual_price ? (
+                                        <div className="grid grid-cols-1 items-start gap-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
+                                            <div className="flex shrink-0 flex-col">
+                                                <div className="flex items-center">
+                                                    <button
+                                                        type="button"
+                                                        disabled={processing}
+                                                        onClick={() => changeQuantity(item.product.id, -1)}
+                                                        className="h-9 w-9 rounded-l-md border border-slate-300 text-base font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                                    >
+                                                        -
+                                                    </button>
                                                     <input
-                                                        type="number"
-                                                        min="0.01"
-                                                        step="0.01"
-                                                        value={item.unit_price}
-                                                        onChange={(event) => updateManualPrice(item.product.id, event.target.value)}
-                                                        className="h-8 w-24 rounded-lg border-slate-200 bg-white text-right text-xs font-semibold text-slate-900 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                                                        type="text"
+                                                        min="1"
+                                                        max={Math.floor(item.max_quantity ?? item.product.available_stock ?? item.product.stock)}
+                                                        step="1"
+                                                        inputMode="numeric"
+                                                        pattern="[0-9]*"
+                                                        value={item.quantity}
+                                                        onChange={(event) =>
+                                                            updateQuantity(
+                                                                item.product.id,
+                                                                event.target.value,
+                                                            )
+                                                        }
+                                                        onWheel={(event) => event.currentTarget.blur()}
+                                                        className={`h-9 w-20 border-y bg-white text-center text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 ${
+                                                            quantityError(item.quantity) ? 'border-red-300 text-red-700' : 'border-slate-300'
+                                                        }`}
                                                     />
-                                                ) : (
-                                                    <span className="whitespace-nowrap text-xs font-semibold text-slate-700">
-                                                        {formatCurrency(Number(item.unit_price), country)}
-                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        disabled={processing}
+                                                        onClick={() => changeQuantity(item.product.id, 1)}
+                                                        className="h-9 w-9 rounded-r-md border border-slate-300 text-base font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                                    >
+                                                        +
+                                                    </button>
+                                                </div>
+                                                {quantityError(item.quantity) && (
+                                                    <p className="mt-1 text-xs font-semibold text-red-600">
+                                                        {integerQuantityMessage}
+                                                    </p>
                                                 )}
-                                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                                                    {priceSourceLabel(item.price_source)}
-                                                </span>
                                             </div>
-                                            {item.price_warning && (
-                                                <p className="text-[11px] font-semibold text-amber-600">{item.price_warning}</p>
-                                            )}
-                                            {item.manual_price && manualPriceError(item, manualPriceMinMargin) && (
-                                                <p className="text-[11px] font-semibold text-red-600">
-                                                    {manualPriceError(item, manualPriceMinMargin)}
-                                                </p>
-                                            )}
-                                            {canUseManualPrice && !item.locked_credit_line && (
+
+                                            <div className="flex min-w-0 flex-col gap-0.5">
+                                                {price_types.length > 1 && !item.locked_credit_line && (
+                                                    <select
+                                                        value={item.price_type_id ?? ''}
+                                                        onChange={(event) => changeLinePriceType(item.product.id, Number(event.target.value))}
+                                                        className="h-8 rounded-lg border-slate-200 bg-white text-xs font-semibold text-slate-700 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                                                    >
+                                                        {price_types.map((priceType) => (
+                                                            <option key={priceType.id} value={priceType.id}>
+                                                                {priceType.name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                )}
+                                                <div className="flex items-center gap-1.5">
+                                                    {item.manual_price ? (
+                                                        <input
+                                                            type="number"
+                                                            min="0.01"
+                                                            step="0.01"
+                                                            value={item.unit_price}
+                                                            onChange={(event) => updateManualPrice(item.product.id, event.target.value)}
+                                                            className="h-8 w-24 rounded-lg border-slate-200 bg-white text-right text-xs font-semibold text-slate-900 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                                                        />
+                                                    ) : (
+                                                        <span className="whitespace-nowrap text-xs font-semibold text-slate-700">
+                                                            {formatCurrency(Number(item.unit_price), country)}
+                                                        </span>
+                                                    )}
+                                                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                                                        {priceSourceLabel(item.price_source)}
+                                                    </span>
+                                                </div>
+                                                {item.price_warning && (
+                                                    <p className="text-[11px] font-semibold text-amber-600">{item.price_warning}</p>
+                                                )}
+                                                {item.manual_price && manualPriceError(item, manualPriceMinMargin) && (
+                                                    <p className="text-[11px] font-semibold text-red-600">
+                                                        {manualPriceError(item, manualPriceMinMargin)}
+                                                    </p>
+                                                )}
+                                                {canUseManualPrice && !item.locked_credit_line && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setManualPriceProductId(item.product.id)}
+                                                        className="self-start text-[11px] font-semibold text-indigo-600 hover:text-indigo-700"
+                                                    >
+                                                        {item.manual_price ? 'Editar precio manual' : 'Precio manual'}
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            <div className="flex w-full items-center justify-start gap-2 sm:w-auto sm:shrink-0 sm:justify-end sm:pt-1">
+                                                <div className="whitespace-nowrap text-right text-sm font-semibold text-slate-900">
+                                                    {formatCurrency(Number(item.unit_price) * quantityNumber(item.quantity), country)}
+                                                </div>
+
                                                 <button
                                                     type="button"
-                                                    onClick={() => setManualPriceProductId(item.product.id)}
-                                                    className="self-start text-[11px] font-semibold text-indigo-600 hover:text-indigo-700"
+                                                    title="Eliminar producto"
+                                                    aria-label="Eliminar producto"
+                                                    disabled={processing}
+                                                    onClick={() => removeProduct(item.product.id)}
+                                                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-base text-transparent hover:bg-red-50 hover:[&>svg]:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                                                 >
-                                                    {item.manual_price ? 'Editar precio manual' : 'Precio manual'}
+                                                    <svg
+                                                        aria-hidden="true"
+                                                        viewBox="0 0 24 24"
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        strokeWidth="2"
+                                                        strokeLinecap="round"
+                                                        strokeLinejoin="round"
+                                                        className="h-5 w-5 text-red-500 transition"
+                                                    >
+                                                        <path d="M3 6h18" />
+                                                        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                                                        <path d="M10 11v6" />
+                                                        <path d="M14 11v6" />
+                                                    </svg>
                                                 </button>
-                                            )}
+                                            </div>
                                         </div>
-
-                                        <div className="shrink-0 justify-self-end whitespace-nowrap text-right text-sm font-semibold text-slate-900 2xl:w-[112px] 2xl:justify-self-auto">
-                                            {formatCurrency(Number(item.unit_price) * quantityNumber(item.quantity), country)}
-                                        </div>
-
-                                        <button
-                                            type="button"
-                                            title={t('actions.remove')}
-                                            aria-label={t('actions.remove')}
-                                            disabled={processing}
-                                            onClick={() => removeProduct(item.product.id)}
-                                            className="relative shrink-0 justify-self-end rounded-md px-2 py-1 text-sm font-bold text-transparent after:text-red-500 after:content-['x'] hover:bg-red-50 hover:text-transparent hover:after:text-red-700 disabled:cursor-not-allowed disabled:opacity-50 2xl:justify-self-auto"
-                                        >
-                                            🗑
-                                        </button>
                                     </div>
                                 ))}
                             </div>

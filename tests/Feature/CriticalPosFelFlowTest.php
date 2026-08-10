@@ -1199,6 +1199,35 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringContainsString('Selecciona un producto de los resultados.', $source);
     }
 
+    public function test_pos_cart_items_use_two_row_layout_and_latest_item_ordering(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+
+        $this->assertStringContainsString('className="space-y-2 border-b border-slate-100 py-2 last:border-b-0"', $source);
+        $this->assertStringContainsString('className="line-clamp-2 break-words font-semibold leading-4 text-slate-900"', $source);
+        $this->assertStringContainsString('className="grid grid-cols-1 items-start gap-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]"', $source);
+        $this->assertStringContainsString('title="Eliminar producto"', $source);
+        $this->assertStringContainsString('aria-label="Eliminar producto"', $source);
+        $this->assertStringContainsString('{ ...existing, quantity: String(quantityNumber(existing.quantity) + 1) }', $source);
+        $this->assertStringContainsString("...items.filter((item) => item.product.id !== product.id),", $source);
+        $this->assertStringContainsString(': [buildCartItem(product), ...items];', $source);
+        $this->assertStringNotContainsString('2xl:grid-cols-[minmax(0,1fr)_144px_170px_112px_32px]', $source);
+    }
+
+    public function test_pos_customer_summary_can_collapse_and_expand_without_removing_customer_controls(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+
+        $this->assertStringContainsString('const [customerEditing, setCustomerEditing] = useState(false);', $source);
+        $this->assertStringContainsString('Cliente: {customerTypeLabel}', $source);
+        $this->assertStringContainsString('Editar cliente', $source);
+        $this->assertStringContainsString('Listo', $source);
+        $this->assertStringContainsString('setCustomerEditing(true);', $source);
+        $this->assertStringContainsString('setCustomerEditing(false);', $source);
+        $this->assertStringContainsString('Consumidor Final', $source);
+        $this->assertStringContainsString('Consultar NIT', $source);
+    }
+
     public function test_pos_recent_products_are_scoped_and_rehydrated_without_stale_payloads(): void
     {
         $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
