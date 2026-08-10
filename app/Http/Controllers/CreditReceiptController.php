@@ -220,7 +220,7 @@ class CreditReceiptController extends Controller
 
     public function print(CreditReceipt $creditReceipt)
     {
-        abort_unless(Credits::enabled(), 403, 'El módulo de créditos no está habilitado.');
+        abort_unless(Credits::reservationsEnabled(), 403, 'Las reservas de crédito no están habilitadas para este negocio.');
         $this->authorizeReceipt($creditReceipt);
         abort_unless(Permissions::userHas(request()->user(), Permissions::CREDITS_PRINT) || request()->hasValidSignature(), 403);
 
@@ -367,7 +367,12 @@ class CreditReceiptController extends Controller
 
     private function ensureCreditsAvailable(Request $request, string $permission): void
     {
-        abort_unless(Credits::enabled(), 403, 'El módulo de créditos no está habilitado.');
+        if (! Credits::reservationsEnabled()) {
+            throw ValidationException::withMessages([
+                'document_type' => 'Las reservas de crédito no están habilitadas para este negocio.',
+            ]);
+        }
+
         abort_unless(Permissions::userHas($request->user(), $permission), 403);
     }
 

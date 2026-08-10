@@ -113,6 +113,16 @@ class TenantReportsTest extends TestCase
             'status' => 'active',
             'created_by' => $user->id,
         ]);
+        TenantModule::query()->create([
+            'business_id' => $business->id,
+            'module' => 'credits',
+            'is_enabled' => true,
+            'enabled_at' => now(),
+        ]);
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'enable_credit_reservations' => true,
+            'reserve_stock_on_credit_reservations' => true,
+        ]);
         $this->creditReservation($business, $main, $product, 1);
 
         $this->actingAs($user)

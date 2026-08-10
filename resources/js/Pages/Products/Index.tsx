@@ -219,9 +219,7 @@ export default function ProductIndex({
                 forceFormData: true,
                 preserveScroll: true,
                 onSuccess: () => {
-                    setEditing(null);
                     clearImagePreview();
-                    reset();
                 },
             });
             return;
@@ -234,7 +232,6 @@ export default function ProductIndex({
             preserveScroll: true,
             onSuccess: () => {
                 clearImagePreview();
-                reset();
             },
         });
     }

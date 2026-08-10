@@ -2009,6 +2009,11 @@ class RoutesPreSalesTest extends TestCase
         $product = $this->product($business, $branch, stock: 10);
         $visit = $this->startedVisit($business, $branch, $seller);
 
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'enable_credit_reservations' => true,
+            'reserve_stock_on_credit_reservations' => true,
+        ]);
+
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
             'items' => [['product_id' => $product->id, 'quantity' => 4]],
         ])->assertSessionHasNoErrors();
@@ -2298,7 +2303,7 @@ class RoutesPreSalesTest extends TestCase
             'allow_invoices' => false,
         ]);
 
-        foreach (['routes', 'inventory', 'branches'] as $module) {
+        foreach (['routes', 'inventory', 'branches', 'credits'] as $module) {
             TenantModule::query()->create([
                 'business_id' => $business->id,
                 'module' => $module,

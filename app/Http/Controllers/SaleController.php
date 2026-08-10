@@ -104,9 +104,10 @@ class SaleController extends Controller
                 'remember_last_customer_product_price' => (bool) ($tenantSettings?->remember_last_customer_product_price ?? false),
             ],
             'available_document_types' => $availableDocumentTypes,
-            'credit_available' => Credits::enabled($businessId) && Permissions::userHas($request->user(), Permissions::CREDITS_CREATE),
-            'credit_sales_available' => Credits::enabled($businessId) && Permissions::userHas($request->user(), Permissions::CREDITS_SALES_CREATE),
+            'credit_available' => Credits::reservationsEnabled($businessId) && Permissions::userHas($request->user(), Permissions::CREDITS_CREATE),
+            'credit_sales_available' => Credits::salesEnabled($businessId) && Permissions::userHas($request->user(), Permissions::CREDITS_SALES_CREATE),
             'allow_negative_stock' => (bool) ($tenantSettings?->allow_negative_stock ?? false),
+            'show_other_branches_stock_in_pos' => (bool) ($tenantSettings?->show_other_branches_stock_in_pos ?? false),
             'credit_invoice' => $creditInvoice,
             'products' => [],
             'categories' => Category::query()
@@ -128,6 +129,8 @@ class SaleController extends Controller
 
         $businessId = currentBusinessId();
         $activeBranch = BranchInventory::activeBranch($businessId);
+        $tenantSettings = TenantSetting::query()->where('business_id', $businessId)->first();
+        $showOtherBranchesStock = (bool) ($tenantSettings?->show_other_branches_stock_in_pos ?? false);
         $search = trim((string) $request->query('q', ''));
         $categoryId = $request->integer('category_id') ?: null;
         $ids = collect(explode(',', (string) $request->query('ids', '')))
@@ -268,9 +271,9 @@ class SaleController extends Controller
         $exactCodeMatches = $exactCodeMatches->where('business_id', $businessId)->values();
 
         return response()->json([
-            'products' => $this->posProductPayload($products, $businessId, $activeBranch->id),
-            'exact_barcode_matches' => $this->posProductPayload($exactBarcodeMatches, $businessId, $activeBranch->id),
-            'exact_code_matches' => $this->posProductPayload($exactCodeMatches, $businessId, $activeBranch->id),
+            'products' => $this->posProductPayload($products, $businessId, $activeBranch->id, $showOtherBranchesStock),
+            'exact_barcode_matches' => $this->posProductPayload($exactBarcodeMatches, $businessId, $activeBranch->id, $showOtherBranchesStock),
+            'exact_code_matches' => $this->posProductPayload($exactCodeMatches, $businessId, $activeBranch->id, $showOtherBranchesStock),
         ]);
     }
 
@@ -352,7 +355,11 @@ class SaleController extends Controller
         $isCreditSale = ($data['payment_condition'] ?? 'paid') === 'credit';
 
         if ($isCreditSale) {
-            abort_unless(Credits::enabled($business->id), 403, 'El módulo de créditos no está habilitado.');
+            if (! Credits::salesEnabled($business->id)) {
+                throw ValidationException::withMessages([
+                    'payment_condition' => 'Las ventas al crédito no están habilitadas para este negocio.',
+                ]);
+            }
             abort_unless(Permissions::userHas($request->user(), Permissions::CREDITS_SALES_CREATE), 403);
         } elseif (empty($data['payments'])) {
             throw ValidationException::withMessages([
@@ -416,7 +423,7 @@ class SaleController extends Controller
         }
 
         if (collect($data['items'])->contains(fn (array $item) => filled($item['credit_line_id'] ?? null))
-            && ! Credits::enabled($business->id)) {
+            && ! module_enabled('credits', $business->id)) {
             abort(403, 'El módulo de créditos no está habilitado.');
         }
 
@@ -1578,7 +1585,7 @@ class SaleController extends Controller
         ];
     }
 
-    private function posProductPayload(Collection $products, int $businessId, int $branchId): array
+    private function posProductPayload(Collection $products, int $businessId, int $branchId, bool $includeOtherBranches = false): array
     {
         if ($products->isEmpty()) {
             return [];
@@ -1590,6 +1597,9 @@ class SaleController extends Controller
         $defaultPriceType = $priceTypes->firstWhere('is_default', true) ?: $priceTypes->first();
 
         $stockBreakdown = StockAvailability::getBreakdownForProducts($businessId, $branchId, $productIds);
+        $otherBranchAvailability = $includeOtherBranches
+            ? $this->otherBranchAvailabilityPayload($businessId, $branchId, $productIds)
+            : collect();
 
         $globalPrices = $priceTypeIds === []
             ? collect()
@@ -1617,7 +1627,9 @@ class SaleController extends Controller
             $globalPrices,
             $branchPrices,
             $priceTypes,
-            $defaultPriceType
+            $defaultPriceType,
+            $otherBranchAvailability,
+            $includeOtherBranches
         ) {
             $productId = (int) $product->id;
             $breakdown = $stockBreakdown->get($productId, []);
@@ -1651,7 +1663,7 @@ class SaleController extends Controller
                 : $prices->first();
             $salePrice = $defaultPayloadPrice['price'] ?? (float) $product->sale_price;
 
-            return [
+            $payload = [
                 'id' => $product->id,
                 'category_id' => $product->category_id,
                 'brand_id' => $product->brand_id,
@@ -1676,7 +1688,48 @@ class SaleController extends Controller
                 'prices' => $prices,
                 'branch_price_applied' => $defaultPayloadPrice && ($defaultPayloadPrice['source'] ?? null) === 'branch_specific',
             ];
+
+            if ($includeOtherBranches) {
+                $payload['other_branch_availability'] = $otherBranchAvailability->get($productId, []);
+            }
+
+            return $payload;
         })->values()->all();
+    }
+
+    private function otherBranchAvailabilityPayload(int $businessId, int $activeBranchId, array $productIds): Collection
+    {
+        $branches = Branch::query()
+            ->where('business_id', $businessId)
+            ->where('is_active', true)
+            ->whereKeyNot($activeBranchId)
+            ->orderBy('name')
+            ->get(['id', 'name']);
+
+        if ($branches->isEmpty()) {
+            return collect();
+        }
+
+        $availability = collect($productIds)->mapWithKeys(fn (int $productId) => [$productId => []]);
+
+        foreach ($branches as $branch) {
+            $breakdown = StockAvailability::getBreakdownForProducts($businessId, (int) $branch->id, $productIds);
+
+            foreach ($breakdown as $productId => $stock) {
+                $availability->put((int) $productId, [
+                    ...($availability->get((int) $productId, [])),
+                    [
+                        'branch_id' => (int) $branch->id,
+                        'branch_name' => $branch->name,
+                        'physical_stock' => (float) ($stock['physical_stock'] ?? 0),
+                        'reserved_total' => (float) ($stock['reserved_total'] ?? 0),
+                        'available_stock' => (float) ($stock['available_stock'] ?? 0),
+                    ],
+                ]);
+            }
+        }
+
+        return $availability;
     }
 
     private function normalizeProductSearchTerm(string $value): string

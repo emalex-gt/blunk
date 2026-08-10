@@ -38,6 +38,15 @@ type Product = {
     image_url: string | null;
     prices?: ProductPrice[];
     branch_price_applied?: boolean;
+    other_branch_availability?: OtherBranchAvailability[];
+};
+
+type OtherBranchAvailability = {
+    branch_id: number;
+    branch_name: string;
+    physical_stock: number;
+    reserved_total: number;
+    available_stock: number;
 };
 
 type ProductPrice = {
@@ -555,6 +564,24 @@ function isMeaningfulPosDraft(draft: PosDraft) {
         || Boolean(draft.discount_type && draft.discount_value);
 }
 
+function otherBranchStockSummary(product: Product) {
+    const branches = (product.other_branch_availability ?? [])
+        .filter((branch) => Number.isFinite(Number(branch.available_stock)))
+        .sort((a, b) => Number(b.available_stock) - Number(a.available_stock));
+
+    if (branches.length === 0) {
+        return null;
+    }
+
+    const visible = branches.slice(0, 2);
+    const extra = branches.length - visible.length;
+    const summary = visible
+        .map((branch) => `${branch.branch_name} ${Math.floor(Number(branch.available_stock))}`)
+        .join(', ');
+
+    return extra > 0 ? `${summary}, +${extra} más` : summary;
+}
+
 export default function POS({
     products = [],
     categories,
@@ -591,6 +618,7 @@ export default function POS({
     credit_available?: boolean;
     credit_sales_available?: boolean;
     allow_negative_stock?: boolean;
+    show_other_branches_stock_in_pos?: boolean;
     credit_invoice?: CreditInvoicePayload | null;
     fel?: {
         module_enabled: boolean;
@@ -764,7 +792,7 @@ export default function POS({
                 description: 'Certifica FEL con Digifact.',
             },
             credit: {
-                title: 'Crédito',
+                title: 'Reserva de crédito',
                 description: 'Reserva productos sin facturar.',
             },
         };
@@ -2984,6 +3012,7 @@ export default function POS({
                                     const disabledByStock = !allow_negative_stock && outOfStock;
                                     const lowStock =
                                         availableStock > 0 && availableStock <= product.min_stock;
+                                    const otherBranchesSummary = otherBranchStockSummary(product);
 
                                     return (
                                         <button
@@ -3045,6 +3074,11 @@ export default function POS({
                                                         </span>
                                                     )}
                                                 </div>
+                                                {otherBranchesSummary && (
+                                                    <div className="mt-1 truncate text-[11px] font-medium text-indigo-600" title={otherBranchesSummary}>
+                                                        También en: {otherBranchesSummary}
+                                                    </div>
+                                                )}
                                             </div>
                                         </button>
                                     );
@@ -3314,7 +3348,7 @@ export default function POS({
 
                             <button
                                 type="submit"
-                                disabled={cart.length === 0 || processing || (!hasOpenCashRegister && !credit_available) || hasInvalidCartQuantities || noAvailableDocumentTypes}
+                                disabled={cart.length === 0 || processing || (!hasOpenCashRegister && !credit_available && !credit_sales_available) || hasInvalidCartQuantities || noAvailableDocumentTypes}
                                 className="mt-4 h-14 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-lg font-semibold text-white shadow-lg shadow-indigo-200 transition-all duration-200 hover:-translate-y-0.5 hover:from-indigo-700 hover:to-violet-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : (processing ? t('pos.finalizing') : t('pos.finalize_sale'))}
@@ -3695,7 +3729,7 @@ export default function POS({
                                                         : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50'
                                                 }`}
                                             >
-                                                <div className="font-semibold">Crédito</div>
+                                                <div className="font-semibold">Reserva de crédito</div>
                                                 <div className="mt-1 text-xs text-slate-500">Reserva productos sin facturar.</div>
                                             </button>
                                         )}
@@ -3703,7 +3737,7 @@ export default function POS({
                                 )}
                                 {singleDocumentType && (
                                     <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
-                                        Documento: {singleDocumentType === 'invoice' ? 'Factura FEL' : (singleDocumentType === 'credit' ? 'Crédito' : 'Comprobante')}
+                                        Documento: {singleDocumentType === 'invoice' ? 'Factura FEL' : (singleDocumentType === 'credit' ? 'Reserva de crédito' : 'Comprobante')}
                                     </div>
                                 )}
                                 {noAvailableDocumentTypes && (

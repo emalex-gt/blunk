@@ -11,6 +11,11 @@ class Credits
 {
     public static function enabled(?int $businessId = null): bool
     {
+        return self::salesEnabled($businessId);
+    }
+
+    public static function salesEnabled(?int $businessId = null): bool
+    {
         $businessId ??= currentBusinessId();
 
         if (! $businessId || ! module_enabled('credits', $businessId)) {
@@ -22,12 +27,29 @@ class Credits
             ->value('enable_credit_sales');
     }
 
+    public static function reservationsEnabled(?int $businessId = null): bool
+    {
+        $businessId ??= currentBusinessId();
+
+        if (! $businessId || ! module_enabled('credits', $businessId)) {
+            return false;
+        }
+
+        return (bool) TenantSetting::query()
+            ->where('business_id', $businessId)
+            ->value('enable_credit_reservations');
+    }
+
     public static function reserveStockOnCreditReservations(?int $businessId = null): bool
     {
         $businessId ??= currentBusinessId();
 
         if (! $businessId) {
             return true;
+        }
+
+        if (! self::reservationsEnabled($businessId)) {
+            return false;
         }
 
         $value = TenantSetting::query()

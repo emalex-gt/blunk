@@ -1401,6 +1401,129 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertJsonPath('products.0.available_stock', 5);
     }
 
+    public function test_pos_product_search_hides_other_branch_availability_when_setting_is_disabled(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'branches']);
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $otherBranch = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal B',
+            'code' => 'B',
+            'is_active' => true,
+        ]);
+        ProductBranchStock::query()->updateOrCreate(
+            ['business_id' => $business->id, 'branch_id' => $otherBranch->id, 'product_id' => $product->id],
+            ['stock' => 12],
+        );
+
+        $payload = $this->actingAs($user)
+            ->get(route('sales.products.search', ['q' => $product->code]))
+            ->assertOk()
+            ->json('products.0');
+
+        $this->assertArrayNotHasKey('other_branch_availability', $payload);
+    }
+
+    public function test_pos_product_search_includes_tenant_scoped_other_branch_availability_when_enabled(): void
+    {
+        [$business, $user] = $this->tenant(
+            modules: ['pos', 'branches', 'credits'],
+            enableCredits: true,
+            showOtherBranchesStockInPos: true,
+            reserveStockOnCreditReservations: true,
+        );
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $otherBranch = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal B',
+            'code' => 'B',
+            'is_active' => true,
+        ]);
+        ProductBranchStock::query()->updateOrCreate(
+            ['business_id' => $business->id, 'branch_id' => $otherBranch->id, 'product_id' => $product->id],
+            ['stock' => 12],
+        );
+        $this->creditReservation($business, $otherBranch, $product, 4);
+
+        [$otherBusiness] = $this->tenant(modules: ['pos', 'branches'], showOtherBranchesStockInPos: true);
+        $foreignBranch = Branch::query()->create([
+            'business_id' => $otherBusiness->id,
+            'name' => 'Sucursal Ajena',
+            'code' => 'X',
+            'is_active' => true,
+        ]);
+        ProductBranchStock::query()->create([
+            'business_id' => $otherBusiness->id,
+            'branch_id' => $foreignBranch->id,
+            'product_id' => $product->id,
+            'stock' => 99,
+        ]);
+
+        $availability = $this->actingAs($user)
+            ->get(route('sales.products.search', ['q' => $product->code]))
+            ->assertOk()
+            ->json('products.0.other_branch_availability');
+
+        $this->assertCount(1, $availability);
+        $this->assertSame($otherBranch->id, $availability[0]['branch_id']);
+        $this->assertSame('Sucursal B', $availability[0]['branch_name']);
+        $this->assertSame(12, (int) $availability[0]['physical_stock']);
+        $this->assertSame(4, (int) $availability[0]['reserved_total']);
+        $this->assertSame(8, (int) $availability[0]['available_stock']);
+        $this->assertNotContains('Sucursal Ajena', collect($availability)->pluck('branch_name')->all());
+    }
+
+    public function test_credit_sales_and_credit_reservations_are_controlled_by_separate_settings(): void
+    {
+        [$business, $user] = $this->tenant(
+            modules: ['pos', 'credits'],
+            enableCredits: false,
+            enableCreditReservations: true,
+        );
+        $product = $this->product($business, stock: 5, salePrice: 100);
+
+        $this->actingAs($user)
+            ->get(route('sales.create'))
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Sales/POS')
+                ->where('credit_available', true)
+                ->where('credit_sales_available', false));
+
+        $payload = $this->salePayload($product, quantity: 1, total: 100);
+        $payload['payment_condition'] = 'credit';
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $payload)
+            ->assertSessionHasErrors([
+                'payment_condition' => 'Las ventas al crédito no están habilitadas para este negocio.',
+            ]);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('credits.receipts.store'), $this->creditPayload($product, 1))
+            ->assertSessionHasNoErrors();
+
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'enable_credit_sales' => true,
+            'enable_credit_reservations' => false,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('sales.create'))
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Sales/POS')
+                ->where('credit_available', false)
+                ->where('credit_sales_available', true));
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('credits.receipts.store'), $this->creditPayload($product, 1))
+            ->assertSessionHasErrors([
+                'document_type' => 'Las reservas de crédito no están habilitadas para este negocio.',
+            ]);
+    }
+
     public function test_backend_rejects_sale_when_submitted_branch_differs_from_active_branch(): void
     {
         [$business, $user] = $this->tenant(
@@ -3802,9 +3925,11 @@ class CriticalPosFelFlowTest extends TestCase
         bool $allowReceipts = true,
         bool $allowInvoices = false,
         bool $enableCredits = false,
+        ?bool $enableCreditReservations = null,
         string $pricingScope = 'global',
         bool $allowNegativeStock = false,
         bool $reserveStockOnCreditReservations = true,
+        bool $showOtherBranchesStockInPos = false,
     ): array
     {
         $business = Business::create([
@@ -3825,7 +3950,9 @@ class CriticalPosFelFlowTest extends TestCase
             'allow_manual_price' => $allowManualPrice,
             'remember_last_customer_product_price' => false,
             'enable_credit_sales' => $enableCredits,
+            'enable_credit_reservations' => $enableCreditReservations ?? $enableCredits,
             'allow_negative_stock' => $allowNegativeStock,
+            'show_other_branches_stock_in_pos' => $showOtherBranchesStockInPos,
             'reserve_stock_on_credit_reservations' => $reserveStockOnCreditReservations,
             'allow_receipts' => $allowReceipts,
             'allow_invoices' => $allowInvoices,
@@ -4075,6 +4202,48 @@ class CriticalPosFelFlowTest extends TestCase
             ],
             'note' => 'Reserva a crédito',
         ];
+    }
+
+    private function creditReservation(Business $business, Branch $branch, Product $product, int $quantity): CreditReceiptLine
+    {
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente crédito',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+            'country' => 'GT',
+        ]);
+
+        $receipt = CreditReceipt::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'customer_name' => 'Cliente crédito',
+            'customer_doc_type' => 'NIT',
+            'customer_doc_number' => '57289085',
+            'receipt_number' => 1,
+            'status' => 'pending',
+            'subtotal' => $quantity * (float) $product->sale_price,
+            'discount_amount' => 0,
+            'total' => $quantity * (float) $product->sale_price,
+            'pending_total' => $quantity * (float) $product->sale_price,
+        ]);
+
+        return CreditReceiptLine::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'credit_receipt_id' => $receipt->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'sku' => $product->code,
+            'quantity' => $quantity,
+            'qty_reserved' => $quantity,
+            'qty_pending' => $quantity,
+            'unit_price' => $product->sale_price,
+            'line_total' => $quantity * (float) $product->sale_price,
+            'pending_total' => $quantity * (float) $product->sale_price,
+            'status' => 'pending',
+        ]);
     }
 
     private function creditPaymentForPrint(User $user): CustomerCreditPayment

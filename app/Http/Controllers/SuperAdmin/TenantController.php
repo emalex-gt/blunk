@@ -65,8 +65,10 @@ class TenantController extends Controller
                 'pre_sale_price_type_id' => null,
                 'pre_sale_allow_manual_price' => false,
                 'enable_credit_sales' => false,
+                'enable_credit_reservations' => false,
                 'reserve_stock_on_credit_reservations' => true,
                 'allow_negative_stock' => false,
+                'show_other_branches_stock_in_pos' => false,
                 'allow_duplicate_product_codes' => false,
                 'allow_duplicate_product_barcodes' => false,
                 'allow_receipts' => true,
@@ -145,8 +147,10 @@ class TenantController extends Controller
                 'pre_sale_price_type_id' => $business->tenantSetting?->pre_sale_price_type_id,
                 'pre_sale_allow_manual_price' => $business->tenantSetting?->pre_sale_allow_manual_price ?? false,
                 'enable_credit_sales' => $business->tenantSetting?->enable_credit_sales ?? false,
+                'enable_credit_reservations' => $business->tenantSetting?->enable_credit_reservations ?? false,
                 'reserve_stock_on_credit_reservations' => $business->tenantSetting?->reserve_stock_on_credit_reservations ?? true,
                 'allow_negative_stock' => $business->tenantSetting?->allow_negative_stock ?? false,
+                'show_other_branches_stock_in_pos' => $business->tenantSetting?->show_other_branches_stock_in_pos ?? false,
                 'allow_duplicate_product_codes' => $business->tenantSetting?->allow_duplicate_product_codes ?? false,
                 'allow_duplicate_product_barcodes' => $business->tenantSetting?->allow_duplicate_product_barcodes ?? false,
                 'allow_receipts' => $business->tenantSetting?->allow_receipts ?? true,
@@ -200,6 +204,7 @@ class TenantController extends Controller
                 ]);
             }
 
+            $previousCreditReservationsEnabled = $business->tenantSetting?->enable_credit_reservations ?? false;
             $previousReserveStockOnCreditReservations = $business->tenantSetting?->reserve_stock_on_credit_reservations ?? true;
 
             TenantSetting::updateOrCreate(
@@ -207,7 +212,9 @@ class TenantController extends Controller
                 $data['settings'],
             );
 
-            if ($previousReserveStockOnCreditReservations && ! $data['settings']['reserve_stock_on_credit_reservations']) {
+            if ($previousReserveStockOnCreditReservations
+                && ($previousCreditReservationsEnabled || $data['settings']['enable_credit_reservations'])
+                && (! $data['settings']['enable_credit_reservations'] || ! $data['settings']['reserve_stock_on_credit_reservations'])) {
                 Credits::releaseReservationStock($business->id);
             }
 
@@ -273,8 +280,10 @@ class TenantController extends Controller
             'pre_sale_price_type_id' => ['nullable', 'integer'],
             'pre_sale_allow_manual_price' => ['nullable', 'boolean'],
             'enable_credit_sales' => ['nullable', 'boolean'],
+            'enable_credit_reservations' => ['nullable', 'boolean'],
             'reserve_stock_on_credit_reservations' => ['nullable', 'boolean'],
             'allow_negative_stock' => ['nullable', 'boolean'],
+            'show_other_branches_stock_in_pos' => ['nullable', 'boolean'],
             'allow_duplicate_product_codes' => ['nullable', 'boolean'],
             'allow_duplicate_product_barcodes' => ['nullable', 'boolean'],
             'allow_receipts' => ['nullable', 'boolean'],
@@ -344,8 +353,10 @@ class TenantController extends Controller
                 'pre_sale_allow_manual_price' => (bool) ($validated['allow_manual_price'] ?? false)
                     && (bool) ($validated['pre_sale_allow_manual_price'] ?? false),
                 'enable_credit_sales' => in_array('credits', $modules, true) && (bool) ($validated['enable_credit_sales'] ?? false),
+                'enable_credit_reservations' => in_array('credits', $modules, true) && (bool) ($validated['enable_credit_reservations'] ?? false),
                 'reserve_stock_on_credit_reservations' => (bool) ($validated['reserve_stock_on_credit_reservations'] ?? true),
                 'allow_negative_stock' => (bool) ($validated['allow_negative_stock'] ?? false),
+                'show_other_branches_stock_in_pos' => (bool) ($validated['show_other_branches_stock_in_pos'] ?? false),
                 'allow_duplicate_product_codes' => (bool) ($validated['allow_duplicate_product_codes'] ?? false),
                 'allow_duplicate_product_barcodes' => (bool) ($validated['allow_duplicate_product_barcodes'] ?? false),
                 'allow_receipts' => (bool) ($validated['allow_receipts'] ?? true),

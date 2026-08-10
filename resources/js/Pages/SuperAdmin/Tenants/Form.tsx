@@ -82,8 +82,10 @@ export default function Form({
         pre_sale_price_type_id?: number | null;
         pre_sale_allow_manual_price?: boolean;
         enable_credit_sales?: boolean;
+        enable_credit_reservations?: boolean;
         reserve_stock_on_credit_reservations?: boolean;
         allow_negative_stock?: boolean;
+        show_other_branches_stock_in_pos?: boolean;
         allow_duplicate_product_codes?: boolean;
         allow_duplicate_product_barcodes?: boolean;
         allow_receipts?: boolean;
@@ -117,8 +119,10 @@ export default function Form({
         pre_sale_price_type_id: settings.pre_sale_price_type_id ?? '',
         pre_sale_allow_manual_price: settings.pre_sale_allow_manual_price ?? false,
         enable_credit_sales: settings.enable_credit_sales ?? false,
+        enable_credit_reservations: settings.enable_credit_reservations ?? false,
         reserve_stock_on_credit_reservations: settings.reserve_stock_on_credit_reservations ?? true,
         allow_negative_stock: settings.allow_negative_stock ?? false,
+        show_other_branches_stock_in_pos: settings.show_other_branches_stock_in_pos ?? false,
         allow_duplicate_product_codes: settings.allow_duplicate_product_codes ?? false,
         allow_duplicate_product_barcodes: settings.allow_duplicate_product_barcodes ?? false,
         allow_receipts: settings.allow_receipts ?? true,
@@ -385,24 +389,35 @@ export default function Form({
                     {data.modules.includes('credits') && (
                         <div className="mt-6 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
                             <div className="mb-4">
-                                <h3 className="text-base font-semibold text-gray-900">Configuración de créditos</h3>
+                                <h3 className="text-base font-semibold text-gray-900">Créditos</h3>
                                 <p className="mt-1 text-sm text-gray-500">
-                                    Activa la reserva de productos a crédito en POS para este tenant.
+                                    Configura por separado las ventas al crédito y las reservas pendientes de facturar.
                                 </p>
                             </div>
                             <Toggle
                                 checked={data.enable_credit_sales}
                                 onChange={(checked) => setData('enable_credit_sales', checked)}
-                                label="Habilitar ventas a crédito"
+                                label="Permitir ventas al crédito"
+                                description="Permite finalizar ventas con condición de pago crédito y crear cuentas por cobrar."
                             />
                             <div className="mt-3">
                                 <Toggle
-                                    checked={data.reserve_stock_on_credit_reservations}
-                                    onChange={(checked) => setData('reserve_stock_on_credit_reservations', checked)}
-                                    label="Reservar stock en reservas de crédito"
-                                    description="Si está activo, las reservas de crédito apartan inventario y reducen el stock disponible. Si está inactivo, solo se guarda la reserva y el stock se descuenta hasta generar la venta."
+                                    checked={data.enable_credit_reservations}
+                                    onChange={(checked) => setData('enable_credit_reservations', checked)}
+                                    label="Permitir reservas de crédito"
+                                    description="Permite crear reservas de productos sin facturar ni descontar stock físico."
                                 />
                             </div>
+                            {data.enable_credit_reservations && (
+                                <div className="mt-3">
+                                    <Toggle
+                                        checked={data.reserve_stock_on_credit_reservations}
+                                        onChange={(checked) => setData('reserve_stock_on_credit_reservations', checked)}
+                                        label="Reservar stock en reservas de crédito"
+                                        description="Si está activo, las reservas de crédito apartan inventario y reducen el stock disponible. Si está inactivo, solo se guarda la reserva y el stock se descuenta hasta generar la venta."
+                                    />
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -414,7 +429,7 @@ export default function Form({
                                     Define si el tenant usa sucursales, comparte catálogo y maneja precios globales o por sucursal.
                                 </p>
                             </div>
-                            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                                 <Toggle
                                     checked={data.use_branches}
                                     onChange={(checked) => setData('use_branches', checked)}
@@ -424,6 +439,12 @@ export default function Form({
                                     checked={data.products_shared_across_branches}
                                     onChange={(checked) => setData('products_shared_across_branches', checked)}
                                     label="Productos compartidos entre sucursales"
+                                />
+                                <Toggle
+                                    checked={data.show_other_branches_stock_in_pos}
+                                    onChange={(checked) => setData('show_other_branches_stock_in_pos', checked)}
+                                    label="Mostrar disponibilidad de otras sucursales en POS"
+                                    description="Si está activo, los resultados del buscador del POS mostrarán también la disponibilidad del producto en otras sucursales. La venta seguirá usando la sucursal activa."
                                 />
                                 <Field label="Precios" error={errors.pricing_scope}>
                                     <select
