@@ -141,7 +141,7 @@ export default function Show({ preSale }: Props) {
                         <h2 className="text-sm font-semibold text-slate-900">Productos</h2>
                     </div>
                     <div className="overflow-x-auto">
-                        <table className="min-w-full text-sm">
+                        <table className="min-w-[1120px] text-sm">
                             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
                                 <tr>
                                     <th className="px-4 py-3">Código</th>
@@ -163,7 +163,7 @@ export default function Show({ preSale }: Props) {
                                             {item.product_code || '-'}
                                             {item.product_barcode && <div className="text-xs text-slate-500">{item.product_barcode}</div>}
                                         </td>
-                                        <td className="px-4 py-3 font-medium text-slate-900">{item.product_name}</td>
+                                        <td className="min-w-64 px-4 py-3 font-medium text-slate-900" title={item.product_name ?? ''}>{item.product_name}</td>
                                         <td className="px-4 py-3">{formatNumber(item.quantity)}</td>
                                         <td className="px-4 py-3">{formatNumber(item.reserved_quantity)}</td>
                                         <td className="px-4 py-3">

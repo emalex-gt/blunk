@@ -361,12 +361,12 @@ export default function Visit({
                                 className="w-full rounded-xl bg-white p-4 text-left shadow-sm ring-1 ring-slate-200 disabled:opacity-50"
                             >
                                 <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                        <h2 className="font-semibold text-slate-950">{product.name}</h2>
-                                        <p className="text-xs text-slate-500">{product.code ?? product.barcode ?? '-'}</p>
+                                    <div className="min-w-0">
+                                        <h2 className="line-clamp-2 font-semibold leading-5 text-slate-950" title={product.name}>{product.name}</h2>
+                                        <p className="truncate text-xs text-slate-500" title={product.code ?? product.barcode ?? ''}>{product.code ?? product.barcode ?? '-'}</p>
                                         <p className="mt-1 text-xs text-slate-500">Existencia: {product.stock} · Reservado: {product.reserved_stock} · Disponible: {product.available_stock}</p>
                                     </div>
-                                    <span className="text-sm font-semibold text-indigo-700">Q {Number(product.sale_price).toFixed(2)}</span>
+                                    <span className="shrink-0 text-sm font-semibold text-indigo-700">Q {Number(product.sale_price).toFixed(2)}</span>
                                 </div>
                                 {allowNegativeStock && product.available_stock <= 0 && (
                                     <p className="mt-2 text-xs font-semibold text-amber-700">Stock negativo permitido</p>
@@ -385,9 +385,9 @@ export default function Visit({
                         {form.data.items.map((item, index) => (
                             <div key={item.product_id} className="rounded-xl bg-slate-50 p-3">
                                 <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                        <p className="text-xs text-slate-500">{item.code ?? item.barcode ?? '-'}</p>
-                                        <p className="font-medium text-slate-900">{item.name}</p>
+                                    <div className="min-w-0">
+                                        <p className="truncate text-xs text-slate-500" title={item.code ?? item.barcode ?? ''}>{item.code ?? item.barcode ?? '-'}</p>
+                                        <p className="line-clamp-2 font-medium leading-5 text-slate-900" title={item.name}>{item.name}</p>
                                     </div>
                                     {canModifyPreSale && (
                                         <button type="button" onClick={() => form.setData('items', form.data.items.filter((_, i) => i !== index))} className="text-sm font-semibold text-red-600">
@@ -395,12 +395,12 @@ export default function Visit({
                                         </button>
                                     )}
                                 </div>
-                                <div className="mt-3 grid grid-cols-3 gap-2 text-xs font-semibold text-slate-500">
+                                <div className="mt-3 hidden grid-cols-3 gap-2 text-xs font-semibold text-slate-500 sm:grid">
                                     <span>Cant.</span>
                                     <span>Precio</span>
                                     <span>Subtotal</span>
                                 </div>
-                                <div className="mt-1 grid grid-cols-3 gap-2">
+                                <div className="mt-2 grid grid-cols-1 gap-2 sm:mt-1 sm:grid-cols-3">
                                     <div className="flex items-center rounded-lg border border-slate-200 bg-white">
                                         <button type="button" disabled={!canModifyPreSale} onClick={() => updateItem(index, { quantity: Math.max(1, item.quantity - 1) })} className="px-3 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">-</button>
                                         <input

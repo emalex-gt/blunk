@@ -582,6 +582,8 @@ export default function POS({
     const [duplicateProductSearchTerm, setDuplicateProductSearchTerm] = useState('');
     const [duplicateProductSelectionMode, setDuplicateProductSelectionMode] = useState<'exact-enter' | 'normal'>('normal');
     const [manualPriceProductId, setManualPriceProductId] = useState<number | null>(null);
+    const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+    const [categorySearch, setCategorySearch] = useState('');
     const [discount, setDiscount] = useState<SaleDiscount | null>(null);
     const [discountForm, setDiscountForm] = useState<SaleDiscount>({
         type: 'fixed',
@@ -2266,6 +2268,31 @@ export default function POS({
     const productsToShow = search || selectedCategoryId ? productSearchResults : currentRecentProducts;
     const showingRecentProducts =
         !search && !selectedCategoryId && currentRecentProducts.length > 0;
+    const selectedCategory = useMemo(
+        () => categories.find((category) => category.id === selectedCategoryId) ?? null,
+        [categories, selectedCategoryId],
+    );
+    const visibleCategoryChips = useMemo(() => {
+        const limit = 3;
+        const initial = categories.slice(0, limit);
+
+        if (selectedCategory && !initial.some((category) => category.id === selectedCategory.id)) {
+            return [...initial, selectedCategory];
+        }
+
+        return initial;
+    }, [categories, selectedCategory]);
+    const categorySearchResults = useMemo(() => {
+        const value = categorySearch.trim().toLowerCase();
+
+        if (value === '') {
+            return categories.slice(0, 20);
+        }
+
+        return categories
+            .filter((category) => category.name.toLowerCase().includes(value))
+            .slice(0, 20);
+    }, [categories, categorySearch]);
     const typedErrors = errors as Record<string, string>;
     const customerError = typedErrors['customer.doc_number'];
     const paymentsError = typedErrors.payments;
@@ -2305,9 +2332,9 @@ export default function POS({
             <Head title={t('nav.sales')} />
             <Toast toasts={toast.toasts} onClose={toast.removeToast} />
 
-            <div className="h-[calc(100vh-4rem)] bg-[#f4f6fb]">
-                <div className="mx-auto grid h-full max-w-[1800px] gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_620px] xl:grid-cols-[minmax(0,1fr)_680px]">
-                    <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
+            <div className="min-h-[calc(100vh-4rem)] overflow-x-hidden bg-[#f4f6fb]">
+                <div className="mx-auto grid w-full max-w-[1800px] min-w-0 items-start gap-3 p-3 sm:p-4 min-[900px]:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] lg:grid-cols-[minmax(0,1fr)_minmax(340px,420px)] xl:grid-cols-[minmax(0,1fr)_minmax(380px,460px)] 2xl:min-h-[calc(100vh-4rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(480px,560px)] 2xl:gap-5 2xl:p-5">
+                    <section className="flex min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)] 2xl:max-h-[calc(100vh-6.5rem)]">
                         <div className="border-b border-slate-200 p-4">
                             {credit_invoice && (
                                 <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700">
@@ -2401,7 +2428,7 @@ export default function POS({
 
                                         {data.customer.consumidor_final ? (
                                             <>
-                                            <div className="grid gap-3 md:grid-cols-3">
+                                            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
                                                 <input
                                                     value={data.customer.name}
                                                     onChange={(event) => setCustomerField('name', event.target.value)}
@@ -2436,7 +2463,7 @@ export default function POS({
                                             </>
                                         ) : (
                                             <>
-                                                <div className="grid gap-3 md:grid-cols-[180px_auto_1fr]">
+                                                <div className="grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)] 2xl:grid-cols-[180px_auto_1fr]">
                                                     <div>
                                                         <label className="block text-xs font-medium text-slate-600">
                                                             NIT
@@ -2469,7 +2496,7 @@ export default function POS({
                                                             {nitLookupLoading ? 'Consultando...' : 'Consultar NIT'}
                                                         </button>
                                                     </div>
-                                                    <div>
+                                                    <div className="sm:col-span-2 2xl:col-span-1">
                                                         <label className="block text-xs font-medium text-slate-600">
                                                             Nombre
                                                         </label>
@@ -2517,7 +2544,7 @@ export default function POS({
                                     </div>
                                 ) : (
                                     <div className="space-y-3">
-                                        <div className="grid gap-3 md:grid-cols-4">
+                                        <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
                                             <div>
                                                 <label className="block text-xs font-medium text-slate-600">
                                                     Tipo de documento
@@ -2569,7 +2596,7 @@ export default function POS({
                                             </div>
                                         </div>
 
-                                        <div className="grid gap-3 md:grid-cols-3">
+                                        <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
                                             <select
                                                 value={data.customer.tax_condition}
                                                 onChange={(event) => setCustomerField('tax_condition', event.target.value)}
@@ -2633,11 +2660,15 @@ export default function POS({
                                 className="mt-3 h-14 w-full rounded-2xl border border-slate-200 bg-white px-5 text-lg font-medium text-slate-900 shadow-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                             />
 
-                            <div className="mt-3 flex gap-2 overflow-x-auto whitespace-nowrap pb-2">
+                            <div className="relative mt-3 flex max-w-full flex-nowrap gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
                                 <button
                                     type="button"
-                                    onClick={() => setSelectedCategoryId(null)}
-                                    className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
+                                    onClick={() => {
+                                        setSelectedCategoryId(null);
+                                        setShowCategoryPicker(false);
+                                        setCategorySearch('');
+                                    }}
+                                    className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
                                         selectedCategoryId === null
                                             ? 'border-indigo-600 bg-indigo-600 text-white shadow-md shadow-indigo-200'
                                             : 'border-slate-200 bg-white text-slate-600 shadow-sm hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700'
@@ -2645,12 +2676,16 @@ export default function POS({
                                 >
                                     {t('categories.all')}
                                 </button>
-                                {categories.map((category) => (
+                                {visibleCategoryChips.map((category) => (
                                     <button
                                         key={category.id}
                                         type="button"
-                                        onClick={() => setSelectedCategoryId(category.id)}
-                                        className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
+                                        onClick={() => {
+                                            setSelectedCategoryId(category.id);
+                                            setShowCategoryPicker(false);
+                                            setCategorySearch('');
+                                        }}
+                                        className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
                                             selectedCategoryId === category.id
                                                 ? 'border-indigo-600 bg-indigo-600 text-white shadow-md shadow-indigo-200'
                                                 : 'border-slate-200 bg-white text-slate-600 shadow-sm hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700'
@@ -2659,10 +2694,55 @@ export default function POS({
                                         {category.name}
                                     </button>
                                 ))}
+                                {categories.length > visibleCategoryChips.length && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowCategoryPicker((current) => !current)}
+                                        className="shrink-0 whitespace-nowrap rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                                    >
+                                        Más categorías
+                                    </button>
+                                )}
+
+                                {showCategoryPicker && (
+                                    <div className="absolute left-0 top-full z-20 mt-2 w-full max-w-md rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
+                                        <input
+                                            value={categorySearch}
+                                            onChange={(event) => setCategorySearch(event.target.value)}
+                                            placeholder="Buscar categoría"
+                                            className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm font-medium text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                            autoFocus
+                                        />
+                                        <div className="mt-2 max-h-64 overflow-y-auto">
+                                            {categorySearchResults.length === 0 ? (
+                                                <div className="px-3 py-2 text-sm text-slate-500">No hay categorías.</div>
+                                            ) : (
+                                                categorySearchResults.map((category) => (
+                                                    <button
+                                                        key={category.id}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setSelectedCategoryId(category.id);
+                                                            setShowCategoryPicker(false);
+                                                            setCategorySearch('');
+                                                        }}
+                                                        className={`block w-full rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${
+                                                            selectedCategoryId === category.id
+                                                                ? 'bg-indigo-50 text-indigo-700'
+                                                                : 'text-slate-700 hover:bg-slate-50'
+                                                        }`}
+                                                    >
+                                                        {category.name}
+                                                    </button>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
 
-                        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                        <div className="min-h-[320px] p-4 2xl:min-h-0 2xl:flex-1 2xl:overflow-y-auto">
                             {(errorMessage || errors.items || errors.note || customerError || paymentsError || cashRegisterError) && (
                                 <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
                                     {errorMessage || errors.items || errors.note || customerError || paymentsError || cashRegisterError}
@@ -2699,7 +2779,7 @@ export default function POS({
                                 </div>
                             )}
 
-                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-3 min-[1700px]:grid-cols-4">
                                 {productsToShow.map((product) => {
                                     const availableStock = Math.floor(product.available_stock ?? product.stock);
                                     const reservedStock = Math.floor(product.reserved_stock ?? 0);
@@ -2721,13 +2801,13 @@ export default function POS({
                                                     src={getProductImageUrl(product.image_url, 200) ?? ''}
                                                     alt={product.name}
                                                     loading="lazy"
-                                                        className="h-24 w-24 shrink-0 rounded-xl object-cover"
+                                                        className="h-20 w-20 shrink-0 rounded-xl object-cover 2xl:h-24 2xl:w-24"
                                                 />
                                             ) : null}
 
                                             <div className="flex min-w-0 flex-1 flex-col justify-between">
                                                 <div>
-                                                    <h3 className="truncate text-sm font-semibold text-slate-900">
+                                                    <h3 className="line-clamp-2 text-sm font-semibold leading-5 text-slate-900" title={product.name}>
                                                         {product.name}
                                                     </h3>
                                                     <div className="mt-1 whitespace-nowrap text-right text-sm font-bold text-slate-900">
@@ -2735,7 +2815,7 @@ export default function POS({
                                                     </div>
                                                 </div>
 
-                                                <div className="truncate text-xs text-slate-500">
+                                                <div className="truncate text-xs text-slate-500" title={product.barcode || product.code || ''}>
                                                     {product.barcode || product.code || t('common.code')}
                                                 </div>
 
@@ -2778,7 +2858,7 @@ export default function POS({
 
                     <form
                         onSubmit={openCheckout}
-                        className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.08)]"
+                        className="flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.08)] 2xl:max-h-[calc(100vh-6.5rem)]"
                     >
                         <header className="border-b border-slate-200 p-4">
                             <div className="flex items-start justify-between gap-3">
@@ -2816,7 +2896,7 @@ export default function POS({
                             </div>
                         </header>
 
-                        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                        <div className="min-h-[260px] p-3 2xl:min-h-0 2xl:flex-1 2xl:overflow-y-auto">
                             {cart.length === 0 && (
                                 <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-300 p-6 text-center text-slate-500">
                                     {t('cart.empty')}
@@ -2827,18 +2907,19 @@ export default function POS({
                                 {cart.map((item) => (
                                     <div
                                         key={item.product.id}
-                                        className="grid grid-cols-[minmax(0,1fr)_144px_180px_120px_32px] items-center gap-3 border-b border-slate-100 py-2 last:border-b-0"
+                                        className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 border-b border-slate-100 py-3 last:border-b-0 2xl:grid-cols-[minmax(0,1fr)_144px_170px_112px_32px] 2xl:items-center 2xl:gap-3"
                                     >
-                                        <div className="flex min-w-0 flex-1 items-center text-sm">
-                                            <span className="shrink-0 font-normal text-gray-500">
-                                                {item.product.barcode || item.product.code || t('common.code')}
-                                            </span>
-                                            <span className="shrink-0 px-1 text-slate-400">-</span>
-                                            <span className="truncate font-semibold text-slate-900">
-                                                {item.product.name}
-                                            </span>
+                                        <div className="col-span-2 flex min-w-0 items-start justify-between gap-2 2xl:col-span-1 2xl:block">
+                                            <div className="min-w-0 text-sm">
+                                                <div className="truncate text-xs font-normal text-gray-500" title={item.product.barcode || item.product.code || ''}>
+                                                    {item.product.barcode || item.product.code || t('common.code')}
+                                                </div>
+                                                <div className="line-clamp-2 font-semibold leading-5 text-slate-900" title={item.product.name}>
+                                                    {item.product.name}
+                                                </div>
+                                            </div>
                                             {item.credit_receipt_number && (
-                                                <span className="ml-2 shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                                                <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
                                                     {item.credit_receipt_number}
                                                 </span>
                                             )}
@@ -2889,7 +2970,7 @@ export default function POS({
                                             )}
                                         </div>
 
-                                        <div className="flex min-w-0 flex-col gap-1">
+                                        <div className="col-span-2 flex min-w-0 flex-col gap-1 sm:col-span-1 2xl:col-span-1">
                                             {price_types.length > 1 && !item.locked_credit_line && (
                                                 <select
                                                     value={item.price_type_id ?? ''}
@@ -2941,7 +3022,7 @@ export default function POS({
                                             )}
                                         </div>
 
-                                        <div className="w-[120px] shrink-0 whitespace-nowrap text-right text-sm font-semibold text-slate-900">
+                                        <div className="shrink-0 justify-self-end whitespace-nowrap text-right text-sm font-semibold text-slate-900 2xl:w-[112px] 2xl:justify-self-auto">
                                             {formatCurrency(Number(item.unit_price) * quantityNumber(item.quantity), country)}
                                         </div>
 
@@ -2951,7 +3032,7 @@ export default function POS({
                                             aria-label={t('actions.remove')}
                                             disabled={processing}
                                             onClick={() => removeProduct(item.product.id)}
-                                            className="shrink-0 rounded-md px-2 py-1 text-base text-red-500 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                            className="relative shrink-0 justify-self-end rounded-md px-2 py-1 text-sm font-bold text-transparent after:text-red-500 after:content-['x'] hover:bg-red-50 hover:text-transparent hover:after:text-red-700 disabled:cursor-not-allowed disabled:opacity-50 2xl:justify-self-auto"
                                         >
                                             🗑
                                         </button>

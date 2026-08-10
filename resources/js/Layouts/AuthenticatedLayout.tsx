@@ -129,7 +129,7 @@ export default function Authenticated({
 
                             <div
                                 ref={navRef}
-                                className="hidden min-w-0 flex-1 flex-wrap items-center gap-2 sm:-my-px sm:ms-6 sm:flex"
+                                className="hidden min-w-0 flex-1 flex-wrap items-center gap-2 lg:-my-px lg:ms-6 lg:flex"
                             >
                                 <HomeNavLink active={route().current('dashboard')} />
                                 {hasModule('pos') && (
@@ -184,7 +184,7 @@ export default function Authenticated({
                             </div>
                         </div>
 
-                        <div className="hidden gap-3 sm:ms-6 sm:flex sm:items-center">
+                        <div className="hidden min-w-0 gap-2 lg:ms-4 lg:flex lg:items-center 2xl:gap-3 2xl:ms-6">
                             {user?.id === 1 && availableBusinesses && (
                                 <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">
                                     Negocio actual
@@ -197,7 +197,7 @@ export default function Authenticated({
                                                 { preserveScroll: true },
                                             )
                                         }
-                                        className="h-10 max-w-56 rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                        className="h-10 max-w-36 rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 xl:max-w-44 2xl:max-w-56"
                                     >
                                         <option value="" disabled>
                                             Cambiar negocio
@@ -223,7 +223,7 @@ export default function Authenticated({
                                                 { preserveScroll: true },
                                             )
                                         }
-                                        className="h-10 max-w-48 rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
+                                        className="h-10 max-w-36 rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 xl:max-w-40 2xl:max-w-48"
                                     >
                                         {branches.map((branch) => (
                                             <option key={branch.id} value={branch.id}>
@@ -260,7 +260,7 @@ export default function Authenticated({
                             </Dropdown>
                         </div>
 
-                        <div className="-me-2 flex items-center sm:hidden">
+                        <div className="-me-2 flex items-center lg:hidden">
                             <button
                                 onClick={() => setShowingNavigationDropdown((current) => !current)}
                                 className="inline-flex items-center justify-center rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 focus:bg-slate-100 focus:text-slate-700 focus:outline-none"
@@ -286,7 +286,7 @@ export default function Authenticated({
                     </div>
                 </div>
 
-                <div className={(showingNavigationDropdown ? 'block' : 'hidden') + ' border-t border-slate-200 bg-white sm:hidden'}>
+                <div className={(showingNavigationDropdown ? 'block' : 'hidden') + ' border-t border-slate-200 bg-white lg:hidden'}>
                     <div className="space-y-1 pb-3 pt-2">
                         <ResponsiveNavLink href={route('dashboard')} active={route().current('dashboard')}>
                             Inicio
