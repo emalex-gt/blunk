@@ -11,10 +11,12 @@ use App\Support\CashRegister;
 use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\Exports\TableExporter;
+use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\ProductSupplierCostHistory;
 use App\Support\Reports\ReportDateRange;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -91,35 +93,64 @@ class PurchaseController extends Controller
         $businessId = currentBusinessId();
         $branchesEnabled = BranchInventory::branchesEnabled($businessId);
         $activeBranch = BranchInventory::activeBranch($businessId);
-        $productsQuery = Product::query()
-            ->where('business_id', $businessId)
-            ->where('is_active', true);
-        BranchInventory::restrictProductsToBranch($productsQuery, $businessId, $activeBranch->id);
-        $products = $productsQuery
-            ->orderBy('name')
-            ->get(['id', 'name', 'code', 'barcode', 'cost_price', 'stock', 'min_stock', 'location', 'image_url']);
-        BranchInventory::applyBranchStockAndPrices($products, $businessId, $activeBranch->id);
-        $supplierCosts = ProductSupplierCostHistory::forProducts($businessId, $products->pluck('id')->all());
-
-        $products->each(function (Product $product) use ($supplierCosts) {
-            $product->setAttribute(
-                'supplier_costs',
-                $supplierCosts->get($product->id, collect())->values(),
-            );
-        });
 
         return Inertia::render('Purchases/Create', [
-            'products' => $products,
+            'products' => [],
             'suppliers' => Supplier::query()
                 ->where('business_id', $businessId)
                 ->where('is_active', true)
                 ->orderBy('name')
+                ->limit(30)
                 ->get(['id', 'name', 'phone', 'email', 'address', 'contact_person']),
             'hasOpenCashRegister' => CashRegister::currentOpenSession($businessId) !== null,
             'branches_enabled' => $branchesEnabled,
             'branches' => $branchesEnabled ? BranchInventory::branchOptions($businessId) : [],
             'active_branch' => $branchesEnabled ? $activeBranch : null,
         ]);
+    }
+
+    public function productSearch(Request $request): JsonResponse
+    {
+        $businessId = currentBusinessId();
+        $activeBranch = BranchInventory::activeBranch($businessId);
+        $search = trim((string) $request->query('q', ''));
+        $ids = $this->productIdsFromRequest($request);
+        $limit = min(max($request->integer('limit', 20), 1), 30);
+
+        if ($search === '' && $ids === []) {
+            return response()->json(['products' => []]);
+        }
+
+        $products = $this->purchaseProductQuery($businessId, $activeBranch->id, $search, $ids, $limit)
+            ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'cost_price', 'sale_price', 'stock', 'min_stock', 'location', 'image_url']);
+
+        return response()->json([
+            'products' => $this->purchaseProductPayload($products, $businessId, $activeBranch->id),
+        ]);
+    }
+
+    public function supplierSearch(Request $request): JsonResponse
+    {
+        $businessId = currentBusinessId();
+        $search = trim((string) $request->query('q', ''));
+
+        if ($search === '') {
+            return response()->json(['suppliers' => []]);
+        }
+
+        $suppliers = Supplier::query()
+            ->where('business_id', $businessId)
+            ->where('is_active', true)
+            ->where(function ($query) use ($search) {
+                $query->where('name', 'ilike', "%{$search}%")
+                    ->orWhere('phone', 'ilike', "%{$search}%")
+                    ->orWhere('email', 'ilike', "%{$search}%");
+            })
+            ->orderBy('name')
+            ->limit(20)
+            ->get(['id', 'name', 'phone', 'email', 'address', 'contact_person']);
+
+        return response()->json(['suppliers' => $suppliers]);
     }
 
     public function store(Request $request): RedirectResponse
@@ -136,6 +167,7 @@ class PurchaseController extends Controller
             'payment_method' => ['required', 'string', 'in:cash,card,bank_transfer,check,credit,other'],
             'paid_from_cash' => ['nullable', 'boolean'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
+            'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
             'note' => ['nullable', 'string', 'max:2000'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'exists:products,id'],
@@ -147,7 +179,7 @@ class PurchaseController extends Controller
             'items.*.quantity.min' => 'La cantidad debe ser un número entero.',
         ]);
 
-        DB::transaction(function () use ($request, $data) {
+        $purchase = DB::transaction(function () use ($request, $data) {
             $businessId = currentBusinessId();
             $branch = isset($data['branch_id'])
                 ? \App\Models\Branch::query()
@@ -261,7 +293,11 @@ class PurchaseController extends Controller
                     $request->user()->id,
                 );
             }
+
+            return $purchase;
         });
+
+        OperationDrafts::markConverted($data['draft_id'] ?? null, 'purchase', 'purchase', $purchase->id, $request);
 
         return redirect()
             ->route('purchases.index')
@@ -358,6 +394,88 @@ class PurchaseController extends Controller
             'other' => 'Otro',
             default => $method ?: '-',
         };
+    }
+
+    private function productIdsFromRequest(Request $request): array
+    {
+        $ids = $request->input('product_ids', $request->query('ids', ''));
+
+        if (is_array($ids)) {
+            return collect($ids)->map(fn ($id) => (int) $id)->filter()->unique()->take(50)->values()->all();
+        }
+
+        return collect(explode(',', (string) $ids))->map(fn (string $id) => (int) trim($id))->filter()->unique()->take(50)->values()->all();
+    }
+
+    private function purchaseProductQuery(int $businessId, int $branchId, string $search, array $ids, int $limit)
+    {
+        $query = Product::query()
+            ->where('products.business_id', $businessId)
+            ->where('products.is_active', true)
+            ->with([
+                'category:id,business_id,name',
+                'brand:id,business_id,name',
+            ]);
+
+        BranchInventory::restrictProductsToBranch($query, $businessId, $branchId);
+
+        if ($ids !== []) {
+            return $query->whereIn('products.id', $ids)->orderBy('products.name');
+        }
+
+        $like = "%{$search}%";
+        $normalized = $this->normalizeProductSearchTerm($search);
+
+        return $query
+            ->where(function ($query) use ($businessId, $like, $normalized) {
+                $query->whereRaw($this->normalizedSql('products.code').' = ?', [$normalized])
+                    ->orWhereRaw($this->normalizedSql('products.barcode').' = ?', [$normalized])
+                    ->orWhere('products.code', 'ilike', $like)
+                    ->orWhere('products.barcode', 'ilike', $like)
+                    ->orWhere('products.name', 'ilike', $like)
+                    ->orWhereHas('category', fn ($category) => $category->where('business_id', $businessId)->where('name', 'ilike', $like))
+                    ->orWhereHas('brand', fn ($brand) => $brand->where('business_id', $businessId)->where('name', 'ilike', $like));
+            })
+            ->orderByRaw(
+                'CASE WHEN '.$this->normalizedSql('products.code').' = ? OR '.$this->normalizedSql('products.barcode').' = ? THEN 0 ELSE 1 END',
+                [$normalized, $normalized],
+            )
+            ->orderBy('products.name')
+            ->limit($limit);
+    }
+
+    private function purchaseProductPayload($products, int $businessId, int $branchId): array
+    {
+        BranchInventory::applyBranchStockAndPrices($products, $businessId, $branchId);
+        $supplierCosts = ProductSupplierCostHistory::forProducts($businessId, $products->pluck('id')->all());
+
+        return $products->map(function (Product $product) use ($supplierCosts) {
+            return [
+                'id' => $product->id,
+                'name' => $product->name,
+                'code' => $product->code,
+                'barcode' => $product->barcode,
+                'category_name' => $product->category?->name,
+                'brand_name' => $product->brand?->name,
+                'cost_price' => (string) $product->cost_price,
+                'sale_price' => (string) $product->sale_price,
+                'stock' => (float) $product->stock,
+                'min_stock' => (float) $product->min_stock,
+                'location' => $product->location,
+                'image_url' => $product->image_url,
+                'supplier_costs' => $supplierCosts->get($product->id, collect())->values(),
+            ];
+        })->values()->all();
+    }
+
+    private function normalizeProductSearchTerm(string $value): string
+    {
+        return mb_strtoupper(preg_replace('/\s+/', ' ', trim($value)) ?? '');
+    }
+
+    private function normalizedSql(string $column): string
+    {
+        return "UPPER(regexp_replace(TRIM(COALESCE({$column}, '')), '\\s+', ' ', 'g'))";
     }
 
     private function resolveSupplier(int $businessId, mixed $supplierId, ?string $supplierName, ?array $supplierData): ?Supplier

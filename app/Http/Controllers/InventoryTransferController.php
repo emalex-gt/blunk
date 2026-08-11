@@ -10,10 +10,12 @@ use App\Models\StockMovement;
 use App\Support\BranchInventory;
 use App\Support\Exports\TableExporter;
 use App\Support\Inventory\StockPolicy;
+use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\Reports\ReportDateRange;
 use App\Support\StockAvailability;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -95,24 +97,41 @@ class InventoryTransferController extends Controller
         $this->authorizePermission($request, Permissions::INVENTORY_TRANSFERS_CREATE);
         $businessId = currentBusinessId();
         $activeBranch = BranchInventory::activeBranch($businessId);
-        $products = Product::query()
-            ->where('business_id', $businessId)
-            ->where('is_active', true)
-            ->orderBy('name')
-            ->get(['id', 'name', 'code', 'barcode', 'stock']);
-
-        BranchInventory::applyBranchStockAndPrices($products, $businessId, $activeBranch->id);
-        $products->each(function (Product $product) use ($activeBranch) {
-            $reserved = StockAvailability::reservedStock($product, null, $activeBranch->id);
-            $product->setAttribute('reserved_stock', $reserved);
-            $product->setAttribute('available_stock', (float) $product->stock - $reserved);
-        });
 
         return Inertia::render('Inventory/Transfers/Create', [
             'branches' => BranchInventory::branchOptions($businessId),
             'activeBranch' => $activeBranch,
-            'products' => $products,
+            'products' => [],
             'allow_negative_stock' => StockPolicy::allowsNegativeStockForBusinessId($businessId),
+        ]);
+    }
+
+    public function productSearch(Request $request): JsonResponse
+    {
+        $this->authorizePermission($request, Permissions::INVENTORY_TRANSFERS_CREATE);
+
+        $businessId = currentBusinessId();
+        $activeBranch = BranchInventory::activeBranch($businessId);
+        $sourceBranchId = $request->integer('source_branch_id') ?: $activeBranch->id;
+        $sourceBranch = $this->branchForBusiness($sourceBranchId, $businessId);
+
+        if (! BranchInventory::canSwitchBranches($request->user()) && (int) $sourceBranch->id !== (int) $activeBranch->id) {
+            abort(403);
+        }
+
+        $search = trim((string) $request->query('q', ''));
+        $ids = $this->productIdsFromRequest($request);
+        $limit = min(max($request->integer('limit', 20), 1), 30);
+
+        if ($search === '' && $ids === []) {
+            return response()->json(['products' => []]);
+        }
+
+        $products = $this->transferProductQuery($businessId, $sourceBranch->id, $search, $ids, $limit)
+            ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'stock', 'location']);
+
+        return response()->json([
+            'products' => $this->transferProductPayload($products, $businessId, $sourceBranch->id),
         ]);
     }
 
@@ -123,6 +142,7 @@ class InventoryTransferController extends Controller
         $data = $request->validate([
             'from_branch_id' => ['required', 'integer', 'exists:branches,id'],
             'to_branch_id' => ['required', 'integer', 'exists:branches,id', 'different:from_branch_id'],
+            'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
@@ -211,6 +231,8 @@ class InventoryTransferController extends Controller
             return $transfer;
         });
 
+        OperationDrafts::markConverted($data['draft_id'] ?? null, 'transfer', 'transfer', $transfer->id, $request);
+
         return redirect()->route('inventory.transfers.show', $transfer)->with('success', 'Traslado registrado correctamente.');
     }
 
@@ -290,6 +312,91 @@ class InventoryTransferController extends Controller
             'product_search' => trim((string) $request->query('product_search', '')),
             'status' => (string) $request->query('status', 'all'),
         ];
+    }
+
+    private function productIdsFromRequest(Request $request): array
+    {
+        $ids = $request->input('product_ids', $request->query('ids', ''));
+
+        if (is_array($ids)) {
+            return collect($ids)->map(fn ($id) => (int) $id)->filter()->unique()->take(50)->values()->all();
+        }
+
+        return collect(explode(',', (string) $ids))->map(fn (string $id) => (int) trim($id))->filter()->unique()->take(50)->values()->all();
+    }
+
+    private function transferProductQuery(int $businessId, int $branchId, string $search, array $ids, int $limit)
+    {
+        $query = Product::query()
+            ->where('products.business_id', $businessId)
+            ->where('products.is_active', true)
+            ->with([
+                'category:id,business_id,name',
+                'brand:id,business_id,name',
+            ]);
+
+        BranchInventory::restrictProductsToBranch($query, $businessId, $branchId);
+
+        if ($ids !== []) {
+            return $query->whereIn('products.id', $ids)->orderBy('products.name');
+        }
+
+        $like = "%{$search}%";
+        $normalized = $this->normalizeProductSearchTerm($search);
+
+        return $query
+            ->where(function ($query) use ($businessId, $like, $normalized) {
+                $query->whereRaw($this->normalizedSql('products.code').' = ?', [$normalized])
+                    ->orWhereRaw($this->normalizedSql('products.barcode').' = ?', [$normalized])
+                    ->orWhere('products.code', 'ilike', $like)
+                    ->orWhere('products.barcode', 'ilike', $like)
+                    ->orWhere('products.name', 'ilike', $like)
+                    ->orWhereHas('category', fn ($category) => $category->where('business_id', $businessId)->where('name', 'ilike', $like))
+                    ->orWhereHas('brand', fn ($brand) => $brand->where('business_id', $businessId)->where('name', 'ilike', $like));
+            })
+            ->orderByRaw(
+                'CASE WHEN '.$this->normalizedSql('products.code').' = ? OR '.$this->normalizedSql('products.barcode').' = ? THEN 0 ELSE 1 END',
+                [$normalized, $normalized],
+            )
+            ->orderBy('products.name')
+            ->limit($limit);
+    }
+
+    private function transferProductPayload($products, int $businessId, int $branchId): array
+    {
+        $productIds = $products->pluck('id')->all();
+        $breakdown = StockAvailability::getBreakdownForProducts($businessId, $branchId, $productIds);
+
+        return $products->map(function (Product $product) use ($breakdown) {
+            $stock = $breakdown->get($product->id, [
+                'physical_stock' => 0,
+                'reserved_total' => 0,
+                'available_stock' => 0,
+            ]);
+
+            return [
+                'id' => $product->id,
+                'name' => $product->name,
+                'code' => $product->code,
+                'barcode' => $product->barcode,
+                'category_name' => $product->category?->name,
+                'brand_name' => $product->brand?->name,
+                'stock' => (float) $stock['physical_stock'],
+                'reserved_stock' => (float) $stock['reserved_total'],
+                'available_stock' => (float) $stock['available_stock'],
+                'location' => $product->location,
+            ];
+        })->values()->all();
+    }
+
+    private function normalizeProductSearchTerm(string $value): string
+    {
+        return mb_strtoupper(preg_replace('/\s+/', ' ', trim($value)) ?? '');
+    }
+
+    private function normalizedSql(string $column): string
+    {
+        return "UPPER(regexp_replace(TRIM(COALESCE({$column}, '')), '\\s+', ' ', 'g'))";
     }
 
     private function branchForBusiness(int $branchId, int $businessId): Branch

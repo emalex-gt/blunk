@@ -15,6 +15,7 @@ use App\Support\BusinessLogo;
 use App\Support\Credits;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\Inventory\StockPolicy;
+use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\StockAvailability;
 use Illuminate\Http\JsonResponse;
@@ -94,6 +95,7 @@ class CreditReceiptController extends Controller
 
         $data = $request->validate([
             'branch_id' => ['nullable', 'integer'],
+            'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
             'customer' => ['required', 'array'],
             'customer.id' => ['nullable', 'integer', 'exists:customers,id'],
             'customer.name' => ['required', 'string', 'max:255'],
@@ -210,6 +212,8 @@ class CreditReceiptController extends Controller
         $redirect = redirect()->route('sales.create')
             ->with('success', 'Crédito registrado correctamente.')
             ->with('credit_receipt_id', $receipt->id);
+
+        OperationDrafts::markConverted($data['draft_id'] ?? null, 'pos_sale', 'credit_receipt', $receipt->id, $request);
 
         if (Permissions::userHas($request->user(), Permissions::CREDITS_PRINT)) {
             $redirect->with('credit_print_url', URL::temporarySignedRoute('credits.receipts.print', now()->addMinutes(10), ['creditReceipt' => $receipt->id]));

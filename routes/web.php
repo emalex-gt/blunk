@@ -14,6 +14,7 @@ use App\Http\Controllers\AccountReceivableController;
 use App\Http\Controllers\CreditReceiptController;
 use App\Http\Controllers\FelReconciliationController;
 use App\Http\Controllers\InventoryTransferController;
+use App\Http\Controllers\OperationDraftController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\RouteController;
 use App\Http\Controllers\SaleController;
@@ -112,6 +113,10 @@ Route::middleware('auth')->group(function () {
     })->name('tenant.switch');
 
     Route::middleware('tenant.active')->group(function () {
+        Route::get('/operation-drafts', [OperationDraftController::class, 'index'])->name('operation-drafts.index');
+        Route::post('/operation-drafts', [OperationDraftController::class, 'store'])->name('operation-drafts.store');
+        Route::post('/operation-drafts/{draft}/discard', [OperationDraftController::class, 'discard'])->name('operation-drafts.discard');
+
         Route::get('/pos', [SaleController::class, 'create'])->middleware(['module:pos', 'permission:pos.view'])->name('sales.create');
         Route::get('/pos/products/search', [SaleController::class, 'productSearch'])
             ->middleware(['module:pos', 'permission:pos.view'])
@@ -369,6 +374,7 @@ Route::middleware('auth')->group(function () {
 
             Route::get('/inventory/transfers', [InventoryTransferController::class, 'index'])->middleware('permission:inventory.transfers.view')->name('inventory.transfers.index');
             Route::get('/inventory/transfers/export/{format}', [InventoryTransferController::class, 'export'])->middleware('permission:inventory.transfers.export')->name('inventory.transfers.export');
+            Route::get('/inventory/transfers/products/search', [InventoryTransferController::class, 'productSearch'])->middleware('permission:inventory.transfers.create')->name('inventory.transfers.products.search');
             Route::get('/inventory/transfers/create', [InventoryTransferController::class, 'create'])->middleware('permission:inventory.transfers.create')->name('inventory.transfers.create');
             Route::post('/inventory/transfers', [InventoryTransferController::class, 'store'])->middleware('permission:inventory.transfers.create')->name('inventory.transfers.store');
             Route::get('/inventory/transfers/{transfer}', [InventoryTransferController::class, 'show'])->middleware('permission:inventory.transfers.view')->name('inventory.transfers.show');
@@ -387,6 +393,8 @@ Route::middleware('auth')->group(function () {
         Route::middleware('module:purchases')->group(function () {
             Route::get('/purchases', [PurchaseController::class, 'index'])->middleware('permission:purchases.view')->name('purchases.index');
             Route::get('/purchases/export/{format}', [PurchaseController::class, 'export'])->middleware('permission:purchases.export')->name('purchases.export');
+            Route::get('/purchases/products/search', [PurchaseController::class, 'productSearch'])->middleware('permission:purchases.create')->name('purchases.products.search');
+            Route::get('/purchases/suppliers/search', [PurchaseController::class, 'supplierSearch'])->middleware('permission:purchases.create')->name('purchases.suppliers.search');
             Route::get('/purchases/create', [PurchaseController::class, 'create'])->middleware('permission:purchases.create')->name('purchases.create');
             Route::post('/purchases', [PurchaseController::class, 'store'])->middleware('permission:purchases.create')->name('purchases.store');
             Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->middleware('permission:purchases.view')->name('purchases.show');

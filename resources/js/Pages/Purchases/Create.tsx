@@ -3,9 +3,11 @@ import SupplierInfoPopover from '@/Components/SupplierInfoPopover';
 import Toast from '@/Components/Toast';
 import { getProductImageUrl } from '@/lib/cloudinary';
 import { clearDraft, loadDraft, makeDraftKey, saveDraft } from '@/lib/draftStorage';
+import { discardOperationDraft, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, router, usePage } from '@inertiajs/react';
+import axios from 'axios';
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 type Product = {
@@ -13,7 +15,10 @@ type Product = {
     name: string;
     code: string | null;
     barcode: string | null;
+    category_name?: string | null;
+    brand_name?: string | null;
     cost_price: string;
+    sale_price?: string;
     stock: number;
     min_stock: number;
     location: string | null;
@@ -113,8 +118,9 @@ export default function Create({
 }) {
     const business = usePage().props.business as { id?: number | null; country?: string | null } | null;
     const businessId = (usePage().props.current_business_id as number | null) ?? business?.id ?? null;
+    const userId = (usePage().props.auth as { user?: { id?: number | null } } | undefined)?.user?.id ?? null;
     const country = business?.country ?? 'GT';
-    const draftKey = useMemo(() => makeDraftKey('purchase', businessId), [businessId]);
+    const draftKey = useMemo(() => makeDraftKey('purchase', businessId, userId, active_branch?.id ?? null), [active_branch?.id, businessId, userId]);
     const [search, setSearch] = useState('');
     const [supplierName, setSupplierName] = useState('');
     const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
@@ -138,12 +144,22 @@ export default function Create({
     const [restoreDraft, setRestoreDraft] = useState<PurchaseDraft | null>(null);
     const [draftReady, setDraftReady] = useState(false);
     const [showClearPurchaseModal, setShowClearPurchaseModal] = useState(false);
+    const [activeDraftId, setActiveDraftId] = useState<number | null>(null);
+    const [savedDraftsOpen, setSavedDraftsOpen] = useState(false);
+    const [savedDrafts, setSavedDrafts] = useState<OperationDraftRecord<PurchaseDraft>[]>([]);
+    const [draftLoading, setDraftLoading] = useState(false);
+    const [draftSaving, setDraftSaving] = useState(false);
+    const [loadedProducts, setLoadedProducts] = useState<Product[]>(products);
+    const [productResults, setProductResults] = useState<Product[]>(products);
+    const [productSearchLoading, setProductSearchLoading] = useState(false);
+    const [supplierResults, setSupplierResults] = useState<Supplier[]>([]);
+    const [supplierSearchLoading, setSupplierSearchLoading] = useState(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const toast = useToast();
 
     const productsById = useMemo(
-        () => new Map(products.map((product) => [product.id, product])),
-        [products],
+        () => new Map(loadedProducts.map((product) => [product.id, product])),
+        [loadedProducts],
     );
 
     const supplierSuggestions = useMemo(() => {
@@ -153,26 +169,10 @@ export default function Create({
             return suppliers.slice(0, 8);
         }
 
-        return suppliers
-            .filter((supplier) => supplier.name.toLowerCase().includes(term))
-            .slice(0, 8);
-    }, [supplierName, suppliers]);
+        return supplierResults.slice(0, 8);
+    }, [supplierName, supplierResults, suppliers]);
 
-    const filteredProducts = useMemo(() => {
-        const term = search.trim().toLowerCase();
-
-        if (!term) {
-            return products.slice(0, 32);
-        }
-
-        return products
-            .filter((product) =>
-                [product.name, product.code, product.barcode]
-                    .filter(Boolean)
-                    .some((value) => value!.toLowerCase().includes(term)),
-            )
-            .slice(0, 32);
-    }, [products, search]);
+    const filteredProducts = productResults;
 
     const total = useMemo(
         () =>
@@ -184,6 +184,13 @@ export default function Create({
     );
 
     function addProduct(product: Product) {
+        setLoadedProducts((current) => {
+            if (current.some((item) => item.id === product.id)) {
+                return current;
+            }
+
+            return [...current, product];
+        });
         setCart((items) => {
             const existing = items.find((item) => item.product.id === product.id);
 
@@ -221,6 +228,28 @@ export default function Create({
         addProduct(product);
         setSearch('');
         requestAnimationFrame(() => searchInputRef.current?.focus());
+    }
+
+    async function hydratePurchaseProducts(productIds: number[]): Promise<Product[]> {
+        const ids = [...new Set(productIds.filter(Boolean))];
+
+        if (ids.length === 0) {
+            return [];
+        }
+
+        const response = await axios.get<{ products: Product[] }>(route('purchases.products.search'), {
+            params: { ids: ids.join(','), limit: 30 },
+            headers: { Accept: 'application/json' },
+        });
+
+        setLoadedProducts((current) => {
+            const map = new Map(current.map((product) => [product.id, product]));
+            response.data.products.forEach((product) => map.set(product.id, product));
+
+            return Array.from(map.values());
+        });
+
+        return response.data.products;
     }
 
     function updateItem(productId: number, field: 'quantity' | 'unit_cost', value: string) {
@@ -263,10 +292,16 @@ export default function Create({
         };
     }
 
-    function restorePurchaseDraft(draft: PurchaseDraft) {
+    async function restorePurchaseDraft(draft: PurchaseDraft) {
+        const missingIds = draft.items
+            .map((item) => item.product_id)
+            .filter((productId) => !productsById.has(productId));
+        const fetchedProducts = await hydratePurchaseProducts(missingIds).catch(() => []);
+        const productMap = new Map(productsById);
+        fetchedProducts.forEach((product) => productMap.set(product.id, product));
         const restoredItems = draft.items
             .map((item) => {
-                const product = productsById.get(item.product_id);
+                const product = productMap.get(item.product_id);
 
                 return product
                     ? {
@@ -277,6 +312,10 @@ export default function Create({
                     : null;
             })
             .filter((item): item is CartItem => Boolean(item));
+
+        if (restoredItems.length < draft.items.length) {
+            toast.warning('Se descartaron productos inválidos del borrador.');
+        }
 
         setCart(restoredItems);
         setSupplierName(draft.supplier_name ?? '');
@@ -291,6 +330,24 @@ export default function Create({
         setBranchId(draft.branch_id ?? active_branch?.id ?? null);
     }
 
+    function restoreSavedPurchaseDraft(draft: OperationDraftRecord<PurchaseDraft>) {
+        if (draft.payload_version !== 1) {
+            setMessage('Este borrador fue creado con una versión anterior y no se puede recuperar automáticamente.');
+            toast.error('Este borrador fue creado con una versión anterior y no se puede recuperar automáticamente.');
+            return;
+        }
+
+        if (isMeaningfulPurchaseDraft(buildPurchaseDraft()) && !window.confirm('Hay datos sin guardar en la pantalla actual. Si recuperas este borrador, se reemplazarán. ¿Deseas continuar?')) {
+            return;
+        }
+
+        void restorePurchaseDraft(draft.payload);
+        setActiveDraftId(draft.id);
+        setSavedDraftsOpen(false);
+        setMessage('Borrador recuperado.');
+        toast.success('Borrador recuperado.');
+    }
+
     function clearPurchaseState() {
         setSearch('');
         setSupplierName('');
@@ -301,7 +358,74 @@ export default function Create({
         setBranchId(active_branch?.id ?? null);
         setCart([]);
         setMessage('');
+        setActiveDraftId(null);
         requestAnimationFrame(() => searchInputRef.current?.focus());
+    }
+
+    async function savePurchaseOperationDraft() {
+        const payload = buildPurchaseDraft();
+
+        if (!isMeaningfulPurchaseDraft(payload)) {
+            setMessage('No hay datos para guardar como borrador.');
+            toast.info('No hay datos para guardar como borrador.');
+            return;
+        }
+
+        setDraftSaving(true);
+        setMessage('');
+
+        try {
+            await saveOperationDraft({
+                type: 'purchase',
+                title: supplierName.trim() || `Compra pausada ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+                branch_id: branchId,
+                supplier_id: selectedSupplier?.id ?? null,
+                payload,
+                payload_version: 1,
+            });
+            clearPurchaseDraftAndState();
+            toast.success('Borrador guardado.');
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'No se pudo guardar el borrador.';
+            setMessage(errorMessage);
+            toast.error(errorMessage);
+        } finally {
+            setDraftSaving(false);
+        }
+    }
+
+    async function openPurchaseDrafts() {
+        setDraftLoading(true);
+        setSavedDraftsOpen(true);
+        setMessage('');
+
+        try {
+            const payload = await listOperationDrafts<PurchaseDraft>('purchase');
+            setSavedDrafts(payload.drafts);
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'No se pudieron cargar los borradores.';
+            setMessage(errorMessage);
+            toast.error(errorMessage);
+        } finally {
+            setDraftLoading(false);
+        }
+    }
+
+    async function discardPurchaseDraft(draft: OperationDraftRecord<PurchaseDraft>) {
+        if (!window.confirm('¿Descartar este borrador?')) {
+            return;
+        }
+
+        try {
+            await discardOperationDraft(draft.id);
+            setSavedDrafts((current) => current.filter((item) => item.id !== draft.id));
+            if (activeDraftId === draft.id) {
+                setActiveDraftId(null);
+            }
+            toast.success('Borrador descartado.');
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'No se pudo descartar el borrador.');
+        }
     }
 
     function clearPurchaseDraftAndState() {
@@ -402,6 +526,7 @@ export default function Create({
             payment_method: paymentMethod,
             paid_from_cash: paymentMethod === 'cash' && paidFromCash,
             branch_id: branchId,
+            draft_id: activeDraftId,
             note,
             items: cart.map((item) => ({
                 product_id: item.product.id,
@@ -501,6 +626,60 @@ export default function Create({
         }
     }, [paymentMethod, paidFromCash]);
 
+    useEffect(() => {
+        const term = search.trim();
+
+        if (term.length < 2) {
+            setProductResults([]);
+            setProductSearchLoading(false);
+            return;
+        }
+
+        const timer = window.setTimeout(() => {
+            setProductSearchLoading(true);
+            axios.get<{ products: Product[] }>(route('purchases.products.search'), {
+                params: { q: term, limit: 30 },
+                headers: { Accept: 'application/json' },
+            })
+                .then((response) => {
+                    setProductResults(response.data.products);
+                    setLoadedProducts((current) => {
+                        const map = new Map(current.map((product) => [product.id, product]));
+                        response.data.products.forEach((product) => map.set(product.id, product));
+
+                        return Array.from(map.values());
+                    });
+                })
+                .catch(() => setProductResults([]))
+                .finally(() => setProductSearchLoading(false));
+        }, 300);
+
+        return () => window.clearTimeout(timer);
+    }, [search]);
+
+    useEffect(() => {
+        const term = supplierName.trim();
+
+        if (term.length < 2 || selectedSupplier?.name === supplierName) {
+            setSupplierResults([]);
+            setSupplierSearchLoading(false);
+            return;
+        }
+
+        const timer = window.setTimeout(() => {
+            setSupplierSearchLoading(true);
+            axios.get<{ suppliers: Supplier[] }>(route('purchases.suppliers.search'), {
+                params: { q: term },
+                headers: { Accept: 'application/json' },
+            })
+                .then((response) => setSupplierResults(response.data.suppliers))
+                .catch(() => setSupplierResults([]))
+                .finally(() => setSupplierSearchLoading(false));
+        }, 300);
+
+        return () => window.clearTimeout(timer);
+    }, [selectedSupplier?.name, supplierName]);
+
     return (
         <AuthenticatedLayout header={<h2 className="text-xl font-semibold text-slate-950">Compras</h2>}>
             <Head title="Registrar compra" />
@@ -519,7 +698,22 @@ export default function Create({
                                         Compra inventario y actualiza costo promedio.
                                     </p>
                                 </div>
-                                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={openPurchaseDrafts}
+                                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                                    >
+                                        Recuperar borrador
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled={draftSaving}
+                                        onClick={savePurchaseOperationDraft}
+                                        className="rounded-xl border border-indigo-200 bg-white px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm hover:bg-indigo-50 disabled:opacity-50"
+                                    >
+                                        Guardar borrador
+                                    </button>
                                     <button
                                         type="button"
                                         onClick={requestClearPurchase}
@@ -653,9 +847,22 @@ export default function Create({
                                 placeholder="Buscar producto por nombre, código o código de barras"
                                 className="mt-3 h-14 w-full rounded-2xl border border-slate-200 bg-white px-5 text-lg font-medium text-slate-900 shadow-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                             />
+                            {productSearchLoading && (
+                                <p className="mt-2 text-sm font-medium text-slate-500">Buscando productos...</p>
+                            )}
                         </div>
 
                         <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                            {!productSearchLoading && search.trim().length >= 2 && filteredProducts.length === 0 && (
+                                <div className="mb-3 rounded-xl border border-dashed border-slate-300 p-4 text-center text-sm text-slate-500">
+                                    Sin resultados.
+                                </div>
+                            )}
+                            {!productSearchLoading && search.trim().length < 2 && filteredProducts.length === 0 && (
+                                <div className="mb-3 rounded-xl border border-dashed border-slate-300 p-4 text-center text-sm text-slate-500">
+                                    Escribe al menos 2 caracteres para buscar productos.
+                                </div>
+                            )}
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                                 {filteredProducts.map((product) => (
                                     <div
@@ -860,7 +1067,7 @@ export default function Create({
                             <button
                                 type="button"
                                 onClick={() => {
-                                    restorePurchaseDraft(restoreDraft);
+                                    void restorePurchaseDraft(restoreDraft);
                                     setRestoreDraft(null);
                                     setDraftReady(true);
                                     requestAnimationFrame(() => searchInputRef.current?.focus());
@@ -869,6 +1076,45 @@ export default function Create({
                             >
                                 Continuar
                             </button>
+                        </div>
+                    </section>
+                </div>
+            )}
+
+            {savedDraftsOpen && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+                    <section className="w-full max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+                        <div className="flex items-center justify-between gap-3">
+                            <h2 className="text-lg font-semibold text-slate-950">Borradores de compra</h2>
+                            <button type="button" onClick={() => setSavedDraftsOpen(false)} className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100">
+                                Cerrar
+                            </button>
+                        </div>
+                        <div className="mt-4 space-y-3">
+                            {draftLoading && <div className="rounded-xl border border-slate-200 p-4 text-sm text-slate-500">Cargando borradores...</div>}
+                            {!draftLoading && savedDrafts.length === 0 && (
+                                <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+                                    No hay borradores guardados.
+                                </div>
+                            )}
+                            {!draftLoading && savedDrafts.map((draft) => (
+                                <div key={draft.id} className="grid gap-3 rounded-xl border border-slate-200 p-4 md:grid-cols-[1fr_auto]">
+                                    <div>
+                                        <div className="text-sm font-semibold text-slate-900">{draft.title ?? 'Borrador de compra'}</div>
+                                        <div className="mt-1 text-xs text-slate-500">
+                                            {draft.supplier?.name ?? draft.payload.supplier_name ?? 'Sin proveedor'} · {draft.item_count} productos · Total estimado {formatCurrency(Number(draft.total ?? 0), country)} · Usuario: {draft.user?.name ?? '-'}
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button type="button" onClick={() => restoreSavedPurchaseDraft(draft)} className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                                            Continuar borrador
+                                        </button>
+                                        <button type="button" onClick={() => discardPurchaseDraft(draft)} className="rounded-xl px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">
+                                            Descartar
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </section>
                 </div>

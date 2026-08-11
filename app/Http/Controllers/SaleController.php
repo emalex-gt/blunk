@@ -30,6 +30,7 @@ use App\Support\Credits;
 use App\Support\FelPhraseRenderer;
 use App\Support\Inventory\StockPolicy;
 use App\Support\ManualPricePolicy;
+use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\PriceLists;
 use App\Support\StockAvailability;
@@ -298,6 +299,7 @@ class SaleController extends Controller
         $data = $request->validate([
             'note' => ['nullable', 'string', 'max:2000'],
             'branch_id' => ['nullable', 'integer'],
+            'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
             'document_type' => ['nullable', 'in:invoice,receipt'],
             'payment_condition' => ['nullable', 'in:paid,credit'],
             'due_date' => ['nullable', 'date'],
@@ -836,6 +838,8 @@ class SaleController extends Controller
                 ]);
             }
         }
+
+        OperationDrafts::markConverted($data['draft_id'] ?? null, 'pos_sale', 'sale', $saleId, $request);
 
         $redirect = redirect()->route('sales.create')->with('success', 'Venta finalizada.');
 

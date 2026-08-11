@@ -5,6 +5,7 @@ import { getProductImageUrl } from '@/lib/cloudinary';
 import { useToast } from '@/hooks/useToast';
 import { t } from '@/lib/i18n';
 import { clearDraft, loadDraft, makeDraftKey, saveDraft } from '@/lib/draftStorage';
+import { discardOperationDraft, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import {
@@ -723,6 +724,11 @@ export default function POS({
     const [restoreDraft, setRestoreDraft] = useState<PosDraft | null>(null);
     const [draftReady, setDraftReady] = useState(false);
     const [showClearSaleModal, setShowClearSaleModal] = useState(false);
+    const [activeOperationDraftId, setActiveOperationDraftId] = useState<number | null>(null);
+    const [savedDraftsOpen, setSavedDraftsOpen] = useState(false);
+    const [savedDrafts, setSavedDrafts] = useState<OperationDraftRecord<PosDraft>[]>([]);
+    const [draftListLoading, setDraftListLoading] = useState(false);
+    const [draftSaving, setDraftSaving] = useState(false);
     const [showDiscountModal, setShowDiscountModal] = useState(false);
     const [duplicateProductChoices, setDuplicateProductChoices] = useState<Product[]>([]);
     const [duplicateProductSearchTerm, setDuplicateProductSearchTerm] = useState('');
@@ -1338,6 +1344,7 @@ export default function POS({
         setPayments([paymentLine(mainPaymentMethod, '0.00')]);
         setDiscount(null);
         setCustomerEditing(false);
+        setActiveOperationDraftId(null);
     }
 
     function clearPosDraftAndState() {
@@ -1766,88 +1773,109 @@ export default function POS({
         clearPosDraftAndState();
     }
 
-    function holdSale() {
-        if (cart.length === 0) {
-            recoverSale();
+    async function holdSale() {
+        const draft = buildDraft();
+
+        if (!isMeaningfulPosDraft(draft)) {
+            showError('No hay datos para guardar como borrador.');
+            toast.info('No hay datos para guardar como borrador.');
             return;
         }
 
-        const payload: HeldSale = {
-            branch_id: draftBranchId,
-            cart,
-            customer: data.customer,
-        };
+        setDraftSaving(true);
 
-        localStorage.setItem(heldSaleKey, JSON.stringify(payload));
-        setHasHeldSale(true);
-        cancelSale(true);
-        showMessage(t('pos.sale_held'));
+        try {
+            await saveOperationDraft({
+                type: 'pos_sale',
+                title: data.customer?.name?.trim() || `Venta pausada ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+                branch_id: activeBranchId,
+                customer_id: data.customer?.id ?? null,
+                payload: draft,
+                payload_version: 1,
+            });
+            clearPosDraftAndState();
+            setHasHeldSale(true);
+            showMessage(t('pos.sale_held'));
+            toast.success('Borrador guardado.');
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'No se pudo guardar el borrador.';
+            showError(errorMessage);
+            toast.error(errorMessage);
+        } finally {
+            setDraftSaving(false);
+        }
     }
 
-    function recoverSale() {
-        const heldSale = loadJson<HeldSale | null>(heldSaleKey, null);
+    async function recoverSale() {
+        setDraftListLoading(true);
+        setSavedDraftsOpen(true);
 
-        if (!heldSale) {
-            showError(t('pos.held_sale_empty'));
-            focusSearch();
+        try {
+            const payload = await listOperationDrafts<PosDraft>('pos_sale');
+            setSavedDrafts(payload.drafts);
+            setHasHeldSale(payload.drafts.length > 0);
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'No se pudieron cargar los borradores.';
+            showError(errorMessage);
+            toast.error(errorMessage);
+        } finally {
+            setDraftListLoading(false);
+        }
+    }
+
+    async function restoreSavedSaleDraft(draft: OperationDraftRecord<PosDraft>) {
+        if (draft.payload_version !== 1) {
+            showError('Este borrador fue creado con una versión anterior y no se puede recuperar automáticamente.');
+            toast.error('Este borrador fue creado con una versión anterior y no se puede recuperar automáticamente.');
             return;
         }
 
-        if (String(heldSale.branch_id ?? 'default') !== String(draftBranchId)) {
-            showError('La venta pendiente pertenece a otra sucursal.');
-            focusSearch();
+        if (isMeaningfulPosDraft(buildDraft()) && !window.confirm('Hay datos sin guardar en la pantalla actual. Si recuperas este borrador, se reemplazarán. ¿Deseas continuar?')) {
             return;
         }
 
-        setCart(
-            (heldSale.cart ?? [])
-                .map((item) => {
-                    const currentProduct = productsById.get(item.product.id) ?? item.product;
+        const missingProductIds = (draft.payload.cart ?? [])
+            .map((item) => item.product_id)
+            .filter((productId) => !productsByIdRef.current.has(productId));
 
-                    if (!currentProduct) {
-                        return null;
-                    }
+        if (missingProductIds.length > 0) {
+            await fetchPosProducts({ ids: missingProductIds, limit: 50 }).catch(() => undefined);
+        }
 
-                    const availableStock = Math.floor(Number(currentProduct.available_stock ?? currentProduct.stock ?? 0));
-
-                    if (quantityError(item.quantity) || (!allow_negative_stock && availableStock < 1)) {
-                        return null;
-                    }
-
-                    const price = priceFromList(currentProduct, item.price_type_id ?? default_price_type_id, default_price_type_id);
-                    const manualPrice = Boolean(item.manual_price);
-
-                    return {
-                        product: currentProduct,
-                        quantity: String(Math.max(
-                            1,
-                            allow_negative_stock ? quantityNumber(item.quantity) : Math.min(quantityNumber(item.quantity), availableStock),
-                        )),
-                        unit_price: manualPrice ? (item.unit_price ?? price.price) : price.price,
-                        original_price: manualPrice ? (item.original_price ?? price.price) : price.price,
-                        price_type_id: item.price_type_id ?? price.priceTypeId ?? null,
-                        price_source: item.price_source ?? 'price_list',
-                        manual_price: manualPrice,
-                        price_warning: price.warning,
-                    };
-                })
-                .filter((item): item is CartItem => Boolean(item)),
-        );
-        setData('customer', heldSale.customer || defaultCustomer);
-        localStorage.removeItem(heldSaleKey);
-        setHasHeldSale(false);
+        restorePosDraft(draft.payload, productsByIdRef.current);
+        setActiveOperationDraftId(draft.id);
+        setSavedDraftsOpen(false);
         setSearch('');
         showMessage(t('pos.sale_recovered'));
+        toast.success('Borrador recuperado.');
         focusSearch();
+    }
+
+    async function discardSavedSaleDraft(draft: OperationDraftRecord<PosDraft>) {
+        if (!window.confirm('¿Descartar este borrador?')) {
+            return;
+        }
+
+        try {
+            await discardOperationDraft(draft.id);
+            setSavedDrafts((current) => current.filter((item) => item.id !== draft.id));
+            setHasHeldSale(savedDrafts.length > 1);
+            if (activeOperationDraftId === draft.id) {
+                setActiveOperationDraftId(null);
+            }
+            toast.success('Borrador descartado.');
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'No se pudo descartar el borrador.');
+        }
     }
 
     function handleHoldShortcut() {
         if (cart.length > 0) {
-            holdSale();
+            void holdSale();
             return;
         }
 
-        recoverSale();
+        void recoverSale();
     }
 
     async function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -1995,6 +2023,7 @@ export default function POS({
             router.post(route('credits.receipts.store'), {
                 note: data.note,
                 branch_id: activeBranchId,
+                draft_id: activeOperationDraftId,
                 customer: fiscalCustomerPayload(data.customer),
                 items: cart.map((item) => ({
                     product_id: item.product.id,
@@ -2016,6 +2045,7 @@ export default function POS({
                     setSplitPayment(false);
                     setDiscount(null);
                     setPayments([paymentLine(mainPaymentMethod, '0.00')]);
+                    setActiveOperationDraftId(null);
                     clearDraft(draftKey);
                     latestDraftRef.current = null;
                     reset();
@@ -2088,6 +2118,7 @@ export default function POS({
         transform(() => ({
             note: data.note,
             branch_id: activeBranchId,
+            draft_id: activeOperationDraftId,
             customer: fiscalCustomerPayload(data.customer),
             document_type: effectiveDocumentType,
             payment_condition: paymentCondition,
@@ -2134,6 +2165,7 @@ export default function POS({
                 setDocumentType(singleDocumentType ?? (availableCheckoutTypes[0] ?? 'receipt'));
                 setDiscount(null);
                 setPayments([paymentLine(mainPaymentMethod, '0.00')]);
+                setActiveOperationDraftId(null);
                 clearDraft(draftKey);
                 latestDraftRef.current = null;
                 const successMessage = effectiveDocumentType === 'invoice'
@@ -2535,7 +2567,7 @@ export default function POS({
                                     <button
                                         type="button"
                                         onClick={holdSale}
-                                        disabled={cart.length === 0}
+                                        disabled={draftSaving}
                                         className="h-11 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                                     >
                                         {t('pos.hold_sale')}
@@ -2543,7 +2575,7 @@ export default function POS({
                                     <button
                                         type="button"
                                         onClick={recoverSale}
-                                        disabled={!hasHeldSale}
+                                        disabled={draftListLoading}
                                         className="h-11 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                                     >
                                         {t('pos.recover_sale')}
@@ -3854,6 +3886,62 @@ export default function POS({
                             >
                                 Continuar
                             </button>
+                        </div>
+                    </section>
+                </div>
+            )}
+
+            {savedDraftsOpen && (
+                <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+                    <section className="w-full max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+                        <div className="flex items-center justify-between gap-3">
+                            <h2 className="text-lg font-semibold text-slate-950">Borradores de venta</h2>
+                            <button
+                                type="button"
+                                onClick={() => setSavedDraftsOpen(false)}
+                                className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                            >
+                                Cerrar
+                            </button>
+                        </div>
+
+                        <div className="mt-4 space-y-3">
+                            {draftListLoading && (
+                                <div className="rounded-xl border border-slate-200 p-4 text-sm text-slate-500">
+                                    Cargando borradores...
+                                </div>
+                            )}
+                            {!draftListLoading && savedDrafts.length === 0 && (
+                                <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+                                    No hay borradores guardados.
+                                </div>
+                            )}
+                            {!draftListLoading && savedDrafts.map((draft) => (
+                                <div key={draft.id} className="grid gap-3 rounded-xl border border-slate-200 p-4 md:grid-cols-[1fr_auto]">
+                                    <div>
+                                        <div className="text-sm font-semibold text-slate-900">{draft.title ?? 'Borrador de venta'}</div>
+                                        <div className="mt-1 text-xs text-slate-500">
+                                            {draft.customer?.name ?? draft.payload.customer?.name ?? 'Consumidor final'} · {draft.item_count} productos · Total estimado {formatCurrency(Number(draft.total ?? 0), country)} · Sucursal: {draft.branch?.name ?? pageProps.active_branch?.name ?? '-'} · Usuario: {draft.user?.name ?? '-'}
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => void restoreSavedSaleDraft(draft)}
+                                            className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                                        >
+                                            Continuar borrador
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => void discardSavedSaleDraft(draft)}
+                                            className="rounded-xl px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
+                                        >
+                                            Descartar
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </section>
                 </div>

@@ -1,11 +1,19 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import { discardOperationDraft, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
 import { Head, Link, router } from '@inertiajs/react';
-import { FormEvent, KeyboardEvent, useMemo, useRef, useState } from 'react';
+import axios from 'axios';
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 type Branch = { id: number; name: string; code: string | null };
-type Product = { id: number; name: string; code: string | null; barcode: string | null; stock: number; reserved_stock?: number; available_stock?: number };
+type Product = { id: number; name: string; code: string | null; barcode: string | null; category_name?: string | null; brand_name?: string | null; stock: number; reserved_stock?: number; available_stock?: number; location?: string | null };
 type Line = { product_id: number; quantity: string };
+type TransferDraft = {
+    from_branch_id: number | null;
+    to_branch_id: number | null;
+    notes: string;
+    items: Line[];
+};
 
 export default function Create({
     branches,
@@ -25,23 +33,18 @@ export default function Create({
     const [items, setItems] = useState<Line[]>([]);
     const [message, setMessage] = useState('');
     const [processing, setProcessing] = useState(false);
+    const [activeDraftId, setActiveDraftId] = useState<number | null>(null);
+    const [draftsOpen, setDraftsOpen] = useState(false);
+    const [drafts, setDrafts] = useState<OperationDraftRecord<TransferDraft>[]>([]);
+    const [draftLoading, setDraftLoading] = useState(false);
+    const [draftSaving, setDraftSaving] = useState(false);
+    const [loadedProducts, setLoadedProducts] = useState<Product[]>(products);
+    const [productResults, setProductResults] = useState<Product[]>(products);
+    const [productSearchLoading, setProductSearchLoading] = useState(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
-    const productsById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
-    const filteredProducts = useMemo(() => {
-        const term = search.trim().toLowerCase();
-
-        if (term.length < 3) {
-            return [];
-        }
-
-        return products
-            .filter((product) =>
-                [product.name, product.code, product.barcode]
-                    .filter(Boolean)
-                    .some((value) => value!.toLowerCase().includes(term)),
-            )
-            .slice(0, 8);
-    }, [products, search]);
+    const previousFromBranchId = useRef<number | null>(fromBranchId);
+    const productsById = useMemo(() => new Map(loadedProducts.map((product) => [product.id, product])), [loadedProducts]);
+    const filteredProducts = productResults;
 
     function productAvailable(product: Product | undefined): number {
         if (!product) {
@@ -49,6 +52,143 @@ export default function Create({
         }
 
         return Number(product.available_stock ?? product.stock ?? 0);
+    }
+
+    function buildTransferDraft(): TransferDraft {
+        return {
+            from_branch_id: fromBranchId,
+            to_branch_id: toBranchId,
+            notes,
+            items,
+        };
+    }
+
+    function isMeaningfulTransferDraft(draft: TransferDraft): boolean {
+        return draft.items.length > 0 || draft.notes.trim() !== '';
+    }
+
+    function clearTransferState() {
+        setNotes('');
+        setSearch('');
+        setItems([]);
+        setFromBranchId(activeBranch?.id ?? branches[0]?.id ?? null);
+        setToBranchId(branches.find((branch) => branch.id !== activeBranch?.id)?.id ?? null);
+        setActiveDraftId(null);
+        setMessage('');
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+    }
+
+    async function hydrateTransferProducts(productIds: number[], sourceBranchId = fromBranchId): Promise<Product[]> {
+        const ids = [...new Set(productIds.filter(Boolean))];
+
+        if (ids.length === 0 || !sourceBranchId) {
+            return [];
+        }
+
+        const response = await axios.get<{ products: Product[] }>(route('inventory.transfers.products.search'), {
+            params: { ids: ids.join(','), source_branch_id: sourceBranchId, limit: 30 },
+            headers: { Accept: 'application/json' },
+        });
+
+        setLoadedProducts((current) => {
+            const map = new Map(current.map((product) => [product.id, product]));
+            response.data.products.forEach((product) => map.set(product.id, product));
+
+            return Array.from(map.values());
+        });
+
+        return response.data.products;
+    }
+
+    async function restoreTransferDraft(draft: OperationDraftRecord<TransferDraft>) {
+        if (draft.payload_version !== 1) {
+            setMessage('Este borrador fue creado con una versión anterior y no se puede recuperar automáticamente.');
+            return;
+        }
+
+        if (isMeaningfulTransferDraft(buildTransferDraft()) && !window.confirm('Hay datos sin guardar en la pantalla actual. Si recuperas este borrador, se reemplazarán. ¿Deseas continuar?')) {
+            return;
+        }
+
+        const payload = draft.payload;
+        const missingIds = (payload.items ?? [])
+            .map((item) => Number(item.product_id))
+            .filter((productId) => !productsById.has(productId));
+        const hydratedProducts = await hydrateTransferProducts(missingIds, payload.from_branch_id ?? fromBranchId).catch(() => []);
+        const productMap = new Map(productsById);
+        hydratedProducts.forEach((product) => productMap.set(product.id, product));
+
+        setFromBranchId(payload.from_branch_id ?? activeBranch?.id ?? null);
+        setToBranchId(payload.to_branch_id ?? null);
+        setNotes(payload.notes ?? '');
+        setItems((payload.items ?? []).filter((item) => productMap.has(Number(item.product_id))));
+        setActiveDraftId(draft.id);
+        setDraftsOpen(false);
+        setMessage((payload.items ?? []).some((item) => !productMap.has(Number(item.product_id)))
+            ? 'Se descartaron productos inválidos del borrador.'
+            : 'Borrador recuperado.');
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+    }
+
+    async function saveTransferDraft() {
+        const payload = buildTransferDraft();
+
+        if (!isMeaningfulTransferDraft(payload)) {
+            setMessage('No hay datos para guardar como borrador.');
+            return;
+        }
+
+        setDraftSaving(true);
+        setMessage('');
+
+        try {
+            await saveOperationDraft({
+                type: 'transfer',
+                title: `Traslado pausado ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+                branch_id: fromBranchId,
+                source_branch_id: fromBranchId,
+                destination_branch_id: toBranchId,
+                payload,
+                payload_version: 1,
+            });
+            clearTransferState();
+            setMessage('Borrador guardado.');
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : 'No se pudo guardar el borrador.');
+        } finally {
+            setDraftSaving(false);
+        }
+    }
+
+    async function openTransferDrafts() {
+        setDraftLoading(true);
+        setDraftsOpen(true);
+        setMessage('');
+
+        try {
+            const payload = await listOperationDrafts<TransferDraft>('transfer');
+            setDrafts(payload.drafts);
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : 'No se pudieron cargar los borradores.');
+        } finally {
+            setDraftLoading(false);
+        }
+    }
+
+    async function discardTransferDraft(draft: OperationDraftRecord<TransferDraft>) {
+        if (!window.confirm('¿Descartar este borrador?')) {
+            return;
+        }
+
+        try {
+            await discardOperationDraft(draft.id);
+            setDrafts((current) => current.filter((item) => item.id !== draft.id));
+            if (activeDraftId === draft.id) {
+                setActiveDraftId(null);
+            }
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : 'No se pudo descartar el borrador.');
+        }
     }
 
     function submit(event: FormEvent) {
@@ -73,6 +213,7 @@ export default function Create({
             from_branch_id: fromBranchId,
             to_branch_id: toBranchId,
             notes,
+            draft_id: activeDraftId,
             items: items.map((item) => ({
                 product_id: item.product_id,
                 quantity: Number(item.quantity),
@@ -145,6 +286,50 @@ export default function Create({
         )));
     }
 
+    useEffect(() => {
+        const term = search.trim();
+
+        if (term.length < 2 || !fromBranchId) {
+            setProductResults([]);
+            setProductSearchLoading(false);
+            return;
+        }
+
+        const timer = window.setTimeout(() => {
+            setProductSearchLoading(true);
+            axios.get<{ products: Product[] }>(route('inventory.transfers.products.search'), {
+                params: { q: term, source_branch_id: fromBranchId, limit: 30 },
+                headers: { Accept: 'application/json' },
+            })
+                .then((response) => {
+                    setProductResults(response.data.products);
+                    setLoadedProducts((current) => {
+                        const map = new Map(current.map((product) => [product.id, product]));
+                        response.data.products.forEach((product) => map.set(product.id, product));
+
+                        return Array.from(map.values());
+                    });
+                })
+                .catch(() => setProductResults([]))
+                .finally(() => setProductSearchLoading(false));
+        }, 300);
+
+        return () => window.clearTimeout(timer);
+    }, [fromBranchId, search]);
+
+    useEffect(() => {
+        if (previousFromBranchId.current === fromBranchId) {
+            return;
+        }
+
+        previousFromBranchId.current = fromBranchId;
+        setItems([]);
+        setLoadedProducts([]);
+        setProductResults([]);
+        setSearch('');
+        setMessage('Se limpiaron las líneas porque cambió la sucursal origen.');
+    }, [fromBranchId]);
+
     return (
         <AuthenticatedLayout>
             <Head title="Nuevo traslado" />
@@ -191,6 +376,16 @@ export default function Create({
                             placeholder="Buscar por producto, SKU o código de barras"
                             className={inputClass}
                         />
+                        {productSearchLoading && (
+                            <div className="absolute z-20 mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 shadow-lg">
+                                Buscando productos...
+                            </div>
+                        )}
+                        {!productSearchLoading && search.trim().length >= 2 && filteredProducts.length === 0 && (
+                            <div className="absolute z-20 mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 shadow-lg">
+                                Sin resultados.
+                            </div>
+                        )}
                         {filteredProducts.length > 0 && (
                             <div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
                                 {filteredProducts.map((product) => (
@@ -247,6 +442,12 @@ export default function Create({
                 </div>
 
                 <div className="flex justify-end gap-3">
+                    <button type="button" onClick={openTransferDrafts} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                        Recuperar borrador
+                    </button>
+                    <button type="button" disabled={draftSaving} onClick={saveTransferDraft} className="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-50">
+                        Guardar borrador
+                    </button>
                     <Link href={route('inventory.transfers.index')} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                         Cancelar
                     </Link>
@@ -255,6 +456,35 @@ export default function Create({
                     </button>
                 </div>
             </form>
+
+            {draftsOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+                    <div className="w-full max-w-3xl rounded-2xl bg-white p-5 shadow-xl">
+                        <div className="flex items-center justify-between gap-3">
+                            <h2 className="text-lg font-semibold text-slate-900">Borradores de traslado</h2>
+                            <button type="button" onClick={() => setDraftsOpen(false)} className="rounded-lg px-3 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-100">Cerrar</button>
+                        </div>
+                        <div className="mt-4 space-y-3">
+                            {draftLoading && <div className="rounded-xl border border-slate-200 p-4 text-sm text-slate-500">Cargando borradores...</div>}
+                            {!draftLoading && drafts.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">No hay borradores guardados.</div>}
+                            {!draftLoading && drafts.map((draft) => (
+                                <div key={draft.id} className="grid gap-3 rounded-xl border border-slate-200 p-4 md:grid-cols-[1fr_auto]">
+                                    <div>
+                                        <div className="text-sm font-semibold text-slate-900">{draft.title ?? 'Borrador de traslado'}</div>
+                                        <div className="mt-1 text-xs text-slate-500">
+                                            {draft.source_branch?.name ?? 'Origen'} → {draft.destination_branch?.name ?? 'Destino'} · {draft.item_count} productos · Usuario: {draft.user?.name ?? '-'}
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button type="button" onClick={() => void restoreTransferDraft(draft)} className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Continuar borrador</button>
+                                        <button type="button" onClick={() => discardTransferDraft(draft)} className="rounded-xl px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">Descartar</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
         </AuthenticatedLayout>
     );
 }
