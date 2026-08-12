@@ -69,7 +69,7 @@ class CustomerController extends Controller
         }
 
         try {
-            $result = GuatemalaNitCustomerResolver::resolve($business, $nit);
+            $result = GuatemalaNitCustomerResolver::resolve($business, $nit, requireVerifiedExisting: true);
             /** @var Customer $customer */
             $customer = $result['customer'];
 

@@ -121,6 +121,7 @@ type CustomerForm = {
     country: string;
     name_locked: boolean;
     tax_lookup_verified_at: string | null;
+    tax_lookup_verified_doc_number: string | null;
 };
 
 type PaymentLine = {
@@ -272,11 +273,29 @@ function emptyCustomer(country: string, defaults: Partial<Pick<CustomerForm, 'de
         country,
         name_locked: false,
         tax_lookup_verified_at: null,
+        tax_lookup_verified_doc_number: null,
     };
 }
 
 function sanitizeNit(value: string) {
     return value.replace(/[\s-]/g, '').replace(/[^A-Za-z0-9]/g, '');
+}
+
+function normalizedFiscalNit(value: string | null | undefined) {
+    return sanitizeNit(String(value ?? '')).toUpperCase();
+}
+
+function normalizeCustomerValidationState(
+    customer: CustomerForm,
+    country: string,
+    defaults: Partial<Pick<CustomerForm, 'department' | 'municipality'>> = {},
+): CustomerForm {
+    return {
+        ...emptyCustomer(country, defaults),
+        ...customer,
+        tax_lookup_verified_doc_number: customer.tax_lookup_verified_doc_number
+            ?? (customer.tax_lookup_verified_at ? normalizedFiscalNit(customer.doc_number) : null),
+    };
 }
 
 async function readJsonResponse(response: globalThis.Response) {
@@ -356,7 +375,7 @@ function quantityNumber(value: number | string | null | undefined) {
 }
 
 function fiscalCustomerPayload(customer: CustomerForm) {
-    const { commercial_name: _commercialName, ...payload } = customer;
+    const { commercial_name: _commercialName, tax_lookup_verified_doc_number: _verifiedDocNumber, ...payload } = customer;
 
     return payload;
 }
@@ -1041,11 +1060,11 @@ export default function POS({
         creditInvoiceLoadedRef.current = true;
         setCart(creditItems);
         cartRef.current = creditItems;
-        setData('customer', credit_invoice.customer);
+        setData('customer', normalizeCustomerValidationState(credit_invoice.customer, country, activeBranchLocationDefaults));
         setDiscount(null);
         setDocumentType(singleDocumentType ?? (available_document_types[0] ?? 'receipt'));
         showMessage('Facturando productos a crédito.');
-    }, [available_document_types, credit_invoice, productsById, setData, singleDocumentType]);
+    }, [activeBranchLocationDefaults, available_document_types, country, credit_invoice, productsById, setData, singleDocumentType]);
 
     const customerSearchTerm = useMemo(() => {
         return [
@@ -1307,7 +1326,7 @@ export default function POS({
 
         setCart(restoredCart);
         setDiscount(restoredDiscount && !discountError(restoredDiscount, cartSubtotal(restoredCart)) ? restoredDiscount : null);
-        setData('customer', draft.customer);
+        setData('customer', normalizeCustomerValidationState(draft.customer, country, activeBranchLocationDefaults));
         setData('note', draft.note ?? '');
         setPayments(draft.payments?.length ? draft.payments.map((payment) => ({
             method: payment.method ?? 'cash',
@@ -1475,7 +1494,16 @@ export default function POS({
 
     function setCustomerDocument(value: string) {
         const cleanValue = country === 'GT' ? sanitizeNit(value) : value.replace(/[\s-]/g, '');
-        setCustomerField('doc_number', cleanValue);
+        const normalizedValue = normalizedFiscalNit(cleanValue);
+        const verifiedValue = normalizedFiscalNit(data.customer.tax_lookup_verified_doc_number);
+        const keepValidation = Boolean(data.customer.tax_lookup_verified_at) && normalizedValue !== '' && normalizedValue === verifiedValue;
+
+        setData('customer', {
+            ...data.customer,
+            doc_number: cleanValue,
+            tax_lookup_verified_at: keepValidation ? data.customer.tax_lookup_verified_at : null,
+            tax_lookup_verified_doc_number: data.customer.tax_lookup_verified_doc_number,
+        });
     }
 
     function selectCustomer(customer: Customer) {
@@ -1494,6 +1522,7 @@ export default function POS({
             country: customer.country ?? country,
             name_locked: Boolean(customer.name_locked),
             tax_lookup_verified_at: customer.tax_lookup_verified_at ?? null,
+            tax_lookup_verified_doc_number: customer.tax_lookup_verified_at ? normalizedFiscalNit(customer.doc_number) : null,
         });
         setCustomerSearchResults([]);
         setNitLookupMessage('');
@@ -1548,6 +1577,7 @@ export default function POS({
                 country: 'GT',
                 name_locked: Boolean(result.customer?.name_locked ?? result.name),
                 tax_lookup_verified_at: result.customer?.tax_lookup_verified_at ?? result.tax_lookup_verified_at ?? null,
+                tax_lookup_verified_doc_number: result.customer?.tax_lookup_verified_at || result.tax_lookup_verified_at ? normalizedFiscalNit(nit) : null,
             });
             setNitLookupMessage(result.name ? 'Nombre obtenido automáticamente' : 'No se encontró nombre para el NIT.');
             setCustomerEditing(false);
@@ -2096,8 +2126,8 @@ export default function POS({
         }
 
         if (invoiceNitNeedsVerification) {
-            showError('El NIT del cliente no ha sido validado.');
-            toast.error('El NIT del cliente no ha sido validado.');
+            showError(invoiceNitVerificationMessage);
+            toast.error(invoiceNitVerificationMessage);
             return;
         }
 
@@ -2508,6 +2538,18 @@ export default function POS({
         !data.customer.consumidor_final &&
         data.customer.doc_type === 'NIT' &&
         !data.customer.tax_lookup_verified_at;
+    const invoiceNitVerificationMessage = (() => {
+        if (!invoiceNitNeedsVerification) {
+            return '';
+        }
+
+        const currentNit = normalizedFiscalNit(data.customer.doc_number);
+        const verifiedNit = normalizedFiscalNit(data.customer.tax_lookup_verified_doc_number);
+
+        return verifiedNit && currentNit !== verifiedNit
+            ? 'El NIT fue modificado después de la validación. Valídalo nuevamente.'
+            : 'El NIT debe validarse antes de emitir factura FEL.';
+    })();
     const invoiceCuiDisabled =
         effectiveDocumentType === 'invoice' &&
         country === 'GT' &&
@@ -2724,6 +2766,7 @@ export default function POS({
                                                                     name: '',
                                                                     name_locked: false,
                                                                     tax_lookup_verified_at: null,
+                                                                    tax_lookup_verified_doc_number: data.customer.tax_lookup_verified_doc_number,
                                                                 });
                                                                 setNitLookupMessage('');
                                                             }}
@@ -3784,7 +3827,7 @@ export default function POS({
                                 )}
                                 {invoiceNitNeedsVerification && (
                                     <div className="mt-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
-                                        El NIT del cliente no ha sido validado.
+                                        {invoiceNitVerificationMessage}
                                     </div>
                                 )}
                                 {invoiceCuiDisabled && (

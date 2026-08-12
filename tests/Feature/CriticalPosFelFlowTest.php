@@ -16,6 +16,7 @@ use App\Models\CustomerAccountMovement;
 use App\Models\CustomerCreditAccount;
 use App\Models\CustomerCreditPayment;
 use App\Models\CustomerCreditPaymentAllocation;
+use App\Models\CustomerTaxLookup;
 use App\Models\ElectronicDocument;
 use App\Models\FelReconciliationRequest;
 use App\Models\PriceType;
@@ -399,6 +400,143 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertSessionHasNoErrors();
 
         $this->assertSame('invoice', Sale::query()->firstOrFail()->document_type);
+    }
+
+    public function test_gt_nit_lookup_revalidates_existing_customer_without_lookup_marker(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner');
+        Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente antiguo',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+            'country' => 'GT',
+            'name_locked' => false,
+            'tax_lookup_verified_at' => null,
+        ]);
+        CustomerTaxLookup::query()->create([
+            'business_id' => $business->id,
+            'country' => 'GT',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+            'name' => 'Cliente Digifact',
+            'provider' => 'digifact',
+            'raw_response' => ['nit' => '57289085'],
+            'last_lookup_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->getJson(route('customers.gt.nit-lookup', ['nit' => '5728-9085']))
+            ->assertOk()
+            ->assertJsonPath('customer.name', 'Cliente Digifact')
+            ->assertJsonPath('customer.doc_number', '57289085')
+            ->assertJsonPath('customer.name_locked', true)
+            ->assertJsonPath('customer.tax_lookup_verified_at', fn ($value) => filled($value));
+
+        $customer = Customer::query()->where('business_id', $business->id)->where('doc_number', '57289085')->firstOrFail();
+        $this->assertSame('Cliente Digifact', $customer->name);
+        $this->assertTrue($customer->name_locked);
+        $this->assertNotNull($customer->tax_lookup_verified_at);
+    }
+
+    public function test_fel_invoice_accepts_verified_customer_with_normalized_nit_match(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'cash_register', 'fel_gt'],
+            allowInvoices: true,
+        );
+        $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente Validado',
+            'doc_type' => 'NIT',
+            'doc_number' => '5728-9085',
+            'country' => 'GT',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
+        ]);
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $sale) {
+            $document = $sale->electronicDocument;
+            $document->update(['status' => 'certified', 'uuid' => 'UUID-NIT']);
+
+            return $document->refresh();
+        });
+        $digifact->shouldReceive('recordSaleRequestTiming')->once();
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                documentType: 'invoice',
+                customer: [
+                    'id' => $customer->id,
+                    'name' => 'Cliente Validado',
+                    'doc_type' => 'NIT',
+                    'doc_number' => '57289085',
+                    'country' => 'GT',
+                    'name_locked' => true,
+                    'tax_lookup_verified_at' => now()->toDateTimeString(),
+                ],
+            ))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('invoice', Sale::query()->where('business_id', $business->id)->firstOrFail()->document_type);
+    }
+
+    public function test_fel_invoice_rejects_changed_nit_even_when_request_sends_lookup_flag(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'cash_register', 'fel_gt'],
+            allowInvoices: true,
+        );
+        $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente Validado',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+            'country' => 'GT',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
+        ]);
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->never();
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                documentType: 'invoice',
+                customer: [
+                    'id' => $customer->id,
+                    'name' => 'Cliente Validado',
+                    'doc_type' => 'NIT',
+                    'doc_number' => '57289086',
+                    'country' => 'GT',
+                    'name_locked' => true,
+                    'tax_lookup_verified_at' => now()->toDateTimeString(),
+                ],
+            ))
+            ->assertSessionHasErrors([
+                'customer.doc_number' => 'El NIT debe validarse antes de emitir factura FEL.',
+            ]);
+
+        $this->assertDatabaseCount('sales', 0);
     }
 
     public function test_receipt_disabled_is_not_exposed_as_available_pos_document_type(): void

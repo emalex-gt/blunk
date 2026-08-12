@@ -21,7 +21,7 @@ class GuatemalaNitCustomerResolver
         return strtoupper(preg_replace('/[\s-]+/', '', trim((string) $nit)));
     }
 
-    public static function resolve(Business $business, ?string $nit, bool $allowCache = true): array
+    public static function resolve(Business $business, ?string $nit, bool $allowCache = true, bool $requireVerifiedExisting = false): array
     {
         $normalizedNit = self::normalize($nit);
 
@@ -34,8 +34,8 @@ class GuatemalaNitCustomerResolver
 
         $existing = self::findExistingCustomer($business, $normalizedNit);
 
-        if ($existing) {
-            if ($existing->doc_type !== 'NIT') {
+        if ($existing && (! $requireVerifiedExisting || ($existing->tax_lookup_verified_at && $existing->name_locked))) {
+            if ($existing->doc_type !== 'NIT' || self::normalize($existing->doc_number) !== $normalizedNit) {
                 $existing->forceFill(['doc_type' => 'NIT', 'doc_number' => $normalizedNit])->save();
             }
 

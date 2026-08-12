@@ -1959,12 +1959,7 @@ class SaleController extends Controller
             }
 
             if ($docType === 'NIT') {
-                $verifiedCustomer = Customer::query()
-                    ->where('business_id', $businessId)
-                    ->where('doc_type', 'NIT')
-                    ->where('doc_number', $docNumber)
-                    ->whereNotNull('tax_lookup_verified_at')
-                    ->first();
+                $verifiedCustomer = $this->verifiedNitCustomer($businessId, $docNumber);
 
                 if ($verifiedCustomer) {
                     $name = $verifiedCustomer->name;
@@ -2162,20 +2157,15 @@ class SaleController extends Controller
 
         if ($docNumber === '' || ! preg_match('/^[A-Za-z0-9]+$/', $docNumber)) {
             throw ValidationException::withMessages([
-                'customer.doc_number' => 'Consulta un NIT valido antes de facturar.',
+                'customer.doc_number' => 'El NIT debe validarse antes de emitir factura FEL.',
             ]);
         }
 
-        $verifiedCustomer = Customer::query()
-            ->where('business_id', $business->id)
-            ->where('doc_type', 'NIT')
-            ->where('doc_number', $docNumber)
-            ->whereNotNull('tax_lookup_verified_at')
-            ->first();
+        $verifiedCustomer = $this->verifiedNitCustomer($business->id, $docNumber);
 
         if (! $verifiedCustomer) {
             throw ValidationException::withMessages([
-                'customer.doc_number' => 'El NIT del cliente no ha sido validado.',
+                'customer.doc_number' => 'El NIT debe validarse antes de emitir factura FEL.',
             ]);
         }
 
@@ -2195,6 +2185,24 @@ class SaleController extends Controller
         return (bool) ($customerData['consumidor_final'] ?? false)
             || $docType === 'CF'
             || $docNumber === 'CF';
+    }
+
+    private function verifiedNitCustomer(int $businessId, string $docNumber): ?Customer
+    {
+        $normalized = $this->normalizeDocument($docNumber);
+
+        if ($normalized === '') {
+            return null;
+        }
+
+        return Customer::query()
+            ->where('business_id', $businessId)
+            ->where(function ($query) {
+                $query->where('doc_type', 'NIT')->orWhereNull('doc_type');
+            })
+            ->whereRaw("UPPER(REPLACE(REPLACE(doc_number, '-', ''), ' ', '')) = ?", [$normalized])
+            ->whereNotNull('tax_lookup_verified_at')
+            ->first();
     }
 
     private function isFinalConsumerSaleData(?array $customerData, ?Customer $customer, array $snapshot = []): bool
