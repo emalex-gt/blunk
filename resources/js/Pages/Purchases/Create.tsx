@@ -154,6 +154,12 @@ export default function Create({
     const [productSearchLoading, setProductSearchLoading] = useState(false);
     const [supplierResults, setSupplierResults] = useState<Supplier[]>([]);
     const [supplierSearchLoading, setSupplierSearchLoading] = useState(false);
+    const [confirmPurchase, setConfirmPurchase] = useState<{
+        supplier: Supplier | null;
+        newSupplier: SupplierDraft | null;
+        fromSupplierModal?: boolean;
+    } | null>(null);
+    const [purchaseDetailsExpanded, setPurchaseDetailsExpanded] = useState(true);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const toast = useToast();
 
@@ -173,6 +179,21 @@ export default function Create({
     }, [supplierName, supplierResults, suppliers]);
 
     const filteredProducts = productResults;
+    const paymentMethodLabels: Record<string, string> = {
+        cash: 'Efectivo',
+        card: 'Tarjeta',
+        bank_transfer: 'Transferencia',
+        check: 'Cheque',
+        credit: 'Crédito',
+        other: 'Otro',
+    };
+    const selectedBranch = useMemo(
+        () => branches.find((branch) => branch.id === branchId) ?? active_branch ?? null,
+        [active_branch, branchId, branches],
+    );
+    const canCompactPurchaseDetails = supplierName.trim() !== ''
+        && (!branches_enabled || branches.length === 0 || branchId !== null);
+    const purchaseDetailsCompact = !purchaseDetailsExpanded && canCompactPurchaseDetails;
 
     const total = useMemo(
         () =>
@@ -252,6 +273,28 @@ export default function Create({
         return response.data.products;
     }
 
+    async function hydrateSuppliers(supplierIds: number[]): Promise<Supplier[]> {
+        const ids = [...new Set(supplierIds.filter(Boolean))];
+
+        if (ids.length === 0) {
+            return [];
+        }
+
+        const response = await axios.get<{ suppliers: Supplier[] }>(route('purchases.suppliers.search'), {
+            params: { ids: ids.join(',') },
+            headers: { Accept: 'application/json' },
+        });
+
+        setSupplierResults((current) => {
+            const map = new Map(current.map((supplier) => [supplier.id, supplier]));
+            response.data.suppliers.forEach((supplier) => map.set(supplier.id, supplier));
+
+            return Array.from(map.values());
+        });
+
+        return response.data.suppliers;
+    }
+
     function updateItem(productId: number, field: 'quantity' | 'unit_cost', value: string) {
         if (field === 'quantity') {
             const sanitized = sanitizeQuantityInput(value);
@@ -319,15 +362,26 @@ export default function Create({
 
         setCart(restoredItems);
         setSupplierName(draft.supplier_name ?? '');
-        setSelectedSupplier(
-            draft.selected_supplier_id
-                ? suppliers.find((supplier) => supplier.id === draft.selected_supplier_id) ?? null
-                : null,
-        );
+        if (draft.selected_supplier_id) {
+            const supplier = suppliers.find((supplier) => supplier.id === draft.selected_supplier_id)
+                ?? supplierResults.find((supplier) => supplier.id === draft.selected_supplier_id)
+                ?? (await hydrateSuppliers([draft.selected_supplier_id]).catch(() => []))[0]
+                ?? null;
+
+            setSelectedSupplier(supplier);
+            if (supplier) {
+                setSupplierName(supplier.name);
+            } else {
+                toast.warning('El proveedor del borrador ya no está disponible. Selecciona otro proveedor.');
+            }
+        } else {
+            setSelectedSupplier(null);
+        }
         setNote(draft.note ?? '');
         setPaymentMethod(draft.payment_method ?? 'cash');
         setPaidFromCash(Boolean((draft.payment_method ?? 'cash') === 'cash' && draft.paid_from_cash && hasOpenCashRegister));
         setBranchId(draft.branch_id ?? active_branch?.id ?? null);
+        setPurchaseDetailsExpanded((draft.supplier_name ?? '').trim() === '');
     }
 
     function restoreSavedPurchaseDraft(draft: OperationDraftRecord<PurchaseDraft>) {
@@ -359,6 +413,7 @@ export default function Create({
         setCart([]);
         setMessage('');
         setActiveDraftId(null);
+        setPurchaseDetailsExpanded(true);
         requestAnimationFrame(() => searchInputRef.current?.focus());
     }
 
@@ -478,8 +533,8 @@ export default function Create({
         return true;
     }
 
-    function submit(event: FormEvent) {
-        event.preventDefault();
+    function submit(event?: FormEvent) {
+        event?.preventDefault();
 
         if (!validatePurchaseBeforeSubmit()) {
             return;
@@ -491,7 +546,7 @@ export default function Create({
             : null;
 
         if (!selectedSupplier && matchingSupplier) {
-            submitPurchase(matchingSupplier, null);
+            setConfirmPurchase({ supplier: matchingSupplier, newSupplier: null });
             return;
         }
 
@@ -508,7 +563,7 @@ export default function Create({
             return;
         }
 
-        submitPurchase(selectedSupplier, null);
+        setConfirmPurchase({ supplier: selectedSupplier, newSupplier: null });
     }
 
     function submitPurchase(
@@ -539,9 +594,11 @@ export default function Create({
                 const firstError = Object.values(errors)[0];
                 const errorMessage = String(firstError ?? 'No se pudo registrar la compra.');
                 setMessage(errorMessage);
+                setPurchaseDetailsExpanded(true);
                 toast.error(errorMessage);
 
                 if (options.fromSupplierModal) {
+                    setSupplierModalOpen(true);
                     setSupplierModalError(errorMessage);
                 }
             },
@@ -579,7 +636,8 @@ export default function Create({
         };
 
         setSupplierName(cleanDraft.name);
-        submitPurchase(null, cleanDraft, { fromSupplierModal: true });
+        setSupplierModalOpen(false);
+        setConfirmPurchase({ supplier: null, newSupplier: cleanDraft, fromSupplierModal: true });
     }
 
     useEffect(() => {
@@ -685,8 +743,8 @@ export default function Create({
             <Head title="Registrar compra" />
             <Toast toasts={toast.toasts} onClose={toast.removeToast} />
 
-            <div className="h-[calc(100vh-8rem)] bg-[#f4f6fb]">
-                <div className="mx-auto grid h-full max-w-[1800px] gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_620px] xl:grid-cols-[minmax(0,1fr)_680px]">
+            <div className="min-h-[calc(100vh-8rem)] overflow-x-hidden bg-[#f4f6fb]">
+                <div className="mx-auto grid min-h-full max-w-[1800px] gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_440px] xl:grid-cols-[minmax(0,1fr)_480px] 2xl:grid-cols-[minmax(0,1fr)_600px]">
                     <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
                         <div className="border-b border-slate-200 p-4">
                             <div className="mb-4 flex items-center justify-between gap-3">
@@ -698,7 +756,7 @@ export default function Create({
                                         Compra inventario y actualiza costo promedio.
                                     </p>
                                 </div>
-                <div className="flex flex-wrap gap-2">
+                                <div className="flex flex-wrap gap-2">
                                     <button
                                         type="button"
                                         onClick={openPurchaseDrafts}
@@ -730,113 +788,161 @@ export default function Create({
                                 </div>
                             </div>
 
-                            <div className="grid gap-3 md:grid-cols-2">
-                                <div className="relative">
-                                    <label className="text-sm font-medium text-slate-700">
-                                        Proveedor
-                                    </label>
-                                    <input
-                                        type="text"
-                                        name="supplier_input"
-                                        value={supplierName}
-                                        onChange={(event) => {
-                                            setSupplierName(event.target.value);
-                                            if (selectedSupplier && event.target.value !== selectedSupplier.name) {
-                                                setSelectedSupplier(null);
-                                            }
-                                        }}
-                                        autoComplete="off"
-                                        autoCorrect="off"
-                                        spellCheck={false}
-                                        placeholder="Escribe o selecciona un proveedor"
-                                        className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
-                                    />
-                                    <p className="mt-1 text-xs text-slate-500">
-                                        Se creará un nuevo proveedor si no existe
-                                    </p>
-                                    {supplierName && !selectedSupplier && supplierSuggestions.length > 0 && (
-                                        <div className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
-                                            {supplierSuggestions.map((supplier) => (
-                                                <button
-                                                    key={supplier.id}
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setSupplierName(supplier.name);
-                                                        setSelectedSupplier(supplier);
-                                                    }}
-                                                    className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
+                            {purchaseDetailsCompact ? (
+                                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3">
+                                    <div className="flex flex-wrap items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <div className="text-[11px] font-semibold uppercase text-indigo-500">
+                                                Datos de compra
+                                            </div>
+                                            <div className="mt-1 truncate text-sm font-semibold text-slate-950">
+                                                Proveedor: {supplierName.trim()}
+                                            </div>
+                                            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-600">
+                                                <span>Pago: <span className="font-semibold">{paymentMethodLabels[paymentMethod] ?? paymentMethod}</span></span>
+                                                {selectedBranch && (
+                                                    <span>Destino: <span className="font-semibold">{selectedBranch.name}</span></span>
+                                                )}
+                                                <span>Desde caja: <span className="font-semibold">{paymentMethod === 'cash' && paidFromCash ? 'Sí' : 'No'}</span></span>
+                                            </div>
+                                            {note.trim() && (
+                                                <div className="mt-1 line-clamp-1 text-xs text-slate-500">
+                                                    Nota: {note.trim()}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setPurchaseDetailsExpanded(true)}
+                                            className="shrink-0 rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
+                                        >
+                                            Editar datos
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                        <div className="relative">
+                                            <label className="text-sm font-medium text-slate-700">
+                                                Proveedor
+                                            </label>
+                                            <input
+                                                type="text"
+                                                name="supplier_input"
+                                                value={supplierName}
+                                                onChange={(event) => {
+                                                    setSupplierName(event.target.value);
+                                                    if (selectedSupplier && event.target.value !== selectedSupplier.name) {
+                                                        setSelectedSupplier(null);
+                                                    }
+                                                }}
+                                                autoComplete="off"
+                                                autoCorrect="off"
+                                                spellCheck={false}
+                                                placeholder="Escribe o selecciona un proveedor"
+                                                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                            />
+                                            <p className="mt-1 text-xs text-slate-500">
+                                                Se creará un nuevo proveedor si no existe
+                                            </p>
+                                            {supplierName && !selectedSupplier && supplierSuggestions.length > 0 && (
+                                                <div className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                                                    {supplierSuggestions.map((supplier) => (
+                                                        <button
+                                                            key={supplier.id}
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setSupplierName(supplier.name);
+                                                                setSelectedSupplier(supplier);
+                                                            }}
+                                                            className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
+                                                        >
+                                                            <span className="block font-semibold">{supplier.name}</span>
+                                                            {(supplier.phone || supplier.email) && (
+                                                                <span className="block text-xs text-slate-500">
+                                                                    {[supplier.phone, supplier.email].filter(Boolean).join(' · ')}
+                                                                </span>
+                                                            )}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div>
+                                            <label className="text-sm font-medium text-slate-700">Nota</label>
+                                            <input
+                                                value={note}
+                                                onChange={(event) => setNote(event.target.value)}
+                                                placeholder="Nota opcional"
+                                                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-medium text-slate-700">Forma de pago</label>
+                                            <select
+                                                value={paymentMethod}
+                                                onChange={(event) => setPaymentMethod(event.target.value)}
+                                                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                            >
+                                                <option value="cash">Efectivo</option>
+                                                <option value="card">Tarjeta</option>
+                                                <option value="bank_transfer">Transferencia</option>
+                                                <option value="check">Cheque</option>
+                                                <option value="credit">Crédito</option>
+                                                <option value="other">Otro</option>
+                                            </select>
+                                        </div>
+                                        {branches_enabled && branches.length > 0 && (
+                                            <div>
+                                                <label className="text-sm font-medium text-slate-700">Sucursal destino</label>
+                                                <select
+                                                    value={branchId ?? ''}
+                                                    onChange={(event) => setBranchId(Number(event.target.value))}
+                                                    className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                                                 >
-                                                    <span className="block font-semibold">{supplier.name}</span>
-                                                    {(supplier.phone || supplier.email) && (
-                                                        <span className="block text-xs text-slate-500">
-                                                            {[supplier.phone, supplier.email].filter(Boolean).join(' · ')}
-                                                        </span>
-                                                    )}
-                                                </button>
-                                            ))}
+                                                    {branches.map((branch) => (
+                                                        <option key={branch.id} value={branch.id}>
+                                                            {branch.name}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <label className="mt-3 flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 text-sm">
+                                        <input
+                                            type="checkbox"
+                                            checked={paidFromCash}
+                                            disabled={!hasOpenCashRegister || paymentMethod !== 'cash'}
+                                            onChange={(event) => setPaidFromCash(event.target.checked)}
+                                            className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
+                                        />
+                                        <span>
+                                            <span className="block font-semibold text-slate-800">¿Pagar desde caja?</span>
+                                            <span className="block text-xs text-slate-500">
+                                                {hasOpenCashRegister
+                                                    ? (paymentMethod === 'cash' ? 'La compra reducirá el efectivo esperado de caja.' : 'Solo aplica para pagos en efectivo.')
+                                                    : 'No hay caja abierta'}
+                                            </span>
+                                        </span>
+                                    </label>
+
+                                    {canCompactPurchaseDetails && (
+                                        <div className="mt-3 flex justify-end">
+                                            <button
+                                                type="button"
+                                                onClick={() => setPurchaseDetailsExpanded(false)}
+                                                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+                                            >
+                                                Guardar datos
+                                            </button>
                                         </div>
                                     )}
-                                </div>
-
-                                <div>
-                                    <label className="text-sm font-medium text-slate-700">Nota</label>
-                                    <input
-                                        value={note}
-                                        onChange={(event) => setNote(event.target.value)}
-                                        placeholder="Nota opcional"
-                                        className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="text-sm font-medium text-slate-700">Forma de pago</label>
-                                    <select
-                                        value={paymentMethod}
-                                        onChange={(event) => setPaymentMethod(event.target.value)}
-                                        className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
-                                    >
-                                        <option value="cash">Efectivo</option>
-                                        <option value="card">Tarjeta</option>
-                                        <option value="bank_transfer">Transferencia</option>
-                                        <option value="check">Cheque</option>
-                                        <option value="credit">Crédito</option>
-                                        <option value="other">Otro</option>
-                                    </select>
-                                </div>
-                                {branches_enabled && branches.length > 0 && (
-                                    <div>
-                                        <label className="text-sm font-medium text-slate-700">Sucursal destino</label>
-                                        <select
-                                            value={branchId ?? ''}
-                                            onChange={(event) => setBranchId(Number(event.target.value))}
-                                            className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
-                                        >
-                                            {branches.map((branch) => (
-                                                <option key={branch.id} value={branch.id}>
-                                                    {branch.name}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                )}
-                            </div>
-
-                            <label className="mt-3 flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 text-sm">
-                                <input
-                                    type="checkbox"
-                                    checked={paidFromCash}
-                                    disabled={!hasOpenCashRegister || paymentMethod !== 'cash'}
-                                    onChange={(event) => setPaidFromCash(event.target.checked)}
-                                    className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
-                                />
-                                <span>
-                                    <span className="block font-semibold text-slate-800">¿Pagar desde caja?</span>
-                                    <span className="block text-xs text-slate-500">
-                                        {hasOpenCashRegister
-                                            ? (paymentMethod === 'cash' ? 'La compra reducirá el efectivo esperado de caja.' : 'Solo aplica para pagos en efectivo.')
-                                            : 'No hay caja abierta'}
-                                    </span>
-                                </span>
-                            </label>
+                                </>
+                            )}
 
                             <input
                                 ref={searchInputRef}
@@ -852,7 +958,7 @@ export default function Create({
                             )}
                         </div>
 
-                        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                        <div className="p-4">
                             {!productSearchLoading && search.trim().length >= 2 && filteredProducts.length === 0 && (
                                 <div className="mb-3 rounded-xl border border-dashed border-slate-300 p-4 text-center text-sm text-slate-500">
                                     Sin resultados.
@@ -863,7 +969,7 @@ export default function Create({
                                     Escribe al menos 2 caracteres para buscar productos.
                                 </div>
                             )}
-                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                            <div className="grid grid-cols-1 gap-3 min-[1180px]:grid-cols-2">
                                 {filteredProducts.map((product) => (
                                     <div
                                         key={product.id}
@@ -871,7 +977,7 @@ export default function Create({
                                         tabIndex={0}
                                         onClick={() => addProduct(product)}
                                         onKeyDown={(event) => handleProductCardKeyDown(event, product)}
-                                        className="relative flex cursor-pointer items-stretch gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                                        className="relative flex min-h-[148px] cursor-pointer gap-4 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] focus:outline-none focus:ring-4 focus:ring-indigo-100"
                                     >
                                         <button
                                             type="button"
@@ -890,24 +996,56 @@ export default function Create({
                                                 src={getProductImageUrl(product.image_url, 200) ?? ''}
                                                 alt={product.name}
                                                 loading="lazy"
-                                                className="h-20 w-20 shrink-0 rounded-xl object-cover"
+                                                className="h-24 w-24 shrink-0 rounded-xl object-cover"
                                             />
                                         ) : null}
 
-                                        <div className="flex min-w-0 flex-1 flex-col justify-between">
+                                        <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
                                             <div>
-                                                <h3 className="truncate pr-7 text-sm font-semibold text-slate-950">
+                                                <h3 className="line-clamp-2 pr-7 text-sm font-semibold leading-5 text-slate-950 sm:text-base">
                                                     {product.name}
                                                 </h3>
-                                                <div className="mt-1 truncate text-xs text-slate-500">
-                                                    {product.barcode || product.code || 'Código'}
+                                                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                                                    <span>Código: <span className="font-semibold text-slate-700">{product.code || '-'}</span></span>
+                                                    <span>Código de barras: <span className="font-semibold text-slate-700">{product.barcode || '-'}</span></span>
+                                                    <span>Stock: <span className="font-semibold text-slate-700">{product.stock}</span></span>
                                                 </div>
                                             </div>
-                                            <div className="flex items-center justify-between gap-2 text-xs">
-                                                <span className="text-slate-600">Stock {product.stock}</span>
-                                                <span className="whitespace-nowrap font-semibold text-slate-950">
-                                                    {formatCurrency(product.cost_price, country)}
-                                                </span>
+                                            <div className="flex flex-wrap items-end justify-between gap-3">
+                                                <div className="space-y-1 text-xs text-slate-500">
+                                                    <div>
+                                                        Costo actual:{' '}
+                                                        <span className="font-semibold text-slate-900">
+                                                            {formatCurrency(product.cost_price, country)}
+                                                        </span>
+                                                    </div>
+                                                    {product.supplier_costs?.[0] && (
+                                                        <div>
+                                                            Último costo:{' '}
+                                                            <span className="font-semibold text-slate-700">
+                                                                {formatCurrency(product.supplier_costs[0].unit_cost, country)}
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                    {product.sale_price && (
+                                                        <div>
+                                                            Precio venta:{' '}
+                                                            <span className="font-semibold text-slate-700">
+                                                                {formatCurrency(product.sale_price, country)}
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        addProduct(product);
+                                                    }}
+                                                    className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                                                >
+                                                    Agregar
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
@@ -917,8 +1055,8 @@ export default function Create({
                     </section>
 
                     <form
-                        onSubmit={submit}
-                        className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.08)]"
+                        onSubmit={(event) => event.preventDefault()}
+                        className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.08)] lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)]"
                     >
                         <header className="border-b border-slate-200 p-4">
                             <h2 className="text-xl font-semibold text-slate-950">Compra</h2>
@@ -940,7 +1078,7 @@ export default function Create({
                                 </div>
                             )}
 
-                            <div>
+                            <div className="space-y-3">
                                 {cart.map((item) => {
                                     const lineTotal = Number(item.quantity || 0) * Number(item.unit_cost || 0);
                                     const quantityMessage = quantityError(item.quantity);
@@ -948,53 +1086,86 @@ export default function Create({
                                     return (
                                         <div
                                             key={item.product.id}
-                                            className="grid grid-cols-[minmax(0,1fr)_92px_112px_100px_32px] items-start gap-3 border-b border-slate-100 py-2 last:border-b-0"
+                                            className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
                                         >
-                                            <div className="min-w-0 text-sm">
-                                                <div className="truncate font-semibold text-slate-950">
-                                                    {item.product.barcode || item.product.code || 'Código'} - {item.product.name}
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                                                        {item.product.barcode || item.product.code || 'Código'}
+                                                    </div>
+                                                    <div className="line-clamp-2 text-sm font-semibold leading-5 text-slate-950">
+                                                        {item.product.name}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    title="Eliminar"
+                                                    onClick={() => removeItem(item.product.id)}
+                                                    className="shrink-0 rounded-lg px-2 py-1 text-lg leading-none text-red-500 hover:bg-red-50 hover:text-red-700"
+                                                >
+                                                    ×
+                                                </button>
+                                            </div>
+                                            <div className="mt-3 grid gap-2 sm:grid-cols-[116px_minmax(0,1fr)_auto] lg:grid-cols-[112px_minmax(0,1fr)] xl:grid-cols-[116px_minmax(0,1fr)_auto]">
+                                                <div>
+                                                    <label className="mb-1 block text-[11px] font-semibold uppercase text-slate-400">
+                                                        Cantidad
+                                                    </label>
+                                                    <div className="flex h-10 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => updateItem(item.product.id, 'quantity', String(Math.max(1, Number(item.quantity || 1) - 1)))}
+                                                            className="w-9 text-sm font-bold text-slate-500 hover:bg-slate-50"
+                                                        >
+                                                            -
+                                                        </button>
+                                                        <input
+                                                            type="number"
+                                                            min="1"
+                                                            step="1"
+                                                            inputMode="numeric"
+                                                            pattern="[0-9]*"
+                                                            value={item.quantity}
+                                                            onChange={(event) => updateItem(item.product.id, 'quantity', event.target.value)}
+                                                            onWheel={(event) => event.currentTarget.blur()}
+                                                            className="h-full min-w-0 flex-1 border-0 text-center text-sm font-semibold text-slate-900 focus:ring-0"
+                                                        />
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => updateItem(item.product.id, 'quantity', String(Number(item.quantity || 0) + 1))}
+                                                            className="w-9 text-sm font-bold text-slate-500 hover:bg-slate-50"
+                                                        >
+                                                            +
+                                                        </button>
+                                                    </div>
+                                                    {quantityMessage && (
+                                                        <div className="mt-1 text-xs font-semibold text-red-600">
+                                                            {quantityMessage}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div>
+                                                    <label className="mb-1 block text-[11px] font-semibold uppercase text-slate-400">
+                                                        Costo unitario
+                                                    </label>
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        step="0.01"
+                                                        value={item.unit_cost}
+                                                        onChange={(event) => updateItem(item.product.id, 'unit_cost', event.target.value)}
+                                                        className="h-10 w-full rounded-xl border-slate-200 text-right text-sm font-semibold text-slate-900 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                    />
+                                                </div>
+                                                <div className="rounded-xl bg-slate-50 px-3 py-2 text-right sm:col-span-2 lg:col-span-2 xl:col-span-1">
+                                                    <div className="text-[11px] font-semibold uppercase text-slate-400">
+                                                        Subtotal
+                                                    </div>
+                                                    <div className="whitespace-nowrap text-sm font-semibold text-slate-950">
+                                                        {formatCurrency(lineTotal, country)}
+                                                    </div>
                                                 </div>
                                             </div>
-                                            <div>
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    step="1"
-                                                    inputMode="numeric"
-                                                    pattern="[0-9]*"
-                                                    value={item.quantity}
-                                                    onChange={(event) => updateItem(item.product.id, 'quantity', event.target.value)}
-                                                    onWheel={(event) => event.currentTarget.blur()}
-                                                    className={[
-                                                        'h-10 w-full rounded-xl text-center text-sm font-semibold text-slate-900 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100',
-                                                        quantityMessage ? 'border-red-300' : 'border-slate-200',
-                                                    ].join(' ')}
-                                                />
-                                                {quantityMessage && (
-                                                    <div className="mt-1 text-xs font-semibold text-red-600">
-                                                        {quantityMessage}
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <input
-                                                type="number"
-                                                min="0"
-                                                step="0.01"
-                                                value={item.unit_cost}
-                                                onChange={(event) => updateItem(item.product.id, 'unit_cost', event.target.value)}
-                                                className="h-10 rounded-xl border-slate-200 text-center text-sm font-semibold text-slate-900 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
-                                            />
-                                            <div className="whitespace-nowrap text-right text-sm font-semibold text-slate-950">
-                                                {formatCurrency(lineTotal, country)}
-                                            </div>
-                                            <button
-                                                type="button"
-                                                title="Eliminar"
-                                                onClick={() => removeItem(item.product.id)}
-                                                className="rounded-lg px-2 py-1 text-red-500 hover:bg-red-50 hover:text-red-700"
-                                            >
-                                                ×
-                                            </button>
                                         </div>
                                     );
                                 })}
@@ -1009,7 +1180,8 @@ export default function Create({
                                 </span>
                             </div>
                             <button
-                                type="submit"
+                                type="button"
+                                onClick={() => submit()}
                                 disabled={cart.length === 0 || processing}
                                 className="mt-4 h-14 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-base font-semibold text-white shadow-lg shadow-indigo-200 transition-all duration-200 hover:-translate-y-0.5 hover:from-indigo-700 hover:to-violet-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
@@ -1040,6 +1212,43 @@ export default function Create({
                     }}
                     onSubmit={submitSupplierModal}
                 />
+            )}
+
+            {confirmPurchase && (
+                <div className="fixed inset-0 z-[75] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+                    <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+                        <h2 className="text-lg font-semibold text-slate-950">
+                            ¿Has revisado la información de esta compra?
+                        </h2>
+                        <p className="mt-2 text-sm text-slate-600">
+                            Confirma que proveedor, productos, cantidades, costos y totales fueron revisados antes de guardar.
+                        </p>
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                disabled={processing}
+                                onClick={() => setConfirmPurchase(null)}
+                                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="button"
+                                disabled={processing}
+                                onClick={() => {
+                                    const confirmation = confirmPurchase;
+                                    setConfirmPurchase(null);
+                                    submitPurchase(confirmation.supplier, confirmation.newSupplier, {
+                                        fromSupplierModal: confirmation.fromSupplierModal,
+                                    });
+                                }}
+                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+                            >
+                                Sí, guardar compra
+                            </button>
+                        </div>
+                    </section>
+                </div>
             )}
 
             {restoreDraft && (

@@ -133,18 +133,33 @@ class PurchaseController extends Controller
     {
         $businessId = currentBusinessId();
         $search = trim((string) $request->query('q', ''));
+        $ids = collect(explode(',', (string) $request->query('ids', '')))
+            ->map(fn ($id) => (int) trim($id))
+            ->filter()
+            ->unique()
+            ->take(30)
+            ->values()
+            ->all();
 
-        if ($search === '') {
+        if ($search === '' && $ids === []) {
             return response()->json(['suppliers' => []]);
         }
 
         $suppliers = Supplier::query()
             ->where('business_id', $businessId)
             ->where('is_active', true)
-            ->where(function ($query) use ($search) {
-                $query->where('name', 'ilike', "%{$search}%")
-                    ->orWhere('phone', 'ilike', "%{$search}%")
-                    ->orWhere('email', 'ilike', "%{$search}%");
+            ->where(function ($query) use ($search, $ids) {
+                if ($ids !== []) {
+                    $query->whereIn('id', $ids);
+                }
+
+                if ($search !== '') {
+                    $query->orWhere(function ($query) use ($search) {
+                        $query->where('name', 'ilike', "%{$search}%")
+                            ->orWhere('phone', 'ilike', "%{$search}%")
+                            ->orWhere('email', 'ilike', "%{$search}%");
+                    });
+                }
             })
             ->orderBy('name')
             ->limit(20)

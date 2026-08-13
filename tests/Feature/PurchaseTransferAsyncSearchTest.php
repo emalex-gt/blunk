@@ -6,6 +6,7 @@ use App\Models\Branch;
 use App\Models\Business;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
+use App\Models\Supplier;
 use App\Models\TenantModule;
 use App\Models\TenantSetting;
 use App\Models\User;
@@ -114,6 +115,77 @@ class PurchaseTransferAsyncSearchTest extends TestCase
             ->assertJsonPath('products.0.id', $product->id);
     }
 
+    public function test_purchase_hydrates_suppliers_by_ids_for_drafts(): void
+    {
+        [$business, $user] = $this->tenant('purchases', ['purchases']);
+        $supplier = Supplier::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Proveedor fuera de lista inicial',
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->getJson(route('purchases.suppliers.search', ['ids' => (string) $supplier->id]))
+            ->assertOk()
+            ->assertJsonPath('suppliers.0.id', $supplier->id)
+            ->assertJsonPath('suppliers.0.name', 'Proveedor fuera de lista inicial');
+    }
+
+    public function test_purchase_and_transfer_create_sources_require_explicit_confirmation(): void
+    {
+        $purchaseSource = file_get_contents(resource_path('js/Pages/Purchases/Create.tsx'));
+        $transferSource = file_get_contents(resource_path('js/Pages/Inventory/Transfers/Create.tsx'));
+
+        $this->assertStringContainsString('¿Has revisado la información de esta compra?', $purchaseSource);
+        $this->assertStringContainsString('Sí, guardar compra', $purchaseSource);
+        $this->assertStringContainsString('onSubmit={(event) => event.preventDefault()}', $purchaseSource);
+        $this->assertStringContainsString('onClick={() => submit()}', $purchaseSource);
+        $this->assertStringContainsString('¿Has revisado la información de este traslado?', $transferSource);
+        $this->assertStringContainsString('Sí, guardar traslado', $transferSource);
+        $this->assertStringContainsString('onClick={requestTransferConfirmation}', $transferSource);
+    }
+
+    public function test_purchase_create_source_uses_readable_purchase_search_and_cart_layout(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Purchases/Create.tsx'));
+
+        $this->assertStringContainsString('min-[1180px]:grid-cols-2', $source);
+        $this->assertStringNotContainsString('lg:grid-cols-3 xl:grid-cols-4', $source);
+        $this->assertStringContainsString('line-clamp-2', $source);
+        $this->assertStringContainsString('Costo actual', $source);
+        $this->assertStringContainsString('Último costo', $source);
+        $this->assertStringContainsString('Costo unitario', $source);
+        $this->assertStringContainsString('Subtotal', $source);
+        $this->assertStringContainsString('purchaseDetailsExpanded', $source);
+        $this->assertStringContainsString('Guardar datos', $source);
+        $this->assertStringContainsString('Editar datos', $source);
+        $this->assertStringContainsString('Datos de compra', $source);
+        $this->assertStringNotContainsString('min-h-0 flex-1 overflow-y-auto p-4', $source);
+    }
+
+    public function test_stock_menu_points_to_paginated_stock_index_not_full_catalog_quick_page(): void
+    {
+        $source = file_get_contents(resource_path('js/Layouts/AuthenticatedLayout.tsx'));
+
+        $this->assertStringContainsString("href: route('stock.index')", $source);
+        $this->assertStringNotContainsString("href: route('stock.quick')", $source);
+    }
+
+    public function test_pos_source_has_cash_change_and_temporary_manual_price_state(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+
+        $this->assertStringContainsString("const [cashReceived, setCashReceived] = useState('');", $source);
+        $this->assertStringContainsString('const cashPaymentAmount = useMemo(', $source);
+        $this->assertStringContainsString('Efectivo recibido', $source);
+        $this->assertStringContainsString('Cambio', $source);
+        $this->assertStringContainsString('type ManualPriceDraft = {', $source);
+        $this->assertStringContainsString('const [manualPriceDraft, setManualPriceDraft]', $source);
+        $this->assertStringContainsString('function closeManualPriceModal()', $source);
+        $this->assertStringContainsString('function resetLinePrice(productId: number)', $source);
+        $this->assertStringContainsString('onClick={applyManualPriceDraft}', $source);
+    }
+
     public function test_transfer_hydrates_products_by_ids_for_drafts(): void
     {
         [$business, $user, $branch] = $this->tenant('stock_manager', ['branches']);
@@ -134,6 +206,71 @@ class PurchaseTransferAsyncSearchTest extends TestCase
             ->assertOk()
             ->assertJsonPath('products.0.id', $product->id)
             ->assertJsonPath('products.0.available_stock', 5);
+    }
+
+    public function test_stock_index_is_paginated_and_filters_server_side(): void
+    {
+        [$business, $user, $branch] = $this->tenant('stock_manager', ['inventory']);
+        [$otherBusiness] = $this->tenant('stock_manager', ['inventory'], 'Other stock tenant');
+        $otherBranch = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal secundaria',
+            'is_active' => true,
+        ]);
+        $lastProduct = null;
+
+        foreach (range(1, 30) as $index) {
+            $product = $this->product($business, "Stock paginado {$index}", "ST-{$index}", "BAR-{$index}");
+            $lastProduct = $product;
+            ProductBranchStock::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'product_id' => $product->id,
+                'stock' => $index,
+            ]);
+        }
+
+        $this->product($otherBusiness, 'Stock paginado otro tenant', 'ST-OTRO', 'BAR-OTRO');
+        ProductBranchStock::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $otherBranch->id,
+            'product_id' => $lastProduct->id,
+            'stock' => 99,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('stock.index', ['per_page' => 25]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Stock/Index')
+                ->has('products.data', 25)
+                ->where('products.total', 30));
+
+        $this->actingAs($user)
+            ->get(route('stock.index', ['search' => 'ST-30', 'per_page' => 25]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Stock/Index')
+                ->has('products.data', 1)
+                ->where('products.data.0.code', 'ST-30')
+                ->where('products.data.0.stock', 30));
+
+        $this->actingAs($user)
+            ->get(route('stock.index', ['search' => 'BAR-30', 'per_page' => 25]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Stock/Index')
+                ->has('products.data', 1)
+                ->where('products.data.0.code', 'ST-30')
+                ->where('products.data.0.stock', 30));
+
+        $this->actingAs($user)
+            ->get(route('stock.index', ['search' => 'ST-OTRO', 'per_page' => 25]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Stock/Index')
+                ->has('products.data', 0)
+                ->where('products.total', 0));
     }
 
     private function tenant(string $role, array $modules, string $name = 'Tenant async'): array
@@ -173,13 +310,13 @@ class PurchaseTransferAsyncSearchTest extends TestCase
         return [$business, $user, $branch];
     }
 
-    private function product(Business $business, string $name, ?string $code = null): Product
+    private function product(Business $business, string $name, ?string $code = null, ?string $barcode = null): Product
     {
         return Product::query()->create([
             'business_id' => $business->id,
             'name' => $name,
             'code' => $code ?? uniqid('P-'),
-            'barcode' => null,
+            'barcode' => $barcode,
             'cost_price' => 10,
             'sale_price' => 20,
             'stock' => 0,

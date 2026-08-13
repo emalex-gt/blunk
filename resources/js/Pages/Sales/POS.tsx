@@ -154,6 +154,12 @@ type CartItem = {
     locked_credit_line?: boolean;
 };
 
+type ManualPriceDraft = {
+    productId: number;
+    unitPrice: string;
+    percentage: string;
+};
+
 type CheckoutType = 'invoice' | 'receipt' | 'credit';
 
 type CreditInvoicePayload = {
@@ -740,6 +746,7 @@ export default function POS({
     const [payments, setPayments] = useState<PaymentLine[]>([
         paymentLine('cash', '0.00'),
     ]);
+    const [cashReceived, setCashReceived] = useState('');
     const [restoreDraft, setRestoreDraft] = useState<PosDraft | null>(null);
     const [draftReady, setDraftReady] = useState(false);
     const [showClearSaleModal, setShowClearSaleModal] = useState(false);
@@ -753,6 +760,7 @@ export default function POS({
     const [duplicateProductSearchTerm, setDuplicateProductSearchTerm] = useState('');
     const [duplicateProductSelectionMode, setDuplicateProductSelectionMode] = useState<'exact-enter' | 'normal'>('normal');
     const [manualPriceProductId, setManualPriceProductId] = useState<number | null>(null);
+    const [manualPriceDraft, setManualPriceDraft] = useState<ManualPriceDraft | null>(null);
     const [showCategoryPicker, setShowCategoryPicker] = useState(false);
     const [categorySearch, setCategorySearch] = useState('');
     const [discount, setDiscount] = useState<SaleDiscount | null>(null);
@@ -1161,6 +1169,28 @@ export default function POS({
         [mainPaymentMethod, payments, splitPayment, total],
     );
 
+    const cashPaymentAmount = useMemo(
+        () => {
+            if (paymentCondition !== 'paid') {
+                return 0;
+            }
+
+            if (splitPayment) {
+                return roundMoney(payments
+                    .filter((payment) => payment.method === 'cash')
+                    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0));
+            }
+
+            return mainPaymentMethod === 'cash' ? total : 0;
+        },
+        [mainPaymentMethod, paymentCondition, payments, splitPayment, total],
+    );
+    const cashReceivedAmount = Number(cashReceived || 0);
+    const cashReceivedIsValid = cashPaymentAmount <= 0
+        || (cashReceived.trim() !== '' && Number.isFinite(cashReceivedAmount) && roundMoney(cashReceivedAmount) >= cashPaymentAmount);
+    const cashChange = cashReceivedIsValid && cashPaymentAmount > 0
+        ? roundMoney(cashReceivedAmount - cashPaymentAmount)
+        : 0;
     const pendingAmount = Number((total - paidTotal).toFixed(2));
     const paymentIsBalanced = Math.round(paidTotal * 100) === Math.round(total * 100);
     const hasInvalidCartQuantities = useMemo(
@@ -1749,6 +1779,61 @@ export default function POS({
         )));
     }
 
+    function openManualPriceModal(productId: number) {
+        const item = cart.find((cartItem) => cartItem.product.id === productId);
+
+        if (!item) {
+            return;
+        }
+
+        setManualPriceDraft({
+            productId,
+            unitPrice: item.unit_price,
+            percentage: '',
+        });
+        setManualPriceProductId(productId);
+    }
+
+    function closeManualPriceModal() {
+        setManualPriceProductId(null);
+        setManualPriceDraft(null);
+    }
+
+    function resetLinePrice(productId: number) {
+        setCart((items) => items.map((item) => {
+            if (item.product.id !== productId) {
+                return item;
+            }
+
+            const price = priceFromList(item.product, item.price_type_id, default_price_type_id);
+
+            return {
+                ...item,
+                unit_price: price.price,
+                original_price: price.price,
+                price_type_id: price.priceTypeId ?? item.price_type_id,
+                price_source: 'price_list',
+                manual_price: false,
+                price_warning: price.warning,
+            };
+        }));
+    }
+
+    function applyManualPriceDraft() {
+        if (!manualPriceDraft) {
+            return;
+        }
+
+        const productId = manualPriceDraft.productId;
+
+        setCart((items) => items.map((item) => (
+            item.product.id === productId
+                ? { ...item, unit_price: manualPriceDraft.unitPrice, price_source: 'manual', manual_price: true, price_warning: null }
+                : item
+        )));
+        closeManualPriceModal();
+    }
+
     function updateManualPrice(productId: number, value: string) {
         setCart((items) => items.map((item) => (
             item.product.id === productId
@@ -1781,6 +1866,23 @@ export default function POS({
                 price_warning: null,
             };
         }));
+    }
+
+    function previewManualPercentage(item: CartItem, percent: number) {
+        const result = priceFromManualPercentage(item, percent, manualPricePolicy, default_price_type_id);
+
+        if (result.error || result.price === null) {
+            const message = result.error || 'Este precio no está permitido.';
+            showError(message);
+            toast.error(message);
+            return;
+        }
+
+        setManualPriceDraft({
+            productId: item.product.id,
+            unitPrice: result.price.toFixed(2),
+            percentage: String(percent),
+        });
     }
 
     function changeQuantity(productId: number, difference: number) {
@@ -2074,6 +2176,7 @@ export default function POS({
                     setShowCheckoutModal(false);
                     setSplitPayment(false);
                     setDiscount(null);
+                    setCashReceived('');
                     setPayments([paymentLine(mainPaymentMethod, '0.00')]);
                     setActiveOperationDraftId(null);
                     clearDraft(draftKey);
@@ -2122,6 +2225,15 @@ export default function POS({
 
         if (paymentCondition === 'paid' && !paymentIsBalanced) {
             toast.warning('El total pagado debe coincidir con el total de la venta.');
+            return;
+        }
+
+        if (paymentCondition === 'paid' && cashPaymentAmount > 0 && !cashReceivedIsValid) {
+            const message = cashReceived.trim() === ''
+                ? 'Ingresa el efectivo recibido.'
+                : 'El efectivo recibido no cubre el monto en efectivo.';
+            showError(message);
+            toast.error(message);
             return;
         }
 
@@ -2194,6 +2306,7 @@ export default function POS({
                 setPaymentCondition('paid');
                 setDocumentType(singleDocumentType ?? (availableCheckoutTypes[0] ?? 'receipt'));
                 setDiscount(null);
+                setCashReceived('');
                 setPayments([paymentLine(mainPaymentMethod, '0.00')]);
                 setActiveOperationDraftId(null);
                 clearDraft(draftKey);
@@ -2432,6 +2545,12 @@ export default function POS({
 
         setPayments([paymentLine(mainPaymentMethod, total.toFixed(2))]);
     }, [mainPaymentMethod, showCheckoutModal, splitPayment, total]);
+
+    useEffect(() => {
+        if (!showCheckoutModal || cashPaymentAmount <= 0) {
+            setCashReceived('');
+        }
+    }, [cashPaymentAmount, showCheckoutModal]);
 
     function updatePayment(index: number, field: keyof PaymentLine, value: string) {
         setPayments((current) =>
@@ -3169,7 +3288,7 @@ export default function POS({
                     </section>
 
                     <form
-                        onSubmit={openCheckout}
+                        onSubmit={(event) => event.preventDefault()}
                         className="flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.08)] 2xl:max-h-[calc(100vh-6.5rem)]"
                     >
                         <header className="border-b border-slate-200 p-4">
@@ -3327,10 +3446,19 @@ export default function POS({
                                                 {canUseManualPrice && !item.locked_credit_line && (
                                                     <button
                                                         type="button"
-                                                        onClick={() => setManualPriceProductId(item.product.id)}
+                                                        onClick={() => openManualPriceModal(item.product.id)}
                                                         className="self-start text-[11px] font-semibold text-indigo-600 hover:text-indigo-700"
                                                     >
                                                         {item.manual_price ? 'Editar precio manual' : 'Precio manual'}
+                                                    </button>
+                                                )}
+                                                {item.manual_price && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => resetLinePrice(item.product.id)}
+                                                        className="self-start text-[11px] font-semibold text-slate-500 hover:text-slate-700"
+                                                    >
+                                                        Restablecer
                                                     </button>
                                                 )}
                                             </div>
@@ -3428,7 +3556,8 @@ export default function POS({
                             )}
 
                             <button
-                                type="submit"
+                                type="button"
+                                onClick={openCheckout}
                                 disabled={cart.length === 0 || processing || (!hasOpenCashRegister && !credit_available && !credit_sales_available) || hasInvalidCartQuantities || noAvailableDocumentTypes}
                                 className="mt-4 h-14 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-lg font-semibold text-white shadow-lg shadow-indigo-200 transition-all duration-200 hover:-translate-y-0.5 hover:from-indigo-700 hover:to-violet-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
@@ -3446,7 +3575,13 @@ export default function POS({
                     return null;
                 }
 
-                const activeManualPriceError = manualPriceError(item, manualPricePolicy, default_price_type_id);
+                const draftItem = {
+                    ...item,
+                    unit_price: manualPriceDraft?.productId === item.product.id ? manualPriceDraft.unitPrice : item.unit_price,
+                    manual_price: true,
+                    price_source: 'manual' as const,
+                };
+                const activeManualPriceError = manualPriceError(draftItem, manualPricePolicy, default_price_type_id);
                 const percentageSteps = manualPercentageSteps(manualPricePolicy);
                 const showPercentageControls = manualPricePolicy.mode !== 'none';
 
@@ -3460,7 +3595,7 @@ export default function POS({
                                 </div>
                                 <button
                                     type="button"
-                                    onClick={() => setManualPriceProductId(null)}
+                                    onClick={closeManualPriceModal}
                                     className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
                                 >
                                     Cerrar
@@ -3484,7 +3619,7 @@ export default function POS({
                                                     key={percent}
                                                     type="button"
                                                     disabled={processing}
-                                                    onClick={() => applyManualPercentage(item.product.id, percent)}
+                                                    onClick={() => previewManualPercentage(item, percent)}
                                                     className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
                                                 >
                                                     {manualPricePolicy.mode === 'price_discount' ? '-' : '+'}{percent}%
@@ -3497,12 +3632,14 @@ export default function POS({
                                                 step="0.01"
                                                 placeholder="Otro %"
                                                 disabled={processing}
+                                                value={manualPriceDraft?.percentage ?? ''}
                                                 onChange={(event) => {
                                                     if (event.target.value === '') {
+                                                        setManualPriceDraft((current) => current ? { ...current, percentage: '' } : current);
                                                         return;
                                                     }
 
-                                                    applyManualPercentage(item.product.id, Number(event.target.value));
+                                                    previewManualPercentage(item, Number(event.target.value));
                                                 }}
                                                 className="h-10 w-28 rounded-xl border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
                                             />
@@ -3516,12 +3653,20 @@ export default function POS({
                                         type="number"
                                         min="0.01"
                                         step="0.01"
-                                        value={item.unit_price}
+                                        value={draftItem.unit_price}
                                         disabled={processing}
-                                        onChange={(event) => updateManualPrice(item.product.id, event.target.value)}
+                                        onChange={(event) => setManualPriceDraft((current) => ({
+                                            productId: item.product.id,
+                                            percentage: current?.productId === item.product.id ? current.percentage : '',
+                                            unitPrice: event.target.value,
+                                        }))}
                                         className="mt-1 h-12 w-full rounded-xl border-slate-200 text-lg font-semibold text-slate-950 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                                     />
                                 </label>
+
+                                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                                    Precio resultante: <span className="font-semibold text-slate-950">{formatCurrency(Number(draftItem.unit_price || 0), country)}</span>
+                                </div>
 
                                 {activeManualPriceError && (
                                     <p className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
@@ -3529,17 +3674,26 @@ export default function POS({
                                     </p>
                                 )}
 
-                                <button
-                                    type="button"
-                                    disabled={Boolean(activeManualPriceError)}
-                                    onClick={() => {
-                                        enableManualPrice(item.product.id);
-                                        setManualPriceProductId(null);
-                                    }}
-                                    className="h-12 w-full rounded-xl bg-indigo-600 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                                >
-                                    Aplicar
-                                </button>
+                                <div className="grid gap-2 sm:grid-cols-[auto_1fr]">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            resetLinePrice(item.product.id);
+                                            closeManualPriceModal();
+                                        }}
+                                        className="h-12 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                                    >
+                                        Restablecer precio
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled={Boolean(activeManualPriceError)}
+                                        onClick={applyManualPriceDraft}
+                                        className="h-12 rounded-xl bg-indigo-600 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                    >
+                                        Aplicar
+                                    </button>
+                                </div>
                             </div>
                         </section>
                     </div>
@@ -3763,6 +3917,35 @@ export default function POS({
                                     </div>
                                 </section>
                             )}
+
+                            {cashPaymentAmount > 0 && (
+                                <section className="grid gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4 sm:grid-cols-3">
+                                    <div>
+                                        <div className="text-xs font-semibold uppercase text-emerald-700">Monto en efectivo</div>
+                                        <div className="mt-1 text-lg font-bold text-emerald-950">{formatCurrency(cashPaymentAmount, country)}</div>
+                                    </div>
+                                    <label className="block">
+                                        <span className="text-xs font-semibold uppercase text-emerald-700">Efectivo recibido</span>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            value={cashReceived}
+                                            onChange={(event) => setCashReceived(event.target.value)}
+                                            className={`mt-1 h-11 w-full rounded-xl bg-white text-right text-sm font-semibold text-slate-900 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 ${
+                                                cashReceived.trim() !== '' && !cashReceivedIsValid ? 'border-red-300' : 'border-emerald-200'
+                                            }`}
+                                        />
+                                    </label>
+                                    <div>
+                                        <div className="text-xs font-semibold uppercase text-emerald-700">Cambio</div>
+                                        <div className="mt-1 text-lg font-bold text-emerald-950">{formatCurrency(Math.max(0, cashChange), country)}</div>
+                                        {cashReceived.trim() !== '' && !cashReceivedIsValid && (
+                                            <div className="mt-1 text-xs font-semibold text-red-600">Efectivo insuficiente.</div>
+                                        )}
+                                    </div>
+                                </section>
+                            )}
                             </>
                             )}
 
@@ -3890,7 +4073,7 @@ export default function POS({
                             <button
                                 type="button"
                                 onClick={submitSale}
-                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && !paymentIsBalanced) || invoiceNitNeedsVerification || invoiceCuiDisabled || hasInvalidCartQuantities || noAvailableDocumentTypes}
+                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && (!paymentIsBalanced || !cashReceivedIsValid)) || invoiceNitNeedsVerification || invoiceCuiDisabled || hasInvalidCartQuantities || noAvailableDocumentTypes}
                                 className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-200 hover:from-indigo-700 hover:to-violet-700 disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : ((processing || creditProcessing) ? 'Confirmando...' : (effectiveCheckoutType === 'credit' ? 'Confirmar crédito' : 'Confirmar venta'))}

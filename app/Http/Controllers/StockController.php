@@ -39,16 +39,47 @@ class StockController extends Controller
     {
         $businessId = currentBusinessId();
         $activeBranch = BranchInventory::activeBranch($businessId);
+        $search = trim((string) $request->query('search', ''));
+        $perPage = (int) $request->query('per_page', 25);
+        $perPage = in_array($perPage, [25, 50, 100], true) ? $perPage : 25;
+
         $products = Product::query()
             ->where('business_id', $businessId)
             ->where('is_active', true)
+            ->when($search !== '', function ($query) use ($search) {
+                $query->where(function ($query) use ($search) {
+                    $query->where('name', 'ilike', "%{$search}%")
+                        ->orWhere('code', 'ilike', "%{$search}%")
+                        ->orWhere('barcode', 'ilike', "%{$search}%");
+                });
+            })
             ->orderBy('name')
-            ->get(['id', 'name', 'code', 'stock', 'location']);
-        BranchInventory::applyBranchStockAndPrices($products, $businessId, $activeBranch->id);
-        $this->applyReservedStock($products, $activeBranch->id);
+            ->paginate($perPage, ['id', 'name', 'code', 'barcode', 'stock', 'location'])
+            ->withQueryString();
+
+        $productIds = collect($products->items())->pluck('id')->all();
+        $stockBreakdown = StockAvailability::getBreakdownForProducts($businessId, $activeBranch->id, $productIds);
+
+        $products->getCollection()->transform(function (Product $product) use ($stockBreakdown) {
+            $breakdown = $stockBreakdown->get($product->id, [
+                'physical_stock' => 0,
+                'reserved_total' => 0,
+                'available_stock' => 0,
+            ]);
+
+            $product->setAttribute('stock', (float) $breakdown['physical_stock']);
+            $product->setAttribute('reserved_stock', (float) $breakdown['reserved_total']);
+            $product->setAttribute('available_stock', (float) $breakdown['available_stock']);
+
+            return $product;
+        });
 
         return Inertia::render('Stock/Index', [
             'products' => $products,
+            'filters' => [
+                'search' => $search,
+                'per_page' => $perPage,
+            ],
             'branches_enabled' => BranchInventory::branchesEnabled($businessId),
             'active_branch' => BranchInventory::branchesEnabled($businessId) ? $activeBranch : null,
         ]);

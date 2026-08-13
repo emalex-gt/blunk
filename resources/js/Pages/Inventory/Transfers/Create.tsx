@@ -41,6 +41,7 @@ export default function Create({
     const [loadedProducts, setLoadedProducts] = useState<Product[]>(products);
     const [productResults, setProductResults] = useState<Product[]>(products);
     const [productSearchLoading, setProductSearchLoading] = useState(false);
+    const [confirmTransferOpen, setConfirmTransferOpen] = useState(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const previousFromBranchId = useRef<number | null>(fromBranchId);
     const productsById = useMemo(() => new Map(loadedProducts.map((product) => [product.id, product])), [loadedProducts]);
@@ -191,8 +192,7 @@ export default function Create({
         }
     }
 
-    function submit(event: FormEvent) {
-        event.preventDefault();
+    function validateTransferBeforeSubmit(): boolean {
         setMessage('');
 
         const invalid = items.some((item) => {
@@ -204,10 +204,27 @@ export default function Create({
 
         if (invalid) {
             setMessage('No hay suficiente stock disponible para trasladar.');
+            return false;
+        }
+
+        return true;
+    }
+
+    function requestTransferConfirmation() {
+        if (!validateTransferBeforeSubmit()) {
+            return;
+        }
+
+        setConfirmTransferOpen(true);
+    }
+
+    function submit() {
+        if (!validateTransferBeforeSubmit()) {
             return;
         }
 
         setProcessing(true);
+        setConfirmTransferOpen(false);
 
         router.post(route('inventory.transfers.store'), {
             from_branch_id: fromBranchId,
@@ -333,7 +350,7 @@ export default function Create({
     return (
         <AuthenticatedLayout>
             <Head title="Nuevo traslado" />
-            <form onSubmit={submit} className="mx-auto max-w-5xl space-y-5 px-4 py-6 sm:px-6">
+            <form onSubmit={(event) => event.preventDefault()} className="mx-auto max-w-5xl space-y-5 px-4 py-6 sm:px-6">
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                     <h1 className="text-2xl font-semibold text-slate-950">Nuevo traslado</h1>
                     <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -451,11 +468,42 @@ export default function Create({
                     <Link href={route('inventory.transfers.index')} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                         Cancelar
                     </Link>
-                    <button disabled={processing} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+                    <button type="button" onClick={requestTransferConfirmation} disabled={processing} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
                         Registrar traslado
                     </button>
                 </div>
             </form>
+
+            {confirmTransferOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+                    <section className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+                        <h2 className="text-lg font-semibold text-slate-950">
+                            ¿Has revisado la información de este traslado?
+                        </h2>
+                        <p className="mt-2 text-sm text-slate-600">
+                            Confirma que sucursal origen, sucursal destino, productos y cantidades fueron comparados antes de guardar.
+                        </p>
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                disabled={processing}
+                                onClick={() => setConfirmTransferOpen(false)}
+                                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="button"
+                                disabled={processing}
+                                onClick={submit}
+                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                            >
+                                Sí, guardar traslado
+                            </button>
+                        </div>
+                    </section>
+                </div>
+            )}
 
             {draftsOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
