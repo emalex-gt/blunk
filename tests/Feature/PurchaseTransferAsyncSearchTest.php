@@ -6,6 +6,8 @@ use App\Models\Branch;
 use App\Models\Business;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
+use App\Models\StockMovement;
+use App\Models\StockReservation;
 use App\Models\Supplier;
 use App\Models\TenantModule;
 use App\Models\TenantSetting;
@@ -208,7 +210,36 @@ class PurchaseTransferAsyncSearchTest extends TestCase
             ->assertJsonPath('products.0.available_stock', 5);
     }
 
-    public function test_stock_index_is_paginated_and_filters_server_side(): void
+    public function test_stock_index_uses_operational_async_search_source(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Stock/Index.tsx'));
+
+        $this->assertStringContainsString("route('stock.products.search')", $source);
+        $this->assertStringContainsString("route('stock.adjustments.store')", $source);
+        $this->assertStringContainsString('Ajustar stock', $source);
+        $this->assertStringContainsString('Confirmar ajuste', $source);
+        $this->assertStringContainsString('Nota / motivo', $source);
+        $this->assertStringNotContainsString('<table', $source);
+    }
+
+    public function test_stock_index_opens_without_product_catalog_payload(): void
+    {
+        [$business, $user] = $this->tenant('stock_manager', ['inventory']);
+        foreach (range(1, 30) as $index) {
+            $this->product($business, "Stock inicial {$index}", "INI-{$index}");
+        }
+
+        $this->actingAs($user)
+            ->get(route('stock.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Stock/Index')
+                ->missing('products')
+                ->where('can_adjust_stock', true)
+                ->where('allow_negative_stock', false));
+    }
+
+    public function test_stock_product_search_is_limited_tenant_scoped_branch_scoped_and_returns_availability(): void
     {
         [$business, $user, $branch] = $this->tenant('stock_manager', ['inventory']);
         [$otherBusiness] = $this->tenant('stock_manager', ['inventory'], 'Other stock tenant');
@@ -238,39 +269,170 @@ class PurchaseTransferAsyncSearchTest extends TestCase
             'stock' => 99,
         ]);
 
-        $this->actingAs($user)
-            ->get(route('stock.index', ['per_page' => 25]))
+        StockReservation::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'product_id' => $lastProduct->id,
+            'source_type' => 'manual_test',
+            'source_id' => 1,
+            'quantity' => 7,
+            'status' => 'active',
+            'created_by' => $user->id,
+        ]);
+
+        $products = $this->actingAs($user)
+            ->getJson(route('stock.products.search', ['q' => 'Stock paginado', 'limit' => 50]))
             ->assertOk()
-            ->assertInertia(fn (Assert $page) => $page
-                ->component('Stock/Index')
-                ->has('products.data', 25)
-                ->where('products.total', 30));
+            ->json('products');
+
+        $this->assertCount(30, $products);
+        $this->assertNotContains('ST-OTRO', collect($products)->pluck('code')->all());
+
+        $barcodeResult = $this->actingAs($user)
+            ->getJson(route('stock.products.search', ['q' => 'BAR-30']))
+            ->assertOk()
+            ->json('products.0');
+
+        $this->assertSame('ST-30', $barcodeResult['code']);
+        $this->assertSame(30.0, (float) $barcodeResult['physical_stock']);
+        $this->assertSame(7.0, (float) $barcodeResult['reserved_stock']);
+        $this->assertSame(23.0, (float) $barcodeResult['available_stock']);
+
+        $this->assertSame([], $this->actingAs($user)
+            ->getJson(route('stock.products.search', ['q' => 'ST-OTRO']))
+            ->assertOk()
+            ->json('products'));
+    }
+
+    public function test_stock_adjustment_increases_stock_creates_row_and_movement(): void
+    {
+        [$business, $user] = $this->tenant('stock_manager', ['inventory']);
+        $product = $this->product($business, 'Producto sin fila stock', 'NEW-STOCK');
+
+        $response = $this->actingAs($user)
+            ->postJson(route('stock.adjustments.store'), [
+                'product_id' => $product->id,
+                'type' => 'increase',
+                'quantity' => 5,
+                'note' => 'Conteo físico inicial',
+            ])
+            ->assertOk()
+            ->json();
+
+        $this->assertSame(0.0, (float) $response['previous_stock']);
+        $this->assertSame(5.0, (float) $response['new_stock']);
+        $this->assertSame(5.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+        $this->assertDatabaseHas('stock_movements', [
+            'business_id' => $business->id,
+            'product_id' => $product->id,
+            'type' => 'entry',
+            'note' => 'Conteo físico inicial',
+        ]);
+    }
+
+    public function test_stock_adjustment_decrease_validates_available_stock_and_negative_policy(): void
+    {
+        [$business, $user, $branch] = $this->tenant('stock_manager', ['inventory']);
+        $product = $this->product($business, 'Producto reservado', 'RES-1');
+        ProductBranchStock::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+            'stock' => 10,
+        ]);
+        StockReservation::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+            'source_type' => 'manual_test',
+            'source_id' => 1,
+            'quantity' => 7,
+            'status' => 'active',
+            'created_by' => $user->id,
+        ]);
 
         $this->actingAs($user)
-            ->get(route('stock.index', ['search' => 'ST-30', 'per_page' => 25]))
-            ->assertOk()
-            ->assertInertia(fn (Assert $page) => $page
-                ->component('Stock/Index')
-                ->has('products.data', 1)
-                ->where('products.data.0.code', 'ST-30')
-                ->where('products.data.0.stock', 30));
+            ->postJson(route('stock.adjustments.store'), [
+                'product_id' => $product->id,
+                'type' => 'decrease',
+                'quantity' => 5,
+                'note' => 'Merma por daño',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('quantity');
+
+        TenantSetting::query()->where('business_id', $business->id)->update(['allow_negative_stock' => true]);
 
         $this->actingAs($user)
-            ->get(route('stock.index', ['search' => 'BAR-30', 'per_page' => 25]))
+            ->postJson(route('stock.adjustments.store'), [
+                'product_id' => $product->id,
+                'type' => 'decrease',
+                'quantity' => 5,
+                'note' => 'Merma por daño',
+            ])
             ->assertOk()
-            ->assertInertia(fn (Assert $page) => $page
-                ->component('Stock/Index')
-                ->has('products.data', 1)
-                ->where('products.data.0.code', 'ST-30')
-                ->where('products.data.0.stock', 30));
+            ->assertJsonPath('product.physical_stock', 5);
+
+        $this->assertDatabaseHas('stock_movements', [
+            'business_id' => $business->id,
+            'product_id' => $product->id,
+            'type' => 'exit',
+            'quantity' => -5,
+        ]);
+    }
+
+    public function test_stock_adjustment_validates_note_quantity_permission_and_tenant(): void
+    {
+        [$business, $user] = $this->tenant('stock_manager', ['inventory']);
+        [$otherBusiness] = $this->tenant('stock_manager', ['inventory'], 'Other adjust tenant');
+        $product = $this->product($business, 'Producto ajuste', 'ADJ-1');
+        $otherProduct = $this->product($otherBusiness, 'Producto otro negocio', 'ADJ-OTHER');
 
         $this->actingAs($user)
-            ->get(route('stock.index', ['search' => 'ST-OTRO', 'per_page' => 25]))
-            ->assertOk()
-            ->assertInertia(fn (Assert $page) => $page
-                ->component('Stock/Index')
-                ->has('products.data', 0)
-                ->where('products.total', 0));
+            ->postJson(route('stock.adjustments.store'), [
+                'product_id' => $product->id,
+                'type' => 'increase',
+                'quantity' => 0,
+                'note' => 'Nota válida',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('quantity');
+
+        $this->actingAs($user)
+            ->postJson(route('stock.adjustments.store'), [
+                'product_id' => $product->id,
+                'type' => 'increase',
+                'quantity' => 1,
+                'note' => 'No',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('note');
+
+        $this->actingAs($user)
+            ->postJson(route('stock.adjustments.store'), [
+                'product_id' => $otherProduct->id,
+                'type' => 'increase',
+                'quantity' => 1,
+                'note' => 'Intento otro tenant',
+            ])
+            ->assertNotFound();
+
+        $viewer = User::factory()->create([
+            'business_id' => $business->id,
+            'role' => 'cashier',
+            'is_active' => true,
+            'current_branch_id' => BranchInventory::defaultBranch($business->id)->id,
+        ]);
+        Permissions::assignDirectPermissions($viewer, [Permissions::INVENTORY_VIEW]);
+
+        $this->actingAs($viewer)
+            ->postJson(route('stock.adjustments.store'), [
+                'product_id' => $product->id,
+                'type' => 'increase',
+                'quantity' => 1,
+                'note' => 'Sin permiso ajuste',
+            ])
+            ->assertForbidden();
     }
 
     private function tenant(string $role, array $modules, string $name = 'Tenant async'): array

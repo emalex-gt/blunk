@@ -6,7 +6,9 @@ use App\Models\Product;
 use App\Models\StockMovement;
 use App\Support\BranchInventory;
 use App\Support\Inventory\StockPolicy;
+use App\Support\Permissions;
 use App\Support\StockAvailability;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -39,49 +41,134 @@ class StockController extends Controller
     {
         $businessId = currentBusinessId();
         $activeBranch = BranchInventory::activeBranch($businessId);
-        $search = trim((string) $request->query('search', ''));
-        $perPage = (int) $request->query('per_page', 25);
-        $perPage = in_array($perPage, [25, 50, 100], true) ? $perPage : 25;
-
-        $products = Product::query()
-            ->where('business_id', $businessId)
-            ->where('is_active', true)
-            ->when($search !== '', function ($query) use ($search) {
-                $query->where(function ($query) use ($search) {
-                    $query->where('name', 'ilike', "%{$search}%")
-                        ->orWhere('code', 'ilike', "%{$search}%")
-                        ->orWhere('barcode', 'ilike', "%{$search}%");
-                });
-            })
-            ->orderBy('name')
-            ->paginate($perPage, ['id', 'name', 'code', 'barcode', 'stock', 'location'])
-            ->withQueryString();
-
-        $productIds = collect($products->items())->pluck('id')->all();
-        $stockBreakdown = StockAvailability::getBreakdownForProducts($businessId, $activeBranch->id, $productIds);
-
-        $products->getCollection()->transform(function (Product $product) use ($stockBreakdown) {
-            $breakdown = $stockBreakdown->get($product->id, [
-                'physical_stock' => 0,
-                'reserved_total' => 0,
-                'available_stock' => 0,
-            ]);
-
-            $product->setAttribute('stock', (float) $breakdown['physical_stock']);
-            $product->setAttribute('reserved_stock', (float) $breakdown['reserved_total']);
-            $product->setAttribute('available_stock', (float) $breakdown['available_stock']);
-
-            return $product;
-        });
 
         return Inertia::render('Stock/Index', [
-            'products' => $products,
-            'filters' => [
-                'search' => $search,
-                'per_page' => $perPage,
-            ],
             'branches_enabled' => BranchInventory::branchesEnabled($businessId),
             'active_branch' => BranchInventory::branchesEnabled($businessId) ? $activeBranch : null,
+            'allow_negative_stock' => StockPolicy::allowsNegativeStockForBusinessId($businessId),
+            'can_adjust_stock' => $request->user()?->hasPermission(Permissions::INVENTORY_ADJUST) ?? false,
+        ]);
+    }
+
+    public function searchProducts(Request $request): JsonResponse
+    {
+        $businessId = currentBusinessId();
+        $branch = BranchInventory::activeBranch($businessId);
+        $term = trim((string) $request->query('q', ''));
+        $limit = (int) $request->query('limit', 20);
+        $limit = max(1, min($limit, 30));
+
+        if (mb_strlen($term) < 2) {
+            return response()->json(['products' => []]);
+        }
+
+        $like = "%{$term}%";
+        $normalized = $this->normalizeSearchTerm($term);
+        $query = Product::query()
+            ->where('products.business_id', $businessId)
+            ->where('products.is_active', true)
+            ->with([
+                'category:id,business_id,name',
+                'brand:id,business_id,name',
+                'productLocation:id,business_id,name',
+            ])
+            ->where(function ($query) use ($like, $normalized) {
+                $query->whereRaw($this->normalizedSql('products.code').' = ?', [$normalized])
+                    ->orWhereRaw($this->normalizedSql('products.barcode').' = ?', [$normalized])
+                    ->orWhere('products.name', 'ilike', $like)
+                    ->orWhere('products.code', 'ilike', $like)
+                    ->orWhere('products.barcode', 'ilike', $like);
+            })
+            ->orderByRaw(
+                'CASE WHEN '.$this->normalizedSql('products.code').' = ? OR '.$this->normalizedSql('products.barcode').' = ? THEN 0 ELSE 1 END',
+                [$normalized, $normalized],
+            )
+            ->orderBy('products.name');
+
+        BranchInventory::restrictProductsToBranch($query, $businessId, $branch->id);
+
+        $products = $query
+            ->limit($limit)
+            ->get(['id', 'business_id', 'category_id', 'brand_id', 'location_id', 'name', 'code', 'barcode', 'sale_price', 'stock', 'min_stock', 'location', 'image_url']);
+
+        return response()->json([
+            'products' => $this->stockProductPayload($products, $businessId, $branch->id),
+        ]);
+    }
+
+    public function adjust(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'product_id' => ['required', 'integer'],
+            'type' => ['required', 'in:increase,decrease'],
+            'quantity' => ['required', 'numeric', 'gt:0'],
+            'note' => ['required', 'string', 'min:5', 'max:1000'],
+        ], [
+            'note.required' => 'La nota es obligatoria.',
+            'note.min' => 'La nota debe tener al menos 5 caracteres.',
+            'quantity.gt' => 'La cantidad debe ser mayor a 0.',
+        ]);
+
+        $businessId = currentBusinessId();
+        $branch = BranchInventory::activeBranch($businessId);
+
+        $result = DB::transaction(function () use ($request, $data, $businessId, $branch) {
+            $product = Product::query()
+                ->where('business_id', $businessId)
+                ->where('is_active', true)
+                ->lockForUpdate()
+                ->findOrFail($data['product_id']);
+
+            BranchInventory::ensureProductInBranch($product, $branch->id);
+
+            $quantity = (float) $data['quantity'];
+            $breakdown = StockAvailability::getBreakdownForProducts($businessId, $branch->id, [$product->id])->get($product->id, [
+                'physical_stock' => 0.0,
+                'reserved_total' => 0.0,
+                'available_stock' => 0.0,
+            ]);
+            $previousAvailable = (float) $breakdown['available_stock'];
+
+            if ($data['type'] === 'decrease'
+                && ! StockPolicy::allowsNegativeStockForBusinessId($businessId)
+                && $previousAvailable < $quantity) {
+                throw ValidationException::withMessages([
+                    'quantity' => 'No puedes reducir esa cantidad porque dejaría stock disponible negativo.',
+                ]);
+            }
+
+            [$previousStock, $newStock] = $data['type'] === 'decrease'
+                ? BranchInventory::decrease($product, $branch->id, $quantity)
+                : BranchInventory::increase($product, $branch->id, $quantity);
+
+            StockMovement::create([
+                'business_id' => $businessId,
+                'branch_id' => $branch->id,
+                'product_id' => $product->id,
+                'type' => $data['type'] === 'decrease' ? 'exit' : 'entry',
+                'quantity' => $data['type'] === 'decrease' ? -1 * $quantity : $quantity,
+                'previous_stock' => $previousStock,
+                'new_stock' => $newStock,
+                'note' => $data['note'],
+                'created_by' => $request->user()->id,
+                'user_id' => $request->user()->id,
+            ]);
+
+            $updatedProduct = Product::query()
+                ->with(['category:id,business_id,name', 'brand:id,business_id,name', 'productLocation:id,business_id,name'])
+                ->findOrFail($product->id);
+
+            return [
+                'previous_stock' => (float) $previousStock,
+                'adjustment' => $data['type'] === 'decrease' ? -1 * $quantity : $quantity,
+                'new_stock' => (float) $newStock,
+                'product' => $this->stockProductPayload(collect([$updatedProduct]), $businessId, $branch->id)->first(),
+            ];
+        });
+
+        return response()->json([
+            'message' => 'Stock ajustado correctamente.',
+            ...$result,
         ]);
     }
 
@@ -204,5 +291,43 @@ class StockController extends Controller
             $product->setAttribute('reserved_stock', $reserved);
             $product->setAttribute('available_stock', (float) $product->stock - $reserved);
         });
+    }
+
+    private function stockProductPayload($products, int $businessId, int $branchId)
+    {
+        $productIds = $products->pluck('id')->all();
+        $stockBreakdown = StockAvailability::getBreakdownForProducts($businessId, $branchId, $productIds);
+
+        return $products->map(function (Product $product) use ($stockBreakdown) {
+            $breakdown = $stockBreakdown->get($product->id, [
+                'physical_stock' => 0,
+                'reserved_total' => 0,
+                'available_stock' => 0,
+            ]);
+
+            return [
+                'id' => $product->id,
+                'name' => $product->name,
+                'code' => $product->code,
+                'barcode' => $product->barcode,
+                'category_name' => $product->category?->name,
+                'brand_name' => $product->brand?->name,
+                'location' => $product->productLocation?->name ?? $product->location,
+                'sale_price' => $product->sale_price,
+                'physical_stock' => (float) $breakdown['physical_stock'],
+                'reserved_stock' => (float) $breakdown['reserved_total'],
+                'available_stock' => (float) $breakdown['available_stock'],
+            ];
+        })->values();
+    }
+
+    private function normalizeSearchTerm(string $value): string
+    {
+        return mb_strtoupper(preg_replace('/\s+/', ' ', trim($value)) ?? '');
+    }
+
+    private function normalizedSql(string $column): string
+    {
+        return "UPPER(regexp_replace(TRIM(COALESCE({$column}, '')), '\\s+', ' ', 'g'))";
     }
 }

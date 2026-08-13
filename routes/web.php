@@ -353,6 +353,8 @@ Route::middleware('auth')->group(function () {
 
             Route::get('/stock', [StockController::class, 'index'])->middleware('permission:inventory.view')->name('stock.index');
             Route::post('/stock', [StockController::class, 'store'])->middleware('permission:inventory.adjust')->name('stock.store');
+            Route::get('/stock/products/search', [StockController::class, 'searchProducts'])->middleware('permission:inventory.view')->name('stock.products.search');
+            Route::post('/stock/adjustments', [StockController::class, 'adjust'])->middleware('permission:inventory.adjust')->name('stock.adjustments.store');
             Route::get('/stock/quick', [StockController::class, 'quick'])->middleware('permission:inventory.view')->name('stock.quick');
             Route::post('/stock/quick', [StockController::class, 'quickStore'])->middleware('permission:inventory.adjust')->name('stock.quick.store');
         });
