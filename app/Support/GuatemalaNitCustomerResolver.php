@@ -15,6 +15,7 @@ class GuatemalaNitCustomerResolver
 {
     public const INVALID_NIT_MESSAGE = 'Debes ingresar un NIT válido. No se permite CF para créditos.';
     public const LOOKUP_ERROR_MESSAGE = 'No se pudo validar el NIT. Verifica el número e inténtalo nuevamente.';
+    public const EXISTING_UNVERIFIED_NIT_MESSAGE = 'Este cliente existe, pero su NIT aún no ha sido validado fiscalmente. Valídalo nuevamente para emitir factura FEL.';
 
     public static function normalize(?string $nit): string
     {
@@ -95,14 +96,23 @@ class GuatemalaNitCustomerResolver
                 'nit' => $nitResult,
                 'raw' => $raw,
             ];
-        } catch (ValidationException $exception) {
-            throw $exception;
         } catch (Throwable $exception) {
             Log::warning('Guatemala NIT customer resolve failed', [
                 'business_id' => $business->id,
                 'nit' => $normalizedNit,
                 'error' => $exception->getMessage(),
             ]);
+
+            if ($existing && $requireVerifiedExisting) {
+                throw ValidationException::withMessages([
+                    'nit' => self::EXISTING_UNVERIFIED_NIT_MESSAGE,
+                    'to_customer_doc_number' => self::EXISTING_UNVERIFIED_NIT_MESSAGE,
+                ]);
+            }
+
+            if ($exception instanceof ValidationException) {
+                throw $exception;
+            }
 
             throw ValidationException::withMessages([
                 'nit' => self::LOOKUP_ERROR_MESSAGE,

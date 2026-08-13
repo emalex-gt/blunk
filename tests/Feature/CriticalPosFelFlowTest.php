@@ -409,7 +409,7 @@ class CriticalPosFelFlowTest extends TestCase
             'business_id' => $business->id,
             'name' => 'Cliente antiguo',
             'doc_type' => 'NIT',
-            'doc_number' => '57289085',
+            'doc_number' => '5728-9085',
             'country' => 'GT',
             'name_locked' => false,
             'tax_lookup_verified_at' => null,
@@ -426,7 +426,7 @@ class CriticalPosFelFlowTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->getJson(route('customers.gt.nit-lookup', ['nit' => '5728-9085']))
+            ->getJson(route('customers.gt.nit-lookup', ['nit' => '57289085']))
             ->assertOk()
             ->assertJsonPath('customer.name', 'Cliente Digifact')
             ->assertJsonPath('customer.doc_number', '57289085')
@@ -437,6 +437,29 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('Cliente Digifact', $customer->name);
         $this->assertTrue($customer->name_locked);
         $this->assertNotNull($customer->tax_lookup_verified_at);
+        $this->assertSame(1, Customer::query()
+            ->where('business_id', $business->id)
+            ->whereRaw("UPPER(REPLACE(REPLACE(doc_number, '-', ''), ' ', '')) = ?", ['57289085'])
+            ->count());
+    }
+
+    public function test_gt_nit_lookup_returns_specific_error_for_existing_unverified_customer_when_provider_fails(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner');
+        Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente viejo',
+            'doc_type' => 'NIT',
+            'doc_number' => '998877',
+            'country' => 'GT',
+            'name_locked' => false,
+            'tax_lookup_verified_at' => null,
+        ]);
+
+        $this->actingAs($user)
+            ->getJson(route('customers.gt.nit-lookup', ['nit' => '998877']))
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Este cliente existe, pero su NIT aún no ha sido validado fiscalmente. Valídalo nuevamente para emitir factura FEL.');
     }
 
     public function test_fel_invoice_accepts_verified_customer_with_normalized_nit_match(): void
@@ -491,6 +514,142 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('invoice', Sale::query()->where('business_id', $business->id)->firstOrFail()->document_type);
     }
 
+    public function test_fel_invoice_blocks_existing_unverified_customer_with_clear_message(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'cash_register', 'fel_gt'],
+            allowInvoices: true,
+        );
+        $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente sin validación',
+            'doc_type' => 'NIT',
+            'doc_number' => '1234-5678',
+            'country' => 'GT',
+            'name_locked' => false,
+            'tax_lookup_verified_at' => null,
+        ]);
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->never();
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                documentType: 'invoice',
+                customer: [
+                    'id' => $customer->id,
+                    'name' => 'Cliente sin validación',
+                    'doc_type' => 'NIT',
+                    'doc_number' => '12345678',
+                    'country' => 'GT',
+                ],
+            ))
+            ->assertSessionHasErrors([
+                'customer.doc_number' => 'Este cliente ya existe, pero su NIT no ha sido validado fiscalmente. Valídalo nuevamente antes de emitir factura FEL.',
+            ]);
+
+        $this->assertDatabaseCount('sales', 0);
+    }
+
+    public function test_receipt_sale_allows_existing_unverified_customer_without_fel_validation(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'cash_register']);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente comprobante',
+            'doc_type' => 'NIT',
+            'doc_number' => '12345678',
+            'country' => 'GT',
+            'name_locked' => false,
+            'tax_lookup_verified_at' => null,
+        ]);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                customer: [
+                    'id' => $customer->id,
+                    'name' => 'Cliente comprobante',
+                    'doc_type' => 'NIT',
+                    'doc_number' => '12345678',
+                    'country' => 'GT',
+                ],
+            ))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('receipt', Sale::query()->where('business_id', $business->id)->firstOrFail()->document_type);
+    }
+
+    public function test_credit_reservation_allows_existing_unverified_customer_without_fel_validation(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['credits'], enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente reserva',
+            'doc_type' => 'NIT',
+            'doc_number' => '12345678',
+            'country' => 'GT',
+            'name_locked' => false,
+            'tax_lookup_verified_at' => null,
+        ]);
+
+        $payload = $this->creditPayload($product, 1);
+        $payload['customer'] = [
+            'id' => $customer->id,
+            'name' => 'Cliente reserva',
+            'doc_type' => 'NIT',
+            'doc_number' => '12345678',
+            'address' => 'Ciudad',
+            'phone' => '5555-5555',
+        ];
+
+        $this->actingAs($user)
+            ->post(route('credits.receipts.store'), $payload)
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('credit_receipts', [
+            'business_id' => $business->id,
+            'customer_id' => $customer->id,
+            'customer_doc_number' => '12345678',
+        ]);
+    }
+
+    public function test_recent_fel_nit_flow_files_do_not_contain_mojibake_markers(): void
+    {
+        $files = [
+            app_path('Support/GuatemalaNitCustomerResolver.php'),
+            app_path('Http/Controllers/CustomerController.php'),
+            app_path('Http/Controllers/SaleController.php'),
+            resource_path('js/Pages/Sales/POS.tsx'),
+            base_path('tests/Feature/CriticalPosFelFlowTest.php'),
+        ];
+
+        foreach ($files as $file) {
+            $source = file_get_contents($file);
+
+            $this->assertDoesNotMatchRegularExpression(
+                '/[\x{00C2}\x{00C3}\x{00E2}\x{00EF}\x{FFFD}]/u',
+                $source,
+                "Mojibake marker found in {$file}",
+            );
+        }
+    }
+
     public function test_fel_invoice_rejects_changed_nit_even_when_request_sends_lookup_flag(): void
     {
         [$business, $user] = $this->tenant(
@@ -533,7 +692,7 @@ class CriticalPosFelFlowTest extends TestCase
                 ],
             ))
             ->assertSessionHasErrors([
-                'customer.doc_number' => 'El NIT debe validarse antes de emitir factura FEL.',
+                'customer.doc_number' => 'El NIT fue modificado después de la validación. Valídalo nuevamente.',
             ]);
 
         $this->assertDatabaseCount('sales', 0);

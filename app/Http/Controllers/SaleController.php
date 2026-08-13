@@ -2138,6 +2138,7 @@ class SaleController extends Controller
         $docType = $customerData['doc_type'] ?? null;
         $docNumber = $this->normalizeDocument($customerData['doc_number'] ?? null);
         $name = trim((string) ($customerData['name'] ?? ''));
+        $submittedCustomer = null;
 
         if ($isFinalConsumer || $docType === 'CF') {
             if ($docNumber !== '' && strtoupper($docNumber) !== 'CF') {
@@ -2161,9 +2162,37 @@ class SaleController extends Controller
             ]);
         }
 
+        if (filled($customerData['id'] ?? null)) {
+            $submittedCustomer = Customer::query()
+                ->where('business_id', $business->id)
+                ->find($customerData['id']);
+
+            if ($submittedCustomer) {
+                $submittedCustomerNit = $this->normalizeDocument($submittedCustomer->doc_number);
+
+                if ($submittedCustomer->tax_lookup_verified_at && $submittedCustomerNit !== '' && $submittedCustomerNit !== $docNumber) {
+                    throw ValidationException::withMessages([
+                        'customer.doc_number' => 'El NIT fue modificado después de la validación. Valídalo nuevamente.',
+                    ]);
+                }
+
+                if (! $submittedCustomer->tax_lookup_verified_at) {
+                    throw ValidationException::withMessages([
+                        'customer.doc_number' => 'Este cliente ya existe, pero su NIT no ha sido validado fiscalmente. Valídalo nuevamente antes de emitir factura FEL.',
+                    ]);
+                }
+            }
+        }
+
         $verifiedCustomer = $this->verifiedNitCustomer($business->id, $docNumber);
 
         if (! $verifiedCustomer) {
+            if ($this->customerByNormalizedNit($business->id, $docNumber)) {
+                throw ValidationException::withMessages([
+                    'customer.doc_number' => 'Este cliente ya existe, pero su NIT no ha sido validado fiscalmente. Valídalo nuevamente antes de emitir factura FEL.',
+                ]);
+            }
+
             throw ValidationException::withMessages([
                 'customer.doc_number' => 'El NIT debe validarse antes de emitir factura FEL.',
             ]);
@@ -2202,6 +2231,24 @@ class SaleController extends Controller
             })
             ->whereRaw("UPPER(REPLACE(REPLACE(doc_number, '-', ''), ' ', '')) = ?", [$normalized])
             ->whereNotNull('tax_lookup_verified_at')
+            ->where('name_locked', true)
+            ->first();
+    }
+
+    private function customerByNormalizedNit(int $businessId, string $docNumber): ?Customer
+    {
+        $normalized = $this->normalizeDocument($docNumber);
+
+        if ($normalized === '') {
+            return null;
+        }
+
+        return Customer::query()
+            ->where('business_id', $businessId)
+            ->where(function ($query) {
+                $query->where('doc_type', 'NIT')->orWhereNull('doc_type');
+            })
+            ->whereRaw("UPPER(REPLACE(REPLACE(doc_number, '-', ''), ' ', '')) = ?", [$normalized])
             ->first();
     }
 

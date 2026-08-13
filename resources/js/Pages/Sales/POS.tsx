@@ -2546,9 +2546,15 @@ export default function POS({
         const currentNit = normalizedFiscalNit(data.customer.doc_number);
         const verifiedNit = normalizedFiscalNit(data.customer.tax_lookup_verified_doc_number);
 
-        return verifiedNit && currentNit !== verifiedNit
-            ? 'El NIT fue modificado después de la validación. Valídalo nuevamente.'
-            : 'El NIT debe validarse antes de emitir factura FEL.';
+        if (verifiedNit && currentNit !== verifiedNit) {
+            return 'El NIT fue modificado después de la validación. Valídalo nuevamente.';
+        }
+
+        if (data.customer.id && currentNit) {
+            return 'Cliente existente sin validación fiscal. Valida el NIT para poder emitir factura FEL.';
+        }
+
+        return 'El NIT debe validarse antes de emitir factura FEL.';
     })();
     const invoiceCuiDisabled =
         effectiveDocumentType === 'invoice' &&
