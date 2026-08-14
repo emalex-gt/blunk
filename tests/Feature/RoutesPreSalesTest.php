@@ -594,6 +594,67 @@ class RoutesPreSalesTest extends TestCase
             'visit_order' => 1,
             'notes' => 'Local 4',
         ]);
+
+        $this->actingAs($seller)
+            ->get(route('routes.mobile.work-days.show', $workDay))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/Mobile/WorkDay')
+                ->has('visits', 1)
+                ->where('visits.0.id', $visit->id)
+                ->where('visits.0.customer.id', $customer->id)
+                ->where('visits.0.customer.name', 'Cliente movil')
+                ->where('visits.0.status', 'pending'));
+    }
+
+    public function test_new_route_customer_remains_visible_after_saving_pre_sale_and_reloading_work_day(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $zone = $this->zone($business, $branch, $seller);
+        $product = $this->product($business, $branch, stock: 10, salePrice: 125);
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.zones.work-day.start', $zone))
+            ->assertRedirect();
+
+        $workDay = RouteWorkDay::query()->where('route_zone_id', $zone->id)->firstOrFail();
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.work-days.customers.store', $workDay), [
+                'name' => 'Cliente preventa nueva',
+                'doc_number' => '202020',
+                'phone' => '4444-2020',
+                'address' => 'Mercado local 20',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $customer = Customer::query()->where('business_id', $business->id)->where('doc_number', '202020')->firstOrFail();
+        $visit = RouteVisit::query()->where('route_work_day_id', $workDay->id)->where('customer_id', $customer->id)->firstOrFail();
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'items' => [[
+                    'product_id' => $product->id,
+                    'quantity' => 2,
+                    'discount' => 0,
+                ]],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $preSale = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail();
+
+        $this->actingAs($seller)
+            ->get(route('routes.mobile.work-days.show', $workDay))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/Mobile/WorkDay')
+                ->has('visits', 1)
+                ->where('visits.0.id', $visit->id)
+                ->where('visits.0.customer.id', $customer->id)
+                ->where('visits.0.status', 'with_pre_sale')
+                ->where('visits.0.pre_sale.id', $preSale->id)
+                ->where('visits.0.pre_sale.status', 'draft'));
     }
 
     public function test_route_mobile_new_customer_defaults_to_branch_location(): void
@@ -1235,6 +1296,8 @@ class RoutesPreSalesTest extends TestCase
         $this->assertStringContainsString('Jornada cerrada. Ya no se puede editar la visita.', $visitSource);
         $this->assertStringContainsString("only: ['visit', 'preSale']", $visitSource);
         $this->assertStringContainsString('preserveState: false', $visitSource);
+        $this->assertStringNotContainsString('window.history.back()', $visitSource);
+        $this->assertStringContainsString("route('routes.mobile.work-days.show', visit.route_work_day_id)", $visitSource);
         $this->assertStringContainsString('¿Finalizar la ruta?', $workDaySource);
         $this->assertStringContainsString('Al finalizar la ruta, las preventas quedarán enviadas y ya no se podrán editar. ¿Deseas continuar?', $workDaySource);
         $this->assertStringContainsString('Sí, finalizar ruta', $workDaySource);
@@ -1595,6 +1658,35 @@ class RoutesPreSalesTest extends TestCase
             ->get(route('routes.pre-sales.index'))
             ->assertOk()
             ->assertSee($visit->customer->name);
+    }
+
+    public function test_pre_sales_queue_action_buttons_are_compact_and_confirm_state_changes(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Routes/PreSales/Index.tsx'));
+
+        $this->assertMatchesRegularExpression('/>\s*Ver\s*</', $source);
+        $this->assertMatchesRegularExpression('/>\s*Prep\.\s*</', $source);
+        $this->assertMatchesRegularExpression('/>\s*Pick\s*</', $source);
+        $this->assertMatchesRegularExpression('/>\s*Cancelar\s*</', $source);
+        $this->assertStringContainsString('w-[240px] min-w-[240px]', $source);
+        $this->assertStringContainsString('flex items-center gap-1.5 whitespace-nowrap', $source);
+        $this->assertStringNotContainsString('flex-wrap gap-1.5', $source);
+        $this->assertStringNotContainsString('Ver detalle', $source);
+        $this->assertStringNotContainsString('En prep.', $source);
+        $this->assertStringNotContainsString('Picking', $source);
+        $this->assertStringNotContainsString('Marcar en preparación</button>', $source);
+        $this->assertStringNotContainsString('Preparar pedido', $source);
+        $this->assertStringNotContainsString('Cancelar preventa</button>', $source);
+        $this->assertStringContainsString('setProcessingTarget(preSale)', $source);
+        $this->assertStringContainsString('title="Marcar en preparación"', $source);
+        $this->assertStringContainsString('¿Deseas marcar esta preventa como en preparación?', $source);
+        $this->assertStringContainsString('Las reservas se mantendrán activas y aún no se generará venta.', $source);
+        $this->assertStringContainsString('Sí, marcar', $source);
+        $this->assertStringContainsString("route('routes.pre-sales.pick', preSale.id)", $source);
+        $this->assertStringNotContainsString("router.post(route('routes.pre-sales.pick'", $source);
+        $this->assertStringContainsString('No cancelar', $source);
+        $this->assertStringContainsString('Sí, cancelar', $source);
+        $this->assertStringContainsString('disabled={processingPreSaleId !== null || cancelForm.processing}', $source);
     }
 
     public function test_admin_queue_lists_submitted_pre_sales_and_excludes_other_tenants(): void

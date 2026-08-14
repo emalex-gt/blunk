@@ -121,6 +121,82 @@ class GuatemalaNitCustomerResolver
         }
     }
 
+    public static function lookupTaxData(Business $business, ?string $nit, bool $allowCache = true): array
+    {
+        $normalizedNit = self::normalize($nit);
+
+        if ($normalizedNit === '' || $normalizedNit === 'CF' || ! preg_match('/^[A-Z0-9]+$/', $normalizedNit)) {
+            throw ValidationException::withMessages([
+                'nit' => self::INVALID_NIT_MESSAGE,
+            ]);
+        }
+
+        if ($allowCache) {
+            $cache = CustomerTaxLookup::query()
+                ->where('business_id', $business->id)
+                ->where('country', 'GT')
+                ->where('doc_type', 'NIT')
+                ->where('doc_number', $normalizedNit)
+                ->first();
+
+            if ($cache && $cache->last_lookup_at?->greaterThanOrEqualTo(now()->subDays(30))) {
+                return [
+                    'nit' => $cache->doc_number,
+                    'name' => $cache->name,
+                    'raw' => $cache->raw_response,
+                    'source' => 'cache',
+                ];
+            }
+        }
+
+        try {
+            $result = DigifactClient::forBusiness($business)->lookupNit($normalizedNit);
+            $raw = $result['raw'] ?? null;
+            $nitResult = self::normalize($result['nit'] ?? $normalizedNit);
+            $name = trim((string) ($result['name'] ?? ''));
+
+            if ($name === '') {
+                throw new FelException('Digifact no devolvió nombre para el NIT.');
+            }
+
+            CustomerTaxLookup::query()->updateOrCreate(
+                [
+                    'business_id' => $business->id,
+                    'country' => 'GT',
+                    'doc_type' => 'NIT',
+                    'doc_number' => $nitResult,
+                ],
+                [
+                    'name' => $name,
+                    'provider' => 'digifact',
+                    'raw_response' => $raw,
+                    'last_lookup_at' => now(),
+                ],
+            );
+
+            return [
+                'nit' => $nitResult,
+                'name' => $name,
+                'raw' => $raw,
+                'source' => 'digifact',
+            ];
+        } catch (Throwable $exception) {
+            Log::warning('Guatemala NIT lookup failed', [
+                'business_id' => $business->id,
+                'nit' => $normalizedNit,
+                'error' => $exception->getMessage(),
+            ]);
+
+            if ($exception instanceof ValidationException) {
+                throw $exception;
+            }
+
+            throw ValidationException::withMessages([
+                'nit' => self::LOOKUP_ERROR_MESSAGE,
+            ]);
+        }
+    }
+
     private static function findExistingCustomer(Business $business, string $nit): ?Customer
     {
         return Customer::query()

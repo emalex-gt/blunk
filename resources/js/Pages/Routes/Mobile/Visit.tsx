@@ -68,6 +68,7 @@ export default function Visit({
         };
         work_day?: { status: string };
         zone?: { name: string };
+        route_work_day_id: number;
     };
     preSale: { id: number; status: string; notes: string | null; items: ExistingItem[] } | null;
     products: Product[];
@@ -259,7 +260,12 @@ export default function Visit({
             <Head title={`Visita ${visit.customer.commercial_name || visit.customer.name}`} />
             <div className="mx-auto max-w-xl space-y-4 px-4 pb-32 pt-5">
                 <div>
-                    <Link href={window.history.length > 1 ? '#' : route('routes.mobile.zones')} onClick={(event) => { event.preventDefault(); window.history.back(); }} className="text-sm font-semibold text-indigo-700">
+                    <Link
+                        href={route('routes.mobile.work-days.show', visit.route_work_day_id)}
+                        preserveState={false}
+                        preserveScroll={false}
+                        className="text-sm font-semibold text-indigo-700"
+                    >
                         Volver
                     </Link>
                     <h1 className="mt-2 text-2xl font-semibold text-slate-950">{visit.customer.commercial_name || visit.customer.name}</h1>

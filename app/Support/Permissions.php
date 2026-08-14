@@ -67,6 +67,7 @@ class Permissions
     public const CUSTOMERS_VIEW = 'customers.view';
     public const CUSTOMERS_CREATE = 'customers.create';
     public const CUSTOMERS_UPDATE = 'customers.update';
+    public const CUSTOMERS_MANAGE = 'customers.manage';
 
     public const FEL_DOCUMENTS_VIEW = 'fel.documents.view';
     public const FEL_CERTIFY = 'fel.certify';
@@ -180,6 +181,7 @@ class Permissions
             self::CUSTOMERS_VIEW => ['name' => 'Ver clientes', 'group' => 'Clientes'],
             self::CUSTOMERS_CREATE => ['name' => 'Crear clientes', 'group' => 'Clientes'],
             self::CUSTOMERS_UPDATE => ['name' => 'Editar clientes', 'group' => 'Clientes'],
+            self::CUSTOMERS_MANAGE => ['name' => 'Gestionar clientes', 'group' => 'Clientes'],
             self::FEL_DOCUMENTS_VIEW => ['name' => 'Ver documentos FEL', 'group' => 'FEL'],
             self::FEL_CERTIFY => ['name' => 'Certificar FEL', 'group' => 'FEL'],
             self::FEL_CANCEL => ['name' => 'Anular FEL', 'group' => 'FEL'],

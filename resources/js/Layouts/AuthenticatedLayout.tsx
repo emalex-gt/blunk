@@ -76,6 +76,7 @@ export default function Authenticated({
         (hasModule('inventory') && route().current('categories.*')) ||
         (hasModule('inventory') && route().current('brands.*')) ||
         (hasModule('inventory') && route().current('product-locations.*')) ||
+        (hasModule('customers') && route().current('customers.*')) ||
         (hasModule('branches') && route().current('inventory.transfers.*')) ||
         (hasModule('purchases') && route().current('purchases.*')) ||
         (hasModule('cash_register') && route().current('cash-register.*')) ||
@@ -87,6 +88,7 @@ export default function Authenticated({
 
     const managementItems: NavItem[] = [
         hasModule('inventory') ? { label: t('nav.products'), href: route('products.index'), active: route().current('products.*') } : null,
+        hasModule('customers') && can('customers.view') ? { label: 'Clientes', href: route('customers.index'), active: route().current('customers.*') } : null,
         hasModule('inventory') && canManageUsers ? { label: 'Listas de precios', href: route('price-lists.index'), active: route().current('price-lists.*') } : null,
         hasModule('purchases') ? { label: 'Compras', href: route('purchases.index'), active: route().current('purchases.*') } : null,
         hasModule('inventory') ? { label: t('nav.stock'), href: route('stock.index'), active: route().current('stock.*') } : null,

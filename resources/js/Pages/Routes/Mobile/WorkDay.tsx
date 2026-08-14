@@ -143,7 +143,7 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
     return (
         <AuthenticatedLayout>
             <Head title="Jornada de ruta" />
-            <div className="mx-auto max-w-xl space-y-4 px-4 pb-28 pt-5">
+            <div className="mx-auto max-w-5xl space-y-4 px-4 pb-32 pt-5">
                 <div>
                     <h1 className="text-2xl font-semibold text-slate-950">{workDay.zone?.name}</h1>
                     <p className="text-sm text-slate-500">{workDay.branch?.name} · {workDay.status}</p>
@@ -263,56 +263,60 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
                     </form>
                 )}
 
-                {visits.map((visit) => (
-                    <div key={visit.id} className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-                        <div className="flex items-start justify-between gap-3">
-                            <div>
-                                <p className="text-xs font-semibold uppercase text-slate-400">#{visit.visit_order ?? '-'}</p>
-                                <h2 className="text-lg font-semibold text-slate-950">{visit.customer.commercial_name || visit.customer.name}</h2>
-                                <p className="text-sm text-slate-500">
-                                    {visit.customer.name}{visit.customer.doc_number ? ` · NIT ${visit.customer.doc_number}` : ''}
-                                    {visit.customer.contact_name ? ` · ${visit.customer.contact_name}` : ''}
-                                </p>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {visits.map((visit) => (
+                        <div key={visit.id} className="flex h-full flex-col rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <p className="text-xs font-semibold uppercase text-slate-400">#{visit.visit_order ?? '-'}</p>
+                                    <h2 className="line-clamp-2 text-lg font-semibold leading-6 text-slate-950" title={visit.customer.commercial_name || visit.customer.name}>
+                                        {visit.customer.commercial_name || visit.customer.name}
+                                    </h2>
+                                    <p className="line-clamp-2 text-sm text-slate-500" title={`${visit.customer.name}${visit.customer.doc_number ? ` · NIT ${visit.customer.doc_number}` : ''}${visit.customer.contact_name ? ` · ${visit.customer.contact_name}` : ''}`}>
+                                        {visit.customer.name}{visit.customer.doc_number ? ` · NIT ${visit.customer.doc_number}` : ''}
+                                        {visit.customer.contact_name ? ` · ${visit.customer.contact_name}` : ''}
+                                    </p>
+                                </div>
+                                <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{visit.status}</span>
                             </div>
-                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{visit.status}</span>
+                            <p className="mt-2 line-clamp-2 text-sm text-slate-600" title={visit.customer.address ?? 'Sin dirección'}>{visit.customer.address ?? 'Sin dirección'}</p>
+                            {visit.pre_sale && (
+                                <p className="mt-2 rounded-lg bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700">
+                                    Preventa: Q {Number(visit.pre_sale.total).toFixed(2)} · {visit.pre_sale.status}
+                                </p>
+                            )}
+                            {visit.status === 'without_sale' && (visit.no_sale_reason || visit.no_sale_note) && (
+                                <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                                    Sin venta: {visit.no_sale_reason}
+                                    {visit.no_sale_note ? ` · ${visit.no_sale_note}` : ''}
+                                </p>
+                            )}
+                            {visit.pre_sale && visitHasSubmittedPreSale(visit) && (
+                                <p className="mt-2 rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">
+                                    {submittedPreSaleMessage}
+                                </p>
+                            )}
+                            <div className="mt-auto grid grid-cols-2 gap-2 pt-4">
+                                <a href={mapHref(visit)} target="_blank" className="rounded-xl bg-slate-100 px-3 py-3 text-center text-sm font-semibold text-slate-700">
+                                    Abrir Maps
+                                </a>
+                                <Link href={route('routes.mobile.visits.show', visit.id)} className="rounded-xl bg-indigo-600 px-3 py-3 text-center text-sm font-semibold text-white">
+                                    Crear/Editar preventa
+                                </Link>
+                                <button
+                                    type="button"
+                                    disabled={visit.status === 'without_sale' || visitHasSubmittedPreSale(visit)}
+                                    onClick={() => openNoSaleModal(visit)}
+                                    className="col-span-2 rounded-xl bg-white px-3 py-3 text-sm font-semibold text-slate-700 ring-1 ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    Sin venta
+                                </button>
+                            </div>
                         </div>
-                        <p className="mt-2 text-sm text-slate-600">{visit.customer.address ?? 'Sin dirección'}</p>
-                        {visit.pre_sale && (
-                            <p className="mt-2 rounded-lg bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700">
-                                Preventa: Q {Number(visit.pre_sale.total).toFixed(2)} · {visit.pre_sale.status}
-                            </p>
-                        )}
-                        {visit.status === 'without_sale' && (visit.no_sale_reason || visit.no_sale_note) && (
-                            <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
-                                Sin venta: {visit.no_sale_reason}
-                                {visit.no_sale_note ? ` · ${visit.no_sale_note}` : ''}
-                            </p>
-                        )}
-                        {visit.pre_sale && visitHasSubmittedPreSale(visit) && (
-                            <p className="mt-2 rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">
-                                {submittedPreSaleMessage}
-                            </p>
-                        )}
-                        <div className="mt-4 grid grid-cols-2 gap-2">
-                            <a href={mapHref(visit)} target="_blank" className="rounded-xl bg-slate-100 px-3 py-3 text-center text-sm font-semibold text-slate-700">
-                                Abrir Maps
-                            </a>
-                            <Link href={route('routes.mobile.visits.show', visit.id)} className="rounded-xl bg-indigo-600 px-3 py-3 text-center text-sm font-semibold text-white">
-                                Crear/Editar preventa
-                            </Link>
-                            <button
-                                type="button"
-                                disabled={visit.status === 'without_sale' || visitHasSubmittedPreSale(visit)}
-                                onClick={() => openNoSaleModal(visit)}
-                                className="col-span-2 rounded-xl bg-white px-3 py-3 text-sm font-semibold text-slate-700 ring-1 ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                                Sin venta
-                            </button>
-                        </div>
-                    </div>
-                ))}
+                    ))}
+                </div>
                 <div className="fixed inset-x-0 bottom-0 border-t border-slate-200 bg-white p-4">
-                    <div className="mx-auto max-w-xl">
+                    <div className="mx-auto max-w-5xl">
                         <button
                             type="button"
                             disabled={closeForm.processing}

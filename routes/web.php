@@ -145,9 +145,14 @@ Route::middleware('auth')->group(function () {
         Route::post('/fel/reconciliation/{reconciliation}/check', [FelReconciliationController::class, 'check'])
             ->middleware(['module:fel_gt', 'permission:fel.reconcile'])
             ->name('fel.reconciliation.check');
+        Route::get('/customers', [CustomerController::class, 'index'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.index');
         Route::get('/customers/search', [CustomerController::class, 'search'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.search');
         Route::get('/customers/lookup/nit', [CustomerController::class, 'lookupNit'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.lookup.nit');
         Route::get('/customers/gt/nit-lookup', [CustomerController::class, 'lookupGuatemalaNit'])->middleware(['module:fel_gt', 'permission:customers.view'])->name('customers.gt.nit-lookup');
+        Route::get('/customers/{customer}/edit', [CustomerController::class, 'edit'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.edit');
+        Route::match(['put', 'patch'], '/customers/{customer}', [CustomerController::class, 'update'])->middleware(['module:customers', 'permission:any:customers.update|customers.manage'])->name('customers.update');
+        Route::post('/customers/{customer}/refresh-tax-data', [CustomerController::class, 'refreshTaxData'])->middleware(['module:customers', 'permission:any:customers.update|customers.manage'])->name('customers.refresh-tax-data');
+        Route::post('/customers/{customer}/assign-nit', [CustomerController::class, 'assignNit'])->middleware(['module:customers', 'permission:any:customers.update|customers.manage'])->name('customers.assign-nit');
         Route::get('/customers/{customer}/products/{product}/last-price', [SaleController::class, 'lastCustomerProductPrice'])
             ->middleware(['module:pos', 'permission:sales.view'])
             ->name('customers.products.last-price');

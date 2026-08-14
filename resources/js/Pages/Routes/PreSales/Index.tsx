@@ -1,4 +1,5 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import ConfirmDialog from '@/Components/ConfirmDialog';
 import { Head, Link, router, useForm } from '@inertiajs/react';
 import { FormEvent, ReactNode, useState } from 'react';
 
@@ -50,6 +51,8 @@ const cancellationReasons = ['Cliente canceló', 'Producto no disponible', 'Dupl
 
 export default function Index({ preSales, filters, branches, sellers, zones }: Props) {
     const [cancelTarget, setCancelTarget] = useState<PreSale | null>(null);
+    const [processingTarget, setProcessingTarget] = useState<PreSale | null>(null);
+    const [processingPreSaleId, setProcessingPreSaleId] = useState<number | null>(null);
     const cancelForm = useForm({
         cancellation_reason: '',
         cancellation_note: '',
@@ -63,8 +66,17 @@ export default function Index({ preSales, filters, branches, sellers, zones }: P
 
     const clear = () => router.get(route('routes.pre-sales.index'), {}, { preserveScroll: true });
 
-    const markProcessing = (preSale: PreSale) => {
-        router.post(route('routes.pre-sales.processing', preSale.id), {}, { preserveScroll: true });
+    const confirmMarkProcessing = () => {
+        if (!processingTarget || processingPreSaleId !== null) {
+            return;
+        }
+
+        setProcessingPreSaleId(processingTarget.id);
+        router.post(route('routes.pre-sales.processing', processingTarget.id), {}, {
+            preserveScroll: true,
+            onFinish: () => setProcessingPreSaleId(null),
+            onSuccess: () => setProcessingTarget(null),
+        });
     };
 
     const submitCancellation = (event: FormEvent) => {
@@ -151,7 +163,7 @@ export default function Index({ preSales, filters, branches, sellers, zones }: P
                                     <th className="px-4 py-3">Preparado</th>
                                     <th className="px-4 py-3">Total</th>
                                     <th className="px-4 py-3">Estado</th>
-                                    <th className="px-4 py-3">Acciones</th>
+                                    <th className="w-[240px] min-w-[240px] px-4 py-3">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
@@ -182,24 +194,34 @@ export default function Index({ preSales, filters, branches, sellers, zones }: P
                                         </td>
                                         <td className="px-4 py-3">Q {Number(preSale.total).toFixed(2)}</td>
                                         <td className="px-4 py-3"><StatusBadge status={preSale.status} /></td>
-                                        <td className="whitespace-nowrap px-4 py-3">
-                                            <div className="flex flex-wrap gap-2">
-                                                <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                                                    Ver detalle
+                                        <td className="w-[240px] min-w-[240px] px-4 py-3">
+                                            <div className="flex items-center gap-1.5 whitespace-nowrap">
+                                                <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">
+                                                    Ver
                                                 </Link>
                                                 {preSale.status === 'submitted' && (
-                                                    <button type="button" onClick={() => markProcessing(preSale)} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">
-                                                        Marcar en preparación
+                                                    <button
+                                                        type="button"
+                                                        disabled={processingPreSaleId !== null || cancelForm.processing}
+                                                        onClick={() => setProcessingTarget(preSale)}
+                                                        className="rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    >
+                                                        Prep.
                                                     </button>
                                                 )}
                                                 {['submitted', 'processing'].includes(preSale.status) && (
-                                                    <Link href={route('routes.pre-sales.pick', preSale.id)} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700">
-                                                        Preparar pedido
+                                                    <Link href={route('routes.pre-sales.pick', preSale.id)} className="rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700">
+                                                        Pick
                                                     </Link>
                                                 )}
                                                 {['submitted', 'processing'].includes(preSale.status) && (
-                                                    <button type="button" onClick={() => setCancelTarget(preSale)} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700">
-                                                        Cancelar preventa
+                                                    <button
+                                                        type="button"
+                                                        disabled={processingPreSaleId !== null || cancelForm.processing}
+                                                        onClick={() => setCancelTarget(preSale)}
+                                                        className="rounded-md bg-red-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    >
+                                                        Cancelar
                                                     </button>
                                                 )}
                                             </div>
@@ -231,11 +253,27 @@ export default function Index({ preSales, filters, branches, sellers, zones }: P
                 </div>
             </div>
 
+            <ConfirmDialog
+                open={processingTarget !== null}
+                title="Marcar en preparación"
+                message="¿Deseas marcar esta preventa como en preparación?"
+                details="Las reservas se mantendrán activas y aún no se generará venta."
+                confirmLabel="Sí, marcar"
+                processing={processingPreSaleId !== null}
+                onCancel={() => {
+                    if (processingPreSaleId === null) {
+                        setProcessingTarget(null);
+                    }
+                }}
+                onConfirm={confirmMarkProcessing}
+            />
+
             {cancelTarget && (
                 <div className="fixed inset-0 z-50 flex items-end bg-slate-950/50 p-4 sm:items-center sm:justify-center">
                     <form onSubmit={submitCancellation} className="w-full rounded-xl bg-white p-5 shadow-xl sm:max-w-lg">
                         <h2 className="text-lg font-semibold text-slate-950">Cancelar preventa</h2>
-                        <p className="mt-2 text-sm text-slate-600">Esta acción liberará las reservas de stock, sin descontar stock físico ni crear ventas.</p>
+                        <p className="mt-2 text-sm text-slate-600">¿Seguro que deseas cancelar esta preventa?</p>
+                        <p className="mt-2 text-sm font-semibold text-slate-800">Esta acción liberará las reservas de stock asociadas.</p>
                         <label className="mt-4 block">
                             <span className="text-xs font-semibold text-slate-500">Motivo</span>
                             <select value={cancelForm.data.cancellation_reason} onChange={(event) => cancelForm.setData('cancellation_reason', event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm">
@@ -251,10 +289,10 @@ export default function Index({ preSales, filters, branches, sellers, zones }: P
                         </label>
                         <div className="mt-5 flex justify-end gap-2">
                             <button type="button" onClick={() => setCancelTarget(null)} disabled={cancelForm.processing} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">
-                                Volver
+                                No cancelar
                             </button>
                             <button disabled={cancelForm.processing} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60">
-                                {cancelForm.processing ? 'Cancelando...' : 'Cancelar preventa'}
+                                {cancelForm.processing ? 'Cancelando...' : 'Sí, cancelar'}
                             </button>
                         </div>
                     </form>
