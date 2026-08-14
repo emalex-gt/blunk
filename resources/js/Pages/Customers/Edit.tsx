@@ -21,6 +21,8 @@ type Customer = {
     name_locked: boolean;
     fiscal_status: string;
     tax_lookup_verified_at: string | null;
+    has_encoding_issue: boolean;
+    encoding_issue_fields: string[];
 };
 
 export default function Edit({ customer }: { customer: Customer }) {
@@ -35,6 +37,7 @@ export default function Edit({ customer }: { customer: Customer }) {
         municipality: customer.municipality ?? '',
     });
     const assignForm = useForm({ nit: '' });
+    const refreshForm = useForm({ nit: '' });
     const canEditFiscalName = customer.is_cf;
 
     const submit = (event: FormEvent) => {
@@ -46,7 +49,10 @@ export default function Edit({ customer }: { customer: Customer }) {
     };
 
     const refreshTaxData = () => {
-        router.post(route('customers.refresh-tax-data', customer.id), {}, { preserveScroll: true });
+        refreshForm.post(route('customers.refresh-tax-data', customer.id), {
+            preserveScroll: true,
+            onSuccess: () => router.reload({ only: ['customer', 'flash', 'errors'] }),
+        });
     };
 
     const assignNit = (event: FormEvent) => {
@@ -90,12 +96,19 @@ export default function Edit({ customer }: { customer: Customer }) {
                             <button
                                 type="button"
                                 onClick={refreshTaxData}
+                                disabled={refreshForm.processing}
                                 className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                             >
-                                Actualizar datos fiscales
+                                {refreshForm.processing ? 'Actualizando...' : 'Actualizar datos fiscales'}
                             </button>
                         )}
                     </div>
+
+                    {customer.has_encoding_issue && (
+                        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+                            Este cliente tiene caracteres inválidos en sus datos fiscales. Pulsa Actualizar datos fiscales para intentar corregirlos.
+                        </div>
+                    )}
 
                     <div className="grid gap-4 md:grid-cols-2">
                         <label className="block text-sm font-medium text-slate-700">
@@ -108,6 +121,7 @@ export default function Edit({ customer }: { customer: Customer }) {
                             <span className="mt-1 block text-xs font-medium text-slate-500">
                                 {customer.has_real_nit ? 'NIT bloqueado' : 'Cliente CF'}
                             </span>
+                            {refreshForm.errors.nit && <span className="mt-1 block text-xs text-red-600">{refreshForm.errors.nit}</span>}
                         </label>
                         <label className="block text-sm font-medium text-slate-700">
                             Nombre fiscal

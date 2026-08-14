@@ -9,7 +9,11 @@ use App\Models\TenantModule;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\Permissions;
+use App\Support\GuatemalaNitCustomerResolver;
+use App\Support\TextEncoding;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Validation\ValidationException;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
@@ -32,6 +36,21 @@ class CustomerManagementTest extends TestCase
         $this->actingAs($user)
             ->get(route('customers.index'))
             ->assertForbidden();
+    }
+
+    public function test_text_encoding_detects_replacement_character_mojibake(): void
+    {
+        $this->assertTrue(TextEncoding::hasMojibake('L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ'));
+    }
+
+    public function test_text_encoding_detects_double_encoded_mojibake(): void
+    {
+        $this->assertTrue(TextEncoding::hasMojibake('L'.chr(0xC3).chr(0x83).chr(0xE2).chr(0x80).chr(0x9C).'PEZ'));
+    }
+
+    public function test_text_encoding_does_not_flag_clean_accented_name(): void
+    {
+        $this->assertFalse(TextEncoding::hasMojibake('LÓPEZ'));
     }
 
     public function test_customer_listing_is_tenant_scoped(): void
@@ -180,6 +199,82 @@ class CustomerManagementTest extends TestCase
         $this->assertNotNull($customer->tax_lookup_verified_at);
     }
 
+    public function test_refresh_tax_data_replaces_mojibake_name_even_when_customer_is_locked(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+        $customer = $this->realNitCustomer($business, [
+            'name' => 'L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ,L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ,EMANUEL,ALEJANDRO',
+            'doc_number' => '57289085',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
+        ]);
+        $this->taxLookup($business, '57289085', 'LÓPEZ,LÓPEZ,EMANUEL,ALEJANDRO');
+
+        $this->actingAs($user)
+            ->from(route('customers.edit', $customer))
+            ->post(route('customers.refresh-tax-data', $customer))
+            ->assertSessionHasNoErrors();
+
+        $customer->refresh();
+        $this->assertSame('LÓPEZ,LÓPEZ,EMANUEL,ALEJANDRO', $customer->name);
+        $this->assertTrue((bool) $customer->name_locked);
+        $this->assertNotNull($customer->tax_lookup_verified_at);
+    }
+
+    public function test_refresh_tax_data_ignores_bad_cache_and_does_not_show_false_success(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+        $customer = $this->realNitCustomer($business, [
+            'name' => 'L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ',
+            'doc_number' => '57289085',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
+        ]);
+        $this->taxLookup($business, '57289085', 'L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ');
+
+        $this->actingAs($user)
+            ->from(route('customers.edit', $customer))
+            ->post(route('customers.refresh-tax-data', $customer))
+            ->assertSessionHasErrors('nit');
+
+        $this->assertSame('L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ', $customer->refresh()->name);
+    }
+
+    public function test_lookup_tax_data_rejects_mojibake_cache_when_not_ignored(): void
+    {
+        [$business] = $this->tenantUser('owner');
+        $this->taxLookup($business, '57289085', 'L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ');
+
+        try {
+            GuatemalaNitCustomerResolver::lookupTaxData($business, '57289085', allowCache: true, ignoreBadCache: false);
+            $this->fail('Expected validation exception.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(
+                'No se pudo obtener un nombre fiscal limpio para este NIT. La fuente de validación devolvió datos con caracteres inválidos.',
+                $exception->errors()['nit'][0],
+            );
+        }
+    }
+
+    public function test_customer_edit_marks_encoding_issue_in_props(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+        $customer = $this->realNitCustomer($business, [
+            'name' => 'L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('customers.edit', $customer))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Customers/Edit')
+                ->where('customer.has_encoding_issue', true)
+                ->where('customer.encoding_issue_fields.0', 'name')
+            );
+    }
+
     public function test_cf_customer_can_assign_valid_nit_and_becomes_locked(): void
     {
         [$business, $user] = $this->tenantUser('owner');
@@ -286,14 +381,33 @@ class CustomerManagementTest extends TestCase
         $this->assertStringContainsString("route('customers.index')", $source);
     }
 
+    public function test_customers_encoding_audit_command_detects_damaged_customers(): void
+    {
+        [$business] = $this->tenantUser('owner');
+        Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ',
+            'doc_number' => '57289085',
+            'country' => 'GT',
+        ]);
+
+        $this->artisan('customers:audit-encoding', ['--business' => $business->id])
+            ->assertSuccessful()
+            ->expectsOutput('Clientes con posible mojibake: 1');
+
+        $this->assertArrayHasKey('customers:audit-encoding', Artisan::all());
+    }
+
     public function test_touched_customer_files_do_not_contain_mojibake(): void
     {
         $files = [
             app_path('Http/Controllers/CustomerController.php'),
             app_path('Support/GuatemalaNitCustomerResolver.php'),
+            app_path('Support/TextEncoding.php'),
             resource_path('js/Pages/Customers/Index.tsx'),
             resource_path('js/Pages/Customers/Edit.tsx'),
             resource_path('js/Layouts/AuthenticatedLayout.tsx'),
+            base_path('routes/console.php'),
         ];
 
         foreach ($files as $file) {

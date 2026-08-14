@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Support\GuatemalaNitCustomerResolver;
+use App\Support\TextEncoding;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -126,20 +127,12 @@ class CustomerController extends Controller
         $business = Business::query()->findOrFail(currentBusinessId());
 
         try {
-            $result = GuatemalaNitCustomerResolver::resolve(
+            $lookup = GuatemalaNitCustomerResolver::lookupTaxData(
                 $business,
                 $this->normalizedNit($customer->doc_number),
-                requireVerifiedExisting: true,
+                allowCache: true,
+                ignoreBadCache: true,
             );
-
-            /** @var Customer $resolvedCustomer */
-            $resolvedCustomer = $result['customer'];
-
-            if ((int) $resolvedCustomer->id !== (int) $customer->id) {
-                throw ValidationException::withMessages([
-                    'nit' => self::DUPLICATE_NIT_MESSAGE,
-                ]);
-            }
         } catch (ValidationException $exception) {
             throw $exception;
         } catch (Throwable $exception) {
@@ -149,6 +142,28 @@ class CustomerController extends Controller
                 'nit' => GuatemalaNitCustomerResolver::LOOKUP_ERROR_MESSAGE,
             ]);
         }
+
+        if ($this->normalizedNitExists(currentBusinessId(), $lookup['nit'], $customer->id)) {
+            throw ValidationException::withMessages([
+                'nit' => self::DUPLICATE_NIT_MESSAGE,
+            ]);
+        }
+
+        $addressParts = GuatemalaNitCustomerResolver::extractAddressParts(is_array($lookup['raw'] ?? null) ? $lookup['raw'] : null);
+
+        $customer->forceFill([
+            'name' => $lookup['name'],
+            'doc_type' => 'NIT',
+            'doc_number' => $lookup['nit'],
+            'address' => $addressParts['address'] ?: $customer->address,
+            'department' => $addressParts['department'] ?: $customer->department,
+            'municipality' => $addressParts['municipality'] ?: $customer->municipality,
+            'country' => 'GT',
+            'is_final_consumer' => false,
+            'name_locked' => true,
+            'tax_lookup_payload' => is_array($lookup['raw'] ?? null) ? $lookup['raw'] : null,
+            'tax_lookup_verified_at' => now(),
+        ])->save();
 
         return back()->with('success', 'Datos fiscales actualizados correctamente.');
     }
@@ -312,6 +327,8 @@ class CustomerController extends Controller
             'is_final_consumer' => (bool) $customer->is_final_consumer,
             'name_locked' => (bool) $customer->name_locked,
             'tax_lookup_verified_at' => $customer->tax_lookup_verified_at?->toIso8601String(),
+            'encoding_issue_fields' => $this->encodingIssueFields($customer),
+            'has_encoding_issue' => $this->encodingIssueFields($customer) !== [],
             'fiscal_status' => $this->fiscalStatus($customer),
             'has_real_nit' => $this->hasRealNit($customer),
             'is_cf' => $this->isCfCustomer($customer),
@@ -438,6 +455,16 @@ class CustomerController extends Controller
         }
 
         return $customer->name_locked ? 'Datos fiscales bloqueados' : 'Sin documento';
+    }
+
+    private function encodingIssueFields(Customer $customer): array
+    {
+        return TextEncoding::fieldsWithMojibake([
+            'name' => $customer->name,
+            'commercial_name' => $customer->commercial_name,
+            'contact_name' => $customer->contact_name,
+            'address' => $customer->address,
+        ]);
     }
 
     private function hasRealNit(Customer $customer): bool

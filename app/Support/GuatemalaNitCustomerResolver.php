@@ -35,7 +35,15 @@ class GuatemalaNitCustomerResolver
 
         $existing = self::findExistingCustomer($business, $normalizedNit);
 
-        if ($existing && (! $requireVerifiedExisting || ($existing->tax_lookup_verified_at && $existing->name_locked))) {
+        if ($existing
+            && (! $requireVerifiedExisting || ($existing->tax_lookup_verified_at && $existing->name_locked))
+            && TextEncoding::fieldsWithMojibake([
+                'name' => $existing->name,
+                'commercial_name' => $existing->commercial_name,
+                'contact_name' => $existing->contact_name,
+                'address' => $existing->address,
+            ]) === []
+        ) {
             if ($existing->doc_type !== 'NIT' || self::normalize($existing->doc_number) !== $normalizedNit) {
                 $existing->forceFill(['doc_type' => 'NIT', 'doc_number' => $normalizedNit])->save();
             }
@@ -56,7 +64,7 @@ class GuatemalaNitCustomerResolver
                     ->where('doc_number', $normalizedNit)
                     ->first();
 
-                if ($cache && $cache->last_lookup_at?->greaterThanOrEqualTo(now()->subDays(30))) {
+                if ($cache && $cache->last_lookup_at?->greaterThanOrEqualTo(now()->subDays(30)) && ! self::lookupHasMojibake($cache->name, $cache->raw_response)) {
                     return [
                         'customer' => self::saveVerifiedCustomer($business, $cache->doc_number, $cache->name, $cache->raw_response),
                         'source' => 'cache',
@@ -73,6 +81,10 @@ class GuatemalaNitCustomerResolver
 
             if ($name === '') {
                 throw new FelException('Digifact no devolvió nombre para el NIT.');
+            }
+
+            if (TextEncoding::hasMojibake($name)) {
+                throw new FelException('Digifact devolvió un nombre con caracteres inválidos.');
             }
 
             CustomerTaxLookup::query()->updateOrCreate(
@@ -121,7 +133,7 @@ class GuatemalaNitCustomerResolver
         }
     }
 
-    public static function lookupTaxData(Business $business, ?string $nit, bool $allowCache = true): array
+    public static function lookupTaxData(Business $business, ?string $nit, bool $allowCache = true, bool $ignoreBadCache = true): array
     {
         $normalizedNit = self::normalize($nit);
 
@@ -140,12 +152,25 @@ class GuatemalaNitCustomerResolver
                 ->first();
 
             if ($cache && $cache->last_lookup_at?->greaterThanOrEqualTo(now()->subDays(30))) {
-                return [
-                    'nit' => $cache->doc_number,
-                    'name' => $cache->name,
-                    'raw' => $cache->raw_response,
-                    'source' => 'cache',
-                ];
+                if (self::lookupHasMojibake($cache->name, $cache->raw_response)) {
+                    if ($ignoreBadCache) {
+                        Log::warning('Ignoring mojibake NIT lookup cache', [
+                            'business_id' => $business->id,
+                            'nit' => $normalizedNit,
+                        ]);
+                    } else {
+                        throw ValidationException::withMessages([
+                            'nit' => 'No se pudo obtener un nombre fiscal limpio para este NIT. La fuente de validación devolvió datos con caracteres inválidos.',
+                        ]);
+                    }
+                } else {
+                    return [
+                        'nit' => $cache->doc_number,
+                        'name' => $cache->name,
+                        'raw' => $cache->raw_response,
+                        'source' => 'cache',
+                    ];
+                }
             }
         }
 
@@ -157,6 +182,12 @@ class GuatemalaNitCustomerResolver
 
             if ($name === '') {
                 throw new FelException('Digifact no devolvió nombre para el NIT.');
+            }
+
+            if (TextEncoding::hasMojibake($name) || TextEncoding::payloadHasMojibake($raw)) {
+                throw ValidationException::withMessages([
+                    'nit' => 'No se pudo obtener un nombre fiscal limpio para este NIT. La fuente de validación devolvió datos con caracteres inválidos.',
+                ]);
             }
 
             CustomerTaxLookup::query()->updateOrCreate(
@@ -233,6 +264,20 @@ class GuatemalaNitCustomerResolver
         ])->save();
 
         return $customer;
+    }
+
+    public static function extractAddressParts(?array $payload): array
+    {
+        return [
+            'address' => self::extractResponseValue($payload, ['Direccion', 'DIRECCION', 'direccion', 'Address']),
+            'department' => self::extractResponseValue($payload, ['DEPARTAMENTO', 'Departamento', 'department']),
+            'municipality' => self::extractResponseValue($payload, ['MUNICIPIO', 'Municipio', 'municipality']),
+        ];
+    }
+
+    private static function lookupHasMojibake(?string $name, mixed $raw): bool
+    {
+        return TextEncoding::hasMojibake($name) || TextEncoding::payloadHasMojibake($raw);
     }
 
     private static function extractResponseValue(?array $payload, array $keys): ?string

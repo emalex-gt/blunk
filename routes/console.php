@@ -5,9 +5,11 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use App\Models\Sale;
+use App\Models\Customer;
 use App\Models\TenantFelSetting;
 use App\Models\User;
 use App\Support\Ferrymas\CreditsFocusedAudit;
+use App\Support\TextEncoding;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
@@ -103,6 +105,57 @@ Artisan::command('ferrymas:audit-credits {--business=1}', function (CreditsFocus
         return self::FAILURE;
     }
 })->purpose('Audit legacy Ferrymas credit reservations and possible real AR without importing data');
+
+Artisan::command('customers:audit-encoding {--business=}', function () {
+    $businessId = (int) $this->option('business');
+
+    if ($businessId <= 0) {
+        $this->error('Debes indicar --business=ID.');
+
+        return self::FAILURE;
+    }
+
+    $affected = [];
+
+    Customer::query()
+        ->where('business_id', $businessId)
+        ->orderBy('id')
+        ->chunkById(200, function ($customers) use (&$affected) {
+            foreach ($customers as $customer) {
+                $fields = TextEncoding::fieldsWithMojibake([
+                    'name' => $customer->name,
+                    'commercial_name' => $customer->commercial_name,
+                    'contact_name' => $customer->contact_name,
+                    'address' => $customer->address,
+                ]);
+
+                if ($fields === []) {
+                    continue;
+                }
+
+                $affected[] = [
+                    'id' => $customer->id,
+                    'nit' => $customer->doc_number ?: 'CF',
+                    'name' => $customer->name,
+                    'commercial_name' => $customer->commercial_name,
+                    'contact_name' => $customer->contact_name,
+                    'address' => $customer->address,
+                    'fields' => implode(', ', $fields),
+                ];
+            }
+        });
+
+    $this->info('Clientes con posible mojibake: '.count($affected));
+
+    if ($affected !== []) {
+        $this->table(
+            ['id', 'nit', 'name', 'commercial_name', 'contact_name', 'address', 'fields'],
+            array_slice($affected, 0, 50),
+        );
+    }
+
+    return self::SUCCESS;
+})->purpose('Audit customers with possible text encoding issues without modifying data');
 
 Artisan::command('fel:diagnose-speed {sale_id?}', function (?string $sale_id = null) {
     $query = Sale::query()
