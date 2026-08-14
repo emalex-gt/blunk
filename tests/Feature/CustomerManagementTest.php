@@ -299,6 +299,22 @@ class CustomerManagementTest extends TestCase
         $this->assertFalse(TextEncoding::hasMojibake($lookup['name']));
     }
 
+    public function test_digifact_nit_lookup_sends_current_json_headers_without_accept_charset(): void
+    {
+        [$business] = $this->tenantUser('owner');
+        $this->felSettings($business);
+        $this->fakeDigifactNitResponse('57289085', 'LOPEZ,LOPEZ,EMANUEL,ALEJANDRO');
+
+        GuatemalaNitCustomerResolver::lookupTaxData($business, '57289085', allowCache: false);
+
+        Http::assertSent(function ($request) {
+            return $request->method() === 'GET'
+                && $request->hasHeader('Accept', 'application/json')
+                && $request->hasHeader('Content-Type', 'application/json')
+                && ! $request->hasHeader('Accept-Charset');
+        });
+    }
+
     public function test_lookup_tax_data_converts_single_byte_digifact_response_without_mojibake(): void
     {
         [$business] = $this->tenantUser('owner');
@@ -515,13 +531,46 @@ class CustomerManagementTest extends TestCase
             ->expectsOutput('cache.exists: yes')
             ->expectsOutput('cache.name.codepoints: U+004E U+006F U+006D U+0062 U+0072 U+0065 U+0020 U+0063 U+0061 U+0063 U+0068 U+0065')
             ->expectsOutput('external.called: yes')
+            ->expectsOutput('external.request_header.Accept: application/json')
+            ->expectsOutput('external.request_header.Content-Type: application/json')
+            ->expectsOutput('external.request_header.Accept-Charset: (none)')
             ->expectsOutput('external.extracted_name.codepoints: U+004E U+006F U+006D U+0062 U+0072 U+0065 U+0020 U+0065 U+0078 U+0074 U+0065 U+0072 U+006E U+006F U+0020 U+0053 U+0041 U+0054')
             ->expectsOutput('external.extracted_name.hex_utf8: 4E 6F 6D 62 72 65 20 65 78 74 65 72 6E 6F 20 53 41 54')
-            ->expectsOutput('raw_body.contains_u_fffd_bytes: no')
-            ->expectsOutput('raw_body.contains_literal_u00_escape: no');
+            ->expectsOutput('external.raw_body.contains_u_fffd_bytes: no')
+            ->expectsOutput('external.raw_body.contains_literal_u00_escape: no');
 
         $this->assertSame('Nombre viejo', $customer->refresh()->name);
         $this->assertSame('Nombre cache', CustomerTaxLookup::query()->where('business_id', $business->id)->where('doc_number', '57289085')->value('name'));
+    }
+
+    public function test_debug_nit_lookup_charset_test_reports_header_variants(): void
+    {
+        [$business] = $this->tenantUser('owner');
+        $this->felSettings($business);
+        $this->fakeDigifactNitResponse('57289085', 'LOPEZ,LOPEZ,EMANUEL,ALEJANDRO');
+
+        $exitCode = Artisan::call('customers:debug-nit-lookup', [
+            'nit' => '57289085',
+            '--business' => $business->id,
+            '--charset-test' => true,
+        ]);
+        $output = Artisan::output();
+
+        $this->assertSame(0, $exitCode, $output);
+        $this->assertStringContainsString('charset_test.variant: actual', $output);
+        $this->assertStringContainsString('charset_test.request_header.Accept: application/json', $output);
+        $this->assertStringContainsString('charset_test.request_header.Content-Type: application/json', $output);
+        $this->assertStringContainsString('charset_test.request_header.Accept-Charset: (none)', $output);
+        $this->assertStringContainsString('charset_test.variant: utf8_content_type', $output);
+        $this->assertStringContainsString('charset_test.request_header.Accept-Charset: UTF-8', $output);
+        $this->assertStringContainsString('charset_test.request_header.Content-Type: application/json; charset=UTF-8', $output);
+        $this->assertStringContainsString('charset_test.variant: utf8_accept', $output);
+        $this->assertStringContainsString('charset_test.request_header.Accept: application/json; charset=UTF-8', $output);
+        $this->assertStringContainsString('charset_test.variant: iso_8859_1', $output);
+        $this->assertStringContainsString('charset_test.request_header.Accept-Charset: ISO-8859-1', $output);
+        $this->assertStringContainsString('charset_test.variant: windows_1252', $output);
+        $this->assertStringContainsString('charset_test.request_header.Accept-Charset: Windows-1252', $output);
+        $this->assertStringContainsString('charset_test.extracted_name.has_mojibake: no', $output);
     }
 
     private function tenantUser(string $role, string $name = 'Customer Tenant'): array

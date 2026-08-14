@@ -161,7 +161,7 @@ Artisan::command('customers:audit-encoding {--business=}', function () {
     return self::SUCCESS;
 })->purpose('Audit customers with possible text encoding issues without modifying data');
 
-Artisan::command('customers:debug-nit-lookup {nit} {--business=}', function (string $nit) {
+Artisan::command('customers:debug-nit-lookup {nit} {--business=} {--charset-test}', function (string $nit) {
     $businessId = (int) $this->option('business');
 
     if ($businessId <= 0) {
@@ -190,6 +190,41 @@ Artisan::command('customers:debug-nit-lookup {nit} {--business=}', function (str
         $this->line("{$label}.hex_utf8: ".$diagnostics['hex_utf8']);
         $this->line("{$label}.contains_u_fffd: ".($diagnostics['contains_u_fffd'] ? 'yes' : 'no'));
         $this->line("{$label}.has_mojibake: ".($diagnostics['has_mojibake'] ? 'yes' : 'no'));
+    };
+    $printExternalDebug = function (array $debug, string $prefix = '') use ($printDiagnostics): void {
+        $label = $prefix === '' ? 'external' : $prefix;
+
+        $this->line("{$label}.called: yes");
+        $this->line("{$label}.variant: ".((string) ($debug['variant'] ?? 'actual')));
+        $this->line("{$label}.request_method: ".((string) ($debug['request_method'] ?? 'GET')));
+        $this->line("{$label}.request_url: ".((string) ($debug['request_url'] ?? '-')));
+        $this->line("{$label}.request_transport: ".((string) ($debug['request_transport'] ?? '-')));
+
+        foreach (($debug['request_headers'] ?? []) as $header => $value) {
+            $this->line("{$label}.request_header.{$header}: ".((string) $value));
+        }
+
+        $this->table(['field', 'value'], [
+            ['http_status', (string) $debug['http_status']],
+            ['successful', $debug['successful'] ? 'yes' : 'no'],
+            ['content_type', (string) ($debug['content_type'] ?: '-')],
+            ['body_encoding', (string) ($debug['body_encoding'] ?: '-')],
+            ['body_converted', $debug['body_converted'] ? 'yes' : 'no'],
+            ['body_valid_utf8_before', $debug['body_valid_utf8_before'] ? 'yes' : 'no'],
+            ['json_error', (string) ($debug['json_error'] ?: '-')],
+            ['response_has_data', $debug['response_has_data'] ? 'yes' : 'no'],
+            ['extracted_name', (string) ($debug['extracted_name'] ?: '-')],
+            ['extracted_name_has_mojibake', $debug['extracted_name_has_mojibake'] ? 'yes' : 'no'],
+            ['payload_has_mojibake', $debug['payload_has_mojibake'] ? 'yes' : 'no'],
+            ['body_preview', (string) ($debug['body_preview'] ?: '-')],
+        ]);
+        $printDiagnostics("{$label}.extracted_name", $debug['extracted_name']);
+        $this->line("{$label}.raw_body.contains_u_fffd_bytes: ".($debug['raw_body_contains_u_fffd_bytes'] ? 'yes' : 'no'));
+        $this->line("{$label}.raw_body.contains_literal_u00_escape: ".($debug['raw_body_contains_literal_u00_escape'] ? 'yes' : 'no'));
+        $this->line("{$label}.raw_body.nombre_marker_position: ".($debug['nombre_marker_position'] === null ? '-' : (string) $debug['nombre_marker_position']));
+        $this->line("{$label}.raw_body.nombre_fragment.text: ".((string) ($debug['nombre_raw_fragment_text'] ?: '-')));
+        $this->line("{$label}.raw_body.nombre_fragment.hex: ".((string) ($debug['nombre_raw_fragment_hex'] ?: '-')));
+        $this->line("{$label}.raw_body.nombre_fragment.codepoints: ".((string) ($debug['nombre_raw_fragment_codepoints'] ?: '-')));
     };
 
     $customers = Customer::query()
@@ -241,31 +276,20 @@ Artisan::command('customers:debug-nit-lookup {nit} {--business=}', function (str
     DB::beginTransaction();
 
     try {
-        $debug = DigifactClient::forBusiness($business)->debugNitLookup($normalizedNit);
+        $client = DigifactClient::forBusiness($business);
+        $debug = $client->debugNitLookup($normalizedNit);
+        $charsetResults = $this->option('charset-test')
+            ? $client->debugNitLookupCharsetVariants($normalizedNit)
+            : [];
         DB::rollBack();
 
-        $this->line('external.called: yes');
-        $this->table(['field', 'value'], [
-            ['http_status', (string) $debug['http_status']],
-            ['successful', $debug['successful'] ? 'yes' : 'no'],
-            ['content_type', (string) ($debug['content_type'] ?: '-')],
-            ['body_encoding', (string) ($debug['body_encoding'] ?: '-')],
-            ['body_converted', $debug['body_converted'] ? 'yes' : 'no'],
-            ['body_valid_utf8_before', $debug['body_valid_utf8_before'] ? 'yes' : 'no'],
-            ['json_error', (string) ($debug['json_error'] ?: '-')],
-            ['response_has_data', $debug['response_has_data'] ? 'yes' : 'no'],
-            ['extracted_name', (string) ($debug['extracted_name'] ?: '-')],
-            ['extracted_name_has_mojibake', $debug['extracted_name_has_mojibake'] ? 'yes' : 'no'],
-            ['payload_has_mojibake', $debug['payload_has_mojibake'] ? 'yes' : 'no'],
-            ['body_preview', (string) ($debug['body_preview'] ?: '-')],
-        ]);
-        $printDiagnostics('external.extracted_name', $debug['extracted_name']);
-        $this->line('raw_body.contains_u_fffd_bytes: '.($debug['raw_body_contains_u_fffd_bytes'] ? 'yes' : 'no'));
-        $this->line('raw_body.contains_literal_u00_escape: '.($debug['raw_body_contains_literal_u00_escape'] ? 'yes' : 'no'));
-        $this->line('raw_body.nombre_marker_position: '.($debug['nombre_marker_position'] === null ? '-' : (string) $debug['nombre_marker_position']));
-        $this->line('raw_body.nombre_fragment.text: '.((string) ($debug['nombre_raw_fragment_text'] ?: '-')));
-        $this->line('raw_body.nombre_fragment.hex: '.((string) ($debug['nombre_raw_fragment_hex'] ?: '-')));
-        $this->line('raw_body.nombre_fragment.codepoints: '.((string) ($debug['nombre_raw_fragment_codepoints'] ?: '-')));
+        $printExternalDebug($debug);
+
+        foreach ($charsetResults as $result) {
+            $this->line('');
+            $this->info('charset_test.variant: '.((string) ($result['variant'] ?? '-')));
+            $printExternalDebug($result, 'charset_test');
+        }
 
         if (! $debug['successful']) {
             $this->warn('final: proveedor respondió con error HTTP.');

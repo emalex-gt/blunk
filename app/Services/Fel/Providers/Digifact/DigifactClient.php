@@ -243,7 +243,7 @@ class DigifactClient
         ];
     }
 
-    public function debugNitLookup(string $nit): array
+    public function debugNitLookup(string $nit, ?array $headerOverrides = null, string $variant = 'actual'): array
     {
         $this->ensureReadyForCalls();
         $receiverNit = DigifactNit::cleanReceiverNit($nit);
@@ -253,12 +253,13 @@ class DigifactClient
         }
 
         $query = $this->sharedLookupQuery($receiverNit);
-        $response = $this->authorizedRequest((int) config('digifact.lookup_timeout', 10))
+        $timeout = (int) config('digifact.lookup_timeout', 10);
+        $response = $this->debugNitLookupRequest($timeout, $headerOverrides)
             ->get($this->buildUrl($this->endpoint('shared')), $query);
 
         if ($response->status() === 401) {
             $this->settings->forceFill(['token' => null, 'token_expires_at' => null])->save();
-            $response = $this->authorizedRequest((int) config('digifact.lookup_timeout', 10))
+            $response = $this->debugNitLookupRequest($timeout, $headerOverrides)
                 ->get($this->buildUrl($this->endpoint('shared')), $query);
         }
 
@@ -284,7 +285,12 @@ class DigifactClient
 
         return [
             'external_called' => true,
+            'variant' => $variant,
             'nit' => $receiverNit,
+            'request_method' => 'GET',
+            'request_url' => $this->buildUrl($this->endpoint('shared')),
+            'request_transport' => 'query_params',
+            'request_headers' => $this->debugNitLookupReportHeaders($headerOverrides),
             'http_status' => $response->status(),
             'successful' => $response->successful(),
             'content_type' => $contentType,
@@ -307,6 +313,17 @@ class DigifactClient
             'body_preview' => mb_substr(trim(strip_tags($body)), 0, 500),
             'raw' => $payload,
         ];
+    }
+
+    public function debugNitLookupCharsetVariants(string $nit): array
+    {
+        $results = [];
+
+        foreach ($this->nitLookupCharsetHeaderVariants() as $variant) {
+            $results[] = $this->debugNitLookup($nit, $variant['headers'], $variant['key']);
+        }
+
+        return $results;
     }
 
     public function certify(array $payload, string $format = 'XML'): array
@@ -650,6 +667,76 @@ class DigifactClient
                 'Authorization' => $this->getToken(),
                 'Content-Type' => 'application/json',
             ]);
+    }
+
+    private function debugNitLookupRequest(int $timeout, ?array $headerOverrides)
+    {
+        if ($headerOverrides === null) {
+            return $this->authorizedRequest($timeout);
+        }
+
+        return Http::connectTimeout((int) config('digifact.connect_timeout', 5))
+            ->timeout($timeout)
+            ->withHeaders([
+                ...$headerOverrides,
+                'Authorization' => $this->getToken(),
+            ]);
+    }
+
+    private function debugNitLookupReportHeaders(?array $headerOverrides): array
+    {
+        $headers = $headerOverrides ?? [
+            'Accept' => 'application/json',
+            'Content-Type' => 'application/json',
+        ];
+
+        return [
+            ...$headers,
+            'Accept-Charset' => $headers['Accept-Charset'] ?? '(none)',
+            'Authorization' => 'present',
+        ];
+    }
+
+    private function nitLookupCharsetHeaderVariants(): array
+    {
+        return [
+            [
+                'key' => 'actual',
+                'headers' => null,
+            ],
+            [
+                'key' => 'utf8_content_type',
+                'headers' => [
+                    'Accept' => 'application/json',
+                    'Accept-Charset' => 'UTF-8',
+                    'Content-Type' => 'application/json; charset=UTF-8',
+                ],
+            ],
+            [
+                'key' => 'utf8_accept',
+                'headers' => [
+                    'Accept' => 'application/json; charset=UTF-8',
+                    'Accept-Charset' => 'UTF-8',
+                    'Content-Type' => 'application/json',
+                ],
+            ],
+            [
+                'key' => 'iso_8859_1',
+                'headers' => [
+                    'Accept' => 'application/json',
+                    'Accept-Charset' => 'ISO-8859-1',
+                    'Content-Type' => 'application/json',
+                ],
+            ],
+            [
+                'key' => 'windows_1252',
+                'headers' => [
+                    'Accept' => 'application/json',
+                    'Accept-Charset' => 'Windows-1252',
+                    'Content-Type' => 'application/json',
+                ],
+            ],
+        ];
     }
 
     private function authorizedDownloadRequest(int $timeout = 15)
