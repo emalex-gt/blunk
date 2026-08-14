@@ -180,6 +180,17 @@ Artisan::command('customers:debug-nit-lookup {nit} {--business=}', function (str
 
     $normalizedNit = GuatemalaNitCustomerResolver::normalize($nit);
     $this->info("NIT normalizado: {$normalizedNit}");
+    $printDiagnostics = function (string $label, ?string $value): void {
+        $diagnostics = TextEncoding::stringDiagnostics($value);
+
+        $this->line("{$label}.visible: ".$diagnostics['visible']);
+        $this->line("{$label}.characters: ".($diagnostics['characters'] === null ? 'invalid-utf8' : (string) $diagnostics['characters']));
+        $this->line("{$label}.bytes: ".$diagnostics['bytes']);
+        $this->line("{$label}.codepoints: ".$diagnostics['codepoints']);
+        $this->line("{$label}.hex_utf8: ".$diagnostics['hex_utf8']);
+        $this->line("{$label}.contains_u_fffd: ".($diagnostics['contains_u_fffd'] ? 'yes' : 'no'));
+        $this->line("{$label}.has_mojibake: ".($diagnostics['has_mojibake'] ? 'yes' : 'no'));
+    };
 
     $customers = Customer::query()
         ->where('business_id', $business->id)
@@ -204,6 +215,7 @@ Artisan::command('customers:debug-nit-lookup {nit} {--business=}', function (str
             ['tax_lookup_verified_at', $customer->tax_lookup_verified_at?->toDateTimeString() ?: '-'],
             ['has_mojibake', $fields === [] ? 'no' : 'yes: '.implode(', ', $fields)],
         ]);
+        $printDiagnostics('customer.name', $customer->name);
     }
 
     $cache = CustomerTaxLookup::query()
@@ -223,6 +235,7 @@ Artisan::command('customers:debug-nit-lookup {nit} {--business=}', function (str
             ['name_has_mojibake', TextEncoding::hasMojibake($cache->name) ? 'yes' : 'no'],
             ['payload_has_mojibake', TextEncoding::payloadHasMojibake($cache->raw_response) ? 'yes' : 'no'],
         ]);
+        $printDiagnostics('cache.name', $cache->name);
     }
 
     DB::beginTransaction();
@@ -246,6 +259,13 @@ Artisan::command('customers:debug-nit-lookup {nit} {--business=}', function (str
             ['payload_has_mojibake', $debug['payload_has_mojibake'] ? 'yes' : 'no'],
             ['body_preview', (string) ($debug['body_preview'] ?: '-')],
         ]);
+        $printDiagnostics('external.extracted_name', $debug['extracted_name']);
+        $this->line('raw_body.contains_u_fffd_bytes: '.($debug['raw_body_contains_u_fffd_bytes'] ? 'yes' : 'no'));
+        $this->line('raw_body.contains_literal_u00_escape: '.($debug['raw_body_contains_literal_u00_escape'] ? 'yes' : 'no'));
+        $this->line('raw_body.nombre_marker_position: '.($debug['nombre_marker_position'] === null ? '-' : (string) $debug['nombre_marker_position']));
+        $this->line('raw_body.nombre_fragment.text: '.((string) ($debug['nombre_raw_fragment_text'] ?: '-')));
+        $this->line('raw_body.nombre_fragment.hex: '.((string) ($debug['nombre_raw_fragment_hex'] ?: '-')));
+        $this->line('raw_body.nombre_fragment.codepoints: '.((string) ($debug['nombre_raw_fragment_codepoints'] ?: '-')));
 
         if (! $debug['successful']) {
             $this->warn('final: proveedor respondió con error HTTP.');

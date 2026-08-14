@@ -263,8 +263,12 @@ class DigifactClient
         }
 
         $contentType = (string) $response->header('Content-Type', '');
-        $normalized = TextEncoding::normalizeResponseBody($response->body(), $contentType);
+        $rawBody = $response->body();
+        $normalized = TextEncoding::normalizeResponseBody($rawBody, $contentType);
         $body = trim($normalized['body']);
+        $rawNameFragment = $this->rawBodyFragmentAroundNameMarker($rawBody);
+        $normalizedNameFragment = TextEncoding::normalizeResponseBody($rawNameFragment['fragment'], $contentType);
+        $nameFragmentText = trim($normalizedNameFragment['body']);
         $payload = null;
         $jsonError = null;
 
@@ -290,8 +294,16 @@ class DigifactClient
             'json_error' => $jsonError,
             'response_has_data' => is_array($payload) ? $this->lookupResponseHasData($payload) : false,
             'extracted_name' => $extractedName,
+            'extracted_name_diagnostics' => TextEncoding::stringDiagnostics($extractedName),
             'extracted_name_has_mojibake' => TextEncoding::hasMojibake($extractedName),
+            'extracted_name_contains_u_fffd' => str_contains((string) $extractedName, "\xEF\xBF\xBD"),
             'payload_has_mojibake' => TextEncoding::payloadHasMojibake($payload),
+            'raw_body_contains_u_fffd_bytes' => str_contains($rawBody, "\xEF\xBF\xBD"),
+            'raw_body_contains_literal_u00_escape' => str_contains(strtolower($rawBody), '\\u00'),
+            'nombre_marker_position' => $rawNameFragment['position'],
+            'nombre_raw_fragment_text' => $nameFragmentText,
+            'nombre_raw_fragment_hex' => TextEncoding::hexBytes($rawNameFragment['fragment']),
+            'nombre_raw_fragment_codepoints' => TextEncoding::codepoints($nameFragmentText),
             'body_preview' => mb_substr(trim(strip_tags($body)), 0, 500),
             'raw' => $payload,
         ];
@@ -944,6 +956,31 @@ class DigifactClient
         }
 
         return $clean;
+    }
+
+    private function rawBodyFragmentAroundNameMarker(string $body): array
+    {
+        $position = null;
+
+        foreach (['"NOMBRE"', '"Nombre"', '"nombre"', 'NOMBRE', 'Nombre', 'nombre'] as $marker) {
+            $candidate = strpos($body, $marker);
+
+            if ($candidate !== false && ($position === null || $candidate < $position)) {
+                $position = $candidate;
+            }
+        }
+
+        if ($position === null) {
+            return [
+                'position' => null,
+                'fragment' => substr($body, 0, 240),
+            ];
+        }
+
+        return [
+            'position' => $position,
+            'fragment' => substr($body, max(0, $position - 80), 240),
+        ];
     }
 
     private function decodedResponse(Response $response, bool $throwOnInvalid = true): array|string|null

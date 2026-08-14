@@ -56,6 +56,17 @@ class CustomerManagementTest extends TestCase
         $this->assertFalse(TextEncoding::hasMojibake('LÓPEZ'));
     }
 
+    public function test_text_encoding_does_not_flag_clean_ascii_name(): void
+    {
+        $this->assertFalse(TextEncoding::hasMojibake('LOPEZ,LOPEZ,EMANUEL,ALEJANDRO'));
+    }
+
+    public function test_text_encoding_flags_specific_damaged_nit_names(): void
+    {
+        $this->assertTrue(TextEncoding::hasMojibake('L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ,L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ,EMANUEL,ALEJANDRO'));
+        $this->assertTrue(TextEncoding::hasMojibake('L'.chr(0xC3).chr(0x83).chr(0xE2).chr(0x80).chr(0x9C).'PEZ,L'.chr(0xC3).chr(0x83).chr(0xE2).chr(0x80).chr(0x9C).'PEZ,EMANUEL,ALEJANDRO'));
+    }
+
     public function test_customer_listing_is_tenant_scoped(): void
     {
         [$businessA, $userA] = $this->tenantUser('owner', 'Customer A');
@@ -229,6 +240,30 @@ class CustomerManagementTest extends TestCase
         $this->assertSame('LÓPEZ,LÓPEZ,EMANUEL,ALEJANDRO', $customer->name);
         $this->assertTrue((bool) $customer->name_locked);
         $this->assertNotNull($customer->tax_lookup_verified_at);
+    }
+
+    public function test_refresh_tax_data_replaces_mojibake_name_when_external_returns_clean_ascii_name(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+        $customer = $this->realNitCustomer($business, [
+            'name' => 'L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ,L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ,EMANUEL,ALEJANDRO',
+            'doc_number' => '57289085',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
+        ]);
+        $this->felSettings($business);
+        $this->taxLookup($business, '57289085', 'L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ');
+        $this->fakeDigifactNitResponse('57289085', 'LOPEZ,LOPEZ,EMANUEL,ALEJANDRO');
+
+        $this->actingAs($user)
+            ->from(route('customers.edit', $customer))
+            ->post(route('customers.refresh-tax-data', $customer))
+            ->assertSessionHasNoErrors();
+
+        $customer->refresh();
+        $this->assertSame('LOPEZ,LOPEZ,EMANUEL,ALEJANDRO', $customer->name);
+        $this->assertFalse(TextEncoding::hasMojibake($customer->name));
+        $this->assertSame('LOPEZ,LOPEZ,EMANUEL,ALEJANDRO', CustomerTaxLookup::query()->where('business_id', $business->id)->where('doc_number', '57289085')->value('name'));
     }
 
     public function test_refresh_tax_data_ignores_bad_cache_and_does_not_show_false_success(): void
@@ -475,8 +510,15 @@ class CustomerManagementTest extends TestCase
             ->assertSuccessful()
             ->expectsOutput('NIT normalizado: 57289085')
             ->expectsOutput('customer.exists: yes')
+            ->expectsOutput('customer.name.codepoints: U+004E U+006F U+006D U+0062 U+0072 U+0065 U+0020 U+0076 U+0069 U+0065 U+006A U+006F')
+            ->expectsOutput('customer.name.hex_utf8: 4E 6F 6D 62 72 65 20 76 69 65 6A 6F')
             ->expectsOutput('cache.exists: yes')
-            ->expectsOutput('external.called: yes');
+            ->expectsOutput('cache.name.codepoints: U+004E U+006F U+006D U+0062 U+0072 U+0065 U+0020 U+0063 U+0061 U+0063 U+0068 U+0065')
+            ->expectsOutput('external.called: yes')
+            ->expectsOutput('external.extracted_name.codepoints: U+004E U+006F U+006D U+0062 U+0072 U+0065 U+0020 U+0065 U+0078 U+0074 U+0065 U+0072 U+006E U+006F U+0020 U+0053 U+0041 U+0054')
+            ->expectsOutput('external.extracted_name.hex_utf8: 4E 6F 6D 62 72 65 20 65 78 74 65 72 6E 6F 20 53 41 54')
+            ->expectsOutput('raw_body.contains_u_fffd_bytes: no')
+            ->expectsOutput('raw_body.contains_literal_u00_escape: no');
 
         $this->assertSame('Nombre viejo', $customer->refresh()->name);
         $this->assertSame('Nombre cache', CustomerTaxLookup::query()->where('business_id', $business->id)->where('doc_number', '57289085')->value('name'));

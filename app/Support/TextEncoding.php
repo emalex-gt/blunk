@@ -4,6 +4,48 @@ namespace App\Support;
 
 class TextEncoding
 {
+    public static function stringDiagnostics(?string $value): array
+    {
+        $value = (string) $value;
+
+        return [
+            'visible' => $value,
+            'characters' => mb_check_encoding($value, 'UTF-8') ? mb_strlen($value, 'UTF-8') : null,
+            'bytes' => strlen($value),
+            'codepoints' => self::codepoints($value),
+            'hex_utf8' => self::hexBytes($value),
+            'contains_u_fffd' => str_contains($value, "\xEF\xBF\xBD"),
+            'has_mojibake' => self::hasMojibake($value),
+        ];
+    }
+
+    public static function codepoints(?string $value): string
+    {
+        $value = (string) $value;
+
+        if ($value === '') {
+            return '-';
+        }
+
+        if (! mb_check_encoding($value, 'UTF-8')) {
+            return 'invalid-utf8';
+        }
+
+        $characters = preg_split('//u', $value, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+        return implode(' ', array_map(
+            fn (string $character): string => 'U+'.str_pad(strtoupper(dechex(mb_ord($character, 'UTF-8'))), 4, '0', STR_PAD_LEFT),
+            $characters,
+        ));
+    }
+
+    public static function hexBytes(?string $value): string
+    {
+        $hex = strtoupper(bin2hex((string) $value));
+
+        return $hex === '' ? '-' : implode(' ', str_split($hex, 2));
+    }
+
     public static function normalizeResponseBody(?string $body, ?string $contentType = null): array
     {
         $body = (string) $body;
