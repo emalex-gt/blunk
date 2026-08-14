@@ -7,6 +7,7 @@ use App\Models\ElectronicDocument;
 use App\Models\Sale;
 use App\Models\TenantFelSetting;
 use App\Services\Fel\FelException;
+use App\Support\TextEncoding;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
@@ -238,6 +239,60 @@ class DigifactClient
         return [
             'nit' => $receiverNit,
             'name' => $name,
+            'raw' => $payload,
+        ];
+    }
+
+    public function debugNitLookup(string $nit): array
+    {
+        $this->ensureReadyForCalls();
+        $receiverNit = DigifactNit::cleanReceiverNit($nit);
+
+        if ($receiverNit === 'CF') {
+            throw new FelException('Ingresa un NIT valido para consultar.');
+        }
+
+        $query = $this->sharedLookupQuery($receiverNit);
+        $response = $this->authorizedRequest((int) config('digifact.lookup_timeout', 10))
+            ->get($this->buildUrl($this->endpoint('shared')), $query);
+
+        if ($response->status() === 401) {
+            $this->settings->forceFill(['token' => null, 'token_expires_at' => null])->save();
+            $response = $this->authorizedRequest((int) config('digifact.lookup_timeout', 10))
+                ->get($this->buildUrl($this->endpoint('shared')), $query);
+        }
+
+        $contentType = (string) $response->header('Content-Type', '');
+        $normalized = TextEncoding::normalizeResponseBody($response->body(), $contentType);
+        $body = trim($normalized['body']);
+        $payload = null;
+        $jsonError = null;
+
+        if ($body !== '') {
+            try {
+                $payload = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+            } catch (Throwable $exception) {
+                $jsonError = $exception->getMessage();
+            }
+        }
+
+        $extractedName = is_array($payload) ? $this->extractNitName($payload) : null;
+
+        return [
+            'external_called' => true,
+            'nit' => $receiverNit,
+            'http_status' => $response->status(),
+            'successful' => $response->successful(),
+            'content_type' => $contentType,
+            'body_encoding' => $normalized['encoding'],
+            'body_converted' => $normalized['converted'],
+            'body_valid_utf8_before' => $normalized['valid_utf8_before'],
+            'json_error' => $jsonError,
+            'response_has_data' => is_array($payload) ? $this->lookupResponseHasData($payload) : false,
+            'extracted_name' => $extractedName,
+            'extracted_name_has_mojibake' => TextEncoding::hasMojibake($extractedName),
+            'payload_has_mojibake' => TextEncoding::payloadHasMojibake($payload),
+            'body_preview' => mb_substr(trim(strip_tags($body)), 0, 500),
             'raw' => $payload,
         ];
     }
@@ -893,13 +948,14 @@ class DigifactClient
 
     private function decodedResponse(Response $response, bool $throwOnInvalid = true): array|string|null
     {
-        $body = trim($response->body());
+        $contentType = (string) $response->header('Content-Type', '');
+        $normalized = TextEncoding::normalizeResponseBody($response->body(), $contentType);
+        $body = trim($normalized['body']);
 
         if ($body === '') {
             return null;
         }
 
-        $contentType = (string) $response->header('Content-Type', '');
         $looksJson = str_contains(mb_strtolower($contentType), 'application/json')
             || str_starts_with($body, '{')
             || str_starts_with($body, '[');
@@ -911,6 +967,8 @@ class DigifactClient
                 'business_id' => $this->business->id,
                 'status' => $response->status(),
                 'content_type' => $contentType,
+                'body_encoding' => $normalized['encoding'],
+                'body_converted' => $normalized['converted'],
                 'body_preview' => $preview,
             ]);
 
@@ -928,6 +986,8 @@ class DigifactClient
                 'business_id' => $this->business->id,
                 'status' => $response->status(),
                 'content_type' => $contentType,
+                'body_encoding' => $normalized['encoding'],
+                'body_converted' => $normalized['converted'],
                 'body_preview' => mb_substr($body, 0, 500),
             ]);
 

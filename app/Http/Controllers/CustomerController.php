@@ -130,7 +130,7 @@ class CustomerController extends Controller
             $lookup = GuatemalaNitCustomerResolver::lookupTaxData(
                 $business,
                 $this->normalizedNit($customer->doc_number),
-                allowCache: true,
+                allowCache: false,
                 ignoreBadCache: true,
             );
         } catch (ValidationException $exception) {

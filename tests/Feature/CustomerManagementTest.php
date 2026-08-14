@@ -6,6 +6,8 @@ use App\Models\Business;
 use App\Models\Customer;
 use App\Models\CustomerTaxLookup;
 use App\Models\TenantModule;
+use App\Models\TenantFelPhrase;
+use App\Models\TenantFelSetting;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\Permissions;
@@ -13,6 +15,7 @@ use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\TextEncoding;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\ValidationException;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
@@ -177,7 +180,7 @@ class CustomerManagementTest extends TestCase
         $this->assertSame('Comercial permitido', $customer->commercial_name);
     }
 
-    public function test_refresh_tax_data_updates_old_unverified_nit_customer_from_cache(): void
+    public function test_refresh_tax_data_skips_cache_and_uses_external_lookup(): void
     {
         [$business, $user] = $this->tenantUser('owner');
         $customer = $this->realNitCustomer($business, [
@@ -185,7 +188,9 @@ class CustomerManagementTest extends TestCase
             'name_locked' => false,
             'tax_lookup_verified_at' => null,
         ]);
-        $this->taxLookup($business, '57289085', 'Nombre Oficial SAT');
+        $this->felSettings($business);
+        $this->taxLookup($business, '57289085', 'Nombre Cache Viejo');
+        $this->fakeDigifactNitResponse('57289085', 'Nombre Oficial SAT');
 
         $this->actingAs($user)
             ->from(route('customers.edit', $customer))
@@ -197,9 +202,12 @@ class CustomerManagementTest extends TestCase
         $this->assertSame('57289085', $customer->doc_number);
         $this->assertTrue((bool) $customer->name_locked);
         $this->assertNotNull($customer->tax_lookup_verified_at);
+
+        $this->assertSame('Nombre Oficial SAT', CustomerTaxLookup::query()->where('business_id', $business->id)->where('doc_number', '57289085')->value('name'));
+        Http::assertSentCount(1);
     }
 
-    public function test_refresh_tax_data_replaces_mojibake_name_even_when_customer_is_locked(): void
+    public function test_refresh_tax_data_replaces_mojibake_name_from_external_even_when_cache_is_bad(): void
     {
         [$business, $user] = $this->tenantUser('owner');
         $customer = $this->realNitCustomer($business, [
@@ -208,7 +216,9 @@ class CustomerManagementTest extends TestCase
             'name_locked' => true,
             'tax_lookup_verified_at' => now(),
         ]);
-        $this->taxLookup($business, '57289085', 'LÓPEZ,LÓPEZ,EMANUEL,ALEJANDRO');
+        $this->felSettings($business);
+        $this->taxLookup($business, '57289085', 'L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ');
+        $this->fakeDigifactNitResponse('57289085', 'LÓPEZ,LÓPEZ,EMANUEL,ALEJANDRO');
 
         $this->actingAs($user)
             ->from(route('customers.edit', $customer))
@@ -230,7 +240,9 @@ class CustomerManagementTest extends TestCase
             'name_locked' => true,
             'tax_lookup_verified_at' => now(),
         ]);
+        $this->felSettings($business);
         $this->taxLookup($business, '57289085', 'L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ');
+        $this->fakeDigifactNitResponse('57289085', 'L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ');
 
         $this->actingAs($user)
             ->from(route('customers.edit', $customer))
@@ -238,6 +250,35 @@ class CustomerManagementTest extends TestCase
             ->assertSessionHasErrors('nit');
 
         $this->assertSame('L'.chr(0xEF).chr(0xBF).chr(0xBD).'PEZ', $customer->refresh()->name);
+    }
+
+    public function test_lookup_tax_data_preserves_clean_utf8_from_digifact(): void
+    {
+        [$business] = $this->tenantUser('owner');
+        $this->felSettings($business);
+        $this->fakeDigifactNitResponse('57289085', 'LÓPEZ,LÓPEZ,EMANUEL,ALEJANDRO');
+
+        $lookup = GuatemalaNitCustomerResolver::lookupTaxData($business, '57289085', allowCache: false);
+
+        $this->assertSame('LÓPEZ,LÓPEZ,EMANUEL,ALEJANDRO', $lookup['name']);
+        $this->assertFalse(TextEncoding::hasMojibake($lookup['name']));
+    }
+
+    public function test_lookup_tax_data_converts_single_byte_digifact_response_without_mojibake(): void
+    {
+        [$business] = $this->tenantUser('owner');
+        $this->felSettings($business);
+        $name = 'L'.chr(0xD3).'PEZ,L'.chr(0xD3).'PEZ,EMANUEL,ALEJANDRO';
+        $body = '{"RESPONSE":[{"NIT":"57289085","NOMBRE":"'.$name.'"}]}';
+
+        Http::fake([
+            '*' => Http::response($body, 200, ['Content-Type' => 'application/json; charset=ISO-8859-1']),
+        ]);
+
+        $lookup = GuatemalaNitCustomerResolver::lookupTaxData($business, '57289085', allowCache: false);
+
+        $this->assertSame('LÓPEZ,LÓPEZ,EMANUEL,ALEJANDRO', $lookup['name']);
+        $this->assertFalse(TextEncoding::hasMojibake($lookup['name']));
     }
 
     public function test_lookup_tax_data_rejects_mojibake_cache_when_not_ignored(): void
@@ -402,6 +443,7 @@ class CustomerManagementTest extends TestCase
     {
         $files = [
             app_path('Http/Controllers/CustomerController.php'),
+            app_path('Services/Fel/Providers/Digifact/DigifactClient.php'),
             app_path('Support/GuatemalaNitCustomerResolver.php'),
             app_path('Support/TextEncoding.php'),
             resource_path('js/Pages/Customers/Index.tsx'),
@@ -416,6 +458,28 @@ class CustomerManagementTest extends TestCase
                 $this->assertStringNotContainsString($badSequence, $contents, $file);
             }
         }
+    }
+
+    public function test_debug_nit_lookup_command_reports_sources_without_modifying_customer_or_cache(): void
+    {
+        [$business] = $this->tenantUser('owner');
+        $this->felSettings($business);
+        $customer = $this->realNitCustomer($business, [
+            'name' => 'Nombre viejo',
+            'doc_number' => '57289085',
+        ]);
+        $this->taxLookup($business, '57289085', 'Nombre cache');
+        $this->fakeDigifactNitResponse('57289085', 'Nombre externo SAT');
+
+        $this->artisan('customers:debug-nit-lookup', ['nit' => '5728-9085', '--business' => $business->id])
+            ->assertSuccessful()
+            ->expectsOutput('NIT normalizado: 57289085')
+            ->expectsOutput('customer.exists: yes')
+            ->expectsOutput('cache.exists: yes')
+            ->expectsOutput('external.called: yes');
+
+        $this->assertSame('Nombre viejo', $customer->refresh()->name);
+        $this->assertSame('Nombre cache', CustomerTaxLookup::query()->where('business_id', $business->id)->where('doc_number', '57289085')->value('name'));
     }
 
     private function tenantUser(string $role, string $name = 'Customer Tenant'): array
@@ -488,6 +552,52 @@ class CustomerManagementTest extends TestCase
             'provider' => 'digifact',
             'raw_response' => ['nit' => $nit, 'name' => $name],
             'last_lookup_at' => now(),
+        ]);
+    }
+
+    private function felSettings(Business $business): TenantFelSetting
+    {
+        $settings = TenantFelSetting::query()->create([
+            'business_id' => $business->id,
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'enabled' => true,
+            'issuer_tax_id' => '5888492',
+            'username' => 'TESTUSER',
+            'password' => 'secret',
+            'token' => 'cached-token',
+            'token_expires_at' => now()->addHour(),
+            'test_base_url' => 'https://digifact.test/api',
+            'production_base_url' => null,
+            'affiliate_type' => 'GEN',
+        ]);
+
+        TenantFelPhrase::query()->create([
+            'business_id' => $business->id,
+            'tenant_fel_setting_id' => $settings->id,
+            'data_identifier' => '1',
+            'phrase_type' => '1',
+            'scenario_code' => '2',
+            'type_data' => '1',
+            'type_value' => '1',
+            'scenario_data' => '1',
+            'scenario_value' => '2',
+        ]);
+
+        return $settings;
+    }
+
+    private function fakeDigifactNitResponse(string $nit, string $name): void
+    {
+        Http::fake([
+            '*' => Http::response([
+                'RESPONSE' => [
+                    [
+                        'NIT' => $nit,
+                        'NOMBRE' => $name,
+                    ],
+                ],
+            ], 200, ['Content-Type' => 'application/json; charset=UTF-8']),
         ]);
     }
 }

@@ -4,6 +4,69 @@ namespace App\Support;
 
 class TextEncoding
 {
+    public static function normalizeResponseBody(?string $body, ?string $contentType = null): array
+    {
+        $body = (string) $body;
+        $contentType = (string) $contentType;
+        $declaredCharset = self::charsetFromContentType($contentType);
+
+        if ($body === '') {
+            return [
+                'body' => '',
+                'encoding' => $declaredCharset ?: 'empty',
+                'converted' => false,
+                'valid_utf8_before' => true,
+            ];
+        }
+
+        $validUtf8Before = mb_check_encoding($body, 'UTF-8');
+
+        if ($validUtf8Before) {
+            return [
+                'body' => $body,
+                'encoding' => $declaredCharset ?: 'UTF-8',
+                'converted' => false,
+                'valid_utf8_before' => true,
+            ];
+        }
+
+        $candidates = [];
+
+        if ($declaredCharset) {
+            $candidates[] = $declaredCharset;
+        }
+
+        foreach (['Windows-1252', 'ISO-8859-1'] as $candidate) {
+            if (! in_array($candidate, $candidates, true)) {
+                $candidates[] = $candidate;
+            }
+        }
+
+        foreach ($candidates as $candidate) {
+            if (self::isUtf8Charset($candidate)) {
+                continue;
+            }
+
+            $converted = @mb_convert_encoding($body, 'UTF-8', $candidate);
+
+            if (is_string($converted) && mb_check_encoding($converted, 'UTF-8')) {
+                return [
+                    'body' => $converted,
+                    'encoding' => $candidate,
+                    'converted' => true,
+                    'valid_utf8_before' => $validUtf8Before,
+                ];
+            }
+        }
+
+        return [
+            'body' => $body,
+            'encoding' => $declaredCharset ?: ($validUtf8Before ? 'UTF-8' : 'unknown'),
+            'converted' => false,
+            'valid_utf8_before' => $validUtf8Before,
+        ];
+    }
+
     public static function hasMojibake(?string $value): bool
     {
         $value = (string) $value;
@@ -59,5 +122,19 @@ class TextEncoding
         }
 
         return false;
+    }
+
+    private static function charsetFromContentType(string $contentType): ?string
+    {
+        if (! preg_match('/charset=([^;]+)/i', $contentType, $matches)) {
+            return null;
+        }
+
+        return trim($matches[1], " \t\n\r\0\x0B\"'");
+    }
+
+    private static function isUtf8Charset(?string $charset): bool
+    {
+        return in_array(strtoupper(str_replace('_', '-', (string) $charset)), ['UTF-8', 'UTF8'], true);
     }
 }

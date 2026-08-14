@@ -4,11 +4,15 @@ use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use App\Models\Business;
 use App\Models\Sale;
 use App\Models\Customer;
+use App\Models\CustomerTaxLookup;
 use App\Models\TenantFelSetting;
 use App\Models\User;
+use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Support\Ferrymas\CreditsFocusedAudit;
+use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\TextEncoding;
 
 Artisan::command('inspire', function () {
@@ -156,6 +160,115 @@ Artisan::command('customers:audit-encoding {--business=}', function () {
 
     return self::SUCCESS;
 })->purpose('Audit customers with possible text encoding issues without modifying data');
+
+Artisan::command('customers:debug-nit-lookup {nit} {--business=}', function (string $nit) {
+    $businessId = (int) $this->option('business');
+
+    if ($businessId <= 0) {
+        $this->error('Debes indicar --business=ID.');
+
+        return self::FAILURE;
+    }
+
+    $business = Business::query()->find($businessId);
+
+    if (! $business) {
+        $this->error("No existe business_id={$businessId}.");
+
+        return self::FAILURE;
+    }
+
+    $normalizedNit = GuatemalaNitCustomerResolver::normalize($nit);
+    $this->info("NIT normalizado: {$normalizedNit}");
+
+    $customers = Customer::query()
+        ->where('business_id', $business->id)
+        ->whereRaw("UPPER(REPLACE(REPLACE(COALESCE(doc_number, ''), '-', ''), ' ', '')) = ?", [$normalizedNit])
+        ->orderBy('id')
+        ->get(['id', 'name', 'commercial_name', 'contact_name', 'doc_type', 'doc_number', 'tax_lookup_verified_at']);
+
+    $this->line('customer.exists: '.($customers->isNotEmpty() ? 'yes' : 'no'));
+
+    foreach ($customers as $customer) {
+        $fields = TextEncoding::fieldsWithMojibake([
+            'name' => $customer->name,
+            'commercial_name' => $customer->commercial_name,
+            'contact_name' => $customer->contact_name,
+        ]);
+
+        $this->table(['field', 'value'], [
+            ['customer_id', (string) $customer->id],
+            ['doc_type', (string) ($customer->doc_type ?: '-')],
+            ['doc_number', (string) ($customer->doc_number ?: '-')],
+            ['name', (string) ($customer->name ?: '-')],
+            ['tax_lookup_verified_at', $customer->tax_lookup_verified_at?->toDateTimeString() ?: '-'],
+            ['has_mojibake', $fields === [] ? 'no' : 'yes: '.implode(', ', $fields)],
+        ]);
+    }
+
+    $cache = CustomerTaxLookup::query()
+        ->where('business_id', $business->id)
+        ->where('country', 'GT')
+        ->where('doc_type', 'NIT')
+        ->where('doc_number', $normalizedNit)
+        ->first();
+
+    $this->line('cache.exists: '.($cache ? 'yes' : 'no'));
+
+    if ($cache) {
+        $this->table(['field', 'value'], [
+            ['cache_id', (string) $cache->id],
+            ['name', (string) ($cache->name ?: '-')],
+            ['last_lookup_at', $cache->last_lookup_at?->toDateTimeString() ?: '-'],
+            ['name_has_mojibake', TextEncoding::hasMojibake($cache->name) ? 'yes' : 'no'],
+            ['payload_has_mojibake', TextEncoding::payloadHasMojibake($cache->raw_response) ? 'yes' : 'no'],
+        ]);
+    }
+
+    DB::beginTransaction();
+
+    try {
+        $debug = DigifactClient::forBusiness($business)->debugNitLookup($normalizedNit);
+        DB::rollBack();
+
+        $this->line('external.called: yes');
+        $this->table(['field', 'value'], [
+            ['http_status', (string) $debug['http_status']],
+            ['successful', $debug['successful'] ? 'yes' : 'no'],
+            ['content_type', (string) ($debug['content_type'] ?: '-')],
+            ['body_encoding', (string) ($debug['body_encoding'] ?: '-')],
+            ['body_converted', $debug['body_converted'] ? 'yes' : 'no'],
+            ['body_valid_utf8_before', $debug['body_valid_utf8_before'] ? 'yes' : 'no'],
+            ['json_error', (string) ($debug['json_error'] ?: '-')],
+            ['response_has_data', $debug['response_has_data'] ? 'yes' : 'no'],
+            ['extracted_name', (string) ($debug['extracted_name'] ?: '-')],
+            ['extracted_name_has_mojibake', $debug['extracted_name_has_mojibake'] ? 'yes' : 'no'],
+            ['payload_has_mojibake', $debug['payload_has_mojibake'] ? 'yes' : 'no'],
+            ['body_preview', (string) ($debug['body_preview'] ?: '-')],
+        ]);
+
+        if (! $debug['successful']) {
+            $this->warn('final: proveedor respondió con error HTTP.');
+        } elseif (! $debug['response_has_data']) {
+            $this->warn('final: proveedor no devolvió datos para este NIT.');
+        } elseif ($debug['extracted_name_has_mojibake'] || $debug['payload_has_mojibake']) {
+            $this->warn('final: proveedor/decodificación produjo datos con mojibake; no se debe actualizar el cliente.');
+        } else {
+            $this->info('final: respuesta externa legible; refresh manual debería actualizar cliente y caché.');
+        }
+
+        return self::SUCCESS;
+    } catch (Throwable $exception) {
+        if (DB::transactionLevel() > 0) {
+            DB::rollBack();
+        }
+
+        $this->line('external.called: yes');
+        $this->error('external.error: '.$exception->getMessage());
+
+        return self::FAILURE;
+    }
+})->purpose('Debug one Guatemala NIT lookup source without updating customers or lookup cache');
 
 Artisan::command('fel:diagnose-speed {sale_id?}', function (?string $sale_id = null) {
     $query = Sale::query()
