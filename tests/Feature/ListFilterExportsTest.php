@@ -69,6 +69,100 @@ class ListFilterExportsTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_purchase_store_saves_trimmed_supplier_invoice_number(): void
+    {
+        [$business, $user, $branch] = $this->tenant('purchases', ['purchases']);
+        $supplier = Supplier::query()->create(['business_id' => $business->id, 'name' => 'Proveedor A']);
+        $product = $this->product($business, 'Producto comprado');
+
+        $this->actingAs($user)
+            ->post(route('purchases.store'), [
+                'supplier_id' => $supplier->id,
+                'supplier_invoice_number' => '  FAC-2026-001  ',
+                'payment_method' => 'card',
+                'branch_id' => $branch->id,
+                'items' => [
+                    ['product_id' => $product->id, 'quantity' => 2, 'unit_cost' => 15],
+                ],
+            ])
+            ->assertRedirect(route('purchases.index'));
+
+        $this->assertDatabaseHas('purchases', [
+            'business_id' => $business->id,
+            'supplier_invoice_number' => 'FAC-2026-001',
+        ]);
+    }
+
+    public function test_purchases_filter_by_supplier_invoice_number(): void
+    {
+        [$business, $user, $branch] = $this->tenant('purchases', ['purchases']);
+        $supplier = Supplier::query()->create(['business_id' => $business->id, 'name' => 'Proveedor A']);
+        $this->purchase($business, $branch, $user, $supplier, 100, 'cash', now(), 'FAC-VISIBLE');
+        $this->purchase($business, $branch, $user, $supplier, 200, 'cash', now(), 'FAC-HIDDEN');
+
+        $this->actingAs($user)
+            ->get(route('purchases.index', ['supplier_invoice_number' => 'VISIBLE']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Purchases/Index')
+                ->where('purchases.total', 1)
+                ->where('purchases.data.0.supplier_invoice_number', 'FAC-VISIBLE'));
+    }
+
+    public function test_purchase_show_and_pdf_include_supplier_invoice_number_and_are_scoped(): void
+    {
+        [$business, $user, $branch] = $this->tenant('purchases', ['purchases']);
+        $supplier = Supplier::query()->create(['business_id' => $business->id, 'name' => 'Proveedor A']);
+        $product = $this->product($business, 'Producto PDF');
+        $purchase = $this->purchase($business, $branch, $user, $supplier, 30, 'card', now(), 'FAC-PDF-1');
+        $purchase->items()->create([
+            'business_id' => $business->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 2,
+            'unit_cost' => 15,
+            'previous_cost' => 10,
+            'new_average_cost' => 15,
+            'total' => 30,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('purchases.show', $purchase))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Purchases/Show')
+                ->where('purchase.supplier_invoice_number', 'FAC-PDF-1'));
+
+        $html = view('pdf.purchases.show', [
+            'purchase' => $purchase->load(['business.tenantSetting', 'supplier', 'branch', 'createdBy', 'items.product']),
+            'business' => $business,
+            'tenantSetting' => $business->tenantSetting,
+            'purchaseNumber' => format_purchase_number($purchase),
+            'timezone' => tenantTimezone($business),
+        ])->render();
+
+        $this->assertStringContainsString('FAC-PDF-1', $html);
+        $this->assertStringContainsString('Comprobante de compra', $html);
+
+        $this->actingAs($user)
+            ->get(route('purchases.pdf', $purchase))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+
+        $cashier = $this->user($business, $branch, 'cashier');
+
+        $this->actingAs($cashier)
+            ->get(route('purchases.pdf', $purchase))
+            ->assertForbidden();
+
+        [$otherBusiness, $otherUser] = $this->tenant('purchases', ['purchases']);
+        $this->assertNotSame($business->id, $otherBusiness->id);
+
+        $this->actingAs($otherUser)
+            ->get(route('purchases.pdf', $purchase))
+            ->assertForbidden();
+    }
+
     public function test_transfers_filter_by_origin_destination_and_product(): void
     {
         [$business, $user, $branch, $otherBranch] = $this->tenant('stock_manager', ['branches']);
@@ -104,6 +198,53 @@ class ListFilterExportsTest extends TestCase
         $this->actingAs($cashier)
             ->get(route('inventory.transfers.export', ['format' => 'pdf']))
             ->assertForbidden();
+    }
+
+    public function test_transfer_pdf_is_letter_internal_document_and_is_scoped(): void
+    {
+        [$business, $user, $branch, $otherBranch] = $this->tenant('stock_manager', ['branches']);
+        $product = $this->product($business, 'Producto traslado PDF');
+        $transfer = $this->transfer($business, $branch, $otherBranch, $user, $product, 4);
+
+        $html = view('pdf.inventory-transfers.show', [
+            'transfer' => $transfer->load(['business.tenantSetting', 'fromBranch', 'toBranch', 'createdBy', 'lines.product']),
+            'business' => $business,
+            'tenantSetting' => $business->tenantSetting,
+            'timezone' => tenantTimezone($business),
+        ])->render();
+
+        $this->assertStringContainsString('Traslado de inventario', $html);
+        $this->assertStringContainsString('Producto traslado PDF', $html);
+        $this->assertStringContainsString('Documento interno generado por Kodbli/BlunkStock', $html);
+
+        $this->actingAs($user)
+            ->get(route('inventory.transfers.pdf', $transfer))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+
+        $cashier = $this->user($business, $branch, 'cashier');
+
+        $this->actingAs($cashier)
+            ->get(route('inventory.transfers.pdf', $transfer))
+            ->assertForbidden();
+
+        [$otherBusiness, $otherUser] = $this->tenant('stock_manager', ['branches']);
+        $this->assertNotSame($business->id, $otherBusiness->id);
+
+        $this->actingAs($otherUser)
+            ->get(route('inventory.transfers.pdf', $transfer))
+            ->assertForbidden();
+    }
+
+    public function test_purchase_draft_source_preserves_supplier_invoice_number(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Purchases/Create.tsx'));
+
+        $this->assertStringContainsString('supplier_invoice_number: string', $source);
+        $this->assertStringContainsString('supplier_invoice_number: supplierInvoiceNumber', $source);
+        $this->assertStringContainsString("setSupplierInvoiceNumber(draft.supplier_invoice_number ?? '')", $source);
+        $this->assertStringContainsString('supplier_invoice_number: supplierInvoiceNumber.trim() || null', $source);
+        $this->assertStringContainsString('Factura proveedor', $source);
     }
 
     private function tenant(string $role, array $modules): array
@@ -170,13 +311,14 @@ class ListFilterExportsTest extends TestCase
         ]);
     }
 
-    private function purchase(Business $business, Branch $branch, User $user, Supplier $supplier, float $total, string $method, $createdAt): Purchase
+    private function purchase(Business $business, Branch $branch, User $user, Supplier $supplier, float $total, string $method, $createdAt, ?string $supplierInvoiceNumber = null): Purchase
     {
         $purchase = Purchase::query()->create([
             'business_id' => $business->id,
             'business_number' => Purchase::query()->where('business_id', $business->id)->max('business_number') + 1,
             'branch_id' => $branch->id,
             'supplier_id' => $supplier->id,
+            'supplier_invoice_number' => $supplierInvoiceNumber,
             'status' => 'completed',
             'total' => $total,
             'payment_method' => $method,

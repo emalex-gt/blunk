@@ -6,6 +6,7 @@ import { FormEvent, ReactNode, useState } from 'react';
 type Purchase = {
     id: number;
     business_number: number | null;
+    supplier_invoice_number: string | null;
     created_at: string;
     total: string;
     paid_from_cash: boolean;
@@ -79,6 +80,7 @@ export default function Index({ purchases, filters = {} }: { purchases: Paginate
                             <Field label="Hasta" type="date" value={form.date_to ?? ''} onChange={(value) => setField('date_to', value)} />
                             <Field label="Proveedor" value={form.supplier_search ?? ''} onChange={(value) => setField('supplier_search', value)} />
                             <Field label="No. compra" value={form.purchase_number ?? ''} onChange={(value) => setField('purchase_number', value)} />
+                            <Field label="Factura proveedor" value={form.supplier_invoice_number ?? ''} onChange={(value) => setField('supplier_invoice_number', value)} />
                             <Field label="Producto" value={form.product_search ?? ''} onChange={(value) => setField('product_search', value)} />
                             <Select label="Forma de pago" value={form.payment_method ?? 'all'} onChange={(value) => setField('payment_method', value)}>
                                 <option value="all">Todas</option>
@@ -114,6 +116,7 @@ export default function Index({ purchases, filters = {} }: { purchases: Paginate
                                     <tr className="bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                                         <th className="px-4 py-3">Fecha</th>
                                         <th className="px-4 py-3">Compra</th>
+                                        <th className="px-4 py-3">Factura proveedor</th>
                                         <th className="px-4 py-3">Proveedor</th>
                                         <th className="px-4 py-3">Usuario</th>
                                         <th className="px-4 py-3">Forma de pago</th>
@@ -125,7 +128,7 @@ export default function Index({ purchases, filters = {} }: { purchases: Paginate
                                 <tbody className="divide-y divide-slate-100">
                                     {purchases.data.length === 0 ? (
                                         <tr>
-                                            <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                                            <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
                                                 Sin compras registradas
                                             </td>
                                         </tr>
@@ -137,6 +140,9 @@ export default function Index({ purchases, filters = {} }: { purchases: Paginate
                                                 </td>
                                                 <td className="px-4 py-3 font-semibold text-slate-950">
                                                     {formatPurchaseNumber(purchase)}
+                                                </td>
+                                                <td className="px-4 py-3 text-slate-600">
+                                                    {purchase.supplier_invoice_number || '-'}
                                                 </td>
                                                 <td className="px-4 py-3 font-semibold text-slate-950">
                                                     {purchase.supplier?.name ?? 'Sin proveedor'}

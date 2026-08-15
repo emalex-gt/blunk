@@ -67,6 +67,7 @@ type PurchaseDraft = {
     items: { product_id: number; quantity: string; unit_cost: string }[];
     supplier_name: string;
     selected_supplier_id: number | null;
+    supplier_invoice_number: string;
     note: string;
     payment_method: string;
     paid_from_cash: boolean;
@@ -77,6 +78,7 @@ function isMeaningfulPurchaseDraft(draft: PurchaseDraft) {
     return (
         (draft.items?.length ?? 0) > 0 ||
         (draft.supplier_name ?? '').trim() !== '' ||
+        (draft.supplier_invoice_number ?? '').trim() !== '' ||
         (draft.note ?? '').trim() !== '' ||
         Boolean(draft.paid_from_cash) ||
         (draft.payment_method ?? 'cash') !== 'cash'
@@ -124,6 +126,7 @@ export default function Create({
     const [search, setSearch] = useState('');
     const [supplierName, setSupplierName] = useState('');
     const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
+    const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState('');
     const [note, setNote] = useState('');
     const [branchId, setBranchId] = useState<number | null>(active_branch?.id ?? null);
     const [paymentMethod, setPaymentMethod] = useState('cash');
@@ -328,6 +331,7 @@ export default function Create({
             })),
             supplier_name: supplierName,
             selected_supplier_id: selectedSupplier?.id ?? null,
+            supplier_invoice_number: supplierInvoiceNumber,
             note,
             payment_method: paymentMethod,
             paid_from_cash: paidFromCash,
@@ -362,6 +366,7 @@ export default function Create({
 
         setCart(restoredItems);
         setSupplierName(draft.supplier_name ?? '');
+        setSupplierInvoiceNumber(draft.supplier_invoice_number ?? '');
         if (draft.selected_supplier_id) {
             const supplier = suppliers.find((supplier) => supplier.id === draft.selected_supplier_id)
                 ?? supplierResults.find((supplier) => supplier.id === draft.selected_supplier_id)
@@ -406,6 +411,7 @@ export default function Create({
         setSearch('');
         setSupplierName('');
         setSelectedSupplier(null);
+        setSupplierInvoiceNumber('');
         setNote('');
         setPaymentMethod('cash');
         setPaidFromCash(false);
@@ -578,6 +584,7 @@ export default function Create({
             supplier_id: supplier?.id ?? null,
             supplier_name: newSupplier?.name || cleanSupplierName || null,
             supplier: newSupplier,
+            supplier_invoice_number: supplierInvoiceNumber.trim() || null,
             payment_method: paymentMethod,
             paid_from_cash: paymentMethod === 'cash' && paidFromCash,
             branch_id: branchId,
@@ -675,6 +682,7 @@ export default function Create({
         paymentMethod,
         restoreDraft,
         selectedSupplier,
+        supplierInvoiceNumber,
         supplierName,
     ]);
 
@@ -804,6 +812,7 @@ export default function Create({
                                                     <span>Destino: <span className="font-semibold">{selectedBranch.name}</span></span>
                                                 )}
                                                 <span>Desde caja: <span className="font-semibold">{paymentMethod === 'cash' && paidFromCash ? 'Sí' : 'No'}</span></span>
+                                                <span>Factura proveedor: <span className="font-semibold">{supplierInvoiceNumber.trim() || 'Sin referencia'}</span></span>
                                             </div>
                                             {note.trim() && (
                                                 <div className="mt-1 line-clamp-1 text-xs text-slate-500">
@@ -868,6 +877,19 @@ export default function Create({
                                                     ))}
                                                 </div>
                                             )}
+                                        </div>
+
+                                        <div>
+                                            <label className="text-sm font-medium text-slate-700">Número de factura del proveedor</label>
+                                            <input
+                                                value={supplierInvoiceNumber}
+                                                onChange={(event) => setSupplierInvoiceNumber(event.target.value)}
+                                                placeholder="Ej. FAC-2026-001"
+                                                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                            />
+                                            <p className="mt-1 text-xs text-slate-500">
+                                                Referencia fiscal o comercial emitida por el proveedor.
+                                            </p>
                                         </div>
 
                                         <div>

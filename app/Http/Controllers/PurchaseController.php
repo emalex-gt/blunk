@@ -15,6 +15,7 @@ use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\ProductSupplierCostHistory;
 use App\Support\Reports\ReportDateRange;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -64,6 +65,7 @@ class PurchaseController extends Controller
         $rows = $query->limit(5000)->get()->map(fn (Purchase $purchase) => [
             $purchase->created_at?->timezone(tenantTimezone($business))->format('Y-m-d H:i'),
             format_purchase_number($purchase),
+            $purchase->supplier_invoice_number ?: '-',
             $purchase->supplier?->name ?? 'Sin proveedor',
             $this->paymentMethodLabel($purchase->payment_method),
             $purchase->paid_from_cash ? 'Sí' : 'No',
@@ -79,7 +81,7 @@ class PurchaseController extends Controller
             'branchName' => BranchInventory::activeBranch($businessId)->name,
             'generatedAt' => now(tenantTimezone($business))->format('Y-m-d H:i'),
             'filters' => TableExporter::filters($this->purchaseFilters($request, $range)),
-            'columns' => ['Fecha', 'No. compra', 'Proveedor', 'Forma de pago', 'Pagado desde caja', 'Estado', 'Total', 'Usuario', 'Sucursal'],
+            'columns' => ['Fecha', 'No. compra', 'Factura proveedor', 'Proveedor', 'Forma de pago', 'Pagado desde caja', 'Estado', 'Total', 'Usuario', 'Sucursal'],
             'rows' => $rows,
             'summary' => [
                 ['label' => 'Total compras', 'value' => $count],
@@ -179,6 +181,7 @@ class PurchaseController extends Controller
             'supplier.email' => ['nullable', 'email', 'max:255'],
             'supplier.phone' => ['nullable', 'string', 'max:50'],
             'supplier.contact_person' => ['nullable', 'string', 'max:255'],
+            'supplier_invoice_number' => ['nullable', 'string', 'max:100'],
             'payment_method' => ['required', 'string', 'in:cash,card,bank_transfer,check,credit,other'],
             'paid_from_cash' => ['nullable', 'boolean'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
@@ -224,11 +227,13 @@ class PurchaseController extends Controller
                 $data['supplier_name'] ?? null,
                 $data['supplier'] ?? null,
             );
+            $supplierInvoiceNumber = trim((string) ($data['supplier_invoice_number'] ?? ''));
             $purchase = Purchase::create([
                 'business_id' => $businessId,
                 'business_number' => BusinessCounter::next($businessId, 'purchases'),
                 'branch_id' => $branch->id,
                 'supplier_id' => $supplier?->id,
+                'supplier_invoice_number' => $supplierInvoiceNumber !== '' ? $supplierInvoiceNumber : null,
                 'status' => 'completed',
                 'total' => 0,
                 'note' => $data['note'] ?? null,
@@ -340,11 +345,41 @@ class PurchaseController extends Controller
         ]);
     }
 
+    public function pdf(Request $request, Purchase $purchase): SymfonyResponse
+    {
+        abort_unless($purchase->business_id === currentBusinessId(), 403);
+        abort_unless(
+            ! BranchInventory::branchesEnabled(currentBusinessId())
+            || BranchInventory::canSwitchBranches($request->user())
+            || (int) $purchase->branch_id === (int) BranchInventory::activeBranch(currentBusinessId())->id,
+            403,
+        );
+
+        $purchase->load([
+            'business.tenantSetting',
+            'supplier:id,name,phone,email,address,contact_person',
+            'branch:id,business_id,name,address,phone,logo_url',
+            'createdBy:id,name',
+            'items.product:id,code,barcode',
+        ]);
+
+        return Pdf::loadView('pdf.purchases.show', [
+            'purchase' => $purchase,
+            'business' => $purchase->business,
+            'tenantSetting' => $purchase->business?->tenantSetting,
+            'purchaseNumber' => format_purchase_number($purchase),
+            'timezone' => tenantTimezone($purchase->business),
+        ])
+            ->setPaper('letter', 'portrait')
+            ->stream('compra-'.str((string) ($purchase->business_number ?? $purchase->id))->slug().'.pdf');
+    }
+
     private function purchaseListQuery(Request $request, ReportDateRange $range)
     {
         $businessId = currentBusinessId();
         $supplierSearch = trim((string) $request->query('supplier_search', ''));
         $purchaseNumber = trim((string) $request->query('purchase_number', ''));
+        $supplierInvoiceNumber = trim((string) $request->query('supplier_invoice_number', ''));
         $paymentMethod = (string) $request->query('payment_method', 'all');
         $paidFromCash = (string) $request->query('paid_from_cash_register', 'all');
         $status = (string) $request->query('status', 'all');
@@ -368,6 +403,7 @@ class PurchaseController extends Controller
                         ->orWhere('id', (int) $number);
                 }));
             })
+            ->when($supplierInvoiceNumber !== '', fn ($query) => $query->where('supplier_invoice_number', 'ilike', "%{$supplierInvoiceNumber}%"))
             ->when(in_array($paymentMethod, ['cash', 'card', 'bank_transfer', 'check', 'credit', 'other'], true), fn ($query) => $query->where('payment_method', $paymentMethod))
             ->when($paidFromCash === 'yes', fn ($query) => $query->where('paid_from_cash', true))
             ->when($paidFromCash === 'no', fn ($query) => $query->where('paid_from_cash', false))
@@ -391,6 +427,7 @@ class PurchaseController extends Controller
             'date_to' => $range->dateTo,
             'supplier_search' => trim((string) $request->query('supplier_search', '')),
             'purchase_number' => trim((string) $request->query('purchase_number', '')),
+            'supplier_invoice_number' => trim((string) $request->query('supplier_invoice_number', '')),
             'payment_method' => (string) $request->query('payment_method', 'all'),
             'paid_from_cash_register' => (string) $request->query('paid_from_cash_register', 'all'),
             'status' => (string) $request->query('status', 'all'),

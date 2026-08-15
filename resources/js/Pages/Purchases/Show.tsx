@@ -16,12 +16,15 @@ type PurchaseItem = {
 type Purchase = {
     id: number;
     business_number: number | null;
+    supplier_invoice_number: string | null;
     created_at: string;
     total: string;
     note: string | null;
+    payment_method: string | null;
     paid_from_cash: boolean;
     cash_register_session: { id: number } | null;
     supplier: { id: number; name: string } | null;
+    branch: { id: number; name: string } | null;
     created_by: { id: number; name: string } | null;
     items: PurchaseItem[];
 };
@@ -36,12 +39,22 @@ export default function Show({ purchase }: { purchase: Purchase }) {
             header={
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <h2 className="text-xl font-semibold text-slate-950">Ver compra</h2>
-                    <Link
-                        href={route('purchases.index')}
-                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-                    >
-                        Volver
-                    </Link>
+                    <div className="flex flex-wrap gap-2">
+                        <a
+                            href={route('purchases.pdf', purchase.id)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                        >
+                            Imprimir
+                        </a>
+                        <Link
+                            href={route('purchases.index')}
+                            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                        >
+                            Volver
+                        </Link>
+                    </div>
                 </div>
             }
         >
@@ -50,9 +63,12 @@ export default function Show({ purchase }: { purchase: Purchase }) {
             <div className="py-5">
                 <div className="mx-auto max-w-[1800px] space-y-5 px-5 sm:px-6">
                     <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
-                        <div className="grid gap-4 md:grid-cols-4">
+                        <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
                             <Summary label="Compra" value={purchaseNumber} />
+                            <Summary label="Factura proveedor" value={purchase.supplier_invoice_number || 'Sin referencia'} />
                             <Summary label="Proveedor" value={purchase.supplier?.name ?? 'Sin proveedor'} />
+                            <Summary label="Sucursal" value={purchase.branch?.name ?? '-'} />
+                            <Summary label="Forma de pago" value={paymentMethodLabel(purchase.payment_method)} />
                             <Summary label="Usuario" value={purchase.created_by?.name ?? '-'} />
                             <Summary label="Total" value={formatCurrency(purchase.total, country)} />
                         </div>
@@ -125,4 +141,15 @@ function Summary({ label, value }: { label: string; value: string }) {
             <div className="mt-2 whitespace-nowrap text-xl font-bold text-slate-950">{value}</div>
         </div>
     );
+}
+
+function paymentMethodLabel(method?: string | null) {
+    return {
+        cash: 'Efectivo',
+        card: 'Tarjeta',
+        bank_transfer: 'Transferencia',
+        check: 'Cheque',
+        credit: 'Crédito',
+        other: 'Otro',
+    }[method ?? ''] ?? '-';
 }

@@ -17,6 +17,11 @@ class InventoryTransfer extends Model
         'created_by',
     ];
 
+    public function business(): BelongsTo
+    {
+        return $this->belongsTo(Business::class);
+    }
+
     public function fromBranch(): BelongsTo
     {
         return $this->belongsTo(Branch::class, 'from_branch_id');

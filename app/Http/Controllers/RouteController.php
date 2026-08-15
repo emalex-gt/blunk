@@ -20,6 +20,7 @@ use App\Support\Inventory\StockReservationService;
 use App\Support\ManualPricePolicy;
 use App\Support\Permissions;
 use App\Support\PriceLists;
+use App\Support\RouteWorkDayCompletion;
 use App\Support\StockAvailability;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -197,6 +198,169 @@ class RouteController extends Controller
         $assignment->delete();
 
         return back()->with('success', 'Cliente removido de la zona.');
+    }
+
+    public function closedWorkDays(Request $request): Response
+    {
+        $businessId = currentBusinessId();
+        $dateFrom = $request->date('date_from')?->startOfDay();
+        $dateTo = $request->date('date_to')?->endOfDay();
+        $status = $request->string('status')->toString();
+        $status = in_array($status, ['closed', 'completed'], true) ? $status : '';
+        $search = trim((string) $request->query('search', ''));
+        $branchId = $request->filled('branch_id')
+            ? Branch::query()->where('business_id', $businessId)->whereKey($request->integer('branch_id'))->value('id')
+            : null;
+        $sellerId = $request->filled('seller_id')
+            ? User::query()->where('business_id', $businessId)->whereKey($request->integer('seller_id'))->value('id')
+            : null;
+        $zoneId = $request->filled('zone_id')
+            ? RouteZone::query()->where('business_id', $businessId)->whereKey($request->integer('zone_id'))->value('id')
+            : null;
+
+        $query = RouteWorkDay::query()
+            ->where('business_id', $businessId)
+            ->where('status', 'closed')
+            ->with(['branch:id,name', 'zone:id,name', 'seller:id,name'])
+            ->select('route_work_days.*')
+            ->selectSub(function ($query) use ($businessId) {
+                $query->from('pre_sales')
+                    ->selectRaw('COALESCE(SUM(total), 0)')
+                    ->whereColumn('pre_sales.route_work_day_id', 'route_work_days.id')
+                    ->where('pre_sales.business_id', $businessId)
+                    ->whereNotIn('pre_sales.status', [PreSale::STATUS_DRAFT, PreSale::STATUS_CANCELLED]);
+            }, 'pre_sales_total')
+            ->withCount([
+                'visits as total_clients_count',
+                'visits as visited_clients_count' => fn ($query) => $query->where('status', '!=', 'pending'),
+                'visits as with_pre_sale_count' => fn ($query) => $query->where('status', 'with_pre_sale'),
+                'visits as without_sale_count' => fn ($query) => $query->where('status', 'without_sale'),
+                'visits as pending_clients_count' => fn ($query) => $query->where('status', 'pending'),
+                'preSales as pre_sales_count' => fn ($query) => $query->where('status', '!=', PreSale::STATUS_DRAFT),
+            ])
+            ->latest('work_date')
+            ->latest('closed_at')
+            ->latest('id');
+
+        $query->when($request->filled('branch_id'), fn ($query) => $branchId ? $query->where('branch_id', $branchId) : $query->whereRaw('1 = 0'));
+        $query->when($request->filled('seller_id'), fn ($query) => $sellerId ? $query->where('seller_id', $sellerId) : $query->whereRaw('1 = 0'));
+        $query->when($request->filled('zone_id'), fn ($query) => $zoneId ? $query->where('route_zone_id', $zoneId) : $query->whereRaw('1 = 0'));
+        $query->when($dateFrom, fn ($query) => $query->where('work_date', '>=', $dateFrom->toDateString()));
+        $query->when($dateTo, fn ($query) => $query->where('work_date', '<=', $dateTo->toDateString()));
+        $query->when($status === 'completed', fn ($query) => $query->whereNotNull('completed_at'));
+        $query->when($status === 'closed', fn ($query) => $query->whereNull('completed_at'));
+        $query->when($search !== '', function ($query) use ($search) {
+            $query->where(function ($query) use ($search) {
+                $query->whereHas('seller', fn ($query) => $query->where('name', 'ilike', "%{$search}%"))
+                    ->orWhereHas('zone', fn ($query) => $query->where('name', 'ilike', "%{$search}%"));
+            });
+        });
+
+        $workDays = $query->paginate(25)
+            ->withQueryString()
+            ->through(fn (RouteWorkDay $workDay) => [
+                'id' => $workDay->id,
+                'work_date' => $workDay->work_date?->toDateString(),
+                'status' => $workDay->status,
+                'closed_at' => $workDay->closed_at?->toIso8601String(),
+                'completed_at' => $workDay->completed_at?->toIso8601String(),
+                'total_clients_count' => (int) $workDay->total_clients_count,
+                'visited_clients_count' => (int) $workDay->visited_clients_count,
+                'pre_sales_count' => (int) $workDay->pre_sales_count,
+                'without_sale_count' => (int) $workDay->without_sale_count,
+                'pre_sales_total' => (float) $workDay->pre_sales_total,
+                'branch' => $workDay->branch,
+                'zone' => $workDay->zone,
+                'seller' => $workDay->seller,
+            ]);
+
+        return Inertia::render('Routes/WorkDays/ClosedIndex', [
+            'workDays' => $workDays,
+            'filters' => [
+                'date_from' => $request->query('date_from', ''),
+                'date_to' => $request->query('date_to', ''),
+                'branch_id' => $request->query('branch_id', ''),
+                'zone_id' => $request->query('zone_id', ''),
+                'seller_id' => $request->query('seller_id', ''),
+                'status' => $status,
+                'search' => $search,
+            ],
+            'branches' => Branch::query()->where('business_id', $businessId)->where('is_active', true)->orderBy('name')->get(['id', 'name']),
+            'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
+            'zones' => RouteZone::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
+        ]);
+    }
+
+    public function showWorkDay(Request $request, RouteWorkDay $workDay): Response
+    {
+        abort_unless((int) $workDay->business_id === currentBusinessId(), 403);
+
+        $businessId = currentBusinessId();
+        $workDay->load(['branch:id,name', 'zone:id,name', 'seller:id,name', 'completedBy:id,name']);
+
+        $summary = [
+            'total_clients' => RouteVisit::query()->where('business_id', $businessId)->where('route_work_day_id', $workDay->id)->count(),
+            'visited' => RouteVisit::query()->where('business_id', $businessId)->where('route_work_day_id', $workDay->id)->where('status', '!=', 'pending')->count(),
+            'with_pre_sale' => RouteVisit::query()->where('business_id', $businessId)->where('route_work_day_id', $workDay->id)->where('status', 'with_pre_sale')->count(),
+            'without_sale' => RouteVisit::query()->where('business_id', $businessId)->where('route_work_day_id', $workDay->id)->where('status', 'without_sale')->count(),
+            'pending' => RouteVisit::query()->where('business_id', $businessId)->where('route_work_day_id', $workDay->id)->where('status', 'pending')->count(),
+            'pre_sales_total' => (float) PreSale::query()
+                ->where('business_id', $businessId)
+                ->where('route_work_day_id', $workDay->id)
+                ->whereNotIn('status', [PreSale::STATUS_DRAFT, PreSale::STATUS_CANCELLED])
+                ->sum('total'),
+            'prepared_total' => (float) PreSale::query()
+                ->where('business_id', $businessId)
+                ->where('route_work_day_id', $workDay->id)
+                ->whereIn('status', [PreSale::STATUS_PICKED, PreSale::STATUS_CONVERTED])
+                ->sum('total'),
+            'converted_total' => (float) PreSale::query()
+                ->where('business_id', $businessId)
+                ->where('route_work_day_id', $workDay->id)
+                ->where('status', PreSale::STATUS_CONVERTED)
+                ->sum('total'),
+        ];
+
+        $preSales = PreSale::query()
+            ->where('business_id', $businessId)
+            ->where('route_work_day_id', $workDay->id)
+            ->with(['customer:id,name,commercial_name,contact_name,doc_number', 'seller:id,name', 'zone:id,name', 'branch:id,name', 'workDay:id,work_date,status,completed_at'])
+            ->select('pre_sales.*')
+            ->selectSub(function ($query) use ($businessId) {
+                $query->from('stock_reservations')
+                    ->selectRaw('COALESCE(SUM(quantity), 0)')
+                    ->whereColumn('stock_reservations.source_id', 'pre_sales.id')
+                    ->where('stock_reservations.business_id', $businessId)
+                    ->where('stock_reservations.source_type', 'pre_sale')
+                    ->where('stock_reservations.status', 'active');
+            }, 'reserved_quantity_total')
+            ->selectSub(function ($query) {
+                $query->from('pre_sale_items')
+                    ->selectRaw('COALESCE(SUM(picked_quantity), 0)')
+                    ->whereColumn('pre_sale_items.pre_sale_id', 'pre_sales.id');
+            }, 'picked_quantity_total')
+            ->withCount('items')
+            ->latest('submitted_at')
+            ->latest('id')
+            ->paginate(25)
+            ->withQueryString();
+
+        return Inertia::render('Routes/WorkDays/Show', [
+            'workDay' => [
+                'id' => $workDay->id,
+                'work_date' => $workDay->work_date?->toDateString(),
+                'status' => $workDay->status,
+                'started_at' => $workDay->started_at?->toIso8601String(),
+                'closed_at' => $workDay->closed_at?->toIso8601String(),
+                'completed_at' => $workDay->completed_at?->toIso8601String(),
+                'completed_by' => $workDay->completedBy,
+                'branch' => $workDay->branch,
+                'zone' => $workDay->zone,
+                'seller' => $workDay->seller,
+                'summary' => $summary,
+            ],
+            'preSales' => $preSales,
+        ]);
     }
 
     public function preSales(Request $request): Response
@@ -915,14 +1079,18 @@ class RouteController extends Controller
                 ]);
             }
 
-            DB::transaction(function () use ($preSale, $reservations, $request) {
-                $reservations->releasePreSaleReservations($preSale);
-                $preSale->update([
-                    'status' => PreSale::STATUS_CANCELLED,
-                    'cancelled_at' => now(),
-                    'cancelled_by' => $request->user()->id,
-                ]);
-            });
+        DB::transaction(function () use ($preSale, $reservations, $request) {
+            $reservations->releasePreSaleReservations($preSale);
+            $preSale->update([
+                'status' => PreSale::STATUS_CANCELLED,
+                'cancelled_at' => now(),
+                'cancelled_by' => $request->user()->id,
+            ]);
+
+            if ($preSale->workDay) {
+                app(RouteWorkDayCompletion::class)->refresh($preSale->workDay, $request->user());
+            }
+        });
 
             return back()->with('success', 'Preventa cancelada y reserva liberada.');
         }
@@ -955,6 +1123,7 @@ class RouteController extends Controller
             $lockedPreSale = PreSale::query()
                 ->where('business_id', currentBusinessId())
                 ->whereKey($preSale->id)
+                ->with('workDay')
                 ->lockForUpdate()
                 ->firstOrFail();
 
@@ -972,6 +1141,10 @@ class RouteController extends Controller
                 'cancellation_reason' => $data['cancellation_reason'],
                 'cancellation_note' => $data['cancellation_note'],
             ]);
+
+            if ($lockedPreSale->workDay) {
+                app(RouteWorkDayCompletion::class)->refresh($lockedPreSale->workDay, $request->user());
+            }
         });
 
         return back()->with('success', 'Preventa cancelada y reserva liberada.');
@@ -1075,7 +1248,7 @@ class RouteController extends Controller
             throw ValidationException::withMessages(['work_day' => 'La jornada no está abierta.']);
         }
 
-        DB::transaction(function () use ($workDay) {
+        DB::transaction(function () use ($request, $workDay) {
             PreSale::query()
                 ->where('business_id', currentBusinessId())
                 ->where('route_work_day_id', $workDay->id)
@@ -1095,6 +1268,8 @@ class RouteController extends Controller
                 'status' => 'closed',
                 'closed_at' => now(),
             ]);
+
+            app(RouteWorkDayCompletion::class)->refresh($workDay, $request->user());
         });
 
         return redirect()->route('routes.mobile.zones')->with('success', 'Jornada cerrada. Las preventas quedaron congeladas.');

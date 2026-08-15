@@ -29,6 +29,7 @@ class TenantSetting extends Model
         'remember_last_customer_product_price',
         'pre_sale_price_type_id',
         'pre_sale_allow_manual_price',
+        'route_pre_sale_invoicing_mode',
         'allow_receipts',
         'allow_invoices',
         'enable_credit_sales',

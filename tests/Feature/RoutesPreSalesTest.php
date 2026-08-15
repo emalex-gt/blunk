@@ -32,6 +32,7 @@ use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
+use App\Support\RouteWorkDayCompletion;
 use App\Support\StockAvailability;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -1743,6 +1744,196 @@ class RoutesPreSalesTest extends TestCase
                 ->where('preSales.data.0.id', $target->id));
     }
 
+    public function test_admin_can_view_closed_work_days_and_open_days_are_excluded(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, customerName: 'Cliente jornada visible');
+
+        $openVisit = $this->startedVisit($business, $branch, $seller, 'Cliente jornada abierta');
+
+        $this->actingAs($admin)
+            ->get(route('routes.work-days.closed'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/WorkDays/ClosedIndex')
+                ->where('workDays.total', 1)
+                ->where('workDays.data.0.id', $preSale->route_work_day_id)
+                ->where('workDays.data.0.pre_sales_count', 1)
+                ->where('workDays.data.0.total_clients_count', 1));
+
+        $this->assertSame('open', $openVisit->workDay->status);
+    }
+
+    public function test_closed_work_days_are_tenant_scoped_and_filter_by_branch_zone_seller(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch);
+        $target = $this->submittedPreSale($business, $branch, $seller, $product, customerName: 'Cliente filtro jornada');
+
+        [$otherBusiness, , $otherBranch] = $this->tenant(role: 'owner');
+        $otherSeller = $this->user($otherBusiness, $otherBranch, 'pre_seller');
+        $otherProduct = $this->product($otherBusiness, $otherBranch);
+        $this->submittedPreSale($otherBusiness, $otherBranch, $otherSeller, $otherProduct, customerName: 'Cliente oculto jornada');
+
+        $this->actingAs($admin)
+            ->get(route('routes.work-days.closed', [
+                'branch_id' => $branch->id,
+                'zone_id' => $target->route_zone_id,
+                'seller_id' => $seller->id,
+                'search' => $target->zone->name,
+                'date_from' => $target->workDay->work_date?->toDateString(),
+                'date_to' => $target->workDay->work_date?->toDateString(),
+            ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('workDays.total', 1)
+                ->where('workDays.data.0.id', $target->route_work_day_id));
+    }
+
+    public function test_closed_work_day_detail_shows_only_pre_sales_for_that_work_day(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch);
+        $target = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 2, customerName: 'Cliente detalle visible');
+        $this->submittedPreSale($business, $branch, $seller, $product, customerName: 'Cliente detalle oculto');
+
+        $this->actingAs($admin)
+            ->get(route('routes.work-days.show', $target->workDay))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/WorkDays/Show')
+                ->where('workDay.id', $target->route_work_day_id)
+                ->where('workDay.summary.total_clients', 1)
+                ->where('workDay.summary.with_pre_sale', 1)
+                ->where('preSales.total', 1)
+                ->where('preSales.data.0.id', $target->id)
+                ->where('preSales.data.0.items_count', 1));
+    }
+
+    public function test_other_tenant_cannot_view_closed_work_day_detail(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product);
+
+        [$otherBusiness, $otherAdmin] = $this->tenant(role: 'owner');
+        $this->assertNotSame($business->id, $otherBusiness->id);
+
+        $this->actingAs($otherAdmin)
+            ->get(route('routes.work-days.show', $preSale->workDay))
+            ->assertForbidden();
+    }
+
+    public function test_closed_work_day_completion_marks_only_when_all_pre_sales_are_final(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product);
+        $workDay = $preSale->workDay->refresh();
+
+        $this->assertNull($workDay->completed_at);
+        $this->assertFalse(app(RouteWorkDayCompletion::class)->isComplete($workDay));
+
+        $this->actingAs($admin)->post(route('routes.pre-sales.cancel', $preSale), [
+            'cancellation_reason' => 'Otro',
+            'cancellation_note' => 'Cliente anuló el pedido.',
+        ])->assertSessionHasNoErrors();
+
+        $workDay->refresh();
+        $this->assertNotNull($workDay->completed_at);
+        $this->assertSame($admin->id, $workDay->completed_by);
+    }
+
+    public function test_picked_pre_sale_does_not_complete_closed_work_day(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product);
+        $item = $preSale->items()->firstOrFail();
+
+        $this->actingAs($admin)->post(route('routes.pre-sales.pick.store', $preSale), [
+            'items' => [['id' => $item->id, 'picked_quantity' => 1]],
+        ])->assertSessionHasNoErrors();
+
+        $this->assertNull($preSale->workDay->refresh()->completed_at);
+        $this->assertFalse(app(RouteWorkDayCompletion::class)->isComplete($preSale->workDay));
+    }
+
+    public function test_work_day_without_pending_visits_or_pre_sales_completes_on_close(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.without-sale', $visit), [
+            'no_sale_reason' => 'Cliente surtido',
+            'no_sale_note' => 'No necesitaba producto hoy.',
+        ])->assertSessionHasNoErrors();
+
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay))
+            ->assertRedirect();
+
+        $this->assertNotNull($visit->workDay->refresh()->completed_at);
+    }
+
+    public function test_route_pre_sale_invoicing_mode_setting_defaults_and_rejects_invalid_values(): void
+    {
+        [$business] = $this->tenant(role: 'owner');
+        $this->assertSame('manual', TenantSetting::query()->where('business_id', $business->id)->value('route_pre_sale_invoicing_mode'));
+
+        $superAdmin = User::factory()->create([
+            'role' => 'super_admin',
+            'is_super_admin' => true,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($superAdmin)->put(route('super-admin.tenants.update', $business), [
+            'name' => $business->name,
+            'country' => 'GT',
+            'is_active' => true,
+            'use_product_images' => true,
+            'max_users' => 10,
+            'receipt_format' => 'ticket',
+            'allow_receipts' => true,
+            'allow_invoices' => false,
+            'route_pre_sale_invoicing_mode' => 'invalid',
+            'modules' => ['routes'],
+        ])->assertSessionHasErrors(['route_pre_sale_invoicing_mode']);
+
+        $this->actingAs($superAdmin)->put(route('super-admin.tenants.update', $business), [
+            'name' => $business->name,
+            'country' => 'GT',
+            'is_active' => true,
+            'use_product_images' => true,
+            'max_users' => 10,
+            'receipt_format' => 'ticket',
+            'allow_receipts' => true,
+            'allow_invoices' => false,
+            'route_pre_sale_invoicing_mode' => 'automatic',
+            'modules' => ['routes'],
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame('automatic', TenantSetting::query()->where('business_id', $business->id)->value('route_pre_sale_invoicing_mode'));
+    }
+
+    public function test_closed_work_days_menu_and_tenant_form_setting_are_exposed(): void
+    {
+        $layoutSource = file_get_contents(resource_path('js/Layouts/AuthenticatedLayout.tsx'));
+        $formSource = file_get_contents(resource_path('js/Pages/SuperAdmin/Tenants/Form.tsx'));
+
+        $this->assertStringContainsString('Jornadas cerradas', $layoutSource);
+        $this->assertStringContainsString("route('routes.work-days.closed')", $layoutSource);
+        $this->assertStringContainsString('Facturación de preventas de ruta', $formSource);
+        $this->assertStringContainsString('route_pre_sale_invoicing_mode', $formSource);
+        $this->assertStringContainsString('La facturación automática se aplicará cuando el flujo de facturación de preventas esté activo.', $formSource);
+    }
+
     public function test_pre_sale_detail_shows_products_and_stock_reservation_info(): void
     {
         [$business, $admin, $branch] = $this->tenant(role: 'owner');
@@ -2389,6 +2580,7 @@ class RoutesPreSalesTest extends TestCase
             'pricing_scope' => 'global',
             'allow_manual_price' => false,
             'remember_last_customer_product_price' => false,
+            'route_pre_sale_invoicing_mode' => 'manual',
             'enable_credit_sales' => false,
             'allow_negative_stock' => $allowNegativeStock,
             'allow_receipts' => true,

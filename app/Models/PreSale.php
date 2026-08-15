@@ -13,6 +13,7 @@ class PreSale extends Model
     public const STATUS_PROCESSING = 'processing';
     public const STATUS_PICKED = 'picked';
     public const STATUS_CANCELLED = 'cancelled';
+    public const STATUS_CONVERTED = 'converted';
 
     protected $fillable = [
         'business_id',

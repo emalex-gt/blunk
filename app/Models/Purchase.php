@@ -14,6 +14,7 @@ class Purchase extends Model
         'branch_id',
         'supplier_id',
         'purchase_number',
+        'supplier_invoice_number',
         'status',
         'total',
         'note',

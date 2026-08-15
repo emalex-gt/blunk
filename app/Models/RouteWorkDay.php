@@ -17,6 +17,8 @@ class RouteWorkDay extends Model
         'status',
         'started_at',
         'closed_at',
+        'completed_at',
+        'completed_by',
         'notes',
     ];
 
@@ -24,6 +26,7 @@ class RouteWorkDay extends Model
         'work_date' => 'date',
         'started_at' => 'datetime',
         'closed_at' => 'datetime',
+        'completed_at' => 'datetime',
     ];
 
     public function zone(): BelongsTo
@@ -39,6 +42,11 @@ class RouteWorkDay extends Model
     public function seller(): BelongsTo
     {
         return $this->belongsTo(User::class, 'seller_id');
+    }
+
+    public function completedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'completed_by');
     }
 
     public function visits(): HasMany

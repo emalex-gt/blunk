@@ -12,7 +12,7 @@ type Transfer = {
     lines: {
         id: number;
         quantity: number;
-        product: { id: number; name: string; code: string | null } | null;
+        product: { id: number; name: string; code: string | null; barcode: string | null } | null;
     }[];
 };
 
@@ -29,13 +29,24 @@ export default function Show({ transfer }: { transfer: Transfer }) {
                                 {transfer.from_branch?.name ?? '-'} hacia {transfer.to_branch?.name ?? '-'}
                             </p>
                         </div>
-                        <Link href={route('inventory.transfers.index')} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                            Volver
-                        </Link>
+                        <div className="flex flex-wrap gap-2">
+                            <a
+                                href={route('inventory.transfers.pdf', transfer.id)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                            >
+                                Imprimir
+                            </a>
+                            <Link href={route('inventory.transfers.index')} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                                Volver
+                            </Link>
+                        </div>
                     </div>
 
                     <div className="mt-5 grid grid-cols-1 gap-4 text-sm md:grid-cols-3">
                         <Info label="Estado" value={transfer.status === 'completed' ? 'Completado' : transfer.status} />
+                        <Info label="Fecha" value={formatDate(transfer.created_at)} />
                         <Info label="Creado por" value={transfer.created_by?.name ?? '-'} />
                         <Info label="Notas" value={transfer.notes ?? '-'} />
                     </div>
@@ -54,7 +65,7 @@ export default function Show({ transfer }: { transfer: Transfer }) {
                             {transfer.lines.map((line) => (
                                 <tr key={line.id}>
                                     <td className="px-4 py-3 font-semibold text-slate-900">{line.product?.name ?? '-'}</td>
-                                    <td className="px-4 py-3 text-slate-600">{line.product?.code ?? '-'}</td>
+                                    <td className="px-4 py-3 text-slate-600">{line.product?.code || line.product?.barcode || '-'}</td>
                                     <td className="px-4 py-3 text-right font-semibold text-slate-900">{line.quantity}</td>
                                 </tr>
                             ))}
@@ -73,4 +84,11 @@ function Info({ label, value }: { label: string; value: string }) {
             <div className="mt-1 font-semibold text-slate-900">{value}</div>
         </div>
     );
+}
+
+function formatDate(value: string) {
+    return new Intl.DateTimeFormat('es', {
+        dateStyle: 'short',
+        timeStyle: 'short',
+    }).format(new Date(value));
 }

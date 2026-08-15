@@ -81,6 +81,7 @@ export default function Form({
         remember_last_customer_product_price?: boolean;
         pre_sale_price_type_id?: number | null;
         pre_sale_allow_manual_price?: boolean;
+        route_pre_sale_invoicing_mode?: 'manual' | 'automatic';
         enable_credit_sales?: boolean;
         enable_credit_reservations?: boolean;
         reserve_stock_on_credit_reservations?: boolean;
@@ -118,6 +119,7 @@ export default function Form({
         remember_last_customer_product_price: settings.remember_last_customer_product_price ?? false,
         pre_sale_price_type_id: settings.pre_sale_price_type_id ?? '',
         pre_sale_allow_manual_price: settings.pre_sale_allow_manual_price ?? false,
+        route_pre_sale_invoicing_mode: settings.route_pre_sale_invoicing_mode ?? 'manual',
         enable_credit_sales: settings.enable_credit_sales ?? false,
         enable_credit_reservations: settings.enable_credit_reservations ?? false,
         reserve_stock_on_credit_reservations: settings.reserve_stock_on_credit_reservations ?? true,
@@ -418,6 +420,39 @@ export default function Form({
                                     />
                                 </div>
                             )}
+                        </div>
+                    )}
+
+                    {data.modules.includes('routes') && (
+                        <div className="mt-6 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+                            <div className="mb-4">
+                                <h3 className="text-base font-semibold text-gray-900">Rutas y preventas</h3>
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Define cómo se manejará la facturación cuando el flujo de preventas de ruta esté activo.
+                                </p>
+                            </div>
+                            <Field label="Facturación de preventas de ruta" error={errors.route_pre_sale_invoicing_mode}>
+                                <select
+                                    className={inputClass}
+                                    value={data.route_pre_sale_invoicing_mode}
+                                    disabled={!data.fel_enabled}
+                                    onChange={(event) => setData('route_pre_sale_invoicing_mode', event.target.value as 'manual' | 'automatic')}
+                                >
+                                    <option value="manual">Manual: elegir cuáles preventas facturar</option>
+                                    <option value="automatic">Automática: generar factura automáticamente</option>
+                                </select>
+                            </Field>
+                            <p className="mt-2 text-xs text-slate-500">
+                                Define si las preventas de ruta preparadas se facturarán automáticamente o si el usuario decidirá cuáles emitir.
+                            </p>
+                            {!data.fel_enabled && (
+                                <p className="mt-2 text-xs font-semibold text-amber-700">
+                                    Disponible cuando FEL esté activo. El valor por defecto seguirá siendo manual.
+                                </p>
+                            )}
+                            <p className="mt-2 text-xs text-slate-500">
+                                La facturación automática se aplicará cuando el flujo de facturación de preventas esté activo.
+                            </p>
                         </div>
                     )}
 

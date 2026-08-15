@@ -14,6 +14,7 @@ use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\Reports\ReportDateRange;
 use App\Support\StockAvailability;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -247,8 +248,36 @@ class InventoryTransferController extends Controller
         );
 
         return Inertia::render('Inventory/Transfers/Show', [
-            'transfer' => $transfer->load(['fromBranch:id,name', 'toBranch:id,name', 'createdBy:id,name', 'lines.product:id,name,code']),
+            'transfer' => $transfer->load(['fromBranch:id,name', 'toBranch:id,name', 'createdBy:id,name', 'lines.product:id,name,code,barcode']),
         ]);
+    }
+
+    public function pdf(Request $request, InventoryTransfer $transfer): SymfonyResponse
+    {
+        $this->authorizePermission($request, Permissions::INVENTORY_TRANSFERS_VIEW);
+        abort_unless((int) $transfer->business_id === (int) currentBusinessId(), 403);
+        abort_unless(
+            BranchInventory::canSwitchBranches($request->user())
+            || in_array(BranchInventory::activeBranch(currentBusinessId())->id, [(int) $transfer->from_branch_id, (int) $transfer->to_branch_id], true),
+            403,
+        );
+
+        $transfer->load([
+            'business.tenantSetting',
+            'fromBranch:id,business_id,name,address,phone,logo_url',
+            'toBranch:id,business_id,name,address,phone,logo_url',
+            'createdBy:id,name',
+            'lines.product:id,name,code,barcode',
+        ]);
+
+        return Pdf::loadView('pdf.inventory-transfers.show', [
+            'transfer' => $transfer,
+            'business' => $transfer->business,
+            'tenantSetting' => $transfer->business?->tenantSetting,
+            'timezone' => tenantTimezone($transfer->business),
+        ])
+            ->setPaper('letter', 'portrait')
+            ->stream('traslado-'.str((string) $transfer->id)->slug().'.pdf');
     }
 
     private function transferListQuery(Request $request, ReportDateRange $range)
