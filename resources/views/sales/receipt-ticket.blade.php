@@ -190,10 +190,10 @@
         @endif
         <h1>{{ $company['name'] ?? $business?->name ?? 'Empresa' }}</h1>
         @if (! empty($company['address']))
-            <p>Dirección: {{ $company['address'] }}</p>
+            <p>{{ $company['address'] }}</p>
         @endif
         @if (! empty($company['phone']))
-            <p>Teléfono: {{ $company['phone'] }}</p>
+            <p>{{ $company['phone'] }}</p>
         @endif
     </header>
 

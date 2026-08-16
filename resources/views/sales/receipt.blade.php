@@ -263,10 +263,10 @@
             <div>
                 <h1>{{ $company['name'] ?? $business?->name ?? 'Empresa' }}</h1>
                 @if (! empty($company['address']))
-                    <p class="small">Dirección: {{ $company['address'] }}</p>
+                    <p class="small">{{ $company['address'] }}</p>
                 @endif
                 @if (! empty($company['phone']))
-                    <p class="small">Teléfono: {{ $company['phone'] }}</p>
+                    <p class="small">{{ $company['phone'] }}</p>
                 @endif
             </div>
         </div>

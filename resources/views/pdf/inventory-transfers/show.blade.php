@@ -51,8 +51,8 @@
         </div>
         <div class="company">
             <h1>{{ $company['name'] ?: 'Empresa' }}</h1>
-            @if (! empty($company['address']))<div>Dirección: {{ $company['address'] }}</div>@endif
-            @if (! empty($company['phone']))<div>Teléfono: {{ $company['phone'] }}</div>@endif
+            @if (! empty($company['address']))<div>{{ $company['address'] }}</div>@endif
+            @if (! empty($company['phone']))<div>{{ $company['phone'] }}</div>@endif
         </div>
         <div class="title">
             <h2>Traslado de inventario</h2>

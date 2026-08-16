@@ -146,8 +146,9 @@ class ListFilterExportsTest extends TestCase
         $this->assertStringContainsString('FAC-PDF-1', $html);
         $this->assertStringContainsString('Comprobante de compra', $html);
         $this->assertStringContainsString('Tenant export', $html);
-        $this->assertStringContainsString('Dirección: Avenida PDF 1', $html);
-        $this->assertStringContainsString('Teléfono: 5555-0001', $html);
+        $this->assertStringContainsString('Avenida PDF 1', $html);
+        $this->assertStringContainsString('5555-0001', $html);
+        $this->assertCompanyHeaderLabelsAreHidden($html);
         $this->assertStringNotContainsString('NIT/documento proveedor', $html);
 
         $this->actingAs($user)
@@ -223,8 +224,9 @@ class ListFilterExportsTest extends TestCase
         $this->assertStringContainsString('Traslado de inventario', $html);
         $this->assertStringContainsString('Producto traslado PDF', $html);
         $this->assertStringContainsString('Tenant export', $html);
-        $this->assertStringContainsString('Dirección: Avenida PDF 1', $html);
-        $this->assertStringContainsString('Teléfono: 5555-0001', $html);
+        $this->assertStringContainsString('Avenida PDF 1', $html);
+        $this->assertStringContainsString('5555-0001', $html);
+        $this->assertCompanyHeaderLabelsAreHidden($html);
         $this->assertStringContainsString('Documento interno generado por Kodbli/BlunkStock', $html);
         $this->assertStringNotContainsString('NIT:', $html);
 
@@ -275,8 +277,12 @@ class ListFilterExportsTest extends TestCase
             ->get(route('sales.receipt', $sale))
             ->assertOk()
             ->assertSee('Tenant export')
-            ->assertSee('Dirección: Avenida PDF 1')
-            ->assertSee('Teléfono: 5555-0001')
+            ->assertSee('Avenida PDF 1')
+            ->assertSee('5555-0001')
+            ->assertDontSee('Dirección:')
+            ->assertDontSee('Teléfono:')
+            ->assertDontSee('Direccion:')
+            ->assertDontSee('Telefono:')
             ->assertSee('Cliente con NIT')
             ->assertDontSee('57289085')
             ->assertDontSee('NIT:');
@@ -342,6 +348,16 @@ class ListFilterExportsTest extends TestCase
         $user = $this->user($business, $branch, $role);
 
         return [$business, $user, $branch, $otherBranch];
+    }
+
+    private function assertCompanyHeaderLabelsAreHidden(string $html): void
+    {
+        $this->assertStringNotContainsString('Dirección:', $html);
+        $this->assertStringNotContainsString('Teléfono:', $html);
+        $this->assertStringNotContainsString('Direccion:', $html);
+        $this->assertStringNotContainsString('Telefono:', $html);
+        $this->assertStringNotContainsString('Address:', $html);
+        $this->assertStringNotContainsString('Phone:', $html);
     }
 
     private function user(Business $business, Branch $branch, string $role): User
