@@ -1253,7 +1253,9 @@ class SaleController extends Controller
 
         return view("sales.receipt-{$receiptFormat}", [
             'paperSize' => ($business?->country ?? 'GT') === 'AR' ? 'A4' : 'Letter',
-            'company' => DocumentCompanyHeader::make($business, $sale->branch, $settings),
+            'company' => DocumentCompanyHeader::make($business, $sale->branch, $settings, [
+                'show_logo' => $receiptFormat === 'document',
+            ]),
             'customerDisplayName' => DocumentCustomerDisplay::nameOnly($sale->customer, $sale->customer_name, $sale->customer_doc_number),
             'business' => $business,
             'sale' => $sale,

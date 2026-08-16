@@ -115,6 +115,7 @@ class ListFilterExportsTest extends TestCase
     public function test_purchase_show_and_pdf_include_supplier_invoice_number_and_are_scoped(): void
     {
         [$business, $user, $branch] = $this->tenant('purchases', ['purchases']);
+        $business->forceFill(['logo_url' => 'https://cdn.example.test/business-logo.png'])->save();
         $supplier = Supplier::query()->create(['business_id' => $business->id, 'name' => 'Proveedor A']);
         $product = $this->product($business, 'Producto PDF');
         $purchase = $this->purchase($business, $branch, $user, $supplier, 30, 'card', now(), 'FAC-PDF-1');
@@ -149,6 +150,7 @@ class ListFilterExportsTest extends TestCase
         $this->assertStringContainsString('Tenant export', $html);
         $this->assertStringContainsString('Avenida PDF 1, Huehuetenango, Huehuetenango', $html);
         $this->assertStringContainsString('5555-0001', $html);
+        $this->assertStringContainsString('https://cdn.example.test/business-logo.png', $html);
         $this->assertCompanyHeaderLabelsAreHidden($html);
         $this->assertStringNotContainsString('NIT/documento proveedor', $html);
 
@@ -211,6 +213,7 @@ class ListFilterExportsTest extends TestCase
     public function test_transfer_pdf_is_letter_internal_document_and_is_scoped(): void
     {
         [$business, $user, $branch, $otherBranch] = $this->tenant('stock_manager', ['branches']);
+        $business->forceFill(['logo_url' => 'https://cdn.example.test/business-logo.png'])->save();
         $product = $this->product($business, 'Producto traslado PDF');
         $transfer = $this->transfer($business, $branch, $otherBranch, $user, $product, 4);
 
@@ -227,6 +230,7 @@ class ListFilterExportsTest extends TestCase
         $this->assertStringContainsString('Tenant export', $html);
         $this->assertStringContainsString('Avenida PDF 1, Huehuetenango, Huehuetenango', $html);
         $this->assertStringContainsString('5555-0001', $html);
+        $this->assertStringContainsString('https://cdn.example.test/business-logo.png', $html);
         $this->assertCompanyHeaderLabelsAreHidden($html);
         $this->assertStringContainsString('Documento interno generado por Kodbli/BlunkStock', $html);
         $this->assertStringNotContainsString('NIT:', $html);
@@ -264,6 +268,7 @@ class ListFilterExportsTest extends TestCase
     public function test_sale_internal_receipt_shows_company_and_customer_name_only(): void
     {
         [$business, $user, $branch] = $this->tenant('owner', ['pos']);
+        $business->forceFill(['logo_url' => 'https://cdn.example.test/business-logo.png'])->save();
         $product = $this->product($business, 'Producto ticket');
         $customer = Customer::query()->create([
             'business_id' => $business->id,
@@ -280,6 +285,9 @@ class ListFilterExportsTest extends TestCase
             ->assertSee('Tenant export')
             ->assertSee('Avenida PDF 1, Huehuetenango, Huehuetenango')
             ->assertSee('5555-0001')
+            ->assertDontSee('https://cdn.example.test/business-logo.png')
+            ->assertDontSee('<img', false)
+            ->assertDontSee('Logo')
             ->assertDontSee('Dirección:')
             ->assertDontSee('Teléfono:')
             ->assertDontSee('Direccion:')
@@ -302,6 +310,110 @@ class ListFilterExportsTest extends TestCase
             ->assertDontSee('Cliente: CF')
             ->assertDontSee('NIT: CF')
             ->assertDontSee('Doc.: CF');
+    }
+
+    public function test_sale_ticket_never_renders_logo_for_receipt_or_invoice(): void
+    {
+        [$business, $user, $branch] = $this->tenant('owner', ['pos']);
+        $business->forceFill(['logo_url' => 'https://cdn.example.test/business-logo.png'])->save();
+        $business->tenantSetting->forceFill(['receipt_format' => 'ticket'])->save();
+
+        $product = $this->product($business, 'Producto sin logo ticket');
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente ticket',
+            'doc_type' => 'NIT',
+            'doc_number' => '1234567',
+            'country' => 'GT',
+        ]);
+
+        foreach (['receipt', 'invoice'] as $documentType) {
+            $sale = $this->sale($business, $branch, $user, $product, $customer, $documentType);
+
+            $this->actingAs($user)
+                ->get(route('sales.receipt', $sale))
+                ->assertOk()
+                ->assertSee('Tenant export')
+                ->assertSee('Avenida PDF 1, Huehuetenango, Huehuetenango')
+                ->assertSee('5555-0001')
+                ->assertSee('Cliente ticket')
+                ->assertDontSee('https://cdn.example.test/business-logo.png')
+                ->assertDontSee('<img', false)
+                ->assertDontSee('Logo')
+                ->assertDontSee('1234567')
+                ->assertDontSee('NIT:');
+        }
+    }
+
+    public function test_sale_formal_document_renders_logo_when_available_and_omits_placeholder_when_missing(): void
+    {
+        [$business, $user, $branch] = $this->tenant('owner', ['pos']);
+        $business->forceFill(['logo_url' => 'https://cdn.example.test/business-logo.png'])->save();
+        $business->tenantSetting->forceFill(['receipt_format' => 'document'])->save();
+        $product = $this->product($business, 'Producto documento formal');
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente documento',
+            'doc_type' => 'NIT',
+            'doc_number' => '7654321',
+            'country' => 'GT',
+        ]);
+        $sale = $this->sale($business, $branch, $user, $product, $customer);
+
+        $this->actingAs($user)
+            ->get(route('sales.receipt', $sale))
+            ->assertOk()
+            ->assertSee('https://cdn.example.test/business-logo.png')
+            ->assertSee('<img', false)
+            ->assertSee('Cliente documento')
+            ->assertDontSee('7654321')
+            ->assertDontSee('NIT:');
+
+        $business->forceFill(['logo_url' => null])->save();
+
+        $this->actingAs($user)
+            ->get(route('sales.receipt', $sale))
+            ->assertOk()
+            ->assertDontSee('<img', false)
+            ->assertDontSee('Logo');
+    }
+
+    public function test_purchase_and_transfer_pdf_omit_logo_placeholders_when_logo_is_missing(): void
+    {
+        [$business, $user, $branch, $otherBranch] = $this->tenant('owner', ['purchases', 'inventory', 'branches']);
+        $supplier = Supplier::query()->create(['business_id' => $business->id, 'name' => 'Proveedor sin logo']);
+        $product = $this->product($business, 'Producto PDF sin logo');
+        $purchase = $this->purchase($business, $branch, $user, $supplier, 75, 'cash', now(), 'FAC-SIN-LOGO');
+        $purchase->items()->create([
+            'business_id' => $business->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_cost' => 75,
+            'previous_cost' => 70,
+            'new_average_cost' => 75,
+            'total' => 75,
+        ]);
+        $transfer = $this->transfer($business, $branch, $otherBranch, $user, $product, 1);
+
+        $purchaseHtml = view('pdf.purchases.show', [
+            'purchase' => $purchase->load(['business.tenantSetting', 'supplier', 'branch', 'createdBy', 'items.product']),
+            'business' => $business,
+            'tenantSetting' => $business->tenantSetting,
+            'purchaseNumber' => format_purchase_number($purchase),
+            'timezone' => tenantTimezone($business),
+        ])->render();
+        $transferHtml = view('pdf.inventory-transfers.show', [
+            'transfer' => $transfer->load(['business.tenantSetting', 'fromBranch', 'toBranch', 'createdBy', 'lines.product']),
+            'business' => $business,
+            'tenantSetting' => $business->tenantSetting,
+            'timezone' => tenantTimezone($business),
+        ])->render();
+
+        $this->assertStringNotContainsString('<img', $purchaseHtml);
+        $this->assertStringNotContainsString('Logo', $purchaseHtml);
+        $this->assertStringNotContainsString('<img', $transferHtml);
+        $this->assertStringNotContainsString('Logo', $transferHtml);
     }
 
     public function test_document_company_header_builds_complete_address_without_empty_commas(): void
@@ -453,11 +565,11 @@ class ListFilterExportsTest extends TestCase
         return $purchase;
     }
 
-    private function sale(Business $business, Branch $branch, User $user, Product $product, Customer $customer): Sale
+    private function sale(Business $business, Branch $branch, User $user, Product $product, Customer $customer, string $documentType = 'receipt'): Sale
     {
         $sale = Sale::query()->create([
             'business_id' => $business->id,
-            'business_number' => 1,
+            'business_number' => Sale::query()->where('business_id', $business->id)->max('business_number') + 1,
             'branch_id' => $branch->id,
             'customer_id' => $customer->id,
             'customer_name' => $customer->name,
@@ -465,7 +577,7 @@ class ListFilterExportsTest extends TestCase
             'customer_doc_number' => $customer->doc_number,
             'total' => 20,
             'payment_method' => 'cash',
-            'document_type' => 'receipt',
+            'document_type' => $documentType,
             'payment_status' => 'paid',
             'amount_paid' => 20,
             'credit_balance' => 0,

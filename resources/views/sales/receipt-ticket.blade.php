@@ -58,14 +58,6 @@
             text-align: center;
         }
 
-        .logo {
-            display: block;
-            height: 38px;
-            margin: 0 auto 6px;
-            max-width: 55mm;
-            object-fit: contain;
-        }
-
         h1,
         p {
             margin: 0;
@@ -185,9 +177,6 @@
 
 <main class="ticket">
     <header class="center">
-        @if (! empty($company['logo_url']))
-            <img src="{{ $company['logo_url'] }}" alt="Logo" class="logo">
-        @endif
         <h1>{{ $company['name'] ?? $business?->name ?? 'Empresa' }}</h1>
         @if (! empty($company['address']))
             <p>{{ $company['address'] }}</p>

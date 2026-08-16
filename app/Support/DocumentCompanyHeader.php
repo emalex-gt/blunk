@@ -8,10 +8,16 @@ use App\Models\TenantSetting;
 
 class DocumentCompanyHeader
 {
-    public static function make(?Business $business, ?Branch $branch = null, ?TenantSetting $settings = null): array
-    {
+    public static function make(
+        ?Business $business,
+        ?Branch $branch = null,
+        ?TenantSetting $settings = null,
+        array $options = [],
+    ): array {
+        $showLogo = (bool) ($options['show_logo'] ?? true);
+
         return [
-            'logo_url' => $business ? BusinessLogo::forPrint($business, $branch) : null,
+            'logo_url' => $showLogo && $business ? BusinessLogo::forPrint($business, $branch) : null,
             'name' => self::firstFilled(
                 $business?->name,
                 $settings?->company_name,
