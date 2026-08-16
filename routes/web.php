@@ -22,6 +22,7 @@ use App\Http\Controllers\StockController;
 use App\Http\Controllers\TenantUserController;
 use App\Http\Controllers\SuperAdmin\DashboardController as SuperAdminDashboardController;
 use App\Http\Controllers\SuperAdmin\FelIncidentController as SuperAdminFelIncidentController;
+use App\Http\Controllers\SuperAdmin\ProductImportController as SuperAdminProductImportController;
 use App\Http\Controllers\SuperAdmin\SecurityController as SuperAdminSecurityController;
 use App\Http\Controllers\SuperAdmin\TenantController as SuperAdminTenantController;
 use App\Http\Controllers\SuperAdmin\TenantBranchController as SuperAdminTenantBranchController;
@@ -93,6 +94,11 @@ Route::middleware(['auth', 'super.admin'])
         Route::get('/tenants/{business}/subscription', [SuperAdminTenantSubscriptionController::class, 'edit'])->name('tenants.subscription');
         Route::put('/tenants/{business}/subscription', [SuperAdminTenantSubscriptionController::class, 'update'])->name('tenants.subscription.update');
         Route::post('/tenants/{business}/subscription/{status}', [SuperAdminTenantSubscriptionController::class, 'setStatus'])->name('tenants.subscription.status');
+        Route::get('/businesses/{business}/product-imports/create', [SuperAdminProductImportController::class, 'create'])->name('product-imports.create');
+        Route::post('/businesses/{business}/product-imports/preview', [SuperAdminProductImportController::class, 'preview'])->name('product-imports.preview');
+        Route::post('/businesses/{business}/product-imports/confirm', [SuperAdminProductImportController::class, 'confirm'])->name('product-imports.confirm');
+        Route::get('/product-import-template', [SuperAdminProductImportController::class, 'template'])->name('product-imports.template');
+        Route::get('/product-imports/reports/{token}', [SuperAdminProductImportController::class, 'report'])->name('product-imports.report');
     });
 
 Route::middleware('auth')->group(function () {

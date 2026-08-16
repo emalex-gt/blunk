@@ -17,6 +17,7 @@ class Product extends Model
         'brand_id',
         'location_id',
         'name',
+        'description',
         'code',
         'barcode',
         'cost_price',

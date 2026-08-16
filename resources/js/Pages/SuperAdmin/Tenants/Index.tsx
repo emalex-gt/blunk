@@ -154,6 +154,9 @@ export default function Index({
                                                     <ActionLink href={route('super-admin.tenants.branches', tenant.id)}>
                                                         Sucursales
                                                     </ActionLink>
+                                                    <ActionLink href={route('super-admin.product-imports.create', tenant.id)}>
+                                                        Importar productos
+                                                    </ActionLink>
                                                     <ActionLink
                                                         href={route('super-admin.tenants.subscription', tenant.id)}
                                                     >
