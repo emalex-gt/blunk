@@ -4,9 +4,11 @@ namespace Tests\Feature;
 
 use App\Models\Business;
 use App\Models\Branch;
+use App\Models\Customer;
 use App\Models\InventoryTransfer;
 use App\Models\Product;
 use App\Models\Purchase;
+use App\Models\Sale;
 use App\Models\Supplier;
 use App\Models\TenantModule;
 use App\Models\TenantSetting;
@@ -143,6 +145,10 @@ class ListFilterExportsTest extends TestCase
 
         $this->assertStringContainsString('FAC-PDF-1', $html);
         $this->assertStringContainsString('Comprobante de compra', $html);
+        $this->assertStringContainsString('Tenant export', $html);
+        $this->assertStringContainsString('Dirección: Avenida PDF 1', $html);
+        $this->assertStringContainsString('Teléfono: 5555-0001', $html);
+        $this->assertStringNotContainsString('NIT/documento proveedor', $html);
 
         $this->actingAs($user)
             ->get(route('purchases.pdf', $purchase))
@@ -210,12 +216,17 @@ class ListFilterExportsTest extends TestCase
             'transfer' => $transfer->load(['business.tenantSetting', 'fromBranch', 'toBranch', 'createdBy', 'lines.product']),
             'business' => $business,
             'tenantSetting' => $business->tenantSetting,
+            'company' => \App\Support\DocumentCompanyHeader::make($business, $branch, $business->tenantSetting),
             'timezone' => tenantTimezone($business),
         ])->render();
 
         $this->assertStringContainsString('Traslado de inventario', $html);
         $this->assertStringContainsString('Producto traslado PDF', $html);
+        $this->assertStringContainsString('Tenant export', $html);
+        $this->assertStringContainsString('Dirección: Avenida PDF 1', $html);
+        $this->assertStringContainsString('Teléfono: 5555-0001', $html);
         $this->assertStringContainsString('Documento interno generado por Kodbli/BlunkStock', $html);
+        $this->assertStringNotContainsString('NIT:', $html);
 
         $this->actingAs($user)
             ->get(route('inventory.transfers.pdf', $transfer))
@@ -247,6 +258,45 @@ class ListFilterExportsTest extends TestCase
         $this->assertStringContainsString('Factura proveedor', $source);
     }
 
+    public function test_sale_internal_receipt_shows_company_and_customer_name_only(): void
+    {
+        [$business, $user, $branch] = $this->tenant('owner', ['pos']);
+        $product = $this->product($business, 'Producto ticket');
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente con NIT',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+            'country' => 'GT',
+        ]);
+        $sale = $this->sale($business, $branch, $user, $product, $customer);
+
+        $this->actingAs($user)
+            ->get(route('sales.receipt', $sale))
+            ->assertOk()
+            ->assertSee('Tenant export')
+            ->assertSee('Dirección: Avenida PDF 1')
+            ->assertSee('Teléfono: 5555-0001')
+            ->assertSee('Cliente con NIT')
+            ->assertDontSee('57289085')
+            ->assertDontSee('NIT:');
+
+        $sale->forceFill([
+            'customer_id' => null,
+            'customer_name' => 'CF',
+            'customer_doc_type' => 'CF',
+            'customer_doc_number' => 'CF',
+        ])->save();
+
+        $this->actingAs($user)
+            ->get(route('sales.receipt', $sale))
+            ->assertOk()
+            ->assertSee('Consumidor final')
+            ->assertDontSee('Cliente: CF')
+            ->assertDontSee('NIT: CF')
+            ->assertDontSee('Doc.: CF');
+    }
+
     private function tenant(string $role, array $modules): array
     {
         $business = Business::query()->create([
@@ -258,6 +308,10 @@ class ListFilterExportsTest extends TestCase
 
         TenantSetting::query()->create([
             'business_id' => $business->id,
+            'company_name' => 'Comercial PDF',
+            'company_address' => 'Dirección tenant',
+            'company_phone' => '5555-9999',
+            'company_tax_id' => '9999999',
             'use_branches' => true,
             'allow_receipts' => true,
             'allow_invoices' => false,
@@ -273,10 +327,16 @@ class ListFilterExportsTest extends TestCase
         }
 
         $branch = BranchInventory::defaultBranch($business->id);
+        $branch->update([
+            'address' => 'Avenida PDF 1',
+            'phone' => '5555-0001',
+        ]);
         $otherBranch = Branch::query()->create([
             'business_id' => $business->id,
             'name' => 'Sucursal B',
             'code' => 'B',
+            'address' => 'Avenida PDF 2',
+            'phone' => '5555-0002',
             'is_active' => true,
         ]);
         $user = $this->user($business, $branch, $role);
@@ -328,6 +388,46 @@ class ListFilterExportsTest extends TestCase
         $purchase->forceFill(['created_at' => $createdAt, 'updated_at' => $createdAt])->save();
 
         return $purchase;
+    }
+
+    private function sale(Business $business, Branch $branch, User $user, Product $product, Customer $customer): Sale
+    {
+        $sale = Sale::query()->create([
+            'business_id' => $business->id,
+            'business_number' => 1,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'customer_doc_type' => $customer->doc_type,
+            'customer_doc_number' => $customer->doc_number,
+            'total' => 20,
+            'payment_method' => 'cash',
+            'document_type' => 'receipt',
+            'payment_status' => 'paid',
+            'amount_paid' => 20,
+            'credit_balance' => 0,
+            'status' => 'completed',
+            'created_by' => $user->id,
+        ]);
+
+        $sale->items()->create([
+            'business_id' => $business->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_price' => 20,
+            'unit_cost' => 10,
+            'total_cost' => 10,
+            'profit_amount' => 10,
+            'total' => 20,
+        ]);
+        $sale->payments()->create([
+            'business_id' => $business->id,
+            'method' => 'cash',
+            'amount' => 20,
+        ]);
+
+        return $sale;
     }
 
     private function transfer(Business $business, Branch $from, Branch $to, User $user, Product $product, int $quantity): InventoryTransfer

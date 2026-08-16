@@ -27,6 +27,8 @@ use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\BusinessLogo;
 use App\Support\Credits;
+use App\Support\DocumentCompanyHeader;
+use App\Support\DocumentCustomerDisplay;
 use App\Support\FelPhraseRenderer;
 use App\Support\Inventory\StockPolicy;
 use App\Support\ManualPricePolicy;
@@ -1234,30 +1236,25 @@ class SaleController extends Controller
             || (int) $sale->branch_id === (int) BranchInventory::activeBranch($businessId)->id,
             403,
         );
-        $business = \App\Models\Business::query()->select('id', 'name', 'country', 'logo_url')->find($businessId);
+        $business = \App\Models\Business::query()->select('id', 'name', 'country', 'phone', 'logo_url')->find($businessId);
         $timezone = tenantTimezone($business);
         $settings = TenantSetting::query()->where('business_id', $businessId)->first();
 
         $sale->load([
-            'customer:id,name,doc_type,doc_number,address,phone',
+            'customer:id,name,doc_type,doc_number,address,phone,is_final_consumer',
             'createdBy:id,name',
             'cancelledBy:id,name',
             'items.product:id,code,barcode',
             'payments:id,sale_id,method,amount,reference,details',
-            'branch:id,business_id,name,logo_url',
+            'branch:id,business_id,name,address,phone,logo_url',
         ]);
 
         $receiptFormat = $settings?->receipt_format === 'document' ? 'document' : 'ticket';
 
         return view("sales.receipt-{$receiptFormat}", [
             'paperSize' => ($business?->country ?? 'GT') === 'AR' ? 'A4' : 'Letter',
-            'company' => [
-                'logo_url' => $business ? BusinessLogo::forPrint($business, $sale->branch) : null,
-                'name' => $settings?->company_name ?: $business?->name,
-                'tax_id' => $settings?->company_tax_id,
-                'address' => $settings?->company_address,
-                'phone' => $settings?->company_phone,
-            ],
+            'company' => DocumentCompanyHeader::make($business, $sale->branch, $settings),
+            'customerDisplayName' => DocumentCustomerDisplay::nameOnly($sale->customer, $sale->customer_name, $sale->customer_doc_number),
             'business' => $business,
             'sale' => $sale,
             'items' => $sale->items,

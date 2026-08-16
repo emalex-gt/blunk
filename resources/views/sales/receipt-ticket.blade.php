@@ -189,14 +189,11 @@
             <img src="{{ $company['logo_url'] }}" alt="Logo" class="logo">
         @endif
         <h1>{{ $company['name'] ?? $business?->name ?? 'Empresa' }}</h1>
-        @if (! empty($company['tax_id']))
-            <p>NIT/CUIT: {{ $company['tax_id'] }}</p>
-        @endif
         @if (! empty($company['address']))
-            <p>{{ $company['address'] }}</p>
+            <p>Dirección: {{ $company['address'] }}</p>
         @endif
         @if (! empty($company['phone']))
-            <p>Tel: {{ $company['phone'] }}</p>
+            <p>Teléfono: {{ $company['phone'] }}</p>
         @endif
     </header>
 
@@ -232,14 +229,8 @@
         </div>
         <div class="row">
             <span>Cliente</span>
-            <span class="right">{{ $sale->customer?->name ?? 'Consumidor Final' }}</span>
+            <span class="right">{{ $customerDisplayName ?? 'Consumidor final' }}</span>
         </div>
-        @if ($sale->customer?->doc_number)
-            <div class="row">
-                <span>{{ $sale->customer?->doc_type ?? 'Doc.' }}</span>
-                <span>{{ $sale->customer?->doc_number }}</span>
-            </div>
-        @endif
     </section>
 
     <div class="line"></div>

@@ -35,11 +35,12 @@
 </head>
 <body>
 @php
-    $logoUrl = $purchase->branch?->logo_url ?: ($business?->logo_url ?: $tenantSetting?->company_logo_url);
-    $companyName = $tenantSetting?->company_name ?: $business?->name;
-    $companyTaxId = $tenantSetting?->company_tax_id;
-    $companyAddress = $purchase->branch?->address ?: $tenantSetting?->company_address;
-    $companyPhone = $purchase->branch?->phone ?: $tenantSetting?->company_phone;
+    $company ??= [
+        'logo_url' => $purchase->branch?->logo_url ?: ($business?->logo_url ?: $tenantSetting?->company_logo_url),
+        'name' => $business?->name ?: $tenantSetting?->company_name,
+        'address' => $purchase->branch?->address ?: $tenantSetting?->company_address,
+        'phone' => $purchase->branch?->phone ?: $tenantSetting?->company_phone,
+    ];
     $subtotal = $purchase->items->sum(fn ($item) => (float) $item->total);
     $paymentMethodLabel = match ($purchase->payment_method) {
         'cash' => 'Efectivo',
@@ -53,15 +54,14 @@
 @endphp
     <div class="header">
         <div class="logo">
-            @if ($logoUrl)
-                <img src="{{ $logoUrl }}" alt="Logo">
+            @if (! empty($company['logo_url']))
+                <img src="{{ $company['logo_url'] }}" alt="Logo">
             @endif
         </div>
         <div class="company">
-            <h1>{{ $companyName ?: 'Empresa' }}</h1>
-            @if ($companyTaxId)<div>NIT: {{ $companyTaxId }}</div>@endif
-            @if ($companyAddress)<div>{{ $companyAddress }}</div>@endif
-            @if ($companyPhone)<div>Tel: {{ $companyPhone }}</div>@endif
+            <h1>{{ $company['name'] ?: 'Empresa' }}</h1>
+            @if (! empty($company['address']))<div>Dirección: {{ $company['address'] }}</div>@endif
+            @if (! empty($company['phone']))<div>Teléfono: {{ $company['phone'] }}</div>@endif
         </div>
         <div class="title">
             <h2>Comprobante de compra</h2>
@@ -76,7 +76,7 @@
         </div>
         <div class="row">
             <div class="cell"><span class="label">Proveedor</span><span class="value">{{ $purchase->supplier?->name ?? 'Sin proveedor' }}</span></div>
-            <div class="cell"><span class="label">NIT/documento proveedor</span><span class="value">-</span></div>
+            <div class="cell"><span class="label">Número interno de compra</span><span class="value">{{ $purchaseNumber }}</span></div>
         </div>
         <div class="row">
             <div class="cell"><span class="label">Número de factura del proveedor</span><span class="value">{{ $purchase->supplier_invoice_number ?: 'Sin referencia' }}</span></div>

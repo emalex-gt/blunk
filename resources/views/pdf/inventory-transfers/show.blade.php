@@ -35,24 +35,24 @@
 </head>
 <body>
 @php
-    $logoUrl = $transfer->fromBranch?->logo_url ?: ($business?->logo_url ?: $tenantSetting?->company_logo_url);
-    $companyName = $tenantSetting?->company_name ?: $business?->name;
-    $companyTaxId = $tenantSetting?->company_tax_id;
-    $companyAddress = $transfer->fromBranch?->address ?: $tenantSetting?->company_address;
-    $companyPhone = $transfer->fromBranch?->phone ?: $tenantSetting?->company_phone;
+    $company ??= [
+        'logo_url' => $transfer->fromBranch?->logo_url ?: ($business?->logo_url ?: $tenantSetting?->company_logo_url),
+        'name' => $business?->name ?: $tenantSetting?->company_name,
+        'address' => $transfer->fromBranch?->address ?: $tenantSetting?->company_address,
+        'phone' => $transfer->fromBranch?->phone ?: $tenantSetting?->company_phone,
+    ];
     $totalUnits = $transfer->lines->sum(fn ($line) => (int) $line->quantity);
 @endphp
     <div class="header">
         <div class="logo">
-            @if ($logoUrl)
-                <img src="{{ $logoUrl }}" alt="Logo">
+            @if (! empty($company['logo_url']))
+                <img src="{{ $company['logo_url'] }}" alt="Logo">
             @endif
         </div>
         <div class="company">
-            <h1>{{ $companyName ?: 'Empresa' }}</h1>
-            @if ($companyTaxId)<div>NIT: {{ $companyTaxId }}</div>@endif
-            @if ($companyAddress)<div>{{ $companyAddress }}</div>@endif
-            @if ($companyPhone)<div>Tel: {{ $companyPhone }}</div>@endif
+            <h1>{{ $company['name'] ?: 'Empresa' }}</h1>
+            @if (! empty($company['address']))<div>Dirección: {{ $company['address'] }}</div>@endif
+            @if (! empty($company['phone']))<div>Teléfono: {{ $company['phone'] }}</div>@endif
         </div>
         <div class="title">
             <h2>Traslado de inventario</h2>

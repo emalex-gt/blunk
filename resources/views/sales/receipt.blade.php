@@ -262,11 +262,8 @@
             @endif
             <div>
                 <h1>{{ $company['name'] ?? $business?->name ?? 'Empresa' }}</h1>
-                @if (! empty($company['tax_id']))
-                    <p class="small">Identificación fiscal: {{ $company['tax_id'] }}</p>
-                @endif
                 @if (! empty($company['address']))
-                    <p class="small">{{ $company['address'] }}</p>
+                    <p class="small">Dirección: {{ $company['address'] }}</p>
                 @endif
                 @if (! empty($company['phone']))
                     <p class="small">Teléfono: {{ $company['phone'] }}</p>
@@ -301,10 +298,7 @@
     <section class="info">
         <div>
             <strong>Cliente</strong>
-            <p>{{ $sale->customer?->name ?? 'Consumidor Final' }}</p>
-            @if ($sale->customer?->doc_number)
-                <p class="small">{{ $sale->customer?->doc_type ?? 'Documento' }}: {{ $sale->customer?->doc_number }}</p>
-            @endif
+            <p>{{ $customerDisplayName ?? 'Consumidor final' }}</p>
         </div>
         <div class="right">
             <strong>Usuario</strong>

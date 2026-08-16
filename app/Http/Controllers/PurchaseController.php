@@ -10,6 +10,7 @@ use App\Models\Supplier;
 use App\Support\CashRegister;
 use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
+use App\Support\DocumentCompanyHeader;
 use App\Support\Exports\TableExporter;
 use App\Support\OperationDrafts;
 use App\Support\Permissions;
@@ -49,7 +50,7 @@ class PurchaseController extends Controller
         abort_unless(Permissions::userHas($request->user(), Permissions::PURCHASES_EXPORT), 403);
 
         $businessId = currentBusinessId();
-        $business = Business::query()->select('id', 'name', 'country')->find($businessId);
+        $business = Business::query()->select('id', 'name', 'country', 'phone')->find($businessId);
         $range = ReportDateRange::monthToDate($request, $business);
         $query = $this->purchaseListQuery($request, $range)
             ->with(['supplier:id,name', 'createdBy:id,name', 'branch:id,name'])
@@ -367,6 +368,7 @@ class PurchaseController extends Controller
             'purchase' => $purchase,
             'business' => $purchase->business,
             'tenantSetting' => $purchase->business?->tenantSetting,
+            'company' => DocumentCompanyHeader::make($purchase->business, $purchase->branch, $purchase->business?->tenantSetting),
             'purchaseNumber' => format_purchase_number($purchase),
             'timezone' => tenantTimezone($purchase->business),
         ])

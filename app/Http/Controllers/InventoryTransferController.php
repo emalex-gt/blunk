@@ -8,6 +8,7 @@ use App\Models\InventoryTransfer;
 use App\Models\Product;
 use App\Models\StockMovement;
 use App\Support\BranchInventory;
+use App\Support\DocumentCompanyHeader;
 use App\Support\Exports\TableExporter;
 use App\Support\Inventory\StockPolicy;
 use App\Support\OperationDrafts;
@@ -274,6 +275,7 @@ class InventoryTransferController extends Controller
             'transfer' => $transfer,
             'business' => $transfer->business,
             'tenantSetting' => $transfer->business?->tenantSetting,
+            'company' => DocumentCompanyHeader::make($transfer->business, $transfer->fromBranch, $transfer->business?->tenantSetting),
             'timezone' => tenantTimezone($transfer->business),
         ])
             ->setPaper('letter', 'portrait')
