@@ -14,6 +14,7 @@ use App\Models\TenantModule;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\BranchInventory;
+use App\Support\DocumentCompanyHeader;
 use App\Support\Permissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -146,7 +147,7 @@ class ListFilterExportsTest extends TestCase
         $this->assertStringContainsString('FAC-PDF-1', $html);
         $this->assertStringContainsString('Comprobante de compra', $html);
         $this->assertStringContainsString('Tenant export', $html);
-        $this->assertStringContainsString('Avenida PDF 1', $html);
+        $this->assertStringContainsString('Avenida PDF 1, Huehuetenango, Huehuetenango', $html);
         $this->assertStringContainsString('5555-0001', $html);
         $this->assertCompanyHeaderLabelsAreHidden($html);
         $this->assertStringNotContainsString('NIT/documento proveedor', $html);
@@ -217,14 +218,14 @@ class ListFilterExportsTest extends TestCase
             'transfer' => $transfer->load(['business.tenantSetting', 'fromBranch', 'toBranch', 'createdBy', 'lines.product']),
             'business' => $business,
             'tenantSetting' => $business->tenantSetting,
-            'company' => \App\Support\DocumentCompanyHeader::make($business, $branch, $business->tenantSetting),
+            'company' => DocumentCompanyHeader::make($business, $branch, $business->tenantSetting),
             'timezone' => tenantTimezone($business),
         ])->render();
 
         $this->assertStringContainsString('Traslado de inventario', $html);
         $this->assertStringContainsString('Producto traslado PDF', $html);
         $this->assertStringContainsString('Tenant export', $html);
-        $this->assertStringContainsString('Avenida PDF 1', $html);
+        $this->assertStringContainsString('Avenida PDF 1, Huehuetenango, Huehuetenango', $html);
         $this->assertStringContainsString('5555-0001', $html);
         $this->assertCompanyHeaderLabelsAreHidden($html);
         $this->assertStringContainsString('Documento interno generado por Kodbli/BlunkStock', $html);
@@ -277,7 +278,7 @@ class ListFilterExportsTest extends TestCase
             ->get(route('sales.receipt', $sale))
             ->assertOk()
             ->assertSee('Tenant export')
-            ->assertSee('Avenida PDF 1')
+            ->assertSee('Avenida PDF 1, Huehuetenango, Huehuetenango')
             ->assertSee('5555-0001')
             ->assertDontSee('Dirección:')
             ->assertDontSee('Teléfono:')
@@ -301,6 +302,48 @@ class ListFilterExportsTest extends TestCase
             ->assertDontSee('Cliente: CF')
             ->assertDontSee('NIT: CF')
             ->assertDontSee('Doc.: CF');
+    }
+
+    public function test_document_company_header_builds_complete_address_without_empty_commas(): void
+    {
+        [$business, , $branch] = $this->tenant('owner', ['pos']);
+
+        $this->assertSame(
+            'Avenida PDF 1, Huehuetenango, Huehuetenango',
+            DocumentCompanyHeader::make($business, $branch, $business->tenantSetting)['address'],
+        );
+
+        $branch->forceFill([
+            'address' => '4A CALLE 10-25 ZONA 1',
+            'municipality' => null,
+            'department' => 'Guatemala',
+        ]);
+        $this->assertSame(
+            '4A CALLE 10-25 ZONA 1, Guatemala',
+            DocumentCompanyHeader::make($business, $branch, $business->tenantSetting)['address'],
+        );
+
+        $branch->forceFill([
+            'address' => '4A CALLE 10-25 ZONA 1',
+            'municipality' => 'Mixco',
+            'department' => null,
+        ]);
+        $this->assertSame(
+            '4A CALLE 10-25 ZONA 1, Mixco',
+            DocumentCompanyHeader::make($business, $branch, $business->tenantSetting)['address'],
+        );
+
+        $branch->forceFill([
+            'address' => null,
+            'municipality' => 'Mixco',
+            'department' => 'Guatemala',
+        ]);
+        $address = DocumentCompanyHeader::make($business, $branch, $business->tenantSetting)['address'];
+
+        $this->assertSame('Mixco, Guatemala', $address);
+        $this->assertStringNotContainsString(',,', $address);
+        $this->assertFalse(str_starts_with($address, ','));
+        $this->assertFalse(str_ends_with($address, ','));
     }
 
     private function tenant(string $role, array $modules): array
@@ -335,6 +378,8 @@ class ListFilterExportsTest extends TestCase
         $branch = BranchInventory::defaultBranch($business->id);
         $branch->update([
             'address' => 'Avenida PDF 1',
+            'municipality' => 'Huehuetenango',
+            'department' => 'Huehuetenango',
             'phone' => '5555-0001',
         ]);
         $otherBranch = Branch::query()->create([
@@ -342,6 +387,8 @@ class ListFilterExportsTest extends TestCase
             'name' => 'Sucursal B',
             'code' => 'B',
             'address' => 'Avenida PDF 2',
+            'municipality' => 'Guatemala',
+            'department' => 'Guatemala',
             'phone' => '5555-0002',
             'is_active' => true,
         ]);

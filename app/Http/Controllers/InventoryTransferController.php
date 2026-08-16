@@ -265,7 +265,7 @@ class InventoryTransferController extends Controller
 
         $transfer->load([
             'business.tenantSetting',
-            'fromBranch:id,business_id,name,address,phone,logo_url',
+            'fromBranch:id,business_id,name,address,municipality,department,phone,logo_url',
             'toBranch:id,business_id,name,address,phone,logo_url',
             'createdBy:id,name',
             'lines.product:id,name,code,barcode',

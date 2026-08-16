@@ -1246,7 +1246,7 @@ class SaleController extends Controller
             'cancelledBy:id,name',
             'items.product:id,code,barcode',
             'payments:id,sale_id,method,amount,reference,details',
-            'branch:id,business_id,name,address,phone,logo_url',
+            'branch:id,business_id,name,address,municipality,department,phone,logo_url',
         ]);
 
         $receiptFormat = $settings?->receipt_format === 'document' ? 'document' : 'ticket';

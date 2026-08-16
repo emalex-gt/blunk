@@ -35,12 +35,7 @@
 </head>
 <body>
 @php
-    $company ??= [
-        'logo_url' => $transfer->fromBranch?->logo_url ?: ($business?->logo_url ?: $tenantSetting?->company_logo_url),
-        'name' => $business?->name ?: $tenantSetting?->company_name,
-        'address' => $transfer->fromBranch?->address ?: $tenantSetting?->company_address,
-        'phone' => $transfer->fromBranch?->phone ?: $tenantSetting?->company_phone,
-    ];
+    $company ??= \App\Support\DocumentCompanyHeader::make($business, $transfer->fromBranch, $tenantSetting);
     $totalUnits = $transfer->lines->sum(fn ($line) => (int) $line->quantity);
 @endphp
     <div class="header">

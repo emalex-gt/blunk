@@ -359,7 +359,7 @@ class PurchaseController extends Controller
         $purchase->load([
             'business.tenantSetting',
             'supplier:id,name,phone,email,address,contact_person',
-            'branch:id,business_id,name,address,phone,logo_url',
+            'branch:id,business_id,name,address,municipality,department,phone,logo_url',
             'createdBy:id,name',
             'items.product:id,code,barcode',
         ]);

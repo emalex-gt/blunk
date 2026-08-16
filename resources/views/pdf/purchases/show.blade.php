@@ -35,12 +35,7 @@
 </head>
 <body>
 @php
-    $company ??= [
-        'logo_url' => $purchase->branch?->logo_url ?: ($business?->logo_url ?: $tenantSetting?->company_logo_url),
-        'name' => $business?->name ?: $tenantSetting?->company_name,
-        'address' => $purchase->branch?->address ?: $tenantSetting?->company_address,
-        'phone' => $purchase->branch?->phone ?: $tenantSetting?->company_phone,
-    ];
+    $company ??= \App\Support\DocumentCompanyHeader::make($business, $purchase->branch, $tenantSetting);
     $subtotal = $purchase->items->sum(fn ($item) => (float) $item->total);
     $paymentMethodLabel = match ($purchase->payment_method) {
         'cash' => 'Efectivo',
