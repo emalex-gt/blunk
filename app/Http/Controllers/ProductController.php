@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\Category;
 use App\Models\Brand;
+use App\Models\BranchProductPrice;
 use App\Models\Product;
 use App\Models\ProductLocation;
+use App\Models\ProductPrice;
 use App\Models\StockMovement;
 use App\Support\BranchInventory;
 use App\Support\PriceLists;
@@ -549,7 +551,39 @@ class ProductController extends Controller
     private function syncProductPrices(Product $product, array $prices, ?float $defaultSalePrice = null, ?int $branchId = null): void
     {
         $default = PriceLists::ensureDefaultPriceType((int) $product->business_id);
-        $prices[$default->id] = $prices[$default->id] ?? ($defaultSalePrice ?? $product->sale_price);
+        $salePrice = round((float) ($defaultSalePrice ?? $product->sale_price), 2);
+        $businessId = (int) $product->business_id;
+
+        ProductPrice::query()->updateOrCreate(
+            [
+                'business_id' => $businessId,
+                'product_id' => $product->id,
+                'price_type_id' => $default->id,
+            ],
+            [
+                'price' => $salePrice,
+                'is_active' => true,
+            ],
+        );
+
+        if (BranchInventory::pricingScope($businessId) === 'branch') {
+            $branchId ??= BranchInventory::activeBranch($businessId)->id;
+
+            BranchProductPrice::query()->updateOrCreate(
+                [
+                    'business_id' => $businessId,
+                    'branch_id' => $branchId,
+                    'product_id' => $product->id,
+                    'price_type_id' => $default->id,
+                ],
+                [
+                    'price' => $salePrice,
+                    'is_active' => true,
+                ],
+            );
+        }
+
+        unset($prices[$default->id], $prices[(string) $default->id]);
 
         PriceLists::updatePricesForProduct($product, $prices, $branchId);
     }

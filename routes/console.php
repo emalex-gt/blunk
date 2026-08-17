@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Support\Ferrymas\CreditsFocusedAudit;
 use App\Support\GuatemalaNitCustomerResolver;
+use App\Support\Products\MainPriceAuditor;
 use App\Support\TextEncoding;
 
 Artisan::command('inspire', function () {
@@ -65,6 +66,55 @@ Artisan::command('app:create-super-admin {email?} {--name=} {--password=}', func
 
     return self::SUCCESS;
 })->purpose('Create or update a platform super admin user');
+
+Artisan::command('products:audit-main-prices {--business=} {--dry-run} {--confirm} {--branch=} {--include-branch} {--created-after=} {--created-before=} {--report} {--only-active}', function (MainPriceAuditor $auditor) {
+    if ($this->option('confirm') && $this->option('dry-run')) {
+        $this->error('No combines --confirm con --dry-run.');
+
+        return self::FAILURE;
+    }
+
+    try {
+        $result = $auditor->run([
+            'business' => $this->option('business'),
+            'confirm' => (bool) $this->option('confirm'),
+            'branch' => $this->option('branch'),
+            'include_branch' => (bool) $this->option('include-branch'),
+            'created_after' => $this->option('created-after'),
+            'created_before' => $this->option('created-before'),
+            'report' => (bool) $this->option('report'),
+            'only_active' => (bool) $this->option('only-active'),
+        ]);
+    } catch (Throwable $exception) {
+        $this->error($exception->getMessage());
+
+        return self::FAILURE;
+    }
+
+    $summary = $result['summary'];
+
+    $this->line('Auditoria de precios principales');
+    $this->line('business_id: '.$summary['business_id']);
+    $this->line('modo: '.$summary['mode']);
+    $this->line("price_type principal: {$summary['price_type_id']} - {$summary['price_type_name']}");
+    $this->line('determinacion: '.$summary['price_type_resolution']);
+    $this->line('pricing_scope: '.$summary['pricing_scope']);
+    $this->line('productos revisados: '.$summary['total_products_reviewed']);
+    $this->line('coincidencias: '.$summary['matches']);
+    $this->line('diferencias product_prices: '.$summary['differences_detected']);
+    $this->line('product_prices creados: '.$summary['product_prices_created']);
+    $this->line('product_prices actualizados: '.$summary['product_prices_updated']);
+    $this->line('diferencias branch_product_prices: '.$summary['branch_price_differences_detected']);
+    $this->line('branch_product_prices creados: '.$summary['branch_product_prices_created']);
+    $this->line('branch_product_prices actualizados: '.$summary['branch_product_prices_updated']);
+    $this->line('omitidos: '.$summary['omitted']);
+
+    if ($summary['report_path']) {
+        $this->line('reporte: '.$summary['report_path']);
+    }
+
+    return self::SUCCESS;
+})->purpose('Audit and optionally synchronize main product prices for one business');
 
 Artisan::command('ferrymas:audit-credits {--business=1}', function (CreditsFocusedAudit $audit) {
     $businessId = (int) $this->option('business');

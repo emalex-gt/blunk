@@ -3,10 +3,13 @@
 namespace Tests\Feature;
 
 use App\Models\Branch;
+use App\Models\BranchProductPrice;
 use App\Models\Brand;
 use App\Models\Business;
 use App\Models\Category;
+use App\Models\PriceType;
 use App\Models\Product;
+use App\Models\ProductPrice;
 use App\Models\Purchase;
 use App\Models\PurchaseItem;
 use App\Models\StockMovement;
@@ -294,12 +297,63 @@ class ProductImportTest extends TestCase
         $this->assertSame('Descripción nueva', $product->description);
         $this->assertSame('12.50', $product->cost_price);
         $this->assertSame('18.75', $product->sale_price);
+        $defaultPriceType = PriceType::query()
+            ->where('business_id', $business->id)
+            ->where('is_default', true)
+            ->firstOrFail();
+        $this->assertSame('18.75', (string) ProductPrice::query()
+            ->where('business_id', $business->id)
+            ->where('product_id', $product->id)
+            ->where('price_type_id', $defaultPriceType->id)
+            ->firstOrFail()
+            ->price);
         $this->assertSame(6.0, (float) BranchInventory::stockMap($business->id, [$product->id], $branch->id)[$product->id]);
         $this->assertDatabaseHas('categories', ['business_id' => $business->id, 'name' => 'Bebidas']);
         $this->assertDatabaseHas('brands', ['business_id' => $business->id, 'name' => 'Coca Cola']);
         $this->assertDatabaseHas('suppliers', ['business_id' => $business->id, 'name' => 'Proveedor Uno']);
         $this->assertDatabaseMissing('brands', ['business_id' => $business->id, 'name' => 'Marca Rechazada']);
         $this->assertDatabaseHas('stock_movements', ['product_id' => $product->id, 'type' => 'product_import_initial']);
+    }
+
+    public function test_new_product_import_syncs_default_branch_price_when_branch_pricing_is_enabled(): void
+    {
+        [$business, $settings, $branch] = $this->tenant();
+        $settings->forceFill(['pricing_scope' => 'branch'])->save();
+        $superAdmin = $this->superAdmin();
+
+        $token = $this->storeTempImport([
+            self::HEADERS,
+            [1, 'Producto precio sucursal', 4, '', '', 'BAR-BRANCH-PRICE', 'COD-BRANCH-PRICE', 'Repuestos', 25, 42.5, ''],
+        ]);
+
+        $this->actingAs($superAdmin)
+            ->post(route('super-admin.product-imports.confirm', $business), [
+                'branch_id' => $branch->id,
+                'token' => $token,
+                'filename' => 'precio-sucursal.xlsx',
+            ])
+            ->assertRedirect(route('super-admin.product-imports.create', $business));
+
+        $product = Product::query()->where('business_id', $business->id)->where('code', 'COD-BRANCH-PRICE')->firstOrFail();
+        $defaultPriceType = PriceType::query()
+            ->where('business_id', $business->id)
+            ->where('is_default', true)
+            ->firstOrFail();
+
+        $this->assertSame('42.50', $product->sale_price);
+        $this->assertSame('42.50', (string) ProductPrice::query()
+            ->where('business_id', $business->id)
+            ->where('product_id', $product->id)
+            ->where('price_type_id', $defaultPriceType->id)
+            ->firstOrFail()
+            ->price);
+        $this->assertSame('42.50', (string) BranchProductPrice::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->where('product_id', $product->id)
+            ->where('price_type_id', $defaultPriceType->id)
+            ->firstOrFail()
+            ->price);
     }
 
     public function test_template_download_is_available_to_super_admin(): void

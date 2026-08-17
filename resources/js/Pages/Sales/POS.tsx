@@ -3449,7 +3449,7 @@ export default function POS({
                                                         onClick={() => openManualPriceModal(item.product.id)}
                                                         className="self-start text-[11px] font-semibold text-indigo-600 hover:text-indigo-700"
                                                     >
-                                                        {item.manual_price ? 'Editar precio manual' : 'Precio manual'}
+                                                        {item.manual_price ? 'Editar precio manual' : 'Cambiar precio'}
                                                     </button>
                                                 )}
                                                 {item.manual_price && (

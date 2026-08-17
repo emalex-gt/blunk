@@ -665,6 +665,15 @@ class ProductImportService
 
     private function syncDefaultPrice(Business $business, Branch $branch, Product $product, int $priceTypeId, float $price): void
     {
+        ProductPrice::query()->updateOrCreate(
+            [
+                'business_id' => $business->id,
+                'product_id' => $product->id,
+                'price_type_id' => $priceTypeId,
+            ],
+            ['price' => round($price, 2), 'is_active' => true],
+        );
+
         if (BranchInventory::pricingScope((int) $business->id) === 'branch') {
             BranchProductPrice::query()->updateOrCreate(
                 [
@@ -678,15 +687,6 @@ class ProductImportService
 
             return;
         }
-
-        ProductPrice::query()->updateOrCreate(
-            [
-                'business_id' => $business->id,
-                'product_id' => $product->id,
-                'price_type_id' => $priceTypeId,
-            ],
-            ['price' => round($price, 2), 'is_active' => true],
-        );
     }
 
     private function stockMovement(Business $business, Branch $branch, Product $product, string $type, float $quantity, float $previousStock, float $newStock, string $note, int $userId): void

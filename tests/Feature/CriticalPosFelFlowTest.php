@@ -1927,7 +1927,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertDatabaseCount('credit_receipts', 0);
     }
 
-    public function test_product_edit_in_branch_pricing_does_not_change_other_branch_or_global_price(): void
+    public function test_product_edit_in_branch_pricing_syncs_global_and_active_branch_without_changing_other_branch_price(): void
     {
         [$business, $user] = $this->tenant(
             modules: ['inventory', 'branches'],
@@ -1971,9 +1971,63 @@ class CriticalPosFelFlowTest extends TestCase
             ])
             ->assertSessionHasNoErrors();
 
-        $this->assertSame('80.00', (string) ProductPrice::query()->where('business_id', $business->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
+        $this->assertSame('120.00', (string) ProductPrice::query()->where('business_id', $business->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
         $this->assertSame('120.00', (string) BranchProductPrice::query()->where('business_id', $business->id)->where('branch_id', $branchA->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
         $this->assertSame('150.00', (string) BranchProductPrice::query()->where('business_id', $business->id)->where('branch_id', $branchB->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
+    }
+
+    public function test_product_edit_sale_price_overwrites_stale_default_product_price_used_by_pos(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory', 'pos'], role: 'owner');
+        $product = $this->product($business, stock: 10, salePrice: 10);
+        $default = PriceType::query()->where('business_id', $business->id)->where('is_default', true)->firstOrFail();
+
+        ProductPrice::query()
+            ->where('business_id', $business->id)
+            ->where('product_id', $product->id)
+            ->where('price_type_id', $default->id)
+            ->update(['price' => 8]);
+
+        $this->actingAs($user)
+            ->put(route('products.update', $product), [
+                'name' => $product->name,
+                'code' => $product->code,
+                'barcode' => '713200110010',
+                'cost_price' => (string) $product->cost_price,
+                'sale_price' => 10,
+                'stock' => 10,
+                'min_stock' => 0,
+                'location' => $product->location,
+                'is_active' => true,
+                'category_name' => null,
+                'prices' => [
+                    $default->id => 8,
+                ],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $product->refresh();
+
+        $this->assertSame('10.00', (string) $product->sale_price);
+        $this->assertSame('10.00', (string) ProductPrice::query()
+            ->where('business_id', $business->id)
+            ->where('product_id', $product->id)
+            ->where('price_type_id', $default->id)
+            ->firstOrFail()
+            ->price);
+
+        $this->actingAs($user)
+            ->get(route('sales.products.search', ['q' => '713200110010']))
+            ->assertOk()
+            ->assertJsonPath('products.0.sale_price', '10');
+    }
+
+    public function test_pos_cart_does_not_label_price_list_prices_as_manual(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+
+        $this->assertStringContainsString("item.manual_price ? 'Editar precio manual' : 'Cambiar precio'", $source);
+        $this->assertStringNotContainsString("item.manual_price ? 'Editar precio manual' : 'Precio manual'", $source);
     }
 
     public function test_cannot_create_product_with_duplicate_code_in_same_business(): void
