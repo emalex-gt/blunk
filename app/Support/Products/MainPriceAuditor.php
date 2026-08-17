@@ -16,8 +16,6 @@ use InvalidArgumentException;
 
 class MainPriceAuditor
 {
-    private const TOLERANCE = 0.01;
-
     public function run(array $options): array
     {
         $businessId = (int) ($options['business'] ?? 0);
@@ -148,13 +146,17 @@ class MainPriceAuditor
                 foreach ($products as $product) {
                     try {
                         $summary['total_products_reviewed']++;
-                        $salePrice = $this->money($product->sale_price ?? 0);
+                        $salePriceRaw = $this->rawDecimal($product, 'sale_price');
+                        $salePrice = $this->money($salePriceRaw);
+                        $salePriceCents = $this->cents($salePriceRaw);
                         $productPrice = $productPrices->get($product->id);
-                        $currentProductPrice = $productPrice ? $this->money($productPrice->price) : null;
+                        $currentProductPriceRaw = $productPrice ? $this->rawDecimal($productPrice, 'price') : null;
+                        $currentProductPrice = $currentProductPriceRaw === null ? null : $this->money($currentProductPriceRaw);
+                        $currentProductPriceCents = $currentProductPriceRaw === null ? null : $this->cents($currentProductPriceRaw);
                         $difference = $currentProductPrice === null ? null : $this->money($salePrice - $currentProductPrice);
                         $productMismatch = $productPrice === null
                             || ! $productPrice->is_active
-                            || abs((float) ($difference ?? 0)) > self::TOLERANCE;
+                            || $salePriceCents !== $currentProductPriceCents;
 
                         $action = 'none';
 
@@ -200,6 +202,12 @@ class MainPriceAuditor
                             'name' => $product->name,
                             'barcode' => $product->barcode,
                             'code' => $product->code,
+                            'product_sale_price_raw' => $salePriceRaw,
+                            'main_product_price_raw' => $currentProductPriceRaw ?? '',
+                            'product_sale_price_formatted' => $this->formatMoney($salePrice),
+                            'main_product_price_formatted' => $currentProductPrice === null ? '' : $this->formatMoney($currentProductPrice),
+                            'product_sale_price_cents' => $salePriceCents,
+                            'main_product_price_cents' => $currentProductPriceCents ?? '',
                             'product_sale_price' => $this->formatMoney($salePrice),
                             'main_product_price' => $currentProductPrice === null ? '' : $this->formatMoney($currentProductPrice),
                             'difference' => $difference === null ? '' : $this->formatMoney($difference),
@@ -223,11 +231,13 @@ class MainPriceAuditor
 
                         if ($branch) {
                             $branchPrice = $branchPrices->get($product->id);
-                            $currentBranchPrice = $branchPrice ? $this->money($branchPrice->price) : null;
+                            $currentBranchPriceRaw = $branchPrice ? $this->rawDecimal($branchPrice, 'price') : null;
+                            $currentBranchPrice = $currentBranchPriceRaw === null ? null : $this->money($currentBranchPriceRaw);
+                            $currentBranchPriceCents = $currentBranchPriceRaw === null ? null : $this->cents($currentBranchPriceRaw);
                             $branchDifference = $currentBranchPrice === null ? null : $this->money($salePrice - $currentBranchPrice);
                             $branchMismatch = $branchPrice === null
                                 || ! $branchPrice->is_active
-                                || abs((float) ($branchDifference ?? 0)) > self::TOLERANCE;
+                                || $salePriceCents !== $currentBranchPriceCents;
                             $branchAction = 'none';
 
                             if ($branchMismatch) {
@@ -273,6 +283,9 @@ class MainPriceAuditor
                             if ($branchMismatch) {
                                 $branchRows[] = [
                                     ...$row,
+                                    'branch_product_price_raw' => $currentBranchPriceRaw ?? '',
+                                    'branch_product_price_formatted' => $currentBranchPrice === null ? '' : $this->formatMoney($currentBranchPrice),
+                                    'branch_product_price_cents' => $currentBranchPriceCents ?? '',
                                     'branch_product_price' => $currentBranchPrice === null ? '' : $this->formatMoney($currentBranchPrice),
                                     'branch_difference' => $branchDifference === null ? '' : $this->formatMoney($branchDifference),
                                     'branch_price_active' => $branchPrice ? ($branchPrice->is_active ? 'yes' : 'no') : '',
@@ -357,6 +370,16 @@ class MainPriceAuditor
     private function money(mixed $value): float
     {
         return round((float) $value, 2);
+    }
+
+    private function cents(mixed $value): int
+    {
+        return (int) round((float) $value * 100);
+    }
+
+    private function rawDecimal(object $model, string $attribute): string
+    {
+        return (string) ($model->getRawOriginal($attribute) ?? $model->{$attribute} ?? 0);
     }
 
     private function formatMoney(float $value): string

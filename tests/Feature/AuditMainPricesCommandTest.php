@@ -41,6 +41,57 @@ class AuditMainPricesCommandTest extends TestCase
         $this->assertSame('8.00', (string) ProductPrice::query()->where('business_id', $business->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
     }
 
+    public function test_dry_run_detects_one_cent_main_price_difference(): void
+    {
+        [$business] = $this->tenant();
+        $product = $this->product($business, name: 'Jabon Palmolive Sandia', salePrice: 8);
+        $default = PriceLists::ensureDefaultPriceType($business->id);
+        $this->productPrice($business, $product, $default, 7.99);
+
+        $this->artisan('products:audit-main-prices', [
+            '--business' => $business->id,
+            '--dry-run' => true,
+        ])
+            ->expectsOutputToContain('diferencias product_prices: 1')
+            ->assertExitCode(0);
+
+        $this->assertSame('7.99', (string) ProductPrice::query()->where('business_id', $business->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
+    }
+
+    public function test_confirm_fixes_one_cent_main_price_difference(): void
+    {
+        [$business] = $this->tenant();
+        $product = $this->product($business, name: 'Jabon Palmolive Sandia', salePrice: 8);
+        $default = PriceLists::ensureDefaultPriceType($business->id);
+        $this->productPrice($business, $product, $default, 7.99);
+
+        $this->artisan('products:audit-main-prices', [
+            '--business' => $business->id,
+            '--confirm' => true,
+        ])
+            ->expectsOutputToContain('diferencias product_prices: 1')
+            ->assertExitCode(0);
+
+        $this->assertSame('8.00', (string) ProductPrice::query()->where('business_id', $business->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
+    }
+
+    public function test_decimal_precision_noise_is_normalized_to_system_cents(): void
+    {
+        [$business] = $this->tenant();
+        $product = $this->product($business, salePrice: 8);
+        $default = PriceLists::ensureDefaultPriceType($business->id);
+        $this->productPrice($business, $product, $default, 7.999999);
+
+        $this->artisan('products:audit-main-prices', [
+            '--business' => $business->id,
+            '--dry-run' => true,
+        ])
+            ->expectsOutputToContain('diferencias product_prices: 0')
+            ->assertExitCode(0);
+
+        $this->assertSame('8.00', (string) ProductPrice::query()->where('business_id', $business->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
+    }
+
     public function test_confirm_updates_main_product_price_to_sale_price(): void
     {
         [$business] = $this->tenant();
@@ -177,6 +228,12 @@ class AuditMainPricesCommandTest extends TestCase
         $this->assertNotEmpty($files);
         $this->assertTrue(collect($files)->contains(fn ($file) => str_ends_with($file, 'summary.json')));
         $this->assertTrue(collect($files)->contains(fn ($file) => str_ends_with($file, 'mismatches.csv')));
+        $mismatchPath = collect($files)->first(fn ($file) => str_ends_with($file, 'mismatches.csv'));
+        $mismatchCsv = Storage::disk('local')->get($mismatchPath);
+        $this->assertStringContainsString('product_sale_price_raw', $mismatchCsv);
+        $this->assertStringContainsString('main_product_price_raw', $mismatchCsv);
+        $this->assertStringContainsString('product_sale_price_formatted', $mismatchCsv);
+        $this->assertStringContainsString('main_product_price_formatted', $mismatchCsv);
     }
 
     public function test_business_option_is_required(): void
