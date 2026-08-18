@@ -1,4 +1,4 @@
-import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+﻿import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, usePage } from '@inertiajs/react';
 
@@ -9,11 +9,11 @@ type Stats = {
     low_stock_count: number;
     out_of_stock_count: number;
     top_product: string | null;
-    estimated_margin: number;
+    estimated_margin?: number;
     cancelled_sales_count: number;
     last_sale_time: string | null;
-    cash_register_status: 'open' | 'closed';
-    cash_register_expected: number | null;
+    cash_register_status?: 'open' | 'closed';
+    cash_register_expected?: number | null;
     timezone: string;
 };
 
@@ -23,6 +23,7 @@ export default function Dashboard({ stats }: { stats: Stats }) {
     const lastSaleTime = stats.last_sale_time
         ? `${stats.last_sale_time}${country === 'AR' ? ' hs' : ''}`
         : 'Sin ventas';
+    const hasEstimatedMargin = typeof stats.estimated_margin === 'number';
 
     const metricRows = [
         ['Total vendido hoy', formatCurrency(stats.sales_total, country), 'text-indigo-700'],
@@ -31,13 +32,13 @@ export default function Dashboard({ stats }: { stats: Stats }) {
         ['Productos sin stock', String(stats.out_of_stock_count), 'text-red-600'],
         ['Stock bajo', String(stats.low_stock_count), 'text-amber-600'],
         ['Ventas anuladas hoy', String(stats.cancelled_sales_count), 'text-red-600'],
-        [
+        ...(stats.cash_register_status ? [[
             'Caja actual',
             stats.cash_register_status === 'open'
                 ? `Abierta · ${formatCurrency(stats.cash_register_expected ?? 0, country)}`
                 : 'Cerrada',
             stats.cash_register_status === 'open' ? 'text-emerald-700' : 'text-slate-950',
-        ],
+        ]] : []),
         ['Última venta', lastSaleTime, 'text-slate-950'],
     ];
 
@@ -54,7 +55,9 @@ export default function Dashboard({ stats }: { stats: Stats }) {
                             <div>
                                 <h1 className="text-xl font-semibold text-slate-950">Resumen de hoy</h1>
                                 <p className="mt-1 text-sm text-slate-500">
-                                    Visión rápida de ventas, stock y margen estimado.
+                                    {hasEstimatedMargin
+                                        ? 'Visión rápida de ventas, stock y margen estimado.'
+                                        : 'Visión rápida de ventas y stock.'}
                                 </p>
                             </div>
                             <div className="flex gap-2">
@@ -102,14 +105,18 @@ export default function Dashboard({ stats }: { stats: Stats }) {
 
                         <div className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
                             <div className="mb-4 h-2 w-2 rounded-full bg-emerald-500 shadow-md shadow-emerald-200" />
-                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                Margen estimado de hoy
-                            </div>
-                            <div className="mt-3 truncate whitespace-nowrap text-3xl font-bold text-slate-950">
-                                {formatCurrency(stats.estimated_margin, country)}
-                            </div>
+                            {hasEstimatedMargin && (
+                                <>
+                                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        Margen estimado de hoy
+                                    </div>
+                                    <div className="mt-3 truncate whitespace-nowrap text-3xl font-bold text-slate-950">
+                                        {formatCurrency(stats.estimated_margin ?? 0, country)}
+                                    </div>
+                                </>
+                            )}
 
-                            <div className="mt-6 border-t border-slate-100 pt-5">
+                            <div className={hasEstimatedMargin ? 'mt-6 border-t border-slate-100 pt-5' : ''}>
                                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                                     Top producto del día
                                 </div>

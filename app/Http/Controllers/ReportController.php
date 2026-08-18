@@ -84,6 +84,8 @@ class ReportController extends Controller
 
         $salesCount = (clone $todaySales)->count();
         $salesTotal = (float) (clone $todaySales)->sum('total');
+        $canViewProfit = Permissions::userHas($request->user(), Permissions::REPORTS_PROFIT_VIEW);
+        $canViewCashRegister = Permissions::userHas($request->user(), Permissions::CASH_REGISTER_VIEW);
         $cancelledSalesCount = Sale::query()
             ->where('business_id', $businessId)
             ->where('status', 'cancelled')
@@ -96,34 +98,41 @@ class ReportController extends Controller
             ->whereBetween('created_at', [$start, $end])
             ->latest()
             ->first(['id', 'created_at']);
-        $openCashSession = CashRegister::currentOpenSession($businessId);
+        $openCashSession = $canViewCashRegister ? CashRegister::currentOpenSession($businessId) : null;
+        $stats = [
+            'sales_count' => $salesCount,
+            'sales_total' => $salesTotal,
+            'average_ticket' => $salesCount > 0 ? round($salesTotal / $salesCount, 2) : 0,
+            'low_stock_count' => Product::query()
+                ->where('business_id', $businessId)
+                ->where('stock', '>', 0)
+                ->whereColumn('stock', '<=', 'min_stock')
+                ->count(),
+            'out_of_stock_count' => Product::query()
+                ->where('business_id', $businessId)
+                ->where('stock', '<=', 0)
+                ->count(),
+            'top_product' => $topProduct?->product_name,
+            'cancelled_sales_count' => $cancelledSalesCount,
+            'last_sale_time' => $lastSale?->created_at
+                ? $lastSale->created_at->copy()->timezone($timezone)->format('H:i')
+                : null,
+            'timezone' => $timezone,
+        ];
+
+        if ($canViewProfit) {
+            $stats['estimated_margin'] = $this->marginQuery($businessId, $start, $end);
+        }
+
+        if ($canViewCashRegister) {
+            $stats['cash_register_status'] = $openCashSession ? 'open' : 'closed';
+            $stats['cash_register_expected'] = $openCashSession
+                ? CashRegister::summary($openCashSession)['expected_cash']
+                : null;
+        }
 
         return Inertia::render('Dashboard', [
-            'stats' => [
-                'sales_count' => $salesCount,
-                'sales_total' => $salesTotal,
-                'average_ticket' => $salesCount > 0 ? round($salesTotal / $salesCount, 2) : 0,
-                'low_stock_count' => Product::query()
-                    ->where('business_id', $businessId)
-                    ->where('stock', '>', 0)
-                    ->whereColumn('stock', '<=', 'min_stock')
-                    ->count(),
-                'out_of_stock_count' => Product::query()
-                    ->where('business_id', $businessId)
-                    ->where('stock', '<=', 0)
-                    ->count(),
-                'top_product' => $topProduct?->product_name,
-                'estimated_margin' => $this->marginQuery($businessId, $start, $end),
-                'cancelled_sales_count' => $cancelledSalesCount,
-                'last_sale_time' => $lastSale?->created_at
-                    ? $lastSale->created_at->copy()->timezone($timezone)->format('H:i')
-                    : null,
-                'cash_register_status' => $openCashSession ? 'open' : 'closed',
-                'cash_register_expected' => $openCashSession
-                    ? CashRegister::summary($openCashSession)['expected_cash']
-                    : null,
-                'timezone' => $timezone,
-            ],
+            'stats' => $stats,
         ]);
     }
 

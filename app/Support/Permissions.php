@@ -167,7 +167,11 @@ class Permissions
             self::REPORTS_TOP_PRODUCTS_VIEW => ['name' => 'Ver productos más vendidos', 'group' => 'Reportes'],
             self::REPORTS_INVENTORY_VIEW => ['name' => 'Ver reporte de inventario', 'group' => 'Reportes'],
             self::REPORTS_DAILY_VIEW => ['name' => 'Ver reporte diario', 'group' => 'Reportes'],
-            self::REPORTS_PROFIT_VIEW => ['name' => 'Ver reporte de utilidades', 'group' => 'Reportes'],
+            self::REPORTS_PROFIT_VIEW => [
+                'name' => 'Ver márgenes y rentabilidad',
+                'group' => 'Reportes',
+                'description' => 'Permite ver costos, márgenes, utilidad estimada y rentabilidad.',
+            ],
             self::REPORTS_WAREHOUSE_MONEY_VIEW => ['name' => 'Ver dinero en bodega', 'group' => 'Reportes'],
             self::REPORTS_SALES_BY_SELLER_VIEW => ['name' => 'Ver ventas por vendedor', 'group' => 'Reportes'],
             self::REPORTS_SALES_BY_DATE_VIEW => ['name' => 'Ver ventas por fecha', 'group' => 'Reportes'],
