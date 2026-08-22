@@ -964,8 +964,13 @@ class RoutesPreSalesTest extends TestCase
             ->post(route('routes.pre-sales.cancel', $preSale), ['idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true))])
             ->assertSessionHasNoErrors();
 
+        $this->actingAs($seller)
+            ->post(route('routes.pre-sales.cancel', $preSale), ['idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true))])
+            ->assertForbidden();
+
         $this->assertSame('cancelled', $preSale->refresh()->status);
         $this->assertSame(0, StockReservation::query()->where('status', 'active')->count());
+        $this->assertSame(1, StockReservation::query()->where('status', 'released')->count());
         $this->assertSame(10.0, StockAvailability::availableStock($product, null, $branch->id));
     }
 
@@ -1231,6 +1236,14 @@ class RoutesPreSalesTest extends TestCase
                 'no_sale_note' => 'El cliente decidió no comprar hoy.',
             ])
             ->assertSessionHasNoErrors();
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
+                'no_sale_reason' => 'No quiso comprar',
+                'no_sale_note' => 'El cliente decidió no comprar hoy.',
+            ])
+            ->assertSessionHasErrors('pre_sale');
 
         $this->assertSame('without_sale', $visit->refresh()->status);
         $this->assertSame('No quiso comprar', $visit->no_sale_reason);
@@ -2051,6 +2064,17 @@ class RoutesPreSalesTest extends TestCase
             ])
             ->assertSessionHasNoErrors()
             ->assertSessionHas('success', 'Preventa lista para facturar.');
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
+                'items' => [[
+                    'id' => $item->id,
+                    'picked_quantity' => 3,
+                    'picking_note' => 'Segundo intento bloqueado.',
+                ]],
+            ])
+            ->assertSessionHasErrors('pre_sale');
 
         $preSale->refresh();
         $item->refresh();

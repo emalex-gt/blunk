@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Branch;
 use App\Models\Business;
+use App\Models\CashRegisterSession;
 use App\Models\Customer;
 use App\Models\CustomerAccountMovement;
 use App\Models\CustomerCreditAccount;
@@ -138,6 +139,48 @@ class CriticalOperationIdempotencyTest extends TestCase
         $this->assertSame(1, CustomerAccountMovement::query()->where('business_id', $business->id)->where('type', 'payment')->count());
         $this->assertSame('75.00', CustomerCreditAccount::query()->where('customer_id', $customer->id)->value('current_balance'));
         $this->assertSame($branch->id, CustomerCreditPayment::query()->firstOrFail()->branch_id);
+    }
+
+    public function test_credit_payment_cancel_blocks_a_second_distinct_key_without_reversing_balance_twice(): void
+    {
+        [$business, $user, $branch] = $this->tenant('owner', ['credits'], enableCredits: true);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente cancelación CxC',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+        ]);
+        CustomerCreditAccount::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => null,
+            'customer_id' => $customer->id,
+            'current_balance' => 100,
+        ]);
+
+        $this->actingAs($user)->post(route('credits.payments.store'), [
+            'idempotency_key' => 'idem-ar-payment-to-cancel',
+            'customer_id' => $customer->id,
+            'amount' => 25,
+            'payment_method' => 'bank_transfer',
+        ])->assertSessionHasNoErrors();
+
+        $payment = CustomerCreditPayment::query()->firstOrFail();
+
+        $this->actingAs($user)->post(route('credits.payments.cancel', $payment), [
+            'idempotency_key' => 'idem-ar-payment-cancel-1',
+        ])->assertSessionHasNoErrors();
+
+        $this->actingAs($user)->post(route('credits.payments.cancel', $payment), [
+            'idempotency_key' => 'idem-ar-payment-cancel-2',
+        ])->assertSessionHasErrors('payment');
+
+        $this->assertSame('cancelled', $payment->refresh()->status);
+        $this->assertSame('100.00', CustomerCreditAccount::query()->where('customer_id', $customer->id)->value('current_balance'));
+        $this->assertSame(1, CustomerAccountMovement::query()
+            ->where('business_id', $business->id)
+            ->where('payment_id', $payment->id)
+            ->where('type', 'cancellation')
+            ->count());
     }
 
     public function test_credit_receipt_line_cancel_blocks_second_distinct_key_without_double_cancelling_quantity(): void
@@ -306,9 +349,37 @@ class CriticalOperationIdempotencyTest extends TestCase
 
         $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $workDay), $payload)->assertRedirect(route('routes.mobile.zones'));
         $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $workDay), $payload)->assertRedirect(route('routes.mobile.zones'));
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $workDay), [
+            'idempotency_key' => 'idem-route-close-distinct-key',
+        ])->assertSessionHasErrors('work_day');
 
         $this->assertSame('closed', $workDay->refresh()->status);
         $this->assertSame('submitted', PreSale::query()->where('route_work_day_id', $workDay->id)->value('status'));
+    }
+
+    public function test_cash_register_close_blocks_a_second_request_after_the_session_is_closed(): void
+    {
+        [$business, $user, $branch] = $this->tenant('owner', ['cash_register']);
+        $session = CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'opened_by' => $user->id,
+            'status' => 'open',
+            'opening_amount' => 0,
+            'expected_cash' => 0,
+            'opened_at' => now(),
+        ]);
+
+        $this->actingAs($user)->post(route('cash-register.close'), [
+            'counted_cash' => 0,
+        ])->assertRedirect(route('cash-register.closings.show', $session));
+
+        $this->actingAs($user)->post(route('cash-register.close'), [
+            'counted_cash' => 0,
+        ])->assertSessionHasErrors('cash_register');
+
+        $this->assertSame('closed', $session->refresh()->status);
+        $this->assertNotNull($session->closed_at);
     }
 
     private function tenant(

@@ -1008,6 +1008,24 @@ class RouteController extends Controller
             ],
             function () use ($request, $visit, $data, $reservations) {
                 $preSaleId = DB::transaction(function () use ($request, $visit, $data, $reservations) {
+            $workDay = RouteWorkDay::query()
+                ->where('business_id', currentBusinessId())
+                ->whereKey($visit->route_work_day_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($workDay->status !== 'open') {
+                throw ValidationException::withMessages([
+                    'pre_sale' => 'La jornada está cerrada. La preventa ya no se puede editar.',
+                ]);
+            }
+
+            $visit = RouteVisit::query()
+                ->where('business_id', currentBusinessId())
+                ->whereKey($visit->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
             $preSale = PreSale::query()
                 ->where('business_id', currentBusinessId())
                 ->where('route_visit_id', $visit->id)
@@ -1162,12 +1180,6 @@ class RouteController extends Controller
         ]);
 
         if ($preSale->status === PreSale::STATUS_DRAFT) {
-            if ($preSale->workDay?->status !== 'open') {
-                throw ValidationException::withMessages([
-                    'pre_sale' => 'Solo se pueden cancelar preventas en borrador con jornada abierta.',
-                ]);
-            }
-
         app(IdempotencyService::class)->run(
             (int) $preSale->business_id,
             (int) $preSale->branch_id,
@@ -1184,16 +1196,38 @@ class RouteController extends Controller
             ],
             function () use ($preSale, $reservations, $request) {
                 DB::transaction(function () use ($preSale, $reservations, $request) {
-            $reservations->releasePreSaleReservations($preSale);
-            $preSale->update([
+            $workDay = RouteWorkDay::query()
+                ->where('business_id', currentBusinessId())
+                ->whereKey($preSale->route_work_day_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($workDay->status !== 'open') {
+                throw ValidationException::withMessages([
+                    'pre_sale' => 'Solo se pueden cancelar preventas en borrador con jornada abierta.',
+                ]);
+            }
+
+            $lockedPreSale = PreSale::query()
+                ->where('business_id', currentBusinessId())
+                ->whereKey($preSale->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($lockedPreSale->status !== PreSale::STATUS_DRAFT) {
+                throw ValidationException::withMessages([
+                    'pre_sale' => 'Esta preventa ya no está disponible para cancelar.',
+                ]);
+            }
+
+            $reservations->releasePreSaleReservations($lockedPreSale);
+            $lockedPreSale->update([
                 'status' => PreSale::STATUS_CANCELLED,
                 'cancelled_at' => now(),
                 'cancelled_by' => $request->user()->id,
             ]);
 
-            if ($preSale->workDay) {
-                app(RouteWorkDayCompletion::class)->refresh($preSale->workDay, $request->user());
-            }
+            app(RouteWorkDayCompletion::class)->refresh($workDay, $request->user());
                 });
 
                 return [
@@ -1391,6 +1425,43 @@ class RouteController extends Controller
             ],
             function () use ($visit, $data, $reservations) {
                 DB::transaction(function () use ($visit, $data, $reservations) {
+            $workDay = RouteWorkDay::query()
+                ->where('business_id', currentBusinessId())
+                ->whereKey($visit->route_work_day_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($workDay->status !== 'open') {
+                throw ValidationException::withMessages([
+                    'pre_sale' => 'La jornada está cerrada. La visita ya no se puede editar.',
+                ]);
+            }
+
+            $visit = RouteVisit::query()
+                ->where('business_id', currentBusinessId())
+                ->whereKey($visit->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($visit->status === 'without_sale') {
+                throw ValidationException::withMessages([
+                    'pre_sale' => 'Esta visita ya fue marcada sin venta.',
+                ]);
+            }
+
+            $submittedPreSale = PreSale::query()
+                ->where('business_id', currentBusinessId())
+                ->where('route_visit_id', $visit->id)
+                ->whereNotIn('status', [PreSale::STATUS_DRAFT, PreSale::STATUS_CANCELLED])
+                ->lockForUpdate()
+                ->first();
+
+            if ($submittedPreSale) {
+                throw ValidationException::withMessages([
+                    'pre_sale' => 'La preventa ya fue enviada y no se puede cambiar a sin venta.',
+                ]);
+            }
+
             $preSale = PreSale::query()
                 ->where('business_id', currentBusinessId())
                 ->where('route_visit_id', $visit->id)

@@ -236,6 +236,30 @@ class SaleDuplicateIdempotencyTest extends TestCase
         $this->assertSame(0, CashMovement::query()->where('type', 'sale_cash_cancel')->count());
     }
 
+    public function test_sale_cancel_blocks_a_second_distinct_key_without_reversing_stock_or_cash_twice(): void
+    {
+        [$business, $user] = $this->tenant();
+        Permissions::assignDirectPermissions($user, [Permissions::SALES_CANCEL]);
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $session = $this->openCashRegister($business, $user);
+        $sale = $this->historicalSale($business, $user, $product, 1, 100, now(), withEffects: true, session: $session);
+
+        $this->actingAs($user)->post(route('sales.cancel', $sale), [
+            'idempotency_key' => 'idem-sale-cancel-1',
+            'reason' => 'Error de captura',
+        ])->assertRedirect(route('sales.show', $sale));
+
+        $this->actingAs($user)->post(route('sales.cancel', $sale), [
+            'idempotency_key' => 'idem-sale-cancel-2',
+            'reason' => 'Error de captura',
+        ])->assertSessionHasErrors('reason');
+
+        $this->assertSame('cancelled', $sale->refresh()->status);
+        $this->assertSame(5.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(1, CashMovement::query()->where('type', 'sale_cash_cancel')->count());
+        $this->assertSame(0.0, (float) $session->refresh()->expected_cash);
+    }
+
     public function test_replayed_invoice_idempotency_without_certified_document_returns_safe_error(): void
     {
         [$business, $user] = $this->tenant();

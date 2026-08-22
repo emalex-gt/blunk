@@ -1156,23 +1156,6 @@ class SaleController extends Controller
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
         ]);
 
-        $sale->load(['electronicDocument', 'payments']);
-
-        if ($sale->is_credit_sale && (float) $sale->amount_paid > 0) {
-            throw ValidationException::withMessages([
-                'reason' => 'No se puede anular una venta al crédito con abonos registrados.',
-            ]);
-        }
-
-        if (CashRegister::cashAmountFromPayments($sale->payments) > 0) {
-            CashRegister::requireOpenSession(
-                currentBusinessId(),
-                'Debes abrir caja antes de anular una venta con pago en efectivo.',
-                true,
-                (int) ($sale->branch_id ?: BranchInventory::defaultBranch(currentBusinessId())->id),
-            );
-        }
-
         $businessId = currentBusinessId();
         $branchId = (int) ($sale->branch_id ?: BranchInventory::defaultBranch($businessId)->id);
 
@@ -1191,35 +1174,53 @@ class SaleController extends Controller
                 'reason' => $data['reason'],
             ],
             function () use ($request, $sale, $data, $businessId) {
-                if (
-                    $sale->document_type === 'invoice'
-                    && $sale->electronicDocument
-                    && $sale->electronicDocument->status === 'certified'
-                ) {
-                    try {
-                        app(DigifactInvoiceService::class)->cancelElectronicDocument(
-                            $sale->electronicDocument,
-                            $data['reason'],
-                        );
-                    } catch (FelException $exception) {
-                        throw ValidationException::withMessages([
-                            'reason' => $exception->getMessage() ?: 'No se pudo anular la factura electronica.',
-                        ]);
-                    }
-                }
-
                 DB::transaction(function () use ($request, $sale, $data, $businessId) {
 
             $sale = Sale::query()
                 ->where('business_id', $businessId)
                 ->lockForUpdate()
-                ->with(['items', 'payments'])
+                ->with(['items', 'payments', 'electronicDocument'])
                 ->findOrFail($sale->id);
 
             if (($sale->status ?? 'completed') === 'cancelled') {
                 throw ValidationException::withMessages([
                     'reason' => 'Esta venta ya fue anulada.',
                 ]);
+            }
+
+            if ($sale->is_credit_sale && (float) $sale->amount_paid > 0) {
+                throw ValidationException::withMessages([
+                    'reason' => 'No se puede anular una venta al crédito con abonos registrados.',
+                ]);
+            }
+
+            $branchId = (int) ($sale->branch_id ?: BranchInventory::defaultBranch($businessId)->id);
+            $cashAmount = CashRegister::cashAmountFromPayments($sale->payments);
+
+            if ($cashAmount > 0) {
+                CashRegister::requireOpenSession(
+                    $businessId,
+                    'Debes abrir caja antes de anular una venta con pago en efectivo.',
+                    true,
+                    $branchId,
+                );
+            }
+
+            if (
+                $sale->document_type === 'invoice'
+                && $sale->electronicDocument
+                && $sale->electronicDocument->status === 'certified'
+            ) {
+                try {
+                    app(DigifactInvoiceService::class)->cancelElectronicDocument(
+                        $sale->electronicDocument,
+                        $data['reason'],
+                    );
+                } catch (FelException $exception) {
+                    throw ValidationException::withMessages([
+                        'reason' => $exception->getMessage() ?: 'No se pudo anular la factura electronica.',
+                    ]);
+                }
             }
 
             AccountsReceivable::cancelSaleCharge($sale, $request->user());
@@ -1234,7 +1235,6 @@ class SaleController extends Controller
                     continue;
                 }
 
-                $branchId = (int) ($sale->branch_id ?: BranchInventory::defaultBranch($businessId)->id);
                 [$previousStock, $newStock] = BranchInventory::increase($product, $branchId, (float) $item->quantity);
 
                 StockMovement::create([
@@ -1249,8 +1249,6 @@ class SaleController extends Controller
                     'created_by' => $request->user()->id,
                 ]);
             }
-
-            $cashAmount = CashRegister::cashAmountFromPayments($sale->payments);
 
             if ($cashAmount > 0) {
                 $cashSession = CashRegister::requireOpenSession(

@@ -287,7 +287,10 @@ class CreditReceiptController extends Controller
             ],
             function () use ($line) {
                 DB::transaction(function () use ($line) {
-            $line = CreditReceiptLine::query()->lockForUpdate()->findOrFail($line->id);
+            $line = CreditReceiptLine::query()
+                ->where('business_id', currentBusinessId())
+                ->lockForUpdate()
+                ->findOrFail($line->id);
 
             if ((int) $line->qty_pending <= 0) {
                 throw ValidationException::withMessages([
@@ -413,6 +416,19 @@ class CreditReceiptController extends Controller
                 ->get();
 
             if ($receipts->isEmpty()) {
+                throw ValidationException::withMessages([
+                    'customer' => 'No hay reservas pendientes para transferir.',
+                ]);
+            }
+
+            $pendingLines = CreditReceiptLine::query()
+                ->where('business_id', currentBusinessId())
+                ->whereIn('credit_receipt_id', $receipts->pluck('id'))
+                ->where('qty_pending', '>', 0)
+                ->lockForUpdate()
+                ->get(['id']);
+
+            if ($pendingLines->isEmpty()) {
                 throw ValidationException::withMessages([
                     'customer' => 'No hay reservas pendientes para transferir.',
                 ]);
