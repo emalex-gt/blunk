@@ -16,11 +16,13 @@ type Option = { id: number; name: string };
 
 type PreSale = {
     id: number;
+    branch_id: number;
     status: string;
     total: string;
     created_at: string;
     submitted_at?: string | null;
     picked_at?: string | null;
+    converted_sale_id?: number | null;
     reserved_quantity_total?: string | number;
     picked_quantity_total?: string | number;
     items_count: number;
@@ -37,6 +39,8 @@ type Props = {
     branches: Option[];
     sellers: Option[];
     zones: Option[];
+    canInvoice: boolean;
+    activeBranchId: number;
 };
 
 const statuses = [
@@ -44,13 +48,14 @@ const statuses = [
     { value: 'submitted', label: 'Enviadas' },
     { value: 'processing', label: 'En preparación' },
     { value: 'picked', label: 'Listas para facturar' },
+    { value: 'converted', label: 'Facturadas' },
     { value: 'cancelled', label: 'Canceladas' },
     { value: 'draft', label: 'Borradores' },
 ];
 
 const cancellationReasons = ['Cliente canceló', 'Producto no disponible', 'Duplicada', 'Error de captura', 'Otro'];
 
-export default function Index({ preSales, filters, branches, sellers, zones }: Props) {
+export default function Index({ preSales, filters, branches, sellers, zones, canInvoice, activeBranchId }: Props) {
     const [cancelTarget, setCancelTarget] = useState<PreSale | null>(null);
     const [processingTarget, setProcessingTarget] = useState<PreSale | null>(null);
     const [processingPreSaleId, setProcessingPreSaleId] = useState<number | null>(null);
@@ -226,6 +231,16 @@ export default function Index({ preSales, filters, branches, sellers, zones }: P
                                                 {['submitted', 'processing'].includes(preSale.status) && (
                                                     <Link href={route('routes.pre-sales.pick', preSale.id)} className="rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700">
                                                         Pick
+                                                    </Link>
+                                                )}
+                                                {preSale.status === 'picked' && canInvoice && preSale.branch_id === activeBranchId && (
+                                                    <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-md bg-violet-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-violet-700">
+                                                        Facturar
+                                                    </Link>
+                                                )}
+                                                {preSale.status === 'converted' && preSale.converted_sale_id && (
+                                                    <Link href={route('sales.show', preSale.converted_sale_id)} className="rounded-md bg-violet-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-violet-700">
+                                                        Venta
                                                     </Link>
                                                 )}
                                                 {['submitted', 'processing'].includes(preSale.status) && (

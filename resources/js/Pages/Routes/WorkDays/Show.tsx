@@ -39,11 +39,13 @@ type WorkDay = {
 
 type PreSale = {
     id: number;
+    branch_id: number;
     status: string;
     total: string | number;
     created_at: string;
     submitted_at?: string | null;
     picked_at?: string | null;
+    converted_sale_id?: number | null;
     reserved_quantity_total?: string | number;
     picked_quantity_total?: string | number;
     items_count: number;
@@ -56,11 +58,13 @@ type PreSale = {
 type Props = {
     workDay: WorkDay;
     preSales: Page<PreSale>;
+    canInvoice: boolean;
+    activeBranchId: number;
 };
 
 const cancellationReasons = ['Cliente canceló', 'Producto no disponible', 'Duplicada', 'Error de captura', 'Otro'];
 
-export default function Show({ workDay, preSales }: Props) {
+export default function Show({ workDay, preSales, canInvoice, activeBranchId }: Props) {
     const [cancelTarget, setCancelTarget] = useState<PreSale | null>(null);
     const [processingTarget, setProcessingTarget] = useState<PreSale | null>(null);
     const [processingPreSaleId, setProcessingPreSaleId] = useState<number | null>(null);
@@ -219,6 +223,16 @@ export default function Show({ workDay, preSales }: Props) {
                                                 {['submitted', 'processing'].includes(preSale.status) && (
                                                     <Link href={route('routes.pre-sales.pick', preSale.id)} className="rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700">
                                                         Pick
+                                                    </Link>
+                                                )}
+                                                {preSale.status === 'picked' && canInvoice && preSale.branch_id === activeBranchId && (
+                                                    <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-md bg-violet-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-violet-700">
+                                                        Facturar
+                                                    </Link>
+                                                )}
+                                                {preSale.status === 'converted' && preSale.converted_sale_id && (
+                                                    <Link href={route('sales.show', preSale.converted_sale_id)} className="rounded-md bg-violet-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-violet-700">
+                                                        Venta
                                                     </Link>
                                                 )}
                                                 {['submitted', 'processing'].includes(preSale.status) && (

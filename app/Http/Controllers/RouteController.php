@@ -12,6 +12,7 @@ use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
 use App\Models\RouteZoneCustomer;
 use App\Models\TenantSetting;
+use App\Models\TenantFelSetting;
 use App\Models\User;
 use App\Support\BranchInventory;
 use App\Support\GuatemalaNitCustomerResolver;
@@ -361,6 +362,8 @@ class RouteController extends Controller
                 'summary' => $summary,
             ],
             'preSales' => $preSales,
+            'canInvoice' => Permissions::userHas(request()->user(), Permissions::ROUTES_PRE_SALES_INVOICE),
+            'activeBranchId' => BranchInventory::activeBranch($businessId)->id,
         ]);
     }
 
@@ -368,7 +371,7 @@ class RouteController extends Controller
     {
         $businessId = currentBusinessId();
         $status = $request->string('status')->toString();
-        $status = in_array($status, ['draft', 'submitted', 'processing', 'picked', 'cancelled'], true) ? $status : null;
+        $status = in_array($status, ['draft', 'submitted', 'processing', 'picked', 'converted', 'cancelled'], true) ? $status : null;
         $dateFrom = $request->date('date_from')?->startOfDay();
         $dateTo = $request->date('date_to')?->endOfDay();
         $branchId = $request->filled('branch_id')
@@ -446,6 +449,8 @@ class RouteController extends Controller
             'branches' => Branch::query()->where('business_id', $businessId)->where('is_active', true)->orderBy('name')->get(['id', 'name']),
             'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
             'zones' => RouteZone::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
+            'canInvoice' => Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_INVOICE),
+            'activeBranchId' => BranchInventory::activeBranch($businessId)->id,
         ]);
     }
 
@@ -460,6 +465,8 @@ class RouteController extends Controller
             'seller:id,name',
             'processingUser:id,name',
             'pickedBy:id,name',
+            'convertedBy:id,name',
+            'convertedSale:id,business_id,business_number,document_type,total',
             'customer:id,name,commercial_name,contact_name,doc_number,address,phone',
             'workDay:id,work_date,status,started_at,closed_at',
             'visit:id,status,visit_order,no_sale_reason,no_sale_note,started_at,finished_at',
@@ -477,6 +484,14 @@ class RouteController extends Controller
             ->groupBy('source_item_id')
             ->selectRaw('source_item_id, COALESCE(SUM(quantity), 0) as quantity')
             ->pluck('quantity', 'source_item_id');
+        $tenantSettings = TenantSetting::query()->where('business_id', $preSale->business_id)->first();
+        $felSettings = TenantFelSetting::query()->where('business_id', $preSale->business_id)->first();
+        $business = Business::query()->findOrFail($preSale->business_id);
+        $invoiceAvailable = $business->country === 'GT'
+            && (bool) ($tenantSettings?->allow_invoices ?? false)
+            && module_enabled('fel_gt', $preSale->business_id)
+            && (bool) $felSettings?->enabled
+            && (bool) $felSettings?->isConfigured();
 
         return Inertia::render('Routes/PreSales/Show', [
             'preSale' => [
@@ -488,6 +503,9 @@ class RouteController extends Controller
                 'processing_user' => $preSale->processingUser,
                 'picked_at' => $preSale->picked_at?->toIso8601String(),
                 'picked_by' => $preSale->pickedBy,
+                'converted_at' => $preSale->converted_at?->toIso8601String(),
+                'converted_by' => $preSale->convertedBy,
+                'converted_sale' => $preSale->convertedSale,
                 'cancelled_at' => $preSale->cancelled_at?->toIso8601String(),
                 'cancellation_reason' => $preSale->cancellation_reason,
                 'cancellation_note' => $preSale->cancellation_note,
@@ -495,6 +513,12 @@ class RouteController extends Controller
                 'subtotal' => (float) $preSale->subtotal,
                 'discount_total' => (float) $preSale->discount_total,
                 'total' => (float) $preSale->total,
+                'prepared_total' => round((float) $preSale->items->sum(function ($item) {
+                    $picked = (float) ($item->picked_quantity ?? 0);
+                    $quantity = max((float) $item->quantity, 1);
+
+                    return max(0, round(($picked * (float) $item->unit_price) - (((float) $item->discount / $quantity) * $picked), 2));
+                }), 2),
                 'branch' => $preSale->branch,
                 'zone' => $preSale->zone,
                 'seller' => $preSale->seller,
@@ -522,6 +546,17 @@ class RouteController extends Controller
                         'available_stock' => (float) ($breakdown['available_stock'] ?? 0),
                     ];
                 })->values(),
+            ],
+            'canInvoice' => Permissions::userHas(request()->user(), Permissions::ROUTES_PRE_SALES_INVOICE)
+                && (int) BranchInventory::activeBranch((int) $preSale->business_id)->id === (int) $preSale->branch_id,
+            'invoiceOptions' => [
+                'mode' => $tenantSettings?->route_pre_sale_invoicing_mode ?: 'manual',
+                'document_types' => array_values(array_filter([
+                    (bool) ($tenantSettings?->allow_receipts ?? true) ? 'receipt' : null,
+                    $invoiceAvailable ? 'invoice' : null,
+                ])),
+                'credit_enabled' => (bool) ($tenantSettings?->enable_credit_sales ?? false),
+                'payment_methods' => ['cash', 'card', 'transfer', 'check'],
             ],
         ]);
     }

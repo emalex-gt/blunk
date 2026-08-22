@@ -33,6 +33,9 @@ class PreSale extends Model
         'processing_user_id',
         'picked_at',
         'picked_by',
+        'converted_at',
+        'converted_by',
+        'converted_sale_id',
         'cancelled_at',
         'cancelled_by',
         'cancellation_reason',
@@ -46,6 +49,7 @@ class PreSale extends Model
         'submitted_at' => 'datetime',
         'processing_started_at' => 'datetime',
         'picked_at' => 'datetime',
+        'converted_at' => 'datetime',
         'cancelled_at' => 'datetime',
     ];
 
@@ -82,6 +86,16 @@ class PreSale extends Model
     public function pickedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'picked_by');
+    }
+
+    public function convertedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'converted_by');
+    }
+
+    public function convertedSale(): BelongsTo
+    {
+        return $this->belongsTo(Sale::class, 'converted_sale_id');
     }
 
     public function workDay(): BelongsTo

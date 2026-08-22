@@ -17,6 +17,7 @@ use App\Http\Controllers\InventoryTransferController;
 use App\Http\Controllers\OperationDraftController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\RouteController;
+use App\Http\Controllers\RoutePreSaleInvoiceController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\TenantUserController;
@@ -265,6 +266,9 @@ Route::middleware('auth')->group(function () {
             Route::post('/pre-sales/{preSale}/pick', [RouteController::class, 'storePreSalePicking'])
                 ->middleware('permission:routes.pre_sales.pick')
                 ->name('pre-sales.pick.store');
+            Route::post('/pre-sales/{preSale}/invoice', [RoutePreSaleInvoiceController::class, 'store'])
+                ->middleware('permission:routes.pre_sales.invoice')
+                ->name('pre-sales.invoice');
 
             Route::get('/mobile/zones', [RouteController::class, 'mobileZones'])
                 ->middleware('permission:routes.work')
