@@ -14,6 +14,7 @@ use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Support\Ferrymas\CreditsFocusedAudit;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\Products\MainPriceAuditor;
+use App\Support\SalesDuplicateAuditor;
 use App\Support\TextEncoding;
 
 Artisan::command('inspire', function () {
@@ -115,6 +116,65 @@ Artisan::command('products:audit-main-prices {--business=} {--dry-run} {--confir
 
     return self::SUCCESS;
 })->purpose('Audit and optionally synchronize main product prices for one business');
+
+Artisan::command('sales:audit-duplicates {--business=} {--from=} {--to=} {--window-seconds=60} {--report} {--dry-run} {--confirm} {--keep-sale-id=} {--duplicate-sale-id=}', function (SalesDuplicateAuditor $auditor) {
+    if ($this->option('confirm') && $this->option('dry-run')) {
+        $this->error('No combines --confirm con --dry-run.');
+
+        return self::FAILURE;
+    }
+
+    try {
+        if ($this->option('keep-sale-id') || $this->option('duplicate-sale-id')) {
+            $result = $auditor->repair([
+                'business' => $this->option('business'),
+                'keep_sale_id' => $this->option('keep-sale-id'),
+                'duplicate_sale_id' => $this->option('duplicate-sale-id'),
+                'confirm' => (bool) $this->option('confirm'),
+            ]);
+
+            $this->line('Reparacion de venta duplicada');
+            $this->line('modo: '.$result['mode']);
+            $this->line('conservar venta: '.$result['keep_sale_id']);
+            $this->line('venta duplicada: '.$result['duplicate_sale_id']);
+            $this->line('correlativo duplicado: '.$result['duplicate_business_number']);
+            $this->line('reversas de stock: '.$result['stock_reversals']);
+            $this->line('reversa caja: '.$result['cash_reversal_amount']);
+            $this->line($result['recommendation']);
+
+            return self::SUCCESS;
+        }
+
+        $result = $auditor->audit([
+            'business' => $this->option('business'),
+            'from' => $this->option('from'),
+            'to' => $this->option('to'),
+            'window_seconds' => $this->option('window-seconds'),
+            'report' => (bool) $this->option('report'),
+        ]);
+    } catch (Throwable $exception) {
+        $this->error($exception->getMessage());
+
+        return self::FAILURE;
+    }
+
+    $this->line('Auditoria de ventas duplicadas');
+    $this->line('business_id: '.$result['business_id']);
+    $this->line('ventana_segundos: '.$result['window_seconds']);
+    $this->line('ventas_revisadas: '.$result['sales_reviewed']);
+    $this->line('grupos_duplicados: '.$result['duplicate_groups']);
+
+    foreach ($result['groups'] as $index => $group) {
+        $this->line('Grupo '.($index + 1).': ventas '.implode(', ', $group['sale_ids']).' | correlativos '.implode(', ', $group['business_numbers']).' | total '.$group['total']);
+        $this->line('  recomendacion: '.$group['recommendation']);
+    }
+
+    if ($result['report_path']) {
+        $this->line('reporte: '.$result['report_path']);
+    }
+
+    return self::SUCCESS;
+})->purpose('Audit and optionally repair duplicated POS sales safely');
 
 Artisan::command('ferrymas:audit-credits {--business=1}', function (CreditsFocusedAudit $audit) {
     $businessId = (int) $this->option('business');

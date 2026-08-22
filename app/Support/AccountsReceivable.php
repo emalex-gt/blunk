@@ -273,7 +273,7 @@ class AccountsReceivable
         });
     }
 
-    public static function cancelSaleCharge(Sale $sale, User $user): void
+    public static function cancelSaleCharge(Sale $sale, ?User $user = null): void
     {
         if (! $sale->is_credit_sale || (float) $sale->credit_balance <= 0) {
             return;
@@ -304,7 +304,7 @@ class AccountsReceivable
             'description' => 'Anulación de venta '.format_sale_number($sale),
             'amount' => $outstanding,
             'balance_after' => $nextBalance,
-            'created_by' => $user->id,
+            'created_by' => $user?->id,
         ]);
 
         $sale->update(['credit_balance' => 0, 'payment_status' => 'paid']);

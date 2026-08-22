@@ -191,6 +191,7 @@ type PosDraft = {
     business_id?: number | string | null;
     user_id?: number | string | null;
     branch_id?: number | string | null;
+    idempotency_key?: string | null;
     checkout_type?: CheckoutType;
     cart: {
         product_id: number;
@@ -219,6 +220,14 @@ type PosDraft = {
 };
 
 const unsafeRecentProductsKey = 'pos_recent_products';
+
+function makeOperationKey() {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+        return crypto.randomUUID();
+    }
+
+    return `pos-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 const basePaymentMethods = [
     { value: 'cash', label: 'Efectivo' },
@@ -748,6 +757,7 @@ export default function POS({
     ]);
     const [cashReceived, setCashReceived] = useState('');
     const [restoreDraft, setRestoreDraft] = useState<PosDraft | null>(null);
+    const [idempotencyKey, setIdempotencyKey] = useState(makeOperationKey);
     const [draftReady, setDraftReady] = useState(false);
     const [showClearSaleModal, setShowClearSaleModal] = useState(false);
     const [activeOperationDraftId, setActiveOperationDraftId] = useState<number | null>(null);
@@ -775,6 +785,7 @@ export default function POS({
     const cartRef = useRef<CartItem[]>([]);
     const messageTimerRef = useRef<number | null>(null);
     const tokenPrewarmStartedRef = useRef(false);
+    const saleSubmitLockedRef = useRef(false);
     const creditInvoiceLoadedRef = useRef(false);
     const draftLoadInitializedRef = useRef(false);
     const latestDraftRef = useRef<PosDraft | null>(null);
@@ -1268,6 +1279,7 @@ export default function POS({
             business_id: businessId,
             user_id: userId,
             branch_id: draftBranchId,
+            idempotency_key: idempotencyKey,
             checkout_type: effectiveCheckoutType,
             cart: cart.map((item) => ({
                 product_id: item.product.id,
@@ -1358,6 +1370,7 @@ export default function POS({
         setDiscount(restoredDiscount && !discountError(restoredDiscount, cartSubtotal(restoredCart)) ? restoredDiscount : null);
         setData('customer', normalizeCustomerValidationState(draft.customer, country, activeBranchLocationDefaults));
         setData('note', draft.note ?? '');
+        setIdempotencyKey(draft.idempotency_key || makeOperationKey());
         setPayments(draft.payments?.length ? draft.payments.map((payment) => ({
             method: payment.method ?? 'cash',
             amount: payment.amount ?? '0.00',
@@ -1394,6 +1407,7 @@ export default function POS({
         setDiscount(null);
         setCustomerEditing(false);
         setActiveOperationDraftId(null);
+        setIdempotencyKey(makeOperationKey());
     }
 
     function clearPosDraftAndState() {
@@ -2121,7 +2135,7 @@ export default function POS({
     }
 
     function submitSale() {
-        if (cart.length === 0 || processing || creditProcessing) {
+        if (cart.length === 0 || processing || creditProcessing || saleSubmitLockedRef.current) {
             return;
         }
 
@@ -2257,7 +2271,9 @@ export default function POS({
             showMessage('Certificando factura FEL...');
         }
 
+        saleSubmitLockedRef.current = true;
         transform(() => ({
+            idempotency_key: idempotencyKey,
             note: data.note,
             branch_id: activeBranchId,
             draft_id: activeOperationDraftId,
@@ -2318,6 +2334,7 @@ export default function POS({
                 setData('branch_id', activeBranchId);
                 setData('customer', defaultCustomer);
                 setCustomerEditing(false);
+                setIdempotencyKey(makeOperationKey());
                 focusSearch();
 
                 if (effectiveDocumentType === 'receipt' && receiptSaleId) {
@@ -2348,6 +2365,9 @@ export default function POS({
 
                 showError(firstError);
                 toast.error(firstError);
+            },
+            onFinish: () => {
+                saleSubmitLockedRef.current = false;
             },
         });
     }
@@ -2458,6 +2478,7 @@ export default function POS({
         documentType,
         draftKey,
         draftReady,
+        idempotencyKey,
         mainPaymentMethod,
         paymentCondition,
         payments,

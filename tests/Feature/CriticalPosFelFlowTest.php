@@ -4512,6 +4512,7 @@ class CriticalPosFelFlowTest extends TestCase
         ];
 
         return [
+            'idempotency_key' => 'test-sale-'.str_replace('.', '-', uniqid('', true)),
             'document_type' => $documentType,
             'customer' => $customer,
             'items' => array_map(function (array $item) use ($itemOverrides) {

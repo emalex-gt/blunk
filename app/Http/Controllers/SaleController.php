@@ -37,6 +37,7 @@ use App\Support\Permissions;
 use App\Support\PriceLists;
 use App\Support\StockAvailability;
 use App\Support\GuatemalaLocations;
+use App\Support\IdempotencyService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -300,6 +301,7 @@ class SaleController extends Controller
 
         $data = $request->validate([
             'note' => ['nullable', 'string', 'max:2000'],
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'branch_id' => ['nullable', 'integer'],
             'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
             'document_type' => ['nullable', 'in:invoice,receipt'],
@@ -434,9 +436,18 @@ class SaleController extends Controller
         $saleTransactionStarted = microtime(true);
         $certifiedDocument = null;
         $pendingFelReconciliation = null;
+        $idempotencyResult = null;
 
         try {
-            $saleId = DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
+            $idempotencyResult = app(IdempotencyService::class)->run(
+                $business->id,
+                $activeBranch->id,
+                $request->user()->id,
+                'pos_sale',
+                $data['idempotency_key'],
+                $this->saleIdempotencyPayload($data, $activeBranch->id, $business->id, $request->user()->id),
+                function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
+            return DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
             $businessId = currentBusinessId();
             $branch = $activeBranch;
             $openSession = $isCreditSale ? null : CashRegister::requireOpenSession(
@@ -775,8 +786,17 @@ class SaleController extends Controller
                 }
             }
 
-            return $sale->id;
+            return [
+                'result_id' => $sale->id,
+                'response_payload' => [
+                    'sale_id' => $sale->id,
+                    'document_type' => $data['document_type'],
+                ],
+            ];
             });
+                },
+                'sale',
+            );
         } catch (ValidationException $exception) {
             if ($pendingFelReconciliation) {
                 $this->createFelReconciliationRequest($pendingFelReconciliation);
@@ -784,16 +804,33 @@ class SaleController extends Controller
 
             throw $exception;
         }
+
+        $saleId = $idempotencyResult->resultId;
         $saleTransactionMs = round((microtime(true) - $saleTransactionStarted) * 1000, 2);
 
         Log::info('Sale transaction completed', [
             'business_id' => $business->id,
             'sale_id' => $saleId,
             'document_type' => $data['document_type'],
+            'idempotency_replayed' => $idempotencyResult->replayed,
             'sale_transaction_ms' => $saleTransactionMs,
         ]);
 
-        if (($data['document_type'] ?? null) === 'invoice' && ! $isCreditSale) {
+        if (($data['document_type'] ?? null) === 'invoice' && $idempotencyResult->replayed) {
+            $certifiedDocument = ElectronicDocument::query()
+                ->where('business_id', $business->id)
+                ->where('sale_id', $saleId)
+                ->where('status', 'certified')
+                ->first();
+
+            if (! $certifiedDocument) {
+                throw ValidationException::withMessages([
+                    'document_type' => 'La venta ya fue registrada, pero la factura FEL no esta certificada. Revisa la venta antes de reintentar.',
+                ]);
+            }
+        }
+
+        if (($data['document_type'] ?? null) === 'invoice' && ! $isCreditSale && ! $idempotencyResult->replayed) {
             $sale = Sale::query()
                 ->with(['business', 'customer', 'items.product', 'payments', 'electronicDocument'])
                 ->findOrFail($saleId);
@@ -841,7 +878,9 @@ class SaleController extends Controller
             }
         }
 
-        OperationDrafts::markConverted($data['draft_id'] ?? null, 'pos_sale', 'sale', $saleId, $request);
+        if (! $idempotencyResult->replayed) {
+            OperationDrafts::markConverted($data['draft_id'] ?? null, 'pos_sale', 'sale', $saleId, $request);
+        }
 
         $redirect = redirect()->route('sales.create')->with('success', 'Venta finalizada.');
 
@@ -1431,6 +1470,42 @@ class SaleController extends Controller
         } catch (FelException) {
             return response('No se pudo obtener el documento imprimible desde Digifact.', 404);
         }
+    }
+
+    private function saleIdempotencyPayload(array $data, int $branchId, int $businessId, int $userId): array
+    {
+        return [
+            'business_id' => $businessId,
+            'branch_id' => $branchId,
+            'user_id' => $userId,
+            'operation_type' => 'pos_sale',
+            'document_type' => $data['document_type'] ?? null,
+            'payment_condition' => $data['payment_condition'] ?? 'paid',
+            'due_date' => $data['due_date'] ?? null,
+            'note' => $data['note'] ?? null,
+            'customer' => $data['customer'] ?? null,
+            'payments' => $data['payments'] ?? [],
+            'items' => collect($data['items'] ?? [])
+                ->map(fn (array $item) => [
+                    'product_id' => (int) ($item['product_id'] ?? 0),
+                    'quantity' => (int) ($item['quantity'] ?? 0),
+                    'price_type_id' => $item['price_type_id'] ?? null,
+                    'unit_price' => isset($item['unit_price']) ? round((float) $item['unit_price'], 4) : null,
+                    'price_source' => $item['price_source'] ?? null,
+                    'manual_price' => (bool) ($item['manual_price'] ?? false),
+                    'credit_line_id' => $item['credit_line_id'] ?? null,
+                ])
+                ->sortBy(fn (array $item) => implode('|', [
+                    $item['product_id'],
+                    $item['credit_line_id'] ?? '',
+                    $item['price_type_id'] ?? '',
+                    $item['unit_price'] ?? '',
+                    $item['quantity'],
+                ]))
+                ->values()
+                ->all(),
+            'discount' => $data['discount'] ?? null,
+        ];
     }
 
     private function resolveSaleDiscount(Request $request, ?array $discountData, float $subtotal): array
