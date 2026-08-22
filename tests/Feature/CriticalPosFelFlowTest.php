@@ -2526,6 +2526,7 @@ class CriticalPosFelFlowTest extends TestCase
 
         $this->actingAs($user)
             ->post(route('purchases.store'), [
+                'idempotency_key' => 'test-purchase-counter',
                 'supplier' => ['name' => 'Proveedor test'],
                 'payment_method' => 'cash',
                 'paid_from_cash' => false,
@@ -2671,6 +2672,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->actingAs($user)
             ->from(route('inventory.transfers.create'))
             ->post(route('inventory.transfers.store'), [
+                'idempotency_key' => 'test-transfer-reserved-block',
                 'from_branch_id' => $main->id,
                 'to_branch_id' => $other->id,
                 'items' => [[
@@ -2723,6 +2725,7 @@ class CriticalPosFelFlowTest extends TestCase
 
         $this->actingAs($user)
             ->post(route('purchases.store'), [
+                'idempotency_key' => 'test-purchase-bank-transfer',
                 'supplier' => ['name' => 'Proveedor test'],
                 'payment_method' => 'bank_transfer',
                 'paid_from_cash' => true,
@@ -2748,6 +2751,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->actingAs($user)
             ->from(route('purchases.create'))
             ->post(route('purchases.store'), [
+                'idempotency_key' => 'test-purchase-cash-no-register',
                 'supplier' => ['name' => 'Proveedor test'],
                 'payment_method' => 'cash',
                 'paid_from_cash' => true,
@@ -3094,7 +3098,10 @@ class CriticalPosFelFlowTest extends TestCase
         $line = CreditReceiptLine::query()->firstOrFail();
 
         $this->actingAs($user)
-            ->delete(route('credits.lines.cancel', $line), ['reason' => 'Cliente desistió'])
+            ->delete(route('credits.lines.cancel', $line), [
+                'idempotency_key' => 'test-credit-line-cancel',
+                'reason' => 'Cliente desistió',
+            ])
             ->assertRedirect();
 
         $line->refresh();
@@ -3180,6 +3187,7 @@ class CriticalPosFelFlowTest extends TestCase
 
         $this->actingAs($user)
             ->post(route('credits.customers.transfer', $from), [
+                'idempotency_key' => 'test-credit-transfer-existing',
                 'to_customer_doc_number' => '999-999',
                 'reason' => 'Cambio de NIT',
             ])
@@ -3218,6 +3226,7 @@ class CriticalPosFelFlowTest extends TestCase
 
         $this->actingAs($user)
             ->post(route('credits.customers.transfer', $from), [
+                'idempotency_key' => 'test-credit-transfer-digifact',
                 'to_customer_doc_number' => '1234567',
                 'reason' => 'Cambio validado',
             ])
@@ -3243,6 +3252,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->actingAs($user)
             ->from(route('credits.customers.show', $from))
             ->post(route('credits.customers.transfer', $from), [
+                'idempotency_key' => 'test-credit-transfer-cf',
                 'to_customer_doc_number' => 'CF',
                 'reason' => 'No permitido',
             ])
@@ -3256,6 +3266,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->actingAs($user)
             ->from(route('credits.customers.show', $from))
             ->post(route('credits.customers.transfer', $from), [
+                'idempotency_key' => 'test-credit-transfer-unresolved',
                 'to_customer_doc_number' => '1111111',
                 'reason' => 'No encontrado',
             ])
@@ -3274,6 +3285,7 @@ class CriticalPosFelFlowTest extends TestCase
 
         $this->actingAs($owner)
             ->post(route('credits.customers.transfer', $from), [
+                'idempotency_key' => 'test-credit-transfer-forbidden',
                 'to_customer_doc_number' => '999999',
                 'reason' => 'Sin permiso',
             ])
@@ -3453,6 +3465,7 @@ class CriticalPosFelFlowTest extends TestCase
         $sale = Sale::query()->latest('id')->firstOrFail();
 
         $this->actingAs($user)->post(route('credits.payments.store'), [
+            'idempotency_key' => 'test-credit-payment-partial',
             'customer_id' => $sale->customer_id,
             'amount' => 75,
             'payment_method' => 'bank_transfer',
@@ -3482,11 +3495,13 @@ class CriticalPosFelFlowTest extends TestCase
         $sale = Sale::query()->latest('id')->firstOrFail();
 
         $this->actingAs($user)->post(route('credits.payments.store'), [
+            'idempotency_key' => 'test-credit-payment-cash-missing',
             'customer_id' => $sale->customer_id, 'amount' => 100, 'payment_method' => 'cash',
         ])->assertSessionHasErrors('cash_register');
 
         $this->openCashRegister($business, $user);
         $this->actingAs($user)->post(route('credits.payments.store'), [
+            'idempotency_key' => 'test-credit-payment-cash-open',
             'customer_id' => $sale->customer_id, 'amount' => 100, 'payment_method' => 'cash',
         ])->assertSessionHasNoErrors();
         $payment = CustomerCreditPayment::query()->firstOrFail();
@@ -3494,7 +3509,9 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('0.00', $sale->customer->creditAccount->fresh()->current_balance);
 
         Permissions::assignDirectPermissions($user, [Permissions::CREDITS_PAYMENTS_CANCEL]);
-        $this->actingAs($user)->post(route('credits.payments.cancel', $payment))->assertSessionHasNoErrors();
+        $this->actingAs($user)->post(route('credits.payments.cancel', $payment), [
+            'idempotency_key' => 'test-credit-payment-cancel-cash',
+        ])->assertSessionHasNoErrors();
         $this->assertSame('cancelled', $payment->refresh()->status);
         $this->assertSame('100.00', $sale->customer->creditAccount->fresh()->current_balance);
         $this->assertSame('unpaid', $sale->refresh()->payment_status);
@@ -3599,6 +3616,7 @@ class CriticalPosFelFlowTest extends TestCase
         CustomerCreditAccount::create(['business_id' => $business->id, 'customer_id' => $customer->id, 'current_balance' => 100]);
 
         $this->actingAs($user)->post(route('credits.payments.store'), [
+            'idempotency_key' => 'test-credit-payment-forbidden',
             'customer_id' => $customer->id,
             'amount' => 25,
             'payment_method' => 'bank_transfer',
@@ -3715,6 +3733,7 @@ class CriticalPosFelFlowTest extends TestCase
         $sale = Sale::query()->firstOrFail();
 
         $this->actingAs($user)->post(route('credits.payments.store'), [
+            'idempotency_key' => 'test-credit-payment-print',
             'customer_id' => $sale->customer_id,
             'amount' => 25,
             'payment_method' => 'bank_transfer',
@@ -3781,6 +3800,7 @@ class CriticalPosFelFlowTest extends TestCase
         $secondSale = Sale::query()->latest('id')->firstOrFail();
 
         $this->actingAs($user)->post(route('credits.payments.store'), [
+            'idempotency_key' => 'test-credit-payment-fifo',
             'customer_id' => $firstSale->customer_id,
             'amount' => 150,
             'payment_method' => 'bank_transfer',
@@ -3819,13 +3839,14 @@ class CriticalPosFelFlowTest extends TestCase
         $sale = Sale::query()->firstOrFail();
 
         $this->actingAs($user)->post(route('credits.payments.store'), [
+            'idempotency_key' => 'test-credit-payment-before-cancel-sale',
             'customer_id' => $sale->customer_id,
             'amount' => 10,
             'payment_method' => 'bank_transfer',
         ])->assertSessionHasNoErrors();
 
         $this->actingAs($user)
-            ->post(route('sales.cancel', $sale), ['reason' => 'Error de prueba'])
+            ->post(route('sales.cancel', $sale), ['idempotency_key' => 'test-sale-cancel-credit-paid', 'reason' => 'Error de prueba'])
             ->assertSessionHasErrors('reason');
         $this->assertSame('completed', $sale->refresh()->status);
         $this->assertSame('90.00', $sale->credit_balance);
@@ -4094,6 +4115,7 @@ class CriticalPosFelFlowTest extends TestCase
         $product = $this->product($business, stock: 1, salePrice: 100);
 
         $this->actingAs($user)->post(route('inventory.transfers.store'), [
+            'idempotency_key' => 'test-transfer-negative-block',
             'from_branch_id' => $from->id,
             'to_branch_id' => $to->id,
             'items' => [['product_id' => $product->id, 'quantity' => 2]],
@@ -4106,6 +4128,7 @@ class CriticalPosFelFlowTest extends TestCase
         $productAllowed = $this->product($businessAllowed, stock: 1, salePrice: 100);
 
         $this->actingAs($userAllowed)->post(route('inventory.transfers.store'), [
+            'idempotency_key' => 'test-transfer-negative-allowed',
             'from_branch_id' => $fromAllowed->id,
             'to_branch_id' => $toAllowed->id,
             'items' => [['product_id' => $productAllowed->id, 'quantity' => 2]],
@@ -4139,6 +4162,7 @@ class CriticalPosFelFlowTest extends TestCase
         $product = $this->product($business, stock: 1, salePrice: 100);
 
         $this->actingAs($user)->post(route('stock.quick.store'), [
+            'idempotency_key' => 'test-stock-output-block',
             'product_id' => $product->id,
             'type' => 'exit',
             'quantity' => 2,
@@ -4149,6 +4173,7 @@ class CriticalPosFelFlowTest extends TestCase
         $productAllowed = $this->product($businessAllowed, stock: 1, salePrice: 100);
 
         $this->actingAs($userAllowed)->post(route('stock.quick.store'), [
+            'idempotency_key' => 'test-stock-output-allowed',
             'product_id' => $productAllowed->id,
             'type' => 'exit',
             'quantity' => 2,
@@ -4538,6 +4563,7 @@ class CriticalPosFelFlowTest extends TestCase
     private function creditPayload(Product $product, int $quantity): array
     {
         return [
+            'idempotency_key' => 'test-credit-'.str_replace('.', '-', uniqid('', true)),
             'customer' => [
                 'name' => 'Cliente crédito',
                 'doc_type' => 'NIT',
@@ -4617,6 +4643,7 @@ class CriticalPosFelFlowTest extends TestCase
             ->firstOrFail();
 
         $this->actingAs($user)->post(route('credits.payments.store'), [
+            'idempotency_key' => 'test-payment-print-fixture',
             'customer_id' => $sale->customer_id,
             'amount' => 25,
             'payment_method' => 'bank_transfer',

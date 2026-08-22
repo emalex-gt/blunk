@@ -1,6 +1,7 @@
 import ConfirmDialog from '@/Components/ConfirmDialog';
 import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import { makeOperationKey } from '@/lib/idempotency';
 import { Head, Link, router, useForm } from '@inertiajs/react';
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -85,7 +86,13 @@ export default function Visit({
         unit_price: Number(item.unit_price ?? 0),
         manual_price: Boolean(item.manual_price),
     }));
-    const form = useForm<{ notes: string; items: Item[] }>({ notes: preSale?.notes ?? '', items: initialItems });
+    const [preSaleKey, setPreSaleKey] = useState(() => makeOperationKey('route-pre-sale'));
+    const submitLockedRef = useRef(false);
+    const form = useForm<{ idempotency_key: string; notes: string; items: Item[] }>({
+        idempotency_key: preSaleKey,
+        notes: preSale?.notes ?? '',
+        items: initialItems,
+    });
     const customerDisplayName = visit.customer.commercial_name || visit.customer.name || 'cliente';
     const workDayIsOpen = visit.work_day?.status === 'open';
     const visitIsWithoutSale = visit.status === 'without_sale';
@@ -189,13 +196,17 @@ export default function Visit({
     };
 
     const submit = () => {
-        if (!canModifyPreSale || form.processing || form.data.items.length === 0) {
+        if (!canModifyPreSale || form.processing || submitLockedRef.current || form.data.items.length === 0) {
             return;
         }
 
+        submitLockedRef.current = true;
+        form.setData('idempotency_key', preSaleKey);
         form.post(route('routes.mobile.visits.pre-sale.store', visit.id), {
             preserveScroll: true,
             onSuccess: () => {
+                const nextKey = makeOperationKey('route-pre-sale');
+                setPreSaleKey(nextKey);
                 setEditingPreSale(false);
                 setConfirmation(null);
                 router.visit(window.location.href, {
@@ -204,6 +215,9 @@ export default function Visit({
                     preserveScroll: true,
                     preserveState: false,
                 });
+            },
+            onFinish: () => {
+                submitLockedRef.current = false;
             },
         });
     };

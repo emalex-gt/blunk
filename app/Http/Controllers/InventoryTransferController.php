@@ -10,6 +10,7 @@ use App\Models\StockMovement;
 use App\Support\BranchInventory;
 use App\Support\DocumentCompanyHeader;
 use App\Support\Exports\TableExporter;
+use App\Support\IdempotencyService;
 use App\Support\Inventory\StockPolicy;
 use App\Support\OperationDrafts;
 use App\Support\Permissions;
@@ -142,6 +143,7 @@ class InventoryTransferController extends Controller
         $this->authorizePermission($request, Permissions::INVENTORY_TRANSFERS_CREATE);
 
         $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'from_branch_id' => ['required', 'integer', 'exists:branches,id'],
             'to_branch_id' => ['required', 'integer', 'exists:branches,id', 'different:from_branch_id'],
             'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
@@ -151,11 +153,20 @@ class InventoryTransferController extends Controller
             'items.*.quantity' => ['required', 'integer', 'min:1'],
         ]);
 
-        $transfer = DB::transaction(function () use ($request, $data) {
-            $businessId = currentBusinessId();
-            $from = $this->branchForBusiness((int) $data['from_branch_id'], $businessId);
-            $to = $this->branchForBusiness((int) $data['to_branch_id'], $businessId);
-            $activeBranch = BranchInventory::activeBranch($businessId);
+        $businessId = currentBusinessId();
+        $from = $this->branchForBusiness((int) $data['from_branch_id'], $businessId);
+        $to = $this->branchForBusiness((int) $data['to_branch_id'], $businessId);
+
+        $idempotencyResult = app(IdempotencyService::class)->run(
+            $businessId,
+            $from->id,
+            $request->user()->id,
+            'inventory_transfer_store',
+            $data['idempotency_key'],
+            $this->transferIdempotencyPayload($data, $businessId, $from->id, $to->id, $request->user()->id),
+            function () use ($request, $data, $businessId, $from, $to) {
+                $transfer = DB::transaction(function () use ($request, $data, $businessId, $from, $to) {
+                    $activeBranch = BranchInventory::activeBranch($businessId);
 
             if (! BranchInventory::canSwitchBranches($request->user()) && (int) $from->id !== (int) $activeBranch->id) {
                 throw ValidationException::withMessages([
@@ -231,11 +242,21 @@ class InventoryTransferController extends Controller
             }
 
             return $transfer;
-        });
+                });
 
-        OperationDrafts::markConverted($data['draft_id'] ?? null, 'transfer', 'transfer', $transfer->id, $request);
+                return [
+                    'result_id' => $transfer->id,
+                    'response_payload' => ['transfer_id' => $transfer->id],
+                ];
+            },
+            'inventory_transfer',
+        );
 
-        return redirect()->route('inventory.transfers.show', $transfer)->with('success', 'Traslado registrado correctamente.');
+        if (! $idempotencyResult->replayed) {
+            OperationDrafts::markConverted($data['draft_id'] ?? null, 'transfer', 'transfer', $idempotencyResult->resultId, $request);
+        }
+
+        return redirect()->route('inventory.transfers.show', $idempotencyResult->resultId)->with('success', 'Traslado registrado correctamente.');
     }
 
     public function show(Request $request, InventoryTransfer $transfer): Response
@@ -330,6 +351,27 @@ class InventoryTransferController extends Controller
                         ->orWhere('barcode', 'ilike', "%{$productSearch}%");
                 });
             });
+    }
+
+    private function transferIdempotencyPayload(array $data, int $businessId, int $fromBranchId, int $toBranchId, int $userId): array
+    {
+        return [
+            'business_id' => $businessId,
+            'branch_id' => $fromBranchId,
+            'user_id' => $userId,
+            'operation_type' => 'inventory_transfer_store',
+            'from_branch_id' => $fromBranchId,
+            'to_branch_id' => $toBranchId,
+            'notes' => $data['notes'] ?? null,
+            'items' => collect($data['items'] ?? [])
+                ->map(fn (array $item) => [
+                    'product_id' => (int) ($item['product_id'] ?? 0),
+                    'quantity' => (int) ($item['quantity'] ?? 0),
+                ])
+                ->sortBy(fn (array $item) => implode('|', [$item['product_id'], $item['quantity']]))
+                ->values()
+                ->all(),
+        ];
     }
 
     private function transferFilters(Request $request, ReportDateRange $range): array

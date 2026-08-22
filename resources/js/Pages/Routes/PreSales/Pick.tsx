@@ -1,6 +1,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import { makeOperationKey } from '@/lib/idempotency';
 import { Head, Link, useForm } from '@inertiajs/react';
-import { FormEvent } from 'react';
+import { FormEvent, useRef, useState } from 'react';
 
 type Related = { id: number; name: string };
 
@@ -38,7 +39,10 @@ type PreSale = {
 type Props = { preSale: PreSale };
 
 export default function Pick({ preSale }: Props) {
+    const [idempotencyKey, setIdempotencyKey] = useState(() => makeOperationKey('pre-sale-pick'));
+    const submitLockedRef = useRef(false);
     const form = useForm({
+        idempotency_key: idempotencyKey,
         items: preSale.items.map((item) => ({
             id: item.id,
             picked_quantity: String(item.picked_quantity ?? Math.min(item.quantity, item.reserved_quantity)),
@@ -49,8 +53,19 @@ export default function Pick({ preSale }: Props) {
 
     const submit = (event: FormEvent) => {
         event.preventDefault();
+
+        if (submitLockedRef.current || form.processing) {
+            return;
+        }
+
+        submitLockedRef.current = true;
+        form.setData('idempotency_key', idempotencyKey);
         form.post(route('routes.pre-sales.pick.store', preSale.id), {
             preserveScroll: true,
+            onSuccess: () => setIdempotencyKey(makeOperationKey('pre-sale-pick')),
+            onFinish: () => {
+                submitLockedRef.current = false;
+            },
         });
     };
 

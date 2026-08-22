@@ -1,4 +1,5 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import { makeOperationKey } from '@/lib/idempotency';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import { useState } from 'react';
@@ -83,7 +84,12 @@ export default function CustomerCredit({
             return;
         }
 
-        router.delete(route('credits.lines.cancel', line.id), { data: { reason } });
+        router.delete(route('credits.lines.cancel', line.id), {
+            data: {
+                idempotency_key: makeOperationKey('credit-line-cancel'),
+                reason,
+            },
+        });
     }
 
     async function lookupTransferNit() {
@@ -121,6 +127,7 @@ export default function CustomerCredit({
         }
 
         router.post(route('credits.customers.transfer', customer.id), {
+            idempotency_key: makeOperationKey('credit-transfer'),
             to_customer_doc_number: transferNit.trim(),
             reason: transferReason,
         });

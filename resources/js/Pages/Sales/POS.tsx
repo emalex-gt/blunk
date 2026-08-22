@@ -2165,8 +2165,10 @@ export default function POS({
                 return;
             }
 
+            saleSubmitLockedRef.current = true;
             setCreditProcessing(true);
             router.post(route('credits.receipts.store'), {
+                idempotency_key: idempotencyKey,
                 note: data.note,
                 branch_id: activeBranchId,
                 draft_id: activeOperationDraftId,
@@ -2193,6 +2195,7 @@ export default function POS({
                     setCashReceived('');
                     setPayments([paymentLine(mainPaymentMethod, '0.00')]);
                     setActiveOperationDraftId(null);
+                    setIdempotencyKey(makeOperationKey());
                     clearDraft(draftKey);
                     latestDraftRef.current = null;
                     reset();
@@ -2214,7 +2217,10 @@ export default function POS({
                     showError(firstError);
                     toast.error(firstError);
                 },
-                onFinish: () => setCreditProcessing(false),
+                onFinish: () => {
+                    saleSubmitLockedRef.current = false;
+                    setCreditProcessing(false);
+                },
             });
             return;
         }

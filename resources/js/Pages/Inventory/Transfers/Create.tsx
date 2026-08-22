@@ -1,4 +1,5 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import { makeOperationKey } from '@/lib/idempotency';
 import { discardOperationDraft, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
 import { Head, Link, router } from '@inertiajs/react';
 import axios from 'axios';
@@ -42,6 +43,8 @@ export default function Create({
     const [productResults, setProductResults] = useState<Product[]>(products);
     const [productSearchLoading, setProductSearchLoading] = useState(false);
     const [confirmTransferOpen, setConfirmTransferOpen] = useState(false);
+    const [idempotencyKey, setIdempotencyKey] = useState(() => makeOperationKey('transfer'));
+    const submitLockedRef = useRef(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const previousFromBranchId = useRef<number | null>(fromBranchId);
     const productsById = useMemo(() => new Map(loadedProducts.map((product) => [product.id, product])), [loadedProducts]);
@@ -75,6 +78,7 @@ export default function Create({
         setFromBranchId(activeBranch?.id ?? branches[0]?.id ?? null);
         setToBranchId(branches.find((branch) => branch.id !== activeBranch?.id)?.id ?? null);
         setActiveDraftId(null);
+        setIdempotencyKey(makeOperationKey('transfer'));
         setMessage('');
         requestAnimationFrame(() => searchInputRef.current?.focus());
     }
@@ -219,14 +223,16 @@ export default function Create({
     }
 
     function submit() {
-        if (!validateTransferBeforeSubmit()) {
+        if (submitLockedRef.current || !validateTransferBeforeSubmit()) {
             return;
         }
 
+        submitLockedRef.current = true;
         setProcessing(true);
         setConfirmTransferOpen(false);
 
         router.post(route('inventory.transfers.store'), {
+            idempotency_key: idempotencyKey,
             from_branch_id: fromBranchId,
             to_branch_id: toBranchId,
             notes,
@@ -237,7 +243,11 @@ export default function Create({
             })),
         }, {
             preserveScroll: true,
-            onFinish: () => setProcessing(false),
+            onSuccess: () => setIdempotencyKey(makeOperationKey('transfer')),
+            onFinish: () => {
+                submitLockedRef.current = false;
+                setProcessing(false);
+            },
         });
     }
 

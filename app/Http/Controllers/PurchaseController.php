@@ -12,6 +12,7 @@ use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\DocumentCompanyHeader;
 use App\Support\Exports\TableExporter;
+use App\Support\IdempotencyService;
 use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\ProductSupplierCostHistory;
@@ -183,6 +184,7 @@ class PurchaseController extends Controller
             'supplier.phone' => ['nullable', 'string', 'max:50'],
             'supplier.contact_person' => ['nullable', 'string', 'max:255'],
             'supplier_invoice_number' => ['nullable', 'string', 'max:100'],
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'payment_method' => ['required', 'string', 'in:cash,card,bank_transfer,check,credit,other'],
             'paid_from_cash' => ['nullable', 'boolean'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
@@ -198,14 +200,23 @@ class PurchaseController extends Controller
             'items.*.quantity.min' => 'La cantidad debe ser un número entero.',
         ]);
 
-        $purchase = DB::transaction(function () use ($request, $data) {
-            $businessId = currentBusinessId();
-            $branch = isset($data['branch_id'])
+        $businessId = currentBusinessId();
+        $branch = isset($data['branch_id'])
                 ? \App\Models\Branch::query()
                     ->where('business_id', $businessId)
                     ->where('is_active', true)
                     ->findOrFail((int) $data['branch_id'])
                 : BranchInventory::activeBranch($businessId);
+
+        $idempotencyResult = app(IdempotencyService::class)->run(
+            $businessId,
+            $branch->id,
+            $request->user()->id,
+            'purchase_store',
+            $data['idempotency_key'],
+            $this->purchaseIdempotencyPayload($data, $businessId, $branch->id, $request->user()->id),
+            function () use ($request, $data, $businessId, $branch) {
+                $purchase = DB::transaction(function () use ($request, $data, $businessId, $branch) {
 
             if (! BranchInventory::canSwitchBranches($request->user()) && (int) $branch->id !== (int) BranchInventory::activeBranch($businessId)->id) {
                 throw ValidationException::withMessages([
@@ -316,9 +327,19 @@ class PurchaseController extends Controller
             }
 
             return $purchase;
-        });
+                });
 
-        OperationDrafts::markConverted($data['draft_id'] ?? null, 'purchase', 'purchase', $purchase->id, $request);
+                return [
+                    'result_id' => $purchase->id,
+                    'response_payload' => ['purchase_id' => $purchase->id],
+                ];
+            },
+            'purchase',
+        );
+
+        if (! $idempotencyResult->replayed) {
+            OperationDrafts::markConverted($data['draft_id'] ?? null, 'purchase', 'purchase', $idempotencyResult->resultId, $request);
+        }
 
         return redirect()
             ->route('purchases.index')
@@ -420,6 +441,32 @@ class PurchaseController extends Controller
                         });
                 });
             });
+    }
+
+    private function purchaseIdempotencyPayload(array $data, int $businessId, int $branchId, int $userId): array
+    {
+        return [
+            'business_id' => $businessId,
+            'branch_id' => $branchId,
+            'user_id' => $userId,
+            'operation_type' => 'purchase_store',
+            'supplier_id' => $data['supplier_id'] ?? null,
+            'supplier_name' => $data['supplier_name'] ?? null,
+            'supplier' => $data['supplier'] ?? null,
+            'supplier_invoice_number' => $data['supplier_invoice_number'] ?? null,
+            'payment_method' => $data['payment_method'] ?? null,
+            'paid_from_cash' => (bool) ($data['paid_from_cash'] ?? false),
+            'note' => $data['note'] ?? null,
+            'items' => collect($data['items'] ?? [])
+                ->map(fn (array $item) => [
+                    'product_id' => (int) ($item['product_id'] ?? 0),
+                    'quantity' => (int) ($item['quantity'] ?? 0),
+                    'unit_cost' => round((float) ($item['unit_cost'] ?? 0), 4),
+                ])
+                ->sortBy(fn (array $item) => implode('|', [$item['product_id'], $item['quantity'], $item['unit_cost']]))
+                ->values()
+                ->all(),
+        ];
     }
 
     private function purchaseFilters(Request $request, ReportDateRange $range): array

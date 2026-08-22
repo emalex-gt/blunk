@@ -311,6 +311,7 @@ class PurchaseTransferAsyncSearchTest extends TestCase
 
         $response = $this->actingAs($user)
             ->postJson(route('stock.adjustments.store'), [
+                'idempotency_key' => 'test-stock-adjust-increase',
                 'product_id' => $product->id,
                 'type' => 'increase',
                 'quantity' => 5,
@@ -353,6 +354,7 @@ class PurchaseTransferAsyncSearchTest extends TestCase
 
         $this->actingAs($user)
             ->postJson(route('stock.adjustments.store'), [
+                'idempotency_key' => 'test-stock-adjust-decrease-block',
                 'product_id' => $product->id,
                 'type' => 'decrease',
                 'quantity' => 5,
@@ -365,6 +367,7 @@ class PurchaseTransferAsyncSearchTest extends TestCase
 
         $this->actingAs($user)
             ->postJson(route('stock.adjustments.store'), [
+                'idempotency_key' => 'test-stock-adjust-decrease-allow',
                 'product_id' => $product->id,
                 'type' => 'decrease',
                 'quantity' => 5,
@@ -390,6 +393,7 @@ class PurchaseTransferAsyncSearchTest extends TestCase
 
         $this->actingAs($user)
             ->postJson(route('stock.adjustments.store'), [
+                'idempotency_key' => 'test-stock-adjust-zero',
                 'product_id' => $product->id,
                 'type' => 'increase',
                 'quantity' => 0,
@@ -400,6 +404,7 @@ class PurchaseTransferAsyncSearchTest extends TestCase
 
         $this->actingAs($user)
             ->postJson(route('stock.adjustments.store'), [
+                'idempotency_key' => 'test-stock-adjust-note',
                 'product_id' => $product->id,
                 'type' => 'increase',
                 'quantity' => 1,
@@ -410,6 +415,7 @@ class PurchaseTransferAsyncSearchTest extends TestCase
 
         $this->actingAs($user)
             ->postJson(route('stock.adjustments.store'), [
+                'idempotency_key' => 'test-stock-adjust-other-tenant',
                 'product_id' => $otherProduct->id,
                 'type' => 'increase',
                 'quantity' => 1,
@@ -427,6 +433,7 @@ class PurchaseTransferAsyncSearchTest extends TestCase
 
         $this->actingAs($viewer)
             ->postJson(route('stock.adjustments.store'), [
+                'idempotency_key' => 'test-stock-adjust-forbidden',
                 'product_id' => $product->id,
                 'type' => 'increase',
                 'quantity' => 1,

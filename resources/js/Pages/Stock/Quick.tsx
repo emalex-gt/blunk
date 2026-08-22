@@ -1,6 +1,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { getProductImageUrl } from '@/lib/cloudinary';
 import { t } from '@/lib/i18n';
+import { makeOperationKey } from '@/lib/idempotency';
 import { Head, Link, router } from '@inertiajs/react';
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -41,6 +42,8 @@ export default function StockQuick({
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const [saving, setSaving] = useState(false);
+    const [idempotencyKey, setIdempotencyKey] = useState(() => makeOperationKey('stock-quick'));
+    const submitLockedRef = useRef(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const quantityInputRef = useRef<HTMLInputElement>(null);
     const messageTimerRef = useRef<number | null>(null);
@@ -88,6 +91,7 @@ export default function StockQuick({
         setQuantity('1');
         setNote('');
         setError('');
+        setIdempotencyKey(makeOperationKey('stock-quick'));
 
         requestAnimationFrame(() => quantityInputRef.current?.focus());
     }
@@ -123,7 +127,7 @@ export default function StockQuick({
     function saveMovement(event: FormEvent) {
         event.preventDefault();
 
-        if (!selectedProduct || saving) {
+        if (!selectedProduct || saving || submitLockedRef.current) {
             return;
         }
 
@@ -139,12 +143,14 @@ export default function StockQuick({
             return;
         }
 
+        submitLockedRef.current = true;
         setSaving(true);
         setError('');
 
         router.post(
             route('stock.quick.store'),
             {
+                idempotency_key: idempotencyKey,
                 product_id: selectedProduct.id,
                 type: mode,
                 quantity: value,
@@ -155,6 +161,7 @@ export default function StockQuick({
                 onSuccess: () => {
                     setQuantity('1');
                     setNote('');
+                    setIdempotencyKey(makeOperationKey('stock-quick'));
                     showMessage('Stock actualizado');
                     requestAnimationFrame(() => quantityInputRef.current?.focus());
                 },
@@ -162,7 +169,10 @@ export default function StockQuick({
                     const firstError = Object.values(errors)[0];
                     showError(String(firstError ?? 'No se pudo guardar.'));
                 },
-                onFinish: () => setSaving(false),
+                onFinish: () => {
+                    submitLockedRef.current = false;
+                    setSaving(false);
+                },
             },
         );
     }

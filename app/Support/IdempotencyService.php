@@ -50,7 +50,7 @@ class IdempotencyService
                 ->firstOrFail();
 
             if (! hash_equals((string) $record->request_hash, $requestHash)) {
-                throw new ConflictHttpException('Esta operacion ya fue usada para otra venta. Inicia una nueva venta.');
+                throw new ConflictHttpException('Esta operación ya fue usada con otros datos. Inicia una nueva operación.');
             }
 
             if ($record->status === self::STATUS_COMPLETED && $record->result_id) {
@@ -62,7 +62,7 @@ class IdempotencyService
             }
 
             if ($record->status === self::STATUS_PROCESSING && ! $inserted) {
-                throw new ConflictHttpException('La venta ya se esta procesando. Espera un momento.');
+                throw new ConflictHttpException('La operación ya se está procesando. Espera un momento.');
             }
 
             $result = $operation();

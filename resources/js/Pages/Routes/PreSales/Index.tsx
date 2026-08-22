@@ -1,7 +1,8 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import ConfirmDialog from '@/Components/ConfirmDialog';
+import { makeOperationKey } from '@/lib/idempotency';
 import { Head, Link, router, useForm } from '@inertiajs/react';
-import { FormEvent, ReactNode, useState } from 'react';
+import { FormEvent, ReactNode, useRef, useState } from 'react';
 
 type Page<T> = {
     data: T[];
@@ -53,7 +54,9 @@ export default function Index({ preSales, filters, branches, sellers, zones }: P
     const [cancelTarget, setCancelTarget] = useState<PreSale | null>(null);
     const [processingTarget, setProcessingTarget] = useState<PreSale | null>(null);
     const [processingPreSaleId, setProcessingPreSaleId] = useState<number | null>(null);
+    const processingLockedRef = useRef(false);
     const cancelForm = useForm({
+        idempotency_key: makeOperationKey('pre-sale-cancel'),
         cancellation_reason: '',
         cancellation_note: '',
     });
@@ -67,14 +70,20 @@ export default function Index({ preSales, filters, branches, sellers, zones }: P
     const clear = () => router.get(route('routes.pre-sales.index'), {}, { preserveScroll: true });
 
     const confirmMarkProcessing = () => {
-        if (!processingTarget || processingPreSaleId !== null) {
+        if (!processingTarget || processingPreSaleId !== null || processingLockedRef.current) {
             return;
         }
 
+        processingLockedRef.current = true;
         setProcessingPreSaleId(processingTarget.id);
-        router.post(route('routes.pre-sales.processing', processingTarget.id), {}, {
+        router.post(route('routes.pre-sales.processing', processingTarget.id), {
+            idempotency_key: makeOperationKey('pre-sale-processing'),
+        }, {
             preserveScroll: true,
-            onFinish: () => setProcessingPreSaleId(null),
+            onFinish: () => {
+                processingLockedRef.current = false;
+                setProcessingPreSaleId(null);
+            },
             onSuccess: () => setProcessingTarget(null),
         });
     };
@@ -85,11 +94,16 @@ export default function Index({ preSales, filters, branches, sellers, zones }: P
             return;
         }
 
+        cancelForm.setData('idempotency_key', cancelForm.data.idempotency_key || makeOperationKey('pre-sale-cancel'));
         cancelForm.post(route('routes.pre-sales.cancel', cancelTarget.id), {
             preserveScroll: true,
             onSuccess: () => {
                 setCancelTarget(null);
-                cancelForm.reset();
+                cancelForm.setData({
+                    idempotency_key: makeOperationKey('pre-sale-cancel'),
+                    cancellation_reason: '',
+                    cancellation_note: '',
+                });
             },
         });
     };

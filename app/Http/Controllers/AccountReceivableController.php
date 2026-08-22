@@ -12,6 +12,7 @@ use App\Support\AccountsReceivable;
 use App\Support\BranchInventory;
 use App\Support\BusinessLogo;
 use App\Support\Credits;
+use App\Support\IdempotencyService;
 use App\Support\Permissions;
 use App\Support\Reports\ReportDateRange;
 use Illuminate\Http\RedirectResponse;
@@ -135,6 +136,7 @@ class AccountReceivableController extends Controller
         $businessId = currentBusinessId();
         $branch = BranchInventory::activeBranch($businessId);
         $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'customer_id' => ['required', 'integer'],
             'amount' => ['required', 'numeric', 'gt:0'],
             'payment_method' => ['required', Rule::in(['cash', 'card', 'bank_transfer', 'check', 'other'])],
@@ -145,19 +147,35 @@ class AccountReceivableController extends Controller
             ->where('business_id', $businessId)
             ->findOrFail($data['customer_id']);
 
-        $payment = AccountsReceivable::recordPayment(
-            $customer,
+        $idempotencyResult = app(IdempotencyService::class)->run(
+            $businessId,
             $branch->id,
-            (float) $data['amount'],
-            $data['payment_method'],
-            $data['reference'] ?? null,
-            $data['notes'] ?? null,
-            $request->user(),
+            $request->user()->id,
+            'credit_payment_store',
+            $data['idempotency_key'],
+            $this->paymentIdempotencyPayload($data, $businessId, $branch->id, $request->user()->id, 'credit_payment_store'),
+            function () use ($customer, $branch, $data, $request) {
+                $payment = AccountsReceivable::recordPayment(
+                    $customer,
+                    $branch->id,
+                    (float) $data['amount'],
+                    $data['payment_method'],
+                    $data['reference'] ?? null,
+                    $data['notes'] ?? null,
+                    $request->user(),
+                );
+
+                return [
+                    'result_id' => $payment->id,
+                    'response_payload' => ['payment_id' => $payment->id],
+                ];
+            },
+            'credit_payment',
         );
 
         return back()
             ->with('success', 'Abono registrado correctamente.')
-            ->with('credit_payment_print_url', route('credits.payments.print', $payment));
+            ->with('credit_payment_print_url', route('credits.payments.print', $idempotencyResult->resultId));
     }
 
     public function cancelPayment(Request $request, CustomerCreditPayment $payment): RedirectResponse
@@ -165,7 +183,28 @@ class AccountReceivableController extends Controller
         $this->ensureAvailable($request, Permissions::CREDITS_PAYMENTS_CANCEL);
         abort_unless((int) $payment->business_id === (int) currentBusinessId(), 403);
         abort_unless((int) $payment->branch_id === (int) BranchInventory::activeBranch(currentBusinessId())->id, 403);
-        AccountsReceivable::cancelPayment($payment, $request->user());
+        $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
+        ]);
+        app(IdempotencyService::class)->run(
+            (int) $payment->business_id,
+            (int) $payment->branch_id,
+            $request->user()->id,
+            'credit_payment_cancel',
+            $data['idempotency_key'],
+            [
+                'business_id' => (int) $payment->business_id,
+                'branch_id' => (int) $payment->branch_id,
+                'user_id' => $request->user()->id,
+                'operation_type' => 'credit_payment_cancel',
+                'payment_id' => $payment->id,
+            ],
+            fn () => [
+                'result_id' => tap($payment, fn ($payment) => AccountsReceivable::cancelPayment($payment, $request->user()))->id,
+                'response_payload' => ['payment_id' => $payment->id],
+            ],
+            'credit_payment',
+        );
 
         return back()->with('success', 'Abono anulado correctamente.');
     }
@@ -225,5 +264,20 @@ class AccountReceivableController extends Controller
     private function ensureCustomer(Customer $customer): void
     {
         abort_unless((int) $customer->business_id === (int) currentBusinessId(), 403);
+    }
+
+    private function paymentIdempotencyPayload(array $data, int $businessId, int $branchId, int $userId, string $operationType): array
+    {
+        return [
+            'business_id' => $businessId,
+            'branch_id' => $branchId,
+            'user_id' => $userId,
+            'operation_type' => $operationType,
+            'customer_id' => (int) ($data['customer_id'] ?? 0),
+            'amount' => round((float) ($data['amount'] ?? 0), 4),
+            'payment_method' => $data['payment_method'] ?? null,
+            'reference' => $data['reference'] ?? null,
+            'notes' => $data['notes'] ?? null,
+        ];
     }
 }

@@ -1153,6 +1153,7 @@ class SaleController extends Controller
 
         $data = $request->validate([
             'reason' => ['required', 'string', 'min:3', 'max:500'],
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
         ]);
 
         $sale->load(['electronicDocument', 'payments']);
@@ -1172,25 +1173,42 @@ class SaleController extends Controller
             );
         }
 
-        if (
-            $sale->document_type === 'invoice'
-            && $sale->electronicDocument
-            && $sale->electronicDocument->status === 'certified'
-        ) {
-            try {
-                app(DigifactInvoiceService::class)->cancelElectronicDocument(
-                    $sale->electronicDocument,
-                    $data['reason'],
-                );
-            } catch (FelException $exception) {
-                throw ValidationException::withMessages([
-                    'reason' => $exception->getMessage() ?: 'No se pudo anular la factura electronica.',
-                ]);
-            }
-        }
+        $businessId = currentBusinessId();
+        $branchId = (int) ($sale->branch_id ?: BranchInventory::defaultBranch($businessId)->id);
 
-        DB::transaction(function () use ($request, $sale, $data) {
-            $businessId = currentBusinessId();
+        app(IdempotencyService::class)->run(
+            $businessId,
+            $branchId,
+            $request->user()->id,
+            'sale_cancel',
+            $data['idempotency_key'],
+            [
+                'business_id' => $businessId,
+                'branch_id' => $branchId,
+                'user_id' => $request->user()->id,
+                'operation_type' => 'sale_cancel',
+                'sale_id' => $sale->id,
+                'reason' => $data['reason'],
+            ],
+            function () use ($request, $sale, $data, $businessId) {
+                if (
+                    $sale->document_type === 'invoice'
+                    && $sale->electronicDocument
+                    && $sale->electronicDocument->status === 'certified'
+                ) {
+                    try {
+                        app(DigifactInvoiceService::class)->cancelElectronicDocument(
+                            $sale->electronicDocument,
+                            $data['reason'],
+                        );
+                    } catch (FelException $exception) {
+                        throw ValidationException::withMessages([
+                            'reason' => $exception->getMessage() ?: 'No se pudo anular la factura electronica.',
+                        ]);
+                    }
+                }
+
+                DB::transaction(function () use ($request, $sale, $data, $businessId) {
 
             $sale = Sale::query()
                 ->where('business_id', $businessId)
@@ -1259,7 +1277,15 @@ class SaleController extends Controller
                 'cancelled_by' => $request->user()->id,
                 'cancellation_reason' => $data['reason'],
             ]);
-        });
+                });
+
+                return [
+                    'result_id' => $sale->id,
+                    'response_payload' => ['sale_id' => $sale->id],
+                ];
+            },
+            'sale',
+        );
 
         return redirect()->route('sales.show', $sale)->with('success', 'Venta anulada correctamente.');
     }

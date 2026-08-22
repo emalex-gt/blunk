@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Product;
 use App\Models\StockMovement;
 use App\Support\BranchInventory;
+use App\Support\IdempotencyService;
 use App\Support\Inventory\StockPolicy;
 use App\Support\Permissions;
 use App\Support\StockAvailability;
@@ -99,6 +100,7 @@ class StockController extends Controller
     public function adjust(Request $request): JsonResponse
     {
         $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'product_id' => ['required', 'integer'],
             'type' => ['required', 'in:increase,decrease'],
             'quantity' => ['required', 'numeric', 'gt:0'],
@@ -112,7 +114,15 @@ class StockController extends Controller
         $businessId = currentBusinessId();
         $branch = BranchInventory::activeBranch($businessId);
 
-        $result = DB::transaction(function () use ($request, $data, $businessId, $branch) {
+        $idempotencyResult = app(IdempotencyService::class)->run(
+            $businessId,
+            $branch->id,
+            $request->user()->id,
+            'stock_adjustment_ajax',
+            $data['idempotency_key'],
+            $this->stockIdempotencyPayload($data, $businessId, $branch->id, $request->user()->id, 'stock_adjustment_ajax'),
+            function () use ($request, $data, $businessId, $branch) {
+                $result = DB::transaction(function () use ($request, $data, $businessId, $branch) {
             $product = Product::query()
                 ->where('business_id', $businessId)
                 ->where('is_active', true)
@@ -164,7 +174,16 @@ class StockController extends Controller
                 'new_stock' => (float) $newStock,
                 'product' => $this->stockProductPayload(collect([$updatedProduct]), $businessId, $branch->id)->first(),
             ];
-        });
+                });
+
+                return [
+                    'result_id' => (int) $data['product_id'],
+                    'response_payload' => $result,
+                ];
+            },
+            'stock_adjustment',
+        );
+        $result = $idempotencyResult->responsePayload;
 
         return response()->json([
             'message' => 'Stock ajustado correctamente.',
@@ -175,25 +194,36 @@ class StockController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'product_id' => ['required', 'exists:products,id'],
             'type' => ['required', 'in:add,remove'],
             'quantity' => ['required', 'integer', 'min:1'],
             'note' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        DB::transaction(function () use ($request, $data) {
+        $businessId = currentBusinessId();
+        $branch = BranchInventory::activeBranch($businessId);
+
+        app(IdempotencyService::class)->run(
+            $businessId,
+            $branch->id,
+            $request->user()->id,
+            'stock_store',
+            $data['idempotency_key'],
+            $this->stockIdempotencyPayload($data, $businessId, $branch->id, $request->user()->id, 'stock_store'),
+            function () use ($request, $data, $businessId, $branch) {
+                DB::transaction(function () use ($request, $data, $businessId, $branch) {
             $product = Product::query()
-                ->where('business_id', currentBusinessId())
+                ->where('business_id', $businessId)
                 ->lockForUpdate()
                 ->findOrFail($data['product_id']);
-            $branch = BranchInventory::activeBranch(currentBusinessId());
 
             $quantity = $data['type'] === 'remove'
                 ? -1 * $data['quantity']
                 : $data['quantity'];
 
             if ($quantity < 0) {
-                StockPolicy::assertCanDecreaseStock(currentBusinessId(), $branch, $product, null, abs($quantity), 'stock');
+                StockPolicy::assertCanDecreaseStock($businessId, $branch, $product, null, abs($quantity), 'stock');
             }
 
             [$previousStock, $newStock] = $quantity < 0
@@ -201,7 +231,7 @@ class StockController extends Controller
                 : BranchInventory::increase($product, $branch->id, $quantity);
 
             StockMovement::create([
-                'business_id' => currentBusinessId(),
+                'business_id' => $businessId,
                 'branch_id' => $branch->id,
                 'product_id' => $product->id,
                 'type' => $data['type'],
@@ -212,7 +242,12 @@ class StockController extends Controller
                 'created_by' => $request->user()->id,
                 'user_id' => $request->user()->id,
             ]);
-        });
+                });
+
+                return ['result_id' => (int) $data['product_id']];
+            },
+            'stock_adjustment',
+        );
 
         return back()->with('success', 'Stock actualizado.');
     }
@@ -220,6 +255,7 @@ class StockController extends Controller
     public function quickStore(Request $request): RedirectResponse
     {
         $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'product_id' => ['required', 'exists:products,id'],
             'type' => ['required', 'in:entry,exit,adjustment'],
             'quantity' => ['required', 'integer', 'min:0'],
@@ -238,15 +274,25 @@ class StockController extends Controller
             ]);
         }
 
-        $product = DB::transaction(function () use ($request, $data) {
+        $businessId = currentBusinessId();
+        $branch = BranchInventory::activeBranch($businessId);
+
+        app(IdempotencyService::class)->run(
+            $businessId,
+            $branch->id,
+            $request->user()->id,
+            'stock_quick_store',
+            $data['idempotency_key'],
+            $this->stockIdempotencyPayload($data, $businessId, $branch->id, $request->user()->id, 'stock_quick_store'),
+            function () use ($request, $data, $businessId, $branch) {
+                $product = DB::transaction(function () use ($request, $data, $businessId, $branch) {
             $product = Product::query()
-                ->where('business_id', currentBusinessId())
+                ->where('business_id', $businessId)
                 ->where('is_active', true)
                 ->lockForUpdate()
                 ->findOrFail($data['product_id']);
-            $branch = BranchInventory::activeBranch(currentBusinessId());
 
-            $previousStock = (float) (BranchInventory::stockMap(currentBusinessId(), [$product->id], $branch->id)[$product->id] ?? 0);
+            $previousStock = (float) (BranchInventory::stockMap($businessId, [$product->id], $branch->id)[$product->id] ?? 0);
             $newStock = match ($data['type']) {
                 'entry' => $previousStock + $data['quantity'],
                 'exit' => $previousStock - $data['quantity'],
@@ -256,7 +302,7 @@ class StockController extends Controller
             $movementQuantity = $newStock - $previousStock;
 
             if ($movementQuantity < 0) {
-                StockPolicy::assertCanDecreaseStock(currentBusinessId(), $branch, $product, null, abs($movementQuantity), 'stock');
+                StockPolicy::assertCanDecreaseStock($businessId, $branch, $product, null, abs($movementQuantity), 'stock');
             }
 
             [$previousStock, $newStock] = $data['type'] === 'adjustment'
@@ -266,7 +312,7 @@ class StockController extends Controller
                     : BranchInventory::increase($product, $branch->id, $movementQuantity));
 
             StockMovement::create([
-                'business_id' => currentBusinessId(),
+                'business_id' => $businessId,
                 'branch_id' => $branch->id,
                 'product_id' => $product->id,
                 'type' => $data['type'],
@@ -279,9 +325,28 @@ class StockController extends Controller
             ]);
 
             return $product->fresh(['category']);
-        });
+                });
+
+                return ['result_id' => $product->id];
+            },
+            'stock_adjustment',
+        );
 
         return back()->with('success', 'Stock actualizado');
+    }
+
+    private function stockIdempotencyPayload(array $data, int $businessId, int $branchId, int $userId, string $operationType): array
+    {
+        return [
+            'business_id' => $businessId,
+            'branch_id' => $branchId,
+            'user_id' => $userId,
+            'operation_type' => $operationType,
+            'product_id' => (int) ($data['product_id'] ?? 0),
+            'type' => $data['type'] ?? null,
+            'quantity' => round((float) ($data['quantity'] ?? 0), 4),
+            'note' => $data['note'] ?? null,
+        ];
     }
 
     private function applyReservedStock($products, int $branchId): void

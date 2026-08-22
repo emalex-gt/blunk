@@ -16,6 +16,7 @@ use App\Models\User;
 use App\Support\BranchInventory;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\GuatemalaLocations;
+use App\Support\IdempotencyService;
 use App\Support\Inventory\StockReservationService;
 use App\Support\ManualPricePolicy;
 use App\Support\Permissions;
@@ -599,13 +600,29 @@ class RouteController extends Controller
         abort_unless(Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_PICK), 403);
 
         $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.id' => ['required', 'integer'],
             'items.*.picked_quantity' => ['required', 'numeric', 'min:0'],
             'items.*.picking_note' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        DB::transaction(function () use ($request, $preSale, $data, $reservations) {
+        app(IdempotencyService::class)->run(
+            (int) $preSale->business_id,
+            (int) $preSale->branch_id,
+            $request->user()->id,
+            'pre_sale_pick',
+            $data['idempotency_key'],
+            [
+                'business_id' => (int) $preSale->business_id,
+                'branch_id' => (int) $preSale->branch_id,
+                'user_id' => $request->user()->id,
+                'operation_type' => 'pre_sale_pick',
+                'pre_sale_id' => $preSale->id,
+                'items' => $data['items'],
+            ],
+            function () use ($request, $preSale, $data, $reservations) {
+                DB::transaction(function () use ($request, $preSale, $data, $reservations) {
             $lockedPreSale = PreSale::query()
                 ->where('business_id', currentBusinessId())
                 ->whereKey($preSale->id)
@@ -693,7 +710,15 @@ class RouteController extends Controller
                 'picked_at' => now(),
                 'picked_by' => $request->user()->id,
             ]);
-        });
+                });
+
+                return [
+                    'result_id' => $preSale->id,
+                    'response_payload' => ['pre_sale_id' => $preSale->id],
+                ];
+            },
+            'pre_sale',
+        );
 
         return redirect()
             ->route('routes.pre-sales.show', $preSale)
@@ -920,6 +945,7 @@ class RouteController extends Controller
         $this->assertVisitEditable($visit);
 
         $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'notes' => ['nullable', 'string'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'integer'],
@@ -931,7 +957,22 @@ class RouteController extends Controller
             'items.*.notes' => ['nullable', 'string'],
         ]);
 
-        DB::transaction(function () use ($request, $visit, $data, $reservations) {
+        app(IdempotencyService::class)->run(
+            currentBusinessId(),
+            (int) $visit->branch_id,
+            $request->user()->id,
+            'route_pre_sale_save',
+            $data['idempotency_key'],
+            [
+                'business_id' => currentBusinessId(),
+                'branch_id' => (int) $visit->branch_id,
+                'user_id' => $request->user()->id,
+                'operation_type' => 'route_pre_sale_save',
+                'visit_id' => $visit->id,
+                'data' => $data,
+            ],
+            function () use ($request, $visit, $data, $reservations) {
+                $preSaleId = DB::transaction(function () use ($request, $visit, $data, $reservations) {
             $preSale = PreSale::query()
                 ->where('business_id', currentBusinessId())
                 ->where('route_visit_id', $visit->id)
@@ -1047,7 +1088,17 @@ class RouteController extends Controller
                 'no_sale_note' => null,
                 'finished_at' => now(),
             ]);
-        });
+
+                    return $preSale->id;
+                });
+
+                return [
+                    'result_id' => $preSaleId,
+                    'response_payload' => ['pre_sale_id' => $preSaleId],
+                ];
+            },
+            'pre_sale',
+        );
 
         return back()->with('success', 'Preventa guardada y stock reservado.');
     }
@@ -1071,6 +1122,9 @@ class RouteController extends Controller
     {
         abort_unless((int) $preSale->business_id === currentBusinessId(), 403);
         abort_unless((int) $preSale->seller_id === (int) $request->user()->id || Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_ADMIN_VIEW), 403);
+        $idempotency = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
+        ]);
 
         if ($preSale->status === PreSale::STATUS_DRAFT) {
             if ($preSale->workDay?->status !== 'open') {
@@ -1079,7 +1133,22 @@ class RouteController extends Controller
                 ]);
             }
 
-        DB::transaction(function () use ($preSale, $reservations, $request) {
+        app(IdempotencyService::class)->run(
+            (int) $preSale->business_id,
+            (int) $preSale->branch_id,
+            $request->user()->id,
+            'pre_sale_cancel',
+            $idempotency['idempotency_key'],
+            [
+                'business_id' => (int) $preSale->business_id,
+                'branch_id' => (int) $preSale->branch_id,
+                'user_id' => $request->user()->id,
+                'operation_type' => 'pre_sale_cancel',
+                'pre_sale_id' => $preSale->id,
+                'status' => PreSale::STATUS_DRAFT,
+            ],
+            function () use ($preSale, $reservations, $request) {
+                DB::transaction(function () use ($preSale, $reservations, $request) {
             $reservations->releasePreSaleReservations($preSale);
             $preSale->update([
                 'status' => PreSale::STATUS_CANCELLED,
@@ -1090,7 +1159,15 @@ class RouteController extends Controller
             if ($preSale->workDay) {
                 app(RouteWorkDayCompletion::class)->refresh($preSale->workDay, $request->user());
             }
-        });
+                });
+
+                return [
+                    'result_id' => $preSale->id,
+                    'response_payload' => ['pre_sale_id' => $preSale->id],
+                ];
+            },
+            'pre_sale',
+        );
 
             return back()->with('success', 'Preventa cancelada y reserva liberada.');
         }
@@ -1119,7 +1196,23 @@ class RouteController extends Controller
             'cancellation_note.min' => 'La observación debe tener al menos 3 caracteres.',
         ]);
 
-        DB::transaction(function () use ($preSale, $reservations, $request, $data) {
+        app(IdempotencyService::class)->run(
+            (int) $preSale->business_id,
+            (int) $preSale->branch_id,
+            $request->user()->id,
+            'pre_sale_cancel',
+            $idempotency['idempotency_key'],
+            [
+                'business_id' => (int) $preSale->business_id,
+                'branch_id' => (int) $preSale->branch_id,
+                'user_id' => $request->user()->id,
+                'operation_type' => 'pre_sale_cancel',
+                'pre_sale_id' => $preSale->id,
+                'cancellation_reason' => $data['cancellation_reason'],
+                'cancellation_note' => $data['cancellation_note'],
+            ],
+            function () use ($preSale, $reservations, $request, $data) {
+                DB::transaction(function () use ($preSale, $reservations, $request, $data) {
             $lockedPreSale = PreSale::query()
                 ->where('business_id', currentBusinessId())
                 ->whereKey($preSale->id)
@@ -1145,7 +1238,15 @@ class RouteController extends Controller
             if ($lockedPreSale->workDay) {
                 app(RouteWorkDayCompletion::class)->refresh($lockedPreSale->workDay, $request->user());
             }
-        });
+                });
+
+                return [
+                    'result_id' => $preSale->id,
+                    'response_payload' => ['pre_sale_id' => $preSale->id],
+                ];
+            },
+            'pre_sale',
+        );
 
         return back()->with('success', 'Preventa cancelada y reserva liberada.');
     }
@@ -1154,8 +1255,25 @@ class RouteController extends Controller
     {
         abort_unless((int) $preSale->business_id === currentBusinessId(), 403);
         abort_unless(Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_ADMIN_VIEW), 403);
+        $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
+        ]);
 
-        DB::transaction(function () use ($preSale, $request) {
+        app(IdempotencyService::class)->run(
+            (int) $preSale->business_id,
+            (int) $preSale->branch_id,
+            $request->user()->id,
+            'pre_sale_processing',
+            $data['idempotency_key'],
+            [
+                'business_id' => (int) $preSale->business_id,
+                'branch_id' => (int) $preSale->branch_id,
+                'user_id' => $request->user()->id,
+                'operation_type' => 'pre_sale_processing',
+                'pre_sale_id' => $preSale->id,
+            ],
+            function () use ($preSale, $request) {
+                DB::transaction(function () use ($preSale, $request) {
             $lockedPreSale = PreSale::query()
                 ->where('business_id', currentBusinessId())
                 ->whereKey($preSale->id)
@@ -1173,7 +1291,15 @@ class RouteController extends Controller
                 'processing_started_at' => now(),
                 'processing_user_id' => $request->user()->id,
             ]);
-        });
+                });
+
+                return [
+                    'result_id' => $preSale->id,
+                    'response_payload' => ['pre_sale_id' => $preSale->id],
+                ];
+            },
+            'pre_sale',
+        );
 
         return back()->with('success', 'Preventa marcada en preparación.');
     }
@@ -1192,6 +1318,7 @@ class RouteController extends Controller
         $data = $request->validate([
             'no_sale_reason' => ['required', 'string', 'in:Tienda cerrada,Cliente surtido,No quiso comprar,Sin presupuesto,Encargado ausente,Pedido para otro día,No encontrado,Otro'],
             'no_sale_note' => ['required', 'string', 'min:3', 'max:1000'],
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
         ], [
             'no_sale_reason.required' => 'Selecciona un motivo.',
             'no_sale_reason.in' => 'Selecciona un motivo válido.',
@@ -1212,7 +1339,23 @@ class RouteController extends Controller
             ]);
         }
 
-        DB::transaction(function () use ($visit, $data, $reservations) {
+        app(IdempotencyService::class)->run(
+            currentBusinessId(),
+            (int) $visit->branch_id,
+            $request->user()->id,
+            'route_visit_without_sale',
+            $data['idempotency_key'],
+            [
+                'business_id' => currentBusinessId(),
+                'branch_id' => (int) $visit->branch_id,
+                'user_id' => $request->user()->id,
+                'operation_type' => 'route_visit_without_sale',
+                'visit_id' => $visit->id,
+                'no_sale_reason' => $data['no_sale_reason'],
+                'no_sale_note' => $data['no_sale_note'],
+            ],
+            function () use ($visit, $data, $reservations) {
+                DB::transaction(function () use ($visit, $data, $reservations) {
             $preSale = PreSale::query()
                 ->where('business_id', currentBusinessId())
                 ->where('route_visit_id', $visit->id)
@@ -1235,7 +1378,15 @@ class RouteController extends Controller
                 'no_sale_note' => $data['no_sale_note'],
                 'finished_at' => now(),
             ]);
-        });
+                });
+
+                return [
+                    'result_id' => $visit->id,
+                    'response_payload' => ['visit_id' => $visit->id],
+                ];
+            },
+            'route_visit',
+        );
 
         return back()->with('success', 'Visita marcada sin venta.');
     }
@@ -1243,34 +1394,65 @@ class RouteController extends Controller
     public function closeWorkDay(Request $request, RouteWorkDay $workDay): RedirectResponse
     {
         $this->authorizeSellerWorkDay($request, $workDay);
+        $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
+        ]);
 
-        if ($workDay->status !== 'open') {
-            throw ValidationException::withMessages(['work_day' => 'La jornada no está abierta.']);
-        }
+        app(IdempotencyService::class)->run(
+            (int) $workDay->business_id,
+            (int) $workDay->branch_id,
+            $request->user()->id,
+            'route_work_day_close',
+            $data['idempotency_key'],
+            [
+                'business_id' => (int) $workDay->business_id,
+                'branch_id' => (int) $workDay->branch_id,
+                'user_id' => $request->user()->id,
+                'operation_type' => 'route_work_day_close',
+                'work_day_id' => $workDay->id,
+            ],
+            function () use ($request, $workDay) {
+                DB::transaction(function () use ($request, $workDay) {
+                    $lockedWorkDay = RouteWorkDay::query()
+                        ->where('business_id', currentBusinessId())
+                        ->whereKey($workDay->id)
+                        ->lockForUpdate()
+                        ->firstOrFail();
 
-        DB::transaction(function () use ($request, $workDay) {
-            PreSale::query()
-                ->where('business_id', currentBusinessId())
-                ->where('route_work_day_id', $workDay->id)
-                ->where('status', 'draft')
-                ->update([
-                    'status' => 'submitted',
-                    'submitted_at' => now(),
-                ]);
+                    if ($lockedWorkDay->status !== 'open') {
+                        throw ValidationException::withMessages(['work_day' => 'La jornada no está abierta.']);
+                    }
 
-            RouteVisit::query()
-                ->where('business_id', currentBusinessId())
-                ->where('route_work_day_id', $workDay->id)
-                ->whereHas('preSale', fn ($query) => $query->whereIn('status', ['draft', 'submitted']))
-                ->update(['status' => 'with_pre_sale', 'finished_at' => now()]);
+                    PreSale::query()
+                        ->where('business_id', currentBusinessId())
+                        ->where('route_work_day_id', $lockedWorkDay->id)
+                        ->where('status', 'draft')
+                        ->update([
+                            'status' => 'submitted',
+                            'submitted_at' => now(),
+                        ]);
 
-            $workDay->update([
-                'status' => 'closed',
-                'closed_at' => now(),
-            ]);
+                    RouteVisit::query()
+                        ->where('business_id', currentBusinessId())
+                        ->where('route_work_day_id', $lockedWorkDay->id)
+                        ->whereHas('preSale', fn ($query) => $query->whereIn('status', ['draft', 'submitted']))
+                        ->update(['status' => 'with_pre_sale', 'finished_at' => now()]);
 
-            app(RouteWorkDayCompletion::class)->refresh($workDay, $request->user());
-        });
+                    $lockedWorkDay->update([
+                        'status' => 'closed',
+                        'closed_at' => now(),
+                    ]);
+
+                    app(RouteWorkDayCompletion::class)->refresh($lockedWorkDay, $request->user());
+                });
+
+                return [
+                    'result_id' => $workDay->id,
+                    'response_payload' => ['work_day_id' => $workDay->id],
+                ];
+            },
+            'route_work_day',
+        );
 
         return redirect()->route('routes.mobile.zones')->with('success', 'Jornada cerrada. Las preventas quedaron congeladas.');
     }

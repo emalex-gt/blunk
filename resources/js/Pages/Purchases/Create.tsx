@@ -3,6 +3,7 @@ import SupplierInfoPopover from '@/Components/SupplierInfoPopover';
 import Toast from '@/Components/Toast';
 import { getProductImageUrl } from '@/lib/cloudinary';
 import { clearDraft, loadDraft, makeDraftKey, saveDraft } from '@/lib/draftStorage';
+import { makeOperationKey } from '@/lib/idempotency';
 import { discardOperationDraft, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency } from '@/utils/currency';
@@ -152,6 +153,8 @@ export default function Create({
     const [savedDrafts, setSavedDrafts] = useState<OperationDraftRecord<PurchaseDraft>[]>([]);
     const [draftLoading, setDraftLoading] = useState(false);
     const [draftSaving, setDraftSaving] = useState(false);
+    const [idempotencyKey, setIdempotencyKey] = useState(() => makeOperationKey('purchase'));
+    const submitLockedRef = useRef(false);
     const [loadedProducts, setLoadedProducts] = useState<Product[]>(products);
     const [productResults, setProductResults] = useState<Product[]>(products);
     const [productSearchLoading, setProductSearchLoading] = useState(false);
@@ -577,10 +580,16 @@ export default function Create({
         newSupplier: SupplierDraft | null,
         options: { fromSupplierModal?: boolean } = {},
     ) {
+        if (submitLockedRef.current) {
+            return;
+        }
+
         const cleanSupplierName = supplierName.trim();
+        submitLockedRef.current = true;
         setProcessing(true);
 
         router.post(route('purchases.store'), {
+            idempotency_key: idempotencyKey,
             supplier_id: supplier?.id ?? null,
             supplier_name: newSupplier?.name || cleanSupplierName || null,
             supplier: newSupplier,
@@ -611,12 +620,16 @@ export default function Create({
             },
             onSuccess: () => {
                 clearDraft(draftKey);
+                setIdempotencyKey(makeOperationKey('purchase'));
                 if (options.fromSupplierModal) {
                     setSupplierModalOpen(false);
                     setSupplierModalError('');
                 }
             },
-            onFinish: () => setProcessing(false),
+            onFinish: () => {
+                submitLockedRef.current = false;
+                setProcessing(false);
+            },
         });
     }
 

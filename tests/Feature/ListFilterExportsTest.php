@@ -80,6 +80,7 @@ class ListFilterExportsTest extends TestCase
 
         $this->actingAs($user)
             ->post(route('purchases.store'), [
+                'idempotency_key' => 'test-purchase-supplier-invoice-number',
                 'supplier_id' => $supplier->id,
                 'supplier_invoice_number' => '  FAC-2026-001  ',
                 'payment_method' => 'card',

@@ -468,7 +468,7 @@ class RoutesPreSalesTest extends TestCase
         $this->assertSame(1, RouteWorkDay::query()->where('route_zone_id', $zone->id)->count());
 
         $this->actingAs($seller)
-            ->post(route('routes.mobile.work-days.close', $firstWorkDay))
+            ->post(route('routes.mobile.work-days.close', $firstWorkDay), ['idempotency_key' => 'test-route-close-'.str_replace('.', '-', uniqid('', true))])
             ->assertRedirect(route('routes.mobile.zones'));
 
         $firstWorkDay->refresh();
@@ -635,6 +635,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [[
                     'product_id' => $product->id,
                     'quantity' => 2,
@@ -924,6 +925,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['product_id' => $product->id, 'quantity' => 5, 'discount' => 0]],
             ])
             ->assertSessionHasNoErrors();
@@ -933,6 +935,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['product_id' => $product->id, 'quantity' => 6, 'discount' => 0]],
             ])
             ->assertSessionHasNoErrors();
@@ -951,13 +954,14 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 4]],
         ])->assertSessionHasNoErrors();
 
         $preSale = PreSale::query()->firstOrFail();
 
         $this->actingAs($seller)
-            ->post(route('routes.pre-sales.cancel', $preSale))
+            ->post(route('routes.pre-sales.cancel', $preSale), ['idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true))])
             ->assertSessionHasNoErrors();
 
         $this->assertSame('cancelled', $preSale->refresh()->status);
@@ -973,11 +977,12 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 4]],
         ])->assertSessionHasNoErrors();
 
         $workDay = RouteWorkDay::query()->firstOrFail();
-        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $workDay))->assertRedirect(route('routes.mobile.zones'));
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $workDay), ['idempotency_key' => 'test-route-close-'.str_replace('.', '-', uniqid('', true))])->assertRedirect(route('routes.mobile.zones'));
 
         $this->assertSame('closed', $workDay->refresh()->status);
         $this->assertSame('submitted', PreSale::query()->firstOrFail()->status);
@@ -985,6 +990,7 @@ class RoutesPreSalesTest extends TestCase
         $this->assertSame(10.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->where('branch_id', $branch->id)->value('stock'));
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 1]],
         ])->assertSessionHasErrors('pre_sale');
     }
@@ -997,11 +1003,12 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)
-            ->post(route('routes.mobile.visits.without-sale', $visit), [])
+            ->post(route('routes.mobile.visits.without-sale', $visit), ['idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true))])
             ->assertSessionHasErrors(['no_sale_reason', 'no_sale_note']);
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'no_sale_reason' => 'Tienda cerrada',
                 'no_sale_note' => 'El local estaba cerrado.',
             ])
@@ -1034,6 +1041,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'no_sale_reason' => 'Cliente surtido',
                 'no_sale_note' => 'Pidió revisar después.',
             ])
@@ -1041,6 +1049,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['product_id' => $product->id, 'quantity' => 4]],
             ])
             ->assertSessionHasNoErrors();
@@ -1077,6 +1086,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['product_id' => $product->id, 'quantity' => 3]],
             ])
             ->assertSessionHasNoErrors();
@@ -1087,6 +1097,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'no_sale_reason' => 'No quiso comprar',
                 'no_sale_note' => 'Al final me llamo que no queria nada',
             ])
@@ -1102,6 +1113,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['product_id' => $product->id, 'quantity' => 2]],
             ])
             ->assertSessionHasNoErrors();
@@ -1143,6 +1155,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'no_sale_reason' => 'No encontrado',
                 'no_sale_note' => 'No estaba el encargado.',
             ])
@@ -1150,6 +1163,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [],
             ])
             ->assertSessionHasErrors('items');
@@ -1173,6 +1187,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'no_sale_reason' => 'Tienda cerrada',
                 'no_sale_note' => 'Cerrado por inventario.',
             ])
@@ -1182,6 +1197,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['product_id' => $product->id, 'quantity' => 1]],
             ])
             ->assertSessionHasErrors('pre_sale');
@@ -1202,6 +1218,7 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 4]],
         ])->assertSessionHasNoErrors();
 
@@ -1209,6 +1226,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'no_sale_reason' => 'No quiso comprar',
                 'no_sale_note' => 'El cliente decidió no comprar hoy.',
             ])
@@ -1242,6 +1260,7 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 4]],
         ])->assertSessionHasNoErrors();
 
@@ -1250,6 +1269,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'no_sale_reason' => 'Pedido para otro día',
                 'no_sale_note' => 'Quiere comprar mañana.',
             ])
@@ -1272,6 +1292,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($sellerA)
             ->post(route('routes.mobile.visits.without-sale', $visitB), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'no_sale_reason' => 'No encontrado',
                 'no_sale_note' => 'No aplica.',
             ])
@@ -1318,11 +1339,13 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 5]],
         ])->assertSessionHasNoErrors();
 
         $otherVisit = $this->startedVisit($business, $branch, $seller, 'Cliente extra');
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $otherVisit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 6]],
         ])->assertSessionHasErrors('items');
 
@@ -1332,6 +1355,7 @@ class RoutesPreSalesTest extends TestCase
         $allowedVisit = $this->startedVisit($allowedBusiness, $allowedBranch, $allowedSeller);
 
         $this->actingAs($allowedSeller)->post(route('routes.mobile.visits.pre-sale.store', $allowedVisit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $allowedProduct->id, 'quantity' => 3]],
         ])->assertSessionHasNoErrors();
 
@@ -1386,6 +1410,7 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 4]],
         ])->assertSessionHasNoErrors();
 
@@ -1410,12 +1435,13 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 4]],
         ])->assertSessionHasNoErrors();
 
         $workDay = RouteWorkDay::query()->where('business_id', $business->id)->firstOrFail();
         $this->actingAs($seller)
-            ->post(route('routes.mobile.work-days.close', $workDay))
+            ->post(route('routes.mobile.work-days.close', $workDay), ['idempotency_key' => 'test-route-close-'.str_replace('.', '-', uniqid('', true))])
             ->assertRedirect(route('routes.mobile.zones'));
 
         $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
@@ -1529,6 +1555,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['product_id' => $product->id, 'quantity' => 2, 'discount' => 0]],
             ])
             ->assertSessionHasNoErrors();
@@ -1580,6 +1607,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['product_id' => $product->id, 'quantity' => 1]],
             ])
             ->assertSessionHasNoErrors();
@@ -1605,6 +1633,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [[
                     'product_id' => $product->id,
                     'quantity' => 1,
@@ -1629,6 +1658,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [[
                     'product_id' => $product->id,
                     'quantity' => 1,
@@ -1651,9 +1681,10 @@ class RoutesPreSalesTest extends TestCase
         $product = $this->product($business, $branch);
         $visit = $this->startedVisit($business, $branch, $seller);
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 1]],
         ])->assertSessionHasNoErrors();
-        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay))->assertRedirect();
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay), ['idempotency_key' => 'test-route-close-'.str_replace('.', '-', uniqid('', true))])->assertRedirect();
 
         $this->actingAs($admin)
             ->get(route('routes.pre-sales.index'))
@@ -1841,6 +1872,7 @@ class RoutesPreSalesTest extends TestCase
         $this->assertFalse(app(RouteWorkDayCompletion::class)->isComplete($workDay));
 
         $this->actingAs($admin)->post(route('routes.pre-sales.cancel', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'cancellation_reason' => 'Otro',
             'cancellation_note' => 'Cliente anuló el pedido.',
         ])->assertSessionHasNoErrors();
@@ -1859,6 +1891,7 @@ class RoutesPreSalesTest extends TestCase
         $item = $preSale->items()->firstOrFail();
 
         $this->actingAs($admin)->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['id' => $item->id, 'picked_quantity' => 1]],
         ])->assertSessionHasNoErrors();
 
@@ -1872,11 +1905,12 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.without-sale', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'no_sale_reason' => 'Cliente surtido',
             'no_sale_note' => 'No necesitaba producto hoy.',
         ])->assertSessionHasNoErrors();
 
-        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay))
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay), ['idempotency_key' => 'test-route-close-'.str_replace('.', '-', uniqid('', true))])
             ->assertRedirect();
 
         $this->assertNotNull($visit->workDay->refresh()->completed_at);
@@ -1963,7 +1997,7 @@ class RoutesPreSalesTest extends TestCase
         $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 4);
 
         $this->actingAs($admin)
-            ->post(route('routes.pre-sales.processing', $preSale))
+            ->post(route('routes.pre-sales.processing', $preSale), ['idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true))])
             ->assertSessionHasNoErrors()
             ->assertSessionHas('success', 'Preventa marcada en preparación.');
 
@@ -2008,6 +2042,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($admin)
             ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [[
                     'id' => $item->id,
                     'picked_quantity' => 2,
@@ -2046,7 +2081,7 @@ class RoutesPreSalesTest extends TestCase
         $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 2);
         $item = $preSale->items()->firstOrFail();
 
-        $this->actingAs($admin)->post(route('routes.pre-sales.processing', $preSale))->assertSessionHasNoErrors();
+        $this->actingAs($admin)->post(route('routes.pre-sales.processing', $preSale), ['idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true))])->assertSessionHasNoErrors();
 
         $this->actingAs($admin)
             ->get(route('routes.pre-sales.pick', $preSale))
@@ -2057,6 +2092,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($admin)
             ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['id' => $item->id, 'picked_quantity' => 2]],
             ])
             ->assertSessionHasNoErrors();
@@ -2073,18 +2109,20 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [
                 ['product_id' => $firstProduct->id, 'quantity' => 2],
                 ['product_id' => $secondProduct->id, 'quantity' => 3],
             ],
         ])->assertSessionHasNoErrors();
-        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay))->assertRedirect();
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay), ['idempotency_key' => 'test-route-close-'.str_replace('.', '-', uniqid('', true))])->assertRedirect();
 
         $preSale = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail();
         $items = $preSale->items()->orderBy('id')->get();
 
         $this->actingAs($admin)
             ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [
                     ['id' => $items[0]->id, 'picked_quantity' => 0],
                     ['id' => $items[1]->id, 'picked_quantity' => 1],
@@ -2108,6 +2146,7 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($admin)
             ->from(route('routes.pre-sales.pick', $preSale))
             ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['id' => $item->id, 'picked_quantity' => 0]],
             ])
             ->assertRedirect(route('routes.pre-sales.pick', $preSale))
@@ -2116,6 +2155,7 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($admin)
             ->from(route('routes.pre-sales.pick', $preSale))
             ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['id' => $item->id, 'picked_quantity' => 4]],
             ])
             ->assertRedirect(route('routes.pre-sales.pick', $preSale))
@@ -2129,6 +2169,7 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($admin)
             ->from(route('routes.pre-sales.pick', $preSale))
             ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['id' => $item->id, 'picked_quantity' => 2]],
             ])
             ->assertRedirect(route('routes.pre-sales.pick', $preSale))
@@ -2146,6 +2187,7 @@ class RoutesPreSalesTest extends TestCase
         $item = $preSale->items()->firstOrFail();
 
         $this->actingAs($admin)->post(route('routes.pre-sales.cancel', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'cancellation_reason' => 'Otro',
             'cancellation_note' => 'Cliente ya no quiere el pedido.',
         ])->assertSessionHasNoErrors();
@@ -2159,6 +2201,7 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($admin)
             ->from(route('routes.pre-sales.show', $preSale))
             ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['id' => $item->id, 'picked_quantity' => 1]],
             ])
             ->assertRedirect(route('routes.pre-sales.show', $preSale))
@@ -2176,12 +2219,14 @@ class RoutesPreSalesTest extends TestCase
         $item = $preSale->items()->firstOrFail();
 
         $this->actingAs($admin)->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['id' => $item->id, 'picked_quantity' => 2]],
         ])->assertSessionHasNoErrors();
 
         $this->actingAs($admin)
             ->from(route('routes.pre-sales.show', $preSale))
             ->post(route('routes.pre-sales.cancel', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'cancellation_reason' => 'Otro',
                 'cancellation_note' => 'No se debe cancelar.',
             ])
@@ -2191,6 +2236,7 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($seller)
             ->from(route('routes.mobile.visits.show', $preSale->visit))
             ->post(route('routes.mobile.visits.pre-sale.store', $preSale->visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['product_id' => $product->id, 'quantity' => 1]],
             ])
             ->assertRedirect(route('routes.mobile.visits.show', $preSale->visit))
@@ -2211,11 +2257,13 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)->get(route('routes.pre-sales.pick', $preSale))->assertForbidden();
         $this->actingAs($seller)->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['id' => $item->id, 'picked_quantity' => 1]],
         ])->assertForbidden();
 
         $this->actingAs($otherAdmin)->get(route('routes.pre-sales.pick', $preSale))->assertForbidden();
         $this->actingAs($otherAdmin)->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['id' => $item->id, 'picked_quantity' => 1]],
         ])->assertForbidden();
 
@@ -2233,6 +2281,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($admin)
             ->post(route('routes.pre-sales.cancel', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'cancellation_reason' => 'Cliente canceló',
                 'cancellation_note' => 'Cliente pidió anular el pedido.',
             ])
@@ -2263,7 +2312,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)->get(route('routes.pre-sales.index'))->assertForbidden();
         $this->actingAs($seller)->get(route('routes.pre-sales.show', $preSale))->assertForbidden();
-        $this->actingAs($seller)->post(route('routes.pre-sales.processing', $preSale))->assertForbidden();
+        $this->actingAs($seller)->post(route('routes.pre-sales.processing', $preSale), ['idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true))])->assertForbidden();
     }
 
     public function test_processing_pre_sale_cannot_be_edited_by_mobile_pre_seller(): void
@@ -2273,11 +2322,12 @@ class RoutesPreSalesTest extends TestCase
         $product = $this->product($business, $branch);
         $preSale = $this->submittedPreSale($business, $branch, $seller, $product);
 
-        $this->actingAs($admin)->post(route('routes.pre-sales.processing', $preSale))->assertSessionHasNoErrors();
+        $this->actingAs($admin)->post(route('routes.pre-sales.processing', $preSale), ['idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true))])->assertSessionHasNoErrors();
 
         $this->actingAs($seller)
             ->from(route('routes.mobile.visits.show', $preSale->visit))
             ->post(route('routes.mobile.visits.pre-sale.store', $preSale->visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['product_id' => $product->id, 'quantity' => 1]],
             ])
             ->assertRedirect(route('routes.mobile.visits.show', $preSale->visit))
@@ -2298,6 +2348,7 @@ class RoutesPreSalesTest extends TestCase
         ]);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 4]],
         ])->assertSessionHasNoErrors();
 
@@ -2321,6 +2372,7 @@ class RoutesPreSalesTest extends TestCase
         foreach ([1, 1, 2] as $index => $quantity) {
             $visit = $this->startedVisit($business, $branch, $seller, 'Cliente '.($index + 1));
             $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['product_id' => $product->id, 'quantity' => $quantity]],
             ])->assertSessionHasNoErrors();
         }
@@ -2382,6 +2434,7 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 3]],
         ])->assertSessionHasNoErrors();
 
@@ -2407,6 +2460,7 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 4]],
         ])->assertSessionHasNoErrors();
 
@@ -2428,12 +2482,13 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 4]],
         ])->assertSessionHasNoErrors();
 
         $preSale = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail();
 
-        $this->actingAs($admin)->post(route('routes.pre-sales.cancel', $preSale))
+        $this->actingAs($admin)->post(route('routes.pre-sales.cancel', $preSale), ['idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true))])
             ->assertSessionHasNoErrors();
 
         $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
@@ -2449,10 +2504,11 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 4]],
         ])->assertSessionHasNoErrors();
 
-        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay))
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay), ['idempotency_key' => 'test-route-close-'.str_replace('.', '-', uniqid('', true))])
             ->assertRedirect();
 
         $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
@@ -2469,12 +2525,14 @@ class RoutesPreSalesTest extends TestCase
         $secondVisit = $this->startedVisit($business, $branch, $seller, 'Cliente B');
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $firstVisit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => 5]],
         ])->assertSessionHasNoErrors();
 
         $this->actingAs($seller)
             ->from(route('routes.mobile.visits.show', $secondVisit))
             ->post(route('routes.mobile.visits.pre-sale.store', $secondVisit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
                 'items' => [['product_id' => $product->id, 'quantity' => 1]],
             ])
             ->assertRedirect(route('routes.mobile.visits.show', $secondVisit))
@@ -2722,10 +2780,11 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller, $customerName);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
             'items' => [['product_id' => $product->id, 'quantity' => $quantity]],
         ])->assertSessionHasNoErrors();
 
-        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay))
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay), ['idempotency_key' => 'test-route-close-'.str_replace('.', '-', uniqid('', true))])
             ->assertRedirect();
 
         return PreSale::query()

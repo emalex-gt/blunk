@@ -1,9 +1,10 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Toast from '@/Components/Toast';
 import { useToast } from '@/hooks/useToast';
+import { makeOperationKey } from '@/lib/idempotency';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, useForm, usePage } from '@inertiajs/react';
-import { FormEvent, useState } from 'react';
+import { FormEvent, useRef, useState } from 'react';
 
 type SaleDetail = {
     id: number;
@@ -128,7 +129,9 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
     const country = business?.country ?? 'GT';
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [showTechnicalModal, setShowTechnicalModal] = useState(false);
-    const cancelForm = useForm({ reason: '' });
+    const [cancelKey, setCancelKey] = useState(() => makeOperationKey('sale-cancel'));
+    const cancelLockedRef = useRef(false);
+    const cancelForm = useForm({ idempotency_key: cancelKey, reason: '' });
     const retryForm = useForm({});
     const toast = useToast();
     const isCancelled = sale.status === 'cancelled';
@@ -171,15 +174,26 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
     function submitCancel(event: FormEvent) {
         event.preventDefault();
 
+        if (cancelLockedRef.current || cancelForm.processing) {
+            return;
+        }
+
+        cancelLockedRef.current = true;
+        cancelForm.setData('idempotency_key', cancelKey);
         cancelForm.post(route('sales.cancel', sale.id), {
             preserveScroll: true,
             onSuccess: () => {
+                const nextKey = makeOperationKey('sale-cancel');
+                setCancelKey(nextKey);
                 setShowCancelModal(false);
-                cancelForm.reset();
+                cancelForm.setData({ idempotency_key: nextKey, reason: '' });
                 toast.success('Venta anulada correctamente.');
             },
             onError: (errors) => {
                 toast.error(errors.reason ?? 'No tienes permisos para anular esta venta.');
+            },
+            onFinish: () => {
+                cancelLockedRef.current = false;
             },
         });
     }

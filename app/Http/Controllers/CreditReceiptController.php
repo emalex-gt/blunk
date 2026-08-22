@@ -14,6 +14,7 @@ use App\Support\BusinessCounter;
 use App\Support\BusinessLogo;
 use App\Support\Credits;
 use App\Support\GuatemalaNitCustomerResolver;
+use App\Support\IdempotencyService;
 use App\Support\Inventory\StockPolicy;
 use App\Support\OperationDrafts;
 use App\Support\Permissions;
@@ -94,6 +95,7 @@ class CreditReceiptController extends Controller
         $this->ensureCreditsAvailable($request, Permissions::CREDITS_CREATE);
 
         $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'branch_id' => ['nullable', 'integer'],
             'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
             'customer' => ['required', 'array'],
@@ -134,7 +136,15 @@ class CreditReceiptController extends Controller
             ]);
         }
 
-        $receipt = DB::transaction(function () use ($request, $businessId, $data, $docType, $docNumber, $activeBranch) {
+        $idempotencyResult = app(IdempotencyService::class)->run(
+            $businessId,
+            $activeBranch->id,
+            $request->user()->id,
+            'credit_receipt_store',
+            $data['idempotency_key'],
+            $this->creditReceiptIdempotencyPayload($data, $businessId, $activeBranch->id, $request->user()->id),
+            function () use ($request, $businessId, $data, $docType, $docNumber, $activeBranch) {
+                $receipt = DB::transaction(function () use ($request, $businessId, $data, $docType, $docNumber, $activeBranch) {
             $branch = $activeBranch;
             $customer = $this->resolveCustomer($data['customer']);
             $shouldReserveStock = Credits::reserveStockOnCreditReservations($businessId);
@@ -207,13 +217,24 @@ class CreditReceiptController extends Controller
             }
 
             return $receipt;
-        });
+                });
+
+                return [
+                    'result_id' => $receipt->id,
+                    'response_payload' => ['credit_receipt_id' => $receipt->id],
+                ];
+            },
+            'credit_receipt',
+        );
+        $receipt = CreditReceipt::query()->findOrFail($idempotencyResult->resultId);
 
         $redirect = redirect()->route('sales.create')
             ->with('success', 'Crédito registrado correctamente.')
             ->with('credit_receipt_id', $receipt->id);
 
-        OperationDrafts::markConverted($data['draft_id'] ?? null, 'pos_sale', 'credit_receipt', $receipt->id, $request);
+        if (! $idempotencyResult->replayed) {
+            OperationDrafts::markConverted($data['draft_id'] ?? null, 'pos_sale', 'credit_receipt', $receipt->id, $request);
+        }
 
         if (Permissions::userHas($request->user(), Permissions::CREDITS_PRINT)) {
             $redirect->with('credit_print_url', URL::temporarySignedRoute('credits.receipts.print', now()->addMinutes(10), ['creditReceipt' => $receipt->id]));
@@ -245,17 +266,50 @@ class CreditReceiptController extends Controller
         $this->ensureCreditsAvailable($request, Permissions::CREDITS_CANCEL_LINES);
         abort_unless((int) $line->business_id === (int) currentBusinessId(), 403);
 
-        $request->validate(['reason' => ['required', 'string', 'max:1000']]);
+        $data = $request->validate([
+            'reason' => ['required', 'string', 'max:1000'],
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
+        ]);
 
-        DB::transaction(function () use ($line) {
+        app(IdempotencyService::class)->run(
+            (int) $line->business_id,
+            (int) $line->branch_id,
+            $request->user()->id,
+            'credit_receipt_line_cancel',
+            $data['idempotency_key'],
+            [
+                'business_id' => (int) $line->business_id,
+                'branch_id' => (int) $line->branch_id,
+                'user_id' => $request->user()->id,
+                'operation_type' => 'credit_receipt_line_cancel',
+                'line_id' => $line->id,
+                'reason' => $data['reason'],
+            ],
+            function () use ($line) {
+                DB::transaction(function () use ($line) {
             $line = CreditReceiptLine::query()->lockForUpdate()->findOrFail($line->id);
+
+            if ((int) $line->qty_pending <= 0) {
+                throw ValidationException::withMessages([
+                    'line' => 'Esta línea de crédito ya no está pendiente.',
+                ]);
+            }
+
             $line->update([
                 'qty_cancelled' => (int) $line->qty_cancelled + (int) $line->qty_pending,
             ]);
 
             $line = Credits::refreshLine($line);
             Credits::refreshReceipt($line->receipt);
-        });
+                });
+
+                return [
+                    'result_id' => $line->id,
+                    'response_payload' => ['line_id' => $line->id],
+                ];
+            },
+            'credit_receipt_line',
+        );
 
         return back()->with('success', 'Línea de crédito cancelada.');
     }
@@ -323,6 +377,7 @@ class CreditReceiptController extends Controller
         abort_unless((int) $customer->business_id === (int) currentBusinessId(), 403);
 
         $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'to_customer_doc_number' => ['required', 'string', 'max:50'],
             'reason' => ['required', 'string', 'max:1000'],
         ]);
@@ -332,12 +387,36 @@ class CreditReceiptController extends Controller
         /** @var Customer $to */
         $to = $resolved['customer'];
 
-        DB::transaction(function () use ($request, $customer, $to, $data, $resolved) {
+        app(IdempotencyService::class)->run(
+            currentBusinessId(),
+            BranchInventory::activeBranch(currentBusinessId())->id,
+            $request->user()->id,
+            'credit_customer_transfer',
+            $data['idempotency_key'],
+            [
+                'business_id' => currentBusinessId(),
+                'branch_id' => BranchInventory::activeBranch(currentBusinessId())->id,
+                'user_id' => $request->user()->id,
+                'operation_type' => 'credit_customer_transfer',
+                'from_customer_id' => $customer->id,
+                'to_customer_id' => $to->id,
+                'to_customer_doc_number' => GuatemalaNitCustomerResolver::normalize($data['to_customer_doc_number']),
+                'reason' => $data['reason'],
+            ],
+            function () use ($request, $customer, $to, $data, $resolved) {
+                DB::transaction(function () use ($request, $customer, $to, $data, $resolved) {
             $receipts = CreditReceipt::query()
                 ->where('business_id', currentBusinessId())
                 ->where('customer_id', $customer->id)
                 ->whereIn('status', ['pending', 'partially_invoiced'])
+                ->lockForUpdate()
                 ->get();
+
+            if ($receipts->isEmpty()) {
+                throw ValidationException::withMessages([
+                    'customer' => 'No hay reservas pendientes para transferir.',
+                ]);
+            }
 
             CreditReceipt::query()
                 ->whereKey($receipts->pluck('id'))
@@ -364,7 +443,15 @@ class CreditReceiptController extends Controller
                     'resolved_at' => now()->toIso8601String(),
                 ],
             ]);
-        });
+                });
+
+                return [
+                    'result_id' => $to->id,
+                    'response_payload' => ['customer_id' => $to->id],
+                ];
+            },
+            'credit_customer_transfer',
+        );
 
         return redirect()->route('credits.customers.show', $to)->with('success', 'Deuda transferida.');
     }
@@ -383,6 +470,27 @@ class CreditReceiptController extends Controller
     private function authorizeReceipt(CreditReceipt $receipt): void
     {
         abort_unless((int) $receipt->business_id === (int) currentBusinessId(), 403);
+    }
+
+    private function creditReceiptIdempotencyPayload(array $data, int $businessId, int $branchId, int $userId): array
+    {
+        return [
+            'business_id' => $businessId,
+            'branch_id' => $branchId,
+            'user_id' => $userId,
+            'operation_type' => 'credit_receipt_store',
+            'customer' => $data['customer'] ?? null,
+            'note' => $data['note'] ?? null,
+            'items' => collect($data['items'] ?? [])
+                ->map(fn (array $item) => [
+                    'product_id' => (int) ($item['product_id'] ?? 0),
+                    'quantity' => (int) ($item['quantity'] ?? 0),
+                    'unit_price' => isset($item['unit_price']) ? round((float) $item['unit_price'], 4) : null,
+                ])
+                ->sortBy(fn (array $item) => implode('|', [$item['product_id'], $item['quantity'], $item['unit_price'] ?? '']))
+                ->values()
+                ->all(),
+        ];
     }
 
     private function resolveCustomer(array $data): Customer

@@ -1,8 +1,9 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
 import ConfirmDialog from '@/Components/ConfirmDialog';
+import { makeOperationKey } from '@/lib/idempotency';
 import { Head, Link, useForm } from '@inertiajs/react';
-import { FormEvent, useState } from 'react';
+import { FormEvent, useRef, useState } from 'react';
 
 type Visit = {
     id: number;
@@ -45,9 +46,14 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
     const [nitLookupLoading, setNitLookupLoading] = useState(false);
     const [nitLookupError, setNitLookupError] = useState('');
     const [showCloseConfirm, setShowCloseConfirm] = useState(false);
-    const closeForm = useForm({});
+    const [closeKey, setCloseKey] = useState(() => makeOperationKey('route-work-day-close'));
+    const closeSubmitLockedRef = useRef(false);
+    const closeForm = useForm({ idempotency_key: closeKey });
     const [noSaleVisit, setNoSaleVisit] = useState<Visit | null>(null);
+    const [noSaleKey, setNoSaleKey] = useState(() => makeOperationKey('route-no-sale'));
+    const noSaleSubmitLockedRef = useRef(false);
     const noSaleForm = useForm({
+        idempotency_key: noSaleKey,
         no_sale_reason: '',
         no_sale_note: '',
         pre_sale: '',
@@ -103,9 +109,23 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
     }
 
     const closeWorkDay = () => {
+        if (closeSubmitLockedRef.current) {
+            return;
+        }
+
+        closeSubmitLockedRef.current = true;
+        closeForm.setData('idempotency_key', closeKey);
         closeForm.post(route('routes.mobile.work-days.close', workDay.id), {
             preserveScroll: true,
-            onFinish: () => setShowCloseConfirm(false),
+            onSuccess: () => {
+                const nextKey = makeOperationKey('route-work-day-close');
+                setCloseKey(nextKey);
+                closeForm.setData('idempotency_key', nextKey);
+            },
+            onFinish: () => {
+                closeSubmitLockedRef.current = false;
+                setShowCloseConfirm(false);
+            },
         });
     };
 
@@ -119,7 +139,10 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
         }
 
         noSaleForm.clearErrors();
+        const nextKey = makeOperationKey('route-no-sale');
+        setNoSaleKey(nextKey);
         noSaleForm.setData({
+            idempotency_key: nextKey,
             no_sale_reason: visit.no_sale_reason ?? '',
             no_sale_note: visit.no_sale_note ?? '',
             pre_sale: '',
@@ -130,13 +153,23 @@ export default function WorkDay({ workDay, visits }: { workDay: { id: number; st
     const confirmNoSale = (event: FormEvent) => {
         event.preventDefault();
 
-        if (!noSaleVisit) {
+        if (!noSaleVisit || noSaleSubmitLockedRef.current) {
             return;
         }
 
+        noSaleSubmitLockedRef.current = true;
+        noSaleForm.setData('idempotency_key', noSaleKey);
         noSaleForm.post(route('routes.mobile.visits.without-sale', noSaleVisit.id), {
             preserveScroll: true,
-            onSuccess: () => setNoSaleVisit(null),
+            onSuccess: () => {
+                setNoSaleVisit(null);
+                const nextKey = makeOperationKey('route-no-sale');
+                setNoSaleKey(nextKey);
+                noSaleForm.setData('idempotency_key', nextKey);
+            },
+            onFinish: () => {
+                noSaleSubmitLockedRef.current = false;
+            },
         });
     };
 

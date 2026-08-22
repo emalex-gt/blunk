@@ -2,6 +2,7 @@ import Toast from '@/Components/Toast';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { useToast } from '@/hooks/useToast';
 import { t } from '@/lib/i18n';
+import { makeOperationKey } from '@/lib/idempotency';
 import { formatCurrency } from '@/utils/currency';
 import { Head, usePage } from '@inertiajs/react';
 import axios from 'axios';
@@ -62,6 +63,8 @@ export default function StockIndex({
     const [note, setNote] = useState('');
     const [modalError, setModalError] = useState('');
     const [saving, setSaving] = useState(false);
+    const [idempotencyKey, setIdempotencyKey] = useState(() => makeOperationKey('stock'));
+    const submitLockedRef = useRef(false);
 
     const numericQuantity = Number(quantity);
     const estimatedNewPhysicalStock = selectedProduct
@@ -101,6 +104,7 @@ export default function StockIndex({
         setQuantity('1');
         setNote('');
         setModalError('');
+        setIdempotencyKey(makeOperationKey('stock'));
         requestAnimationFrame(() => quantityInputRef.current?.focus());
     }
 
@@ -164,14 +168,16 @@ export default function StockIndex({
     }
 
     function submitAdjustment() {
-        if (!selectedProduct || saving || !validateAdjustment()) {
+        if (!selectedProduct || saving || submitLockedRef.current || !validateAdjustment()) {
             return;
         }
 
+        submitLockedRef.current = true;
         setSaving(true);
         setModalError('');
 
         axios.post<AdjustmentResponse>(route('stock.adjustments.store'), {
+            idempotency_key: idempotencyKey,
             product_id: selectedProduct.id,
             type: adjustmentType,
             quantity: numericQuantity,
@@ -185,6 +191,7 @@ export default function StockIndex({
                     product.id === updatedProduct.id ? updatedProduct : product
                 )));
                 setSelectedProduct(null);
+                setIdempotencyKey(makeOperationKey('stock'));
                 toast.success(response.data.message || 'Stock ajustado correctamente.');
                 requestAnimationFrame(() => searchInputRef.current?.focus());
             })
@@ -196,7 +203,10 @@ export default function StockIndex({
                     : (error.response?.data?.message || 'No se pudo ajustar el stock.');
                 setModalError(String(message));
             })
-            .finally(() => setSaving(false));
+            .finally(() => {
+                submitLockedRef.current = false;
+                setSaving(false);
+            });
     }
 
     useEffect(() => {

@@ -1,6 +1,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import { makeOperationKey } from '@/lib/idempotency';
 import { Head, Link, router, useForm } from '@inertiajs/react';
-import { FormEvent, ReactNode, useState } from 'react';
+import { FormEvent, ReactNode, useRef, useState } from 'react';
 
 type Related = { id: number; name: string };
 
@@ -58,17 +59,37 @@ const cancellationReasons = ['Cliente canceló', 'Producto no disponible', 'Dupl
 
 export default function Show({ preSale }: Props) {
     const [cancelOpen, setCancelOpen] = useState(false);
-    const cancelForm = useForm({ cancellation_reason: '', cancellation_note: '' });
+    const processingLockedRef = useRef(false);
+    const cancelForm = useForm({ idempotency_key: makeOperationKey('pre-sale-cancel'), cancellation_reason: '', cancellation_note: '' });
 
     const markProcessing = () => {
-        router.post(route('routes.pre-sales.processing', preSale.id), {}, { preserveScroll: true });
+        if (processingLockedRef.current) {
+            return;
+        }
+
+        processingLockedRef.current = true;
+        router.post(route('routes.pre-sales.processing', preSale.id), {
+            idempotency_key: makeOperationKey('pre-sale-processing'),
+        }, {
+            preserveScroll: true,
+            onFinish: () => {
+                processingLockedRef.current = false;
+            },
+        });
     };
 
     const submitCancellation = (event: FormEvent) => {
         event.preventDefault();
         cancelForm.post(route('routes.pre-sales.cancel', preSale.id), {
             preserveScroll: true,
-            onSuccess: () => setCancelOpen(false),
+            onSuccess: () => {
+                setCancelOpen(false);
+                cancelForm.setData({
+                    idempotency_key: makeOperationKey('pre-sale-cancel'),
+                    cancellation_reason: '',
+                    cancellation_note: '',
+                });
+            },
         });
     };
 
