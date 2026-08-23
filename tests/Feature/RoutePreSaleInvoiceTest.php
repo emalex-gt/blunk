@@ -31,6 +31,7 @@ use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Inertia\Testing\AssertableInertia as Assert;
 use Mockery;
 use Tests\TestCase;
 
@@ -120,6 +121,7 @@ class RoutePreSaleInvoiceTest extends TestCase
         $this->assertSame(0, SaleItem::query()->where('business_id', $business->id)->count());
         $this->assertSame(0, ElectronicDocument::query()->where('business_id', $business->id)->count());
         $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerAccountMovement::query()->where('business_id', $business->id)->count());
         $this->assertDatabaseCount('cash_movements', 0);
         $this->assertSame(10.0, (float) ProductBranchStock::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('product_id', $product->id)->value('stock'));
         $this->assertSame(PreSale::STATUS_PICKED, $preSale->refresh()->status);
@@ -164,6 +166,196 @@ class RoutePreSaleInvoiceTest extends TestCase
         $this->actingAs($admin)
             ->post(route('routes.pre-sales.invoice', $submitted), $this->invoicePayload())
             ->assertSessionHasErrors('pre_sale');
+    }
+
+    public function test_invoice_ui_is_unavailable_when_no_document_type_can_be_issued(): void
+    {
+        [$business, $admin, $branch] = $this->tenant();
+        TenantSetting::query()->where('business_id', $business->id)->update(['allow_receipts' => false]);
+        $product = $this->product($business, $branch);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+
+        $this->actingAs($admin)
+            ->get(route('routes.pre-sales.show', $preSale))
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/PreSales/Show')
+                ->where('canInvoice', false)
+                ->where('invoiceOptions.document_types', []));
+    }
+
+    public function test_invoice_ui_hides_credit_when_the_user_cannot_create_credit_sales(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(enableCreditSales: true);
+        $product = $this->product($business, $branch);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+
+        $admin->roles()->detach();
+        Permissions::assignDirectPermissions($admin, [
+            Permissions::ROUTES_PRE_SALES_ADMIN_VIEW,
+            Permissions::ROUTES_PRE_SALES_INVOICE,
+        ]);
+
+        $this->actingAs($admin)
+            ->get(route('routes.pre-sales.show', $preSale))
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/PreSales/Show')
+                ->where('canInvoice', true)
+                ->where('invoiceOptions.credit_enabled', false));
+    }
+
+    public function test_credit_conversion_is_rejected_when_credit_sales_are_disabled(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(enableCreditSales: false);
+        $product = $this->product($business, $branch);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+
+        $this->actingAs($admin)
+            ->get(route('routes.pre-sales.show', $preSale))
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('invoiceOptions.credit_enabled', false));
+
+        $this->actingAs($admin)
+            ->from(route('routes.pre-sales.show', $preSale))
+            ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload('receipt', 'credit'))
+            ->assertRedirect(route('routes.pre-sales.show', $preSale))
+            ->assertSessionHasErrors('payment_condition');
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertSame(PreSale::STATUS_PICKED, $preSale->refresh()->status);
+    }
+
+    public function test_invoice_ui_hides_credit_when_the_credits_module_is_disabled(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(enableCreditSales: true);
+        $product = $this->product($business, $branch);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+        TenantModule::query()
+            ->where('business_id', $business->id)
+            ->where('module', 'credits')
+            ->update(['is_enabled' => false]);
+
+        $this->actingAs($admin)
+            ->get(route('routes.pre-sales.show', $preSale))
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('invoiceOptions.credit_enabled', false));
+    }
+
+    public function test_successful_fel_conversion_marks_the_document_certified_and_consumes_the_reservation(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(allowInvoices: true);
+        $this->felSettings($business, $branch);
+        $product = $this->product($business, $branch, stock: 10, price: 100);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product, quantity: 2, pickedQuantity: 2);
+        $this->openCashRegister($business, $branch, $admin);
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $sale): ElectronicDocument {
+            $document = $sale->electronicDocument()->firstOrFail();
+            $document->update([
+                'status' => 'certified',
+                'uuid' => 'route-pre-sale-fel-uuid',
+                'series' => 'A',
+                'number' => '1',
+                'certification_date' => now(),
+            ]);
+            $sale->update([
+                'certification_status' => 'certified',
+                'fel_status' => 'CERTIFIED',
+                'fel_uuid' => 'route-pre-sale-fel-uuid',
+            ]);
+
+            return $document->refresh();
+        });
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload('invoice', 'paid', 'cash'))
+            ->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->where('business_id', $business->id)->firstOrFail();
+        $this->assertSame('certified', $sale->certification_status);
+        $this->assertDatabaseHas('electronic_documents', ['sale_id' => $sale->id, 'status' => 'certified']);
+        $this->assertSame(8.0, (float) ProductBranchStock::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(0, StockReservation::query()->where('source_id', $preSale->id)->where('status', 'active')->count());
+        $this->assertSame(PreSale::STATUS_CONVERTED, $preSale->refresh()->status);
+    }
+
+    public function test_a_different_idempotency_key_cannot_convert_an_already_converted_pre_sale(): void
+    {
+        [$business, $admin, $branch] = $this->tenant();
+        $product = $this->product($business, $branch);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+        $this->openCashRegister($business, $branch, $admin);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload('receipt', 'paid', 'cash', 'route-pre-sale-first-key'))
+            ->assertSessionHasNoErrors();
+
+        $this->actingAs($admin)
+            ->from(route('routes.pre-sales.show', $preSale))
+            ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload('receipt', 'paid', 'cash', 'route-pre-sale-second-key'))
+            ->assertRedirect(route('routes.pre-sales.show', $preSale))
+            ->assertSessionHasErrors('pre_sale');
+
+        $this->assertSame(1, Sale::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_conversion_is_scoped_to_the_current_tenant_and_active_branch(): void
+    {
+        [$business, $admin, $branch] = $this->tenant();
+        [$otherBusiness, $otherAdmin, $otherBranch] = $this->tenant();
+        $otherTenantProduct = $this->product($otherBusiness, $otherBranch);
+        $otherTenantPreSale = $this->pickedPreSale($otherBusiness, $otherBranch, $otherAdmin, $otherTenantProduct);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.invoice', $otherTenantPreSale), $this->invoicePayload())
+            ->assertForbidden();
+
+        $otherBranch = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Otra sucursal '.uniqid(),
+            'code' => 'OTHER-'.uniqid(),
+            'is_active' => true,
+        ]);
+        $otherBranchProduct = $this->product($business, $otherBranch);
+        $otherBranchPreSale = $this->pickedPreSale($business, $otherBranch, $admin, $otherBranchProduct);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.invoice', $otherBranchPreSale), $this->invoicePayload())
+            ->assertForbidden();
+    }
+
+    public function test_converted_pre_sale_cannot_return_to_picking_cancellation_or_processing(): void
+    {
+        [$business, $admin, $branch] = $this->tenant();
+        $product = $this->product($business, $branch);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+        $this->openCashRegister($business, $branch, $admin);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload())
+            ->assertSessionHasNoErrors();
+
+        $item = $preSale->items()->firstOrFail();
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'route-pre-sale-repick-key',
+                'items' => [['id' => $item->id, 'picked_quantity' => 1]],
+            ])
+            ->assertSessionHasErrors('pre_sale');
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.cancel', $preSale), ['idempotency_key' => 'route-pre-sale-cancel-key'])
+            ->assertSessionHasErrors('pre_sale');
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.processing', $preSale), ['idempotency_key' => 'route-pre-sale-process-key'])
+            ->assertSessionHasErrors('pre_sale');
+
+        $this->assertSame(PreSale::STATUS_CONVERTED, $preSale->refresh()->status);
+        $source = file_get_contents(resource_path('js/Pages/Routes/PreSales/Show.tsx'));
+        $this->assertStringContainsString("preSale.status === 'picked' && canInvoice && invoiceOptions.document_types.length > 0", $source);
+        $this->assertStringContainsString("preSale.status === 'converted' && preSale.converted_sale", $source);
+        $this->assertStringContainsString('No hay documentos disponibles para facturar esta preventa.', $source);
     }
 
     private function tenant(bool $enableCreditSales = false, bool $allowInvoices = false): array

@@ -165,7 +165,7 @@ export default function Show({ preSale, canInvoice, invoiceOptions }: Props) {
                                 Preparar pedido
                             </Link>
                         )}
-                        {preSale.status === 'picked' && canInvoice && !preSale.converted_sale && (
+                        {preSale.status === 'picked' && canInvoice && invoiceOptions.document_types.length > 0 && !preSale.converted_sale && (
                             <button onClick={() => setInvoiceOpen(true)} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700">
                                 Facturar
                             </button>
@@ -223,6 +223,12 @@ export default function Show({ preSale, canInvoice, invoiceOptions }: Props) {
                 {preSale.status === 'picked' && invoiceOptions.mode === 'automatic' && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                         La facturación automática aún no está activa. Factura esta preventa manualmente.
+                    </div>
+                )}
+
+                {preSale.status === 'picked' && invoiceOptions.document_types.length === 0 && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                        No hay documentos disponibles para facturar esta preventa.
                     </div>
                 )}
 

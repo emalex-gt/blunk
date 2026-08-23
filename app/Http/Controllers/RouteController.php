@@ -299,6 +299,7 @@ class RouteController extends Controller
         abort_unless((int) $workDay->business_id === currentBusinessId(), 403);
 
         $businessId = currentBusinessId();
+        $invoiceOptions = $this->routePreSaleInvoiceOptions($businessId, $request->user());
         $workDay->load(['branch:id,name', 'zone:id,name', 'seller:id,name', 'completedBy:id,name']);
 
         $summary = [
@@ -363,7 +364,7 @@ class RouteController extends Controller
                 'summary' => $summary,
             ],
             'preSales' => $preSales,
-            'canInvoice' => Permissions::userHas(request()->user(), Permissions::ROUTES_PRE_SALES_INVOICE),
+            'canInvoice' => $this->canInvoiceRoutePreSales($request->user(), $invoiceOptions),
             'activeBranchId' => BranchInventory::activeBranch($businessId)->id,
         ]);
     }
@@ -371,6 +372,7 @@ class RouteController extends Controller
     public function preSales(Request $request): Response
     {
         $businessId = currentBusinessId();
+        $invoiceOptions = $this->routePreSaleInvoiceOptions($businessId, $request->user());
         $status = $request->string('status')->toString();
         $status = in_array($status, ['draft', 'submitted', 'processing', 'picked', 'converted', 'cancelled'], true) ? $status : null;
         $dateFrom = $request->date('date_from')?->startOfDay();
@@ -450,7 +452,7 @@ class RouteController extends Controller
             'branches' => Branch::query()->where('business_id', $businessId)->where('is_active', true)->orderBy('name')->get(['id', 'name']),
             'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
             'zones' => RouteZone::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
-            'canInvoice' => Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_INVOICE),
+            'canInvoice' => $this->canInvoiceRoutePreSales($request->user(), $invoiceOptions),
             'activeBranchId' => BranchInventory::activeBranch($businessId)->id,
         ]);
     }
@@ -488,11 +490,13 @@ class RouteController extends Controller
         $tenantSettings = TenantSetting::query()->where('business_id', $preSale->business_id)->first();
         $felSettings = TenantFelSetting::query()->where('business_id', $preSale->business_id)->first();
         $business = Business::query()->findOrFail($preSale->business_id);
-        $invoiceAvailable = $business->country === 'GT'
-            && (bool) ($tenantSettings?->allow_invoices ?? false)
-            && module_enabled('fel_gt', $preSale->business_id)
-            && (bool) $felSettings?->enabled
-            && (bool) $felSettings?->isConfigured();
+        $invoiceOptions = $this->routePreSaleInvoiceOptions(
+            (int) $preSale->business_id,
+            request()->user(),
+            $business,
+            $tenantSettings,
+            $felSettings,
+        );
 
         return Inertia::render('Routes/PreSales/Show', [
             'preSale' => [
@@ -548,17 +552,9 @@ class RouteController extends Controller
                     ];
                 })->values(),
             ],
-            'canInvoice' => Permissions::userHas(request()->user(), Permissions::ROUTES_PRE_SALES_INVOICE)
+            'canInvoice' => $this->canInvoiceRoutePreSales(request()->user(), $invoiceOptions)
                 && (int) BranchInventory::activeBranch((int) $preSale->business_id)->id === (int) $preSale->branch_id,
-            'invoiceOptions' => [
-                'mode' => $tenantSettings?->route_pre_sale_invoicing_mode ?: 'manual',
-                'document_types' => array_values(array_filter([
-                    (bool) ($tenantSettings?->allow_receipts ?? true) ? 'receipt' : null,
-                    $invoiceAvailable ? 'invoice' : null,
-                ])),
-                'credit_enabled' => (bool) ($tenantSettings?->enable_credit_sales ?? false),
-                'payment_methods' => ['cash', 'card', 'transfer', 'check'],
-            ],
+            'invoiceOptions' => $invoiceOptions,
         ]);
     }
 
@@ -1919,6 +1915,42 @@ class RouteController extends Controller
     private function currentBusinessCountry(): string
     {
         return Business::query()->whereKey(currentBusinessId())->value('country') ?: 'GT';
+    }
+
+    private function routePreSaleInvoiceOptions(
+        int $businessId,
+        User $user,
+        ?Business $business = null,
+        ?TenantSetting $settings = null,
+        ?TenantFelSetting $felSettings = null,
+    ): array {
+        $business ??= Business::query()->findOrFail($businessId);
+        $settings ??= TenantSetting::query()->where('business_id', $businessId)->first();
+        $felSettings ??= TenantFelSetting::query()->where('business_id', $businessId)->first();
+
+        $invoiceAvailable = $business->country === 'GT'
+            && (bool) ($settings?->allow_invoices ?? false)
+            && module_enabled('fel_gt', $businessId)
+            && (bool) $felSettings?->enabled
+            && (bool) $felSettings?->isConfigured();
+
+        return [
+            'mode' => $settings?->route_pre_sale_invoicing_mode ?: 'manual',
+            'document_types' => array_values(array_filter([
+                (bool) ($settings?->allow_receipts ?? true) ? 'receipt' : null,
+                $invoiceAvailable ? 'invoice' : null,
+            ])),
+            'credit_enabled' => (bool) ($settings?->enable_credit_sales ?? false)
+                && module_enabled('credits', $businessId)
+                && Permissions::userHas($user, Permissions::CREDITS_SALES_CREATE),
+            'payment_methods' => ['cash', 'card', 'transfer', 'check'],
+        ];
+    }
+
+    private function canInvoiceRoutePreSales(User $user, array $invoiceOptions): bool
+    {
+        return Permissions::userHas($user, Permissions::ROUTES_PRE_SALES_INVOICE)
+            && $invoiceOptions['document_types'] !== [];
     }
 
     private function assignCustomerToZone(RouteZone $zone, Customer $customer, ?string $notes = null): RouteZoneCustomer
