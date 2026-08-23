@@ -105,6 +105,63 @@ class SystemIntegrityAuditCommandTest extends TestCase
             ->assertExitCode(1);
     }
 
+    public function test_zero_amount_cash_opening_does_not_generate_a_warning(): void
+    {
+        [$business, $branch] = $this->business();
+        $session = CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'status' => 'open',
+            'opening_amount' => 0,
+            'expected_cash' => 0,
+            'opened_at' => now(),
+        ]);
+        $this->cashMovement($business, $branch, $session, 'opening', 0);
+
+        $this->artisan('system:audit-integrity', ['--business' => $business->id, '--section' => 'cash'])
+            ->expectsOutputToContain('cash: 0 críticos, 0 warnings')
+            ->assertExitCode(0);
+    }
+
+    public function test_zero_quantity_duplicate_adjustments_do_not_generate_a_warning_in_normal_mode(): void
+    {
+        [$business, $branch] = $this->business();
+        $product = $this->product($business);
+        $this->movement($business, $branch, $product, 'manual', 0, 'Ajuste de inventario');
+        $this->movement($business, $branch, $product, 'manual', 0, 'Ajuste de inventario');
+
+        $this->artisan('system:audit-integrity', ['--business' => $business->id, '--section' => 'stock'])
+            ->expectsOutputToContain('stock_adjustments: 0 críticos, 0 warnings')
+            ->assertExitCode(0);
+    }
+
+    public function test_zero_quantity_adjustment_is_info_only_in_strict_mode(): void
+    {
+        [$business, $branch] = $this->business();
+        $product = $this->product($business);
+        $this->movement($business, $branch, $product, 'manual', 0, 'Ajuste de inventario');
+
+        $this->artisan('system:audit-integrity', ['--business' => $business->id, '--section' => 'stock', '--strict' => true])
+            ->expectsOutputToContain('stock_adjustments: 0 críticos, 0 warnings, 1 info')
+            ->assertExitCode(0);
+    }
+
+    public function test_duplicate_non_zero_adjustments_still_generate_a_warning_and_csv_summary(): void
+    {
+        [$business, $branch] = $this->business();
+        $product = $this->product($business);
+        $this->stock($business, $branch, $product, 2);
+        $this->movement($business, $branch, $product, 'manual', 1, 'Ajuste de inventario');
+        $this->movement($business, $branch, $product, 'manual', 1, 'Ajuste de inventario');
+
+        $this->artisan('system:audit-integrity', ['--business' => $business->id, '--section' => 'stock', '--report' => true])
+            ->expectsOutputToContain('stock_adjustments: 0 críticos, 1 warnings')
+            ->assertExitCode(0);
+
+        $summary = Storage::disk('local')->get(collect(Storage::disk('local')->allFiles('system-integrity-audits'))->first(fn (string $path) => str_ends_with($path, 'summary.csv')));
+        $this->assertStringContainsString('stock_adjustments,0,1,0,1', $summary);
+    }
+
     public function test_detects_accounts_receivable_balance_mismatch(): void
     {
         [$business, $branch] = $this->business();
@@ -251,9 +308,22 @@ class SystemIntegrityAuditCommandTest extends TestCase
         ProductBranchStock::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id, 'stock' => $stock]);
     }
 
-    private function movement(Business $business, Branch $branch, Product $product, string $type, float $quantity): void
+    private function movement(Business $business, Branch $branch, Product $product, string $type, float $quantity, ?string $note = null): void
     {
-        StockMovement::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id, 'type' => $type, 'quantity' => $quantity, 'previous_stock' => 0, 'new_stock' => $quantity]);
+        StockMovement::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id, 'type' => $type, 'quantity' => $quantity, 'previous_stock' => 0, 'new_stock' => $quantity, 'note' => $note]);
+    }
+
+    private function cashMovement(Business $business, Branch $branch, CashRegisterSession $session, string $type, float $amount): void
+    {
+        DB::table('cash_movements')->insert([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'cash_register_session_id' => $session->id,
+            'type' => $type,
+            'amount' => $amount,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 
     private function customer(Business $business): Customer

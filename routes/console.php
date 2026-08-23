@@ -177,7 +177,7 @@ Artisan::command('sales:audit-duplicates {--business=} {--from=} {--to=} {--wind
     return self::SUCCESS;
 })->purpose('Audit and optionally repair duplicated POS sales safely');
 
-Artisan::command('system:audit-integrity {--business=} {--branch=} {--from=} {--to=} {--report} {--section=} {--dry-run}', function (SystemIntegrityAuditor $auditor) {
+Artisan::command('system:audit-integrity {--business=} {--branch=} {--from=} {--to=} {--report} {--section=} {--strict} {--dry-run}', function (SystemIntegrityAuditor $auditor) {
     try {
         $result = $auditor->audit([
             'business' => $this->option('business'),
@@ -186,6 +186,7 @@ Artisan::command('system:audit-integrity {--business=} {--branch=} {--from=} {--
             'to' => $this->option('to'),
             'report' => (bool) $this->option('report'),
             'section' => $this->option('section'),
+            'strict' => (bool) $this->option('strict'),
         ]);
     } catch (Throwable $exception) {
         $this->error($exception->getMessage());

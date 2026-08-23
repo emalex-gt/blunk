@@ -68,6 +68,7 @@ class SystemIntegrityAuditor
             'branch_id' => $branchId,
             'from' => filled($options['from'] ?? null) ? Carbon::parse($options['from'])->startOfDay() : null,
             'to' => filled($options['to'] ?? null) ? Carbon::parse($options['to'])->endOfDay() : null,
+            'strict' => (bool) ($options['strict'] ?? false),
         ];
         $results = [
             'stock' => [],
@@ -226,7 +227,13 @@ class SystemIntegrityAuditor
             } elseif ($movement->branch_id === null) {
                 $stockIssues[] = $this->issue($base, 'critical', 'stock_movement_without_branch', "Movimiento #{$movement->id} no tiene sucursal.", 'Asignar sucursal solo tras revisar el origen del movimiento.');
             } elseif ((float) $movement->quantity === 0) {
-                $stockIssues[] = $this->issue($base, 'warning', 'zero_quantity_stock_movement', "Movimiento #{$movement->id} tiene cantidad cero.", 'Revisar si el movimiento debe conservarse como evidencia o corregirse manualmente.');
+                if ($this->isManualStockAdjustment($movement->type)) {
+                    if ($context['strict']) {
+                        $stockIssues[] = $this->issue($base, 'info', 'zero_quantity_manual_adjustment', "Movimiento manual #{$movement->id} no tuvo impacto en stock.", 'Hallazgo informativo; no requiere corrección operativa.');
+                    }
+                } else {
+                    $stockIssues[] = $this->issue($base, 'warning', 'zero_quantity_stock_movement', "Movimiento #{$movement->id} tiene cantidad cero.", 'Revisar si debe conservarse como evidencia o corregirse manualmente.');
+                }
             } elseif (! in_array($movement->type, $validTypes, true)) {
                 $stockIssues[] = $this->issue($base, 'warning', 'invalid_stock_movement_type', "Movimiento #{$movement->id} usa tipo no reconocido: {$movement->type}.", 'Verificar la procedencia y documentar o normalizar en una reparación posterior.');
             }
@@ -436,10 +443,20 @@ class SystemIntegrityAuditor
             }
 
             if ((float) $movement->amount === 0.0) {
-                $issues[] = $this->issue($base, 'warning', 'zero_amount_cash_movement', 'Movimiento de caja con monto cero.', 'Revisar si debe conservarse como evidencia.');
+                if ($this->isCashOpeningMovement($movement->type)) {
+                    if ($context['strict']) {
+                        $issues[] = $this->issue($base, 'info', 'zero_amount_cash_opening', 'Apertura de caja válida con monto inicial cero.', 'Hallazgo informativo; no requiere corrección operativa.');
+                    }
+                } else {
+                    $issues[] = $this->issue($base, 'warning', 'zero_amount_cash_movement', 'Movimiento de caja con monto cero.', 'Revisar si debe conservarse como evidencia.');
+                }
             }
 
-            if (! $movement->reference_type && ! in_array($movement->type, ['opening', 'closing_adjustment', 'expense'], true)) {
+            if ((float) $movement->amount < 0 && ! in_array($movement->type, ['purchase_cash', 'expense', 'sale_cash_cancel', 'credit_payment_cash_cancel', 'closing_adjustment'], true)) {
+                $issues[] = $this->issue($base, 'warning', 'invalid_negative_cash_movement', 'Movimiento de caja negativo con tipo que no representa una salida o reversa válida.', 'Revisar tipo, referencia y evidencia del movimiento.');
+            }
+
+            if (! $movement->reference_type && ! in_array($movement->type, ['opening', 'open', 'apertura', 'closing_adjustment', 'expense'], true)) {
                 $issues[] = $this->issue($base, 'warning', 'cash_movement_without_reference', 'Movimiento de caja sin referencia operativa.', 'Documentar o vincular la operación en una fase de reparación.');
             }
         }
@@ -781,7 +798,11 @@ class SystemIntegrityAuditor
                 'note' => $movement->note,
             ];
             if ((float) $movement->quantity === 0.0) {
-                $issues[] = $this->issue($base, 'warning', 'zero_quantity_adjustment', 'Ajuste manual con cantidad cero.', 'Revisar si debe conservarse como evidencia.');
+                if ($context['strict']) {
+                    $issues[] = $this->issue($base, 'info', 'zero_quantity_adjustment', 'Ajuste manual sin impacto de stock.', 'Hallazgo informativo; no requiere corrección operativa.');
+                }
+
+                continue;
             }
             if (in_array($movement->type, ['exit', 'adjustment'], true) && blank($movement->note)) {
                 $issues[] = $this->issue($base, 'warning', 'adjustment_without_note', 'Salida o ajuste manual sin nota.', 'Documentar el motivo antes de una reparación.');
@@ -888,6 +909,16 @@ class SystemIntegrityAuditor
     private function issue(array $row, string $severity, string $issueType, string $notes, string $recommendedAction): array
     {
         return [...$row, 'issue_type' => $issueType, 'severity' => $severity, 'notes' => $notes, 'recommended_action' => $recommendedAction];
+    }
+
+    private function isCashOpeningMovement(?string $type): bool
+    {
+        return in_array(mb_strtolower(trim((string) $type)), ['opening', 'open', 'apertura'], true);
+    }
+
+    private function isManualStockAdjustment(?string $type): bool
+    {
+        return in_array($type, ['entry', 'exit', 'add', 'remove', 'adjustment', 'manual'], true);
     }
 
     private function summarize(array $results, ?string $requestedSection): array
