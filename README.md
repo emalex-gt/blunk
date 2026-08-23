@@ -113,7 +113,7 @@ composer dev
 
 ## AI-Assisted Development
 
-AI-assisted tools may be used to accelerate implementation, investigation, and documentation. Architectural decisions, code review, validation, testing, and responsibility for the resulting software remain with the developer.
+OpenAI Codex and ChatGPT are used as part of the development workflow for implementation support, debugging, refactoring, technical investigation, and documentation. Architecture, code review, validation, testing, and final technical decisions remain developer responsibilities.
 
 ## Project Status
 
