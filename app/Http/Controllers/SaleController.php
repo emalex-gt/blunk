@@ -27,6 +27,7 @@ use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\BusinessLogo;
 use App\Support\Credits;
+use App\Support\CustomerIdentity;
 use App\Support\DocumentCompanyHeader;
 use App\Support\DocumentCustomerDisplay;
 use App\Support\FelPhraseRenderer;
@@ -1935,16 +1936,20 @@ class SaleController extends Controller
     private function saleCustomerSnapshot(?Customer $customer, ?array $customerData): array
     {
         $customerData ??= [];
+        $customerCountry = $customerData['country'] ?? $customer?->country ?? 'GT';
+        $document = $customerData['doc_number'] ?? $customer?->doc_number;
 
         return [
             'customer_name' => trim((string) ($customerData['name'] ?? '')) ?: $customer?->name,
             'customer_doc_type' => $customerData['doc_type'] ?? $customer?->doc_type,
-            'customer_doc_number' => $this->normalizeDocument($customerData['doc_number'] ?? $customer?->doc_number),
+            'customer_doc_number' => $customerCountry === 'GT'
+                ? (CustomerIdentity::normalizeTaxId($document) ?? '')
+                : $this->normalizeDocument($document),
             'customer_address' => trim((string) ($customerData['address'] ?? '')) ?: $customer?->address,
             'customer_postal_code' => $customer?->postal_code,
             'customer_municipality' => trim((string) ($customerData['municipality'] ?? '')) ?: $customer?->municipality,
             'customer_department' => trim((string) ($customerData['department'] ?? '')) ?: $customer?->department,
-            'customer_country' => $customer?->country ?: 'GT',
+            'customer_country' => $customerCountry,
             'customer_phone' => trim((string) ($customerData['phone'] ?? '')) ?: $customer?->phone,
         ];
     }
@@ -1956,7 +1961,7 @@ class SaleController extends Controller
         $customerData ??= [];
         $customerCountry = $customerData['country'] ?? $country;
         $docType = $customerData['doc_type'] ?? null;
-        $docNumber = $this->normalizeDocument($customerData['doc_number'] ?? null);
+        $docNumber = CustomerIdentity::normalizeTaxId($customerData['doc_number'] ?? null) ?? '';
         $name = trim((string) ($customerData['name'] ?? ''));
         $commercialName = trim((string) ($customerData['commercial_name'] ?? ''));
         $department = trim((string) ($customerData['department'] ?? ''));
@@ -1964,7 +1969,10 @@ class SaleController extends Controller
 
         $this->validateCustomerLocation($customerCountry, $department, $municipality);
 
-        if ($customerCountry === 'GT' && ($customerData['consumidor_final'] ?? false)) {
+        $isFinalConsumerRequest = $customerCountry === 'GT'
+            && ((bool) ($customerData['consumidor_final'] ?? false) || $docNumber === 'CF');
+
+        if ($isFinalConsumerRequest) {
             $name = $name !== '' ? $name : ($commercialName !== '' ? $commercialName : 'Consumidor Final');
             $payload = [
                 'name' => $name,
@@ -1980,6 +1988,13 @@ class SaleController extends Controller
                 'name_locked' => false,
             ];
 
+            if (CustomerIdentity::isGenericFinalConsumer('CF', $name, [
+                'commercial_name' => $commercialName,
+                ...$payload,
+            ])) {
+                return Customer::getOrCreateGenericFinalConsumer($businessId);
+            }
+
             if (! empty($customerData['id'])) {
                 $customer = Customer::query()
                     ->where('business_id', $businessId)
@@ -1994,17 +2009,6 @@ class SaleController extends Controller
 
                     return $customer;
                 }
-            }
-
-            $hasCustomerDetails = $commercialName !== ''
-                || trim((string) ($customerData['address'] ?? '')) !== ''
-                || $department !== ''
-                || $municipality !== ''
-                || trim((string) ($customerData['phone'] ?? '')) !== ''
-                || strcasecmp($name, 'Consumidor Final') !== 0;
-
-            if (! $hasCustomerDetails) {
-                return null;
             }
 
             return Customer::create([
@@ -2087,8 +2091,20 @@ class SaleController extends Controller
 
         if (! empty($customerData['id'])) {
             $customer = (clone $query)->find($customerData['id']);
-        } elseif ($docNumber !== '') {
-            $customer = (clone $query)->where('doc_number', $docNumber)->first();
+        } elseif (CustomerIdentity::isRealTaxId($docNumber)) {
+            $customer = Customer::findOrCreateByNormalizedTaxId($businessId, [
+                'name' => $name ?: ($commercialName !== '' ? $commercialName : "Cliente {$docNumber}"),
+                'commercial_name' => $commercialName !== '' ? $commercialName : null,
+                'doc_type' => $docType,
+                'doc_number' => $docNumber,
+                'tax_condition' => $customerData['tax_condition'] ?? null,
+                'address' => $customerData['address'] ?? null,
+                'department' => $department !== '' ? $department : null,
+                'municipality' => $municipality !== '' ? $municipality : null,
+                'phone' => $customerData['phone'] ?? null,
+                'country' => $customerCountry,
+                'is_final_consumer' => false,
+            ]);
         }
 
         $payload = [

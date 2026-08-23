@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Business;
 use App\Models\Customer;
+use App\Support\CustomerIdentity;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\TextEncoding;
 use Illuminate\Http\JsonResponse;
@@ -18,6 +19,7 @@ use Throwable;
 class CustomerController extends Controller
 {
     private const DUPLICATE_NIT_MESSAGE = 'Ya existe un cliente con este NIT.';
+    private const GENERIC_FINAL_CONSUMER_MESSAGE = 'El cliente Consumidor Final ya existe y se reutiliza automáticamente.';
     private const INVALID_NIT_MESSAGE = 'El NIT ingresado no es válido.';
     private const LOCKED_NAME_MESSAGE = 'El nombre fiscal no puede editarse manualmente.';
     private const LOCKED_NIT_MESSAGE = 'El NIT no puede editarse manualmente.';
@@ -33,6 +35,7 @@ class CustomerController extends Controller
 
         $customers = Customer::query()
             ->where('business_id', $businessId)
+            ->whereNull('merged_into_customer_id')
             ->when($search !== '', fn ($query) => $this->applySearch($query, $search))
             ->when($fiscalStatus !== '', fn ($query) => $this->applyFiscalStatus($query, $fiscalStatus))
             ->orderBy('name')
@@ -61,6 +64,7 @@ class CustomerController extends Controller
 
         $customers = Customer::query()
             ->where('business_id', $businessId)
+            ->whereNull('merged_into_customer_id')
             ->where(function ($query) use ($search) {
                 $query->where('name', 'ilike', "%{$search}%")
                     ->orWhere('commercial_name', 'ilike', "%{$search}%")
@@ -107,6 +111,13 @@ class CustomerController extends Controller
             $payload['doc_number'] = $this->isCfValue($customer->doc_number) || blank($customer->doc_number) ? 'CF' : $customer->doc_number;
             $payload['is_final_consumer'] = true;
             $payload['name_locked'] = false;
+
+            if (CustomerIdentity::isGenericFinalConsumer($payload['doc_number'], $payload['name'], $payload)
+                && $this->genericFinalConsumerExists(currentBusinessId(), $customer->id)) {
+                throw ValidationException::withMessages([
+                    'name' => self::GENERIC_FINAL_CONSUMER_MESSAGE,
+                ]);
+            }
         }
 
         $customer->fill($payload)->save();
@@ -436,8 +447,22 @@ class CustomerController extends Controller
         return Customer::query()
             ->where('business_id', $businessId)
             ->when($ignoreCustomerId, fn ($query) => $query->whereKeyNot($ignoreCustomerId))
-            ->whereRaw("UPPER(REPLACE(REPLACE(COALESCE(doc_number, ''), '-', ''), ' ', '')) = ?", [$nit])
+            ->where('normalized_tax_id', $nit)
             ->exists();
+    }
+
+    private function genericFinalConsumerExists(int $businessId, ?int $ignoreCustomerId = null): bool
+    {
+        return Customer::query()
+            ->where('business_id', $businessId)
+            ->where('normalized_tax_id', 'CF')
+            ->when($ignoreCustomerId, fn ($query) => $query->whereKeyNot($ignoreCustomerId))
+            ->get()
+            ->contains(fn (Customer $candidate) => CustomerIdentity::isGenericFinalConsumer(
+                $candidate->normalized_tax_id,
+                $candidate->name,
+                $candidate->only(['commercial_name', 'contact_name', 'address', 'phone', 'postal_code', 'department', 'municipality']),
+            ));
     }
 
     private function fiscalStatus(Customer $customer): string
@@ -469,9 +494,7 @@ class CustomerController extends Controller
 
     private function hasRealNit(Customer $customer): bool
     {
-        $nit = $this->normalizedNit($customer->doc_number);
-
-        return $nit !== '' && ! $this->isCfValue($customer->doc_number);
+        return CustomerIdentity::isRealTaxId($customer->doc_number);
     }
 
     private function isCfCustomer(Customer $customer): bool
@@ -484,14 +507,12 @@ class CustomerController extends Controller
 
     private function isCfValue(?string $value): bool
     {
-        $value = strtoupper(str_replace([' ', '-', '/'], '', trim((string) $value)));
-
-        return $value === '' || $value === 'CF';
+        return CustomerIdentity::normalizeTaxId($value) === 'CF' || blank($value);
     }
 
     private function normalizedNit(mixed $value): string
     {
-        return GuatemalaNitCustomerResolver::normalize((string) $value);
+        return CustomerIdentity::normalizeTaxId($value) ?? '';
     }
 
     private function nullableTrim(mixed $value): ?string

@@ -15,6 +15,7 @@ use App\Models\TenantSetting;
 use App\Models\TenantFelSetting;
 use App\Models\User;
 use App\Support\BranchInventory;
+use App\Support\CustomerIdentity;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\GuatemalaLocations;
 use App\Support\IdempotencyService;
@@ -1775,17 +1776,35 @@ class RouteController extends Controller
         $isFinalConsumer = $docNumber === '' || $docNumber === 'CF';
         $branchDefaults = $this->routeCustomerBranchLocationDefaults($defaultBranch);
 
-        if (! $isFinalConsumer) {
-            $existing = Customer::query()
-                ->where('business_id', $businessId)
-                ->whereRaw("UPPER(REPLACE(REPLACE(doc_number, '-', ''), ' ', '')) = ?", [$docNumber])
-                ->where(function ($query) {
-                    $query->where('doc_type', 'NIT')->orWhereNull('doc_type');
-                })
-                ->lockForUpdate()
-                ->first();
+        foreach (['department', 'municipality'] as $field) {
+            if ($data[$field] === '' && $branchDefaults[$field] !== '') {
+                $data[$field] = $branchDefaults[$field];
+            }
+        }
 
-            if ($existing) {
+        if ($isFinalConsumer && CustomerIdentity::isGenericFinalConsumer('CF', $data['name'], $data)) {
+            return [
+                'customer' => Customer::getOrCreateGenericFinalConsumer($businessId),
+                'created' => false,
+            ];
+        }
+
+        if (! $isFinalConsumer) {
+            $existing = Customer::findOrCreateByNormalizedTaxId($businessId, [
+                'name' => $data['name'],
+                'commercial_name' => $data['commercial_name'] !== '' ? $data['commercial_name'] : null,
+                'contact_name' => $data['contact_name'] !== '' ? $data['contact_name'] : null,
+                'doc_type' => 'NIT',
+                'doc_number' => $docNumber,
+                'address' => $data['address'] !== '' ? $data['address'] : null,
+                'department' => $data['department'] !== '' ? $data['department'] : null,
+                'municipality' => $data['municipality'] !== '' ? $data['municipality'] : null,
+                'phone' => $data['phone'] !== '' ? $data['phone'] : null,
+                'country' => $this->currentBusinessCountry(),
+                'is_final_consumer' => false,
+            ]);
+
+            if (! $existing->wasRecentlyCreated) {
                 $payload = [];
 
                 if (blank($existing->name) && $data['name'] !== '') {
@@ -1820,12 +1839,8 @@ class RouteController extends Controller
 
                 return ['customer' => $existing, 'created' => false];
             }
-        }
 
-        foreach (['department', 'municipality'] as $field) {
-            if ($data[$field] === '' && $branchDefaults[$field] !== '') {
-                $data[$field] = $branchDefaults[$field];
-            }
+            return ['customer' => $existing, 'created' => true];
         }
 
         $customer = Customer::query()->create([
@@ -1863,10 +1878,7 @@ class RouteController extends Controller
                 $duplicate = Customer::query()
                     ->where('business_id', currentBusinessId())
                     ->whereKeyNot($customer->id)
-                    ->whereRaw("UPPER(REPLACE(REPLACE(doc_number, '-', ''), ' ', '')) = ?", [$docNumber])
-                    ->where(function ($query) {
-                        $query->where('doc_type', 'NIT')->orWhereNull('doc_type');
-                    })
+                    ->where('normalized_tax_id', $docNumber)
                     ->exists();
 
                 if ($duplicate) {
@@ -1993,9 +2005,7 @@ class RouteController extends Controller
 
     private function normalizeRouteCustomerDocument(?string $value): string
     {
-        $document = strtoupper(preg_replace('/[\s-]+/', '', trim((string) $value)));
-
-        return $document;
+        return CustomerIdentity::normalizeTaxId($value) ?? '';
     }
 
     private function authorizeBusiness(RouteZone $zone): void

@@ -19,7 +19,7 @@ class GuatemalaNitCustomerResolver
 
     public static function normalize(?string $nit): string
     {
-        return strtoupper(preg_replace('/[\s-]+/', '', trim((string) $nit)));
+        return CustomerIdentity::normalizeTaxId($nit) ?? '';
     }
 
     public static function resolve(Business $business, ?string $nit, bool $allowCache = true, bool $requireVerifiedExisting = false): array
@@ -232,7 +232,7 @@ class GuatemalaNitCustomerResolver
     {
         return Customer::query()
             ->where('business_id', $business->id)
-            ->whereRaw("UPPER(REPLACE(REPLACE(doc_number, '-', ''), ' ', '')) = ?", [$nit])
+            ->where('normalized_tax_id', $nit)
             ->where(function ($query) {
                 $query->where('doc_type', 'NIT')->orWhereNull('doc_type');
             })
@@ -241,8 +241,10 @@ class GuatemalaNitCustomerResolver
 
     private static function saveVerifiedCustomer(Business $business, string $nit, string $name, ?array $raw): Customer
     {
-        $customer = self::findExistingCustomer($business, $nit) ?? new Customer([
+        $customer = Customer::findOrCreateByNormalizedTaxId($business, [
             'business_id' => $business->id,
+            'name' => $name,
+            'doc_type' => 'NIT',
             'doc_number' => $nit,
         ]);
         $address = self::extractResponseValue($raw, ['Direccion', 'DIRECCION', 'direccion', 'Address']);

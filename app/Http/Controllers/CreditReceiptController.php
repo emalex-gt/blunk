@@ -13,6 +13,7 @@ use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\BusinessLogo;
 use App\Support\Credits;
+use App\Support\CustomerIdentity;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\IdempotencyService;
 use App\Support\Inventory\StockPolicy;
@@ -100,7 +101,7 @@ class CreditReceiptController extends Controller
             'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
             'customer' => ['required', 'array'],
             'customer.id' => ['nullable', 'integer', 'exists:customers,id'],
-            'customer.name' => ['required', 'string', 'max:255'],
+            'customer.name' => ['nullable', 'string', 'max:255'],
             'customer.doc_type' => ['required', 'string', 'max:50'],
             'customer.doc_number' => ['required', 'string', 'max:50'],
             'customer.address' => ['nullable', 'string', 'max:255'],
@@ -112,8 +113,8 @@ class CreditReceiptController extends Controller
             'items.*.unit_price' => ['nullable', 'numeric', 'gt:0'],
         ]);
 
-        $docType = strtoupper(trim((string) $data['customer']['doc_type']));
-        $docNumber = strtoupper(trim((string) $data['customer']['doc_number']));
+        $docType = CustomerIdentity::normalizeTaxId($data['customer']['doc_type']) ?? '';
+        $docNumber = CustomerIdentity::normalizeTaxId($data['customer']['doc_number']) ?? '';
         $activeBranch = BranchInventory::activeBranch($businessId);
 
         if (filled($data['branch_id'] ?? null)) {
@@ -128,12 +129,6 @@ class CreditReceiptController extends Controller
                     'branch_id' => 'La sucursal de la venta no coincide con la sucursal activa.',
                 ]);
             }
-        }
-
-        if ($docType === 'CF' || $docNumber === 'CF') {
-            throw ValidationException::withMessages([
-                'customer.doc_number' => 'Para crédito debes ingresar un NIT válido. CF no está permitido.',
-            ]);
         }
 
         $idempotencyResult = app(IdempotencyService::class)->run(
@@ -512,20 +507,63 @@ class CreditReceiptController extends Controller
     private function resolveCustomer(array $data): Customer
     {
         $businessId = currentBusinessId();
-        $docNumber = strtoupper(trim((string) $data['doc_number']));
-        $customer = isset($data['id'])
-            ? Customer::query()->where('business_id', $businessId)->find($data['id'])
-            : null;
+        $docNumber = CustomerIdentity::normalizeTaxId($data['doc_number'] ?? null);
+        $docType = CustomerIdentity::normalizeTaxId($data['doc_type'] ?? null) ?? '';
+        $name = trim((string) ($data['name'] ?? ''));
+        $isFinalConsumer = $docNumber === 'CF' || $docType === 'CF';
 
-        $customer ??= Customer::query()
-            ->where('business_id', $businessId)
-            ->whereRaw('UPPER(doc_number) = ?', [$docNumber])
-            ->first();
+        if ($isFinalConsumer) {
+            $name = $name !== '' ? $name : 'Consumidor Final';
+
+            if (CustomerIdentity::isGenericFinalConsumer('CF', $name)) {
+                return Customer::getOrCreateGenericFinalConsumer($businessId);
+            }
+
+            $customer = isset($data['id'])
+                ? Customer::query()
+                    ->where('business_id', $businessId)
+                    ->whereNull('merged_into_customer_id')
+                    ->find($data['id'])
+                : null;
+
+            if ($customer && CustomerIdentity::isGenericFinalConsumer(
+                $customer->normalized_tax_id,
+                $customer->name,
+                $customer->only(['commercial_name', 'contact_name', 'address', 'phone', 'postal_code', 'department', 'municipality']),
+            )) {
+                $customer = null;
+            }
+
+            $payload = [
+                'business_id' => $businessId,
+                'name' => $name,
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
+                'address' => $data['address'] ?? null,
+                'phone' => $data['phone'] ?? null,
+                'country' => 'GT',
+                'is_final_consumer' => true,
+            ];
+
+            if ($customer) {
+                $customer->update($payload);
+
+                return $customer->refresh();
+            }
+
+            return Customer::query()->create($payload);
+        }
+
+        if (! CustomerIdentity::isRealTaxId($docNumber)) {
+            throw ValidationException::withMessages([
+                'customer.doc_number' => 'Debes ingresar un NIT válido.',
+            ]);
+        }
 
         $payload = [
             'business_id' => $businessId,
-            'name' => $data['name'],
-            'doc_type' => strtoupper(trim((string) $data['doc_type'])),
+            'name' => $name,
+            'doc_type' => 'NIT',
             'doc_number' => $docNumber,
             'address' => $data['address'] ?? null,
             'phone' => $data['phone'] ?? null,
@@ -533,13 +571,7 @@ class CreditReceiptController extends Controller
             'is_final_consumer' => false,
         ];
 
-        if ($customer) {
-            $customer->update($payload);
-
-            return $customer->refresh();
-        }
-
-        return Customer::query()->create($payload);
+        return Customer::findOrCreateByNormalizedTaxId($businessId, $payload)->refresh();
     }
 
     private function customerPendingBefore(CreditReceipt $receipt): float

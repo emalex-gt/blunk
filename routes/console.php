@@ -12,6 +12,7 @@ use App\Models\TenantFelSetting;
 use App\Models\User;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Support\Ferrymas\CreditsFocusedAudit;
+use App\Support\FinalConsumerAuditor;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\IdempotencyHealthMonitor;
 use App\Support\IdempotencyKeyPruner;
@@ -119,6 +120,64 @@ Artisan::command('products:audit-main-prices {--business=} {--dry-run} {--confir
 
     return self::SUCCESS;
 })->purpose('Audit and optionally synchronize main product prices for one business');
+
+Artisan::command('customers:audit-final-consumer {--business=} {--dry-run} {--report}', function (FinalConsumerAuditor $auditor) {
+    try {
+        $result = $auditor->audit([
+            'business' => $this->option('business'),
+            'report' => (bool) $this->option('report'),
+        ]);
+    } catch (Throwable $exception) {
+        $this->error($exception->getMessage());
+
+        return self::FAILURE;
+    }
+
+    $this->line('Auditoría de Consumidor Final');
+    $this->line('business_id: '.$result['business_id']);
+    $this->line('grupos CF genéricos duplicados: '.$result['generic_cf_duplicate_groups']);
+    $this->line('clientes CF genéricos: '.$result['generic_cf_customers']);
+    $this->line('grupos NIT reales duplicados: '.$result['real_tax_id_duplicate_groups']);
+    $this->line('clientes CF/personalizados: '.$result['cf_customers']);
+    if ($result['report_path']) {
+        $this->line('reporte: '.$result['report_path']);
+    }
+
+    return self::SUCCESS;
+})->purpose('Read-only audit for generic final consumer and real tax ID duplicates');
+
+Artisan::command('customers:merge-generic-final-consumer {--business=} {--dry-run} {--confirm}', function (FinalConsumerAuditor $auditor) {
+    if ($this->option('confirm') && $this->option('dry-run')) {
+        $this->error('No combines --confirm con --dry-run.');
+
+        return self::FAILURE;
+    }
+
+    try {
+        $result = $auditor->merge([
+            'business' => $this->option('business'),
+            'confirm' => (bool) $this->option('confirm'),
+        ]);
+    } catch (Throwable $exception) {
+        $this->error($exception->getMessage());
+
+        return self::FAILURE;
+    }
+
+    $this->line('Fusión controlada de Consumidor Final');
+    $this->line('modo: '.$result['mode']);
+    $this->line('canonical_customer_id: '.($result['canonical_customer_id'] ?? 'ninguno'));
+    $this->line('duplicate_customer_ids: '.implode('|', $result['duplicate_customer_ids']));
+    $this->line('sales_to_move: '.$result['sales_to_move']);
+    $this->line('credit_receipts_to_move: '.$result['credit_receipts_to_move']);
+    $this->line('other_relations_to_move: '.json_encode($result['other_relations_to_move']));
+    $this->line('customers_to_deactivate: '.implode('|', $result['customers_to_deactivate']));
+    if ($result['mode'] === 'dry-run') {
+        $this->line('Dry-run: no se modificaron datos. Usa --confirm para ejecutar la fusión.');
+    }
+
+    return self::SUCCESS;
+})->purpose('Merge duplicate generic final consumers only when explicitly confirmed');
 
 Artisan::command('sales:audit-duplicates {--business=} {--from=} {--to=} {--window-seconds=60} {--report} {--dry-run} {--confirm} {--keep-sale-id=} {--duplicate-sale-id=}', function (SalesDuplicateAuditor $auditor) {
     if ($this->option('confirm') && $this->option('dry-run')) {

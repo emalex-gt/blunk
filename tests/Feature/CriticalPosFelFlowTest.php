@@ -3069,21 +3069,26 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame(2, $line->refresh()->qty_pending);
     }
 
-    public function test_credit_receipt_rejects_final_consumer_customer(): void
+    public function test_credit_receipt_reuses_generic_final_consumer_customer(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
         $product = $this->product($business, stock: 10, salePrice: 100);
+        $generic = Customer::getOrCreateGenericFinalConsumer($business);
 
         $payload = $this->creditPayload($product, 1);
-        $payload['customer']['doc_type'] = 'CF';
-        $payload['customer']['doc_number'] = 'CF';
+        $payload['customer']['name'] = 'Consumidor Final';
+        $payload['customer']['doc_type'] = 'C/F';
+        $payload['customer']['doc_number'] = 'C/F';
 
         $this->actingAs($user)
             ->from(route('sales.create'))
             ->post(route('credits.receipts.store'), $payload)
-            ->assertSessionHasErrors('customer.doc_number');
+            ->assertSessionHasNoErrors();
 
-        $this->assertDatabaseCount('credit_receipts', 0);
+        $this->assertDatabaseHas('credit_receipts', [
+            'business_id' => $business->id,
+            'customer_id' => $generic->id,
+        ]);
     }
 
     public function test_credit_line_cancellation_releases_reserved_stock_without_deleting_line(): void

@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Business;
 use App\Models\CashMovement;
 use App\Models\CashRegisterSession;
+use App\Models\Customer;
 use App\Models\ElectronicDocument;
 use App\Models\OperationIdempotencyKey;
 use App\Models\PriceType;
@@ -309,6 +310,90 @@ class SaleDuplicateIdempotencyTest extends TestCase
 
         $this->assertSame(1, Sale::query()->count());
         $this->assertSame(0, ElectronicDocument::query()->where('status', 'certified')->count());
+    }
+
+    public function test_pos_reuses_one_generic_final_consumer_customer(): void
+    {
+        [$business, $user] = $this->tenant();
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $customer = [
+            'name' => 'Consumidor Final',
+            'doc_type' => 'CF',
+            'doc_number' => 'C/F',
+            'consumidor_final' => true,
+        ];
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, 'generic-cf-sale-1', customer: $customer))
+            ->assertRedirect();
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, 'generic-cf-sale-2', customer: $customer))
+            ->assertRedirect();
+
+        $customers = Customer::query()->where('business_id', $business->id)->get();
+        $saleCustomerIds = Sale::query()->where('business_id', $business->id)->pluck('customer_id')->unique()->values();
+
+        $this->assertCount(1, $customers);
+        $this->assertSame('CF', $customers->first()->normalized_tax_id);
+        $this->assertSame([$customers->first()->id], $saleCustomerIds->all());
+    }
+
+    public function test_pos_keeps_personalized_final_consumer_separate_from_generic_customer(): void
+    {
+        [$business, $user] = $this->tenant();
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, 'generic-cf-sale-3', customer: [
+                'name' => 'Consumidor Final',
+                'doc_number' => 'CF',
+                'consumidor_final' => true,
+            ]))
+            ->assertRedirect();
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, 'personal-cf-sale-1', customer: [
+                'name' => 'Juan Perez',
+                'doc_number' => 'CF',
+                'consumidor_final' => true,
+            ]))
+            ->assertRedirect();
+
+        $this->assertSame(2, Customer::query()->where('business_id', $business->id)->count());
+        $this->assertSame(1, Customer::query()
+            ->where('business_id', $business->id)
+            ->where('name', 'Consumidor Final')
+            ->count());
+        $this->assertSame(1, Customer::query()
+            ->where('business_id', $business->id)
+            ->where('name', 'Juan Perez')
+            ->count());
+    }
+
+    public function test_pos_reuses_existing_real_tax_id_after_normalization(): void
+    {
+        [$business, $user] = $this->tenant();
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente con NIT',
+            'doc_type' => 'NIT',
+            'doc_number' => '5728-9085',
+            'country' => 'GT',
+        ]);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, 'real-nit-sale-1', customer: [
+                'name' => 'Cliente con NIT',
+                'doc_type' => 'NIT',
+                'doc_number' => '57289085',
+            ]))
+            ->assertRedirect();
+
+        $this->assertSame(1, Customer::query()->where('business_id', $business->id)->count());
+        $this->assertSame($customer->id, Sale::query()->where('business_id', $business->id)->sole()->customer_id);
     }
 
     private function tenant(): array
