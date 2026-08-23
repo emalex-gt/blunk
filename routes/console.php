@@ -15,6 +15,7 @@ use App\Support\Ferrymas\CreditsFocusedAudit;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\Products\MainPriceAuditor;
 use App\Support\SalesDuplicateAuditor;
+use App\Support\SystemIntegrityAuditor;
 use App\Support\TextEncoding;
 
 Artisan::command('inspire', function () {
@@ -175,6 +176,44 @@ Artisan::command('sales:audit-duplicates {--business=} {--from=} {--to=} {--wind
 
     return self::SUCCESS;
 })->purpose('Audit and optionally repair duplicated POS sales safely');
+
+Artisan::command('system:audit-integrity {--business=} {--branch=} {--from=} {--to=} {--report} {--section=} {--dry-run}', function (SystemIntegrityAuditor $auditor) {
+    try {
+        $result = $auditor->audit([
+            'business' => $this->option('business'),
+            'branch' => $this->option('branch'),
+            'from' => $this->option('from'),
+            'to' => $this->option('to'),
+            'report' => (bool) $this->option('report'),
+            'section' => $this->option('section'),
+        ]);
+    } catch (Throwable $exception) {
+        $this->error($exception->getMessage());
+
+        return self::FAILURE;
+    }
+
+    $this->line('Auditoría de integridad operativa');
+    $this->line('business_id: '.$result['business_id']);
+    if ($result['branch_id']) {
+        $this->line('branch_id: '.$result['branch_id']);
+    }
+    foreach ($result['summary'] as $summary) {
+        $this->line(sprintf('%s: %d críticos, %d warnings, %d info', $summary['section'], $summary['critical_count'], $summary['warning_count'], $summary['info_count']));
+    }
+    if ($result['report_path']) {
+        $this->line('reporte: '.$result['report_path']);
+    }
+    if ($this->option('verbose')) {
+        foreach ($result['results'] as $section => $issues) {
+            foreach ($issues as $issue) {
+                $this->line("[{$section}] {$issue['severity']} {$issue['issue_type']}: {$issue['notes']}");
+            }
+        }
+    }
+
+    return $result['has_critical'] ? self::FAILURE : self::SUCCESS;
+})->purpose('Read-only operational integrity audit with optional CSV reports');
 
 Artisan::command('ferrymas:audit-credits {--business=1}', function (CreditsFocusedAudit $audit) {
     $businessId = (int) $this->option('business');

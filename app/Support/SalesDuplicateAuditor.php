@@ -180,6 +180,7 @@ class SalesDuplicateAuditor
     {
         return Sale::query()
             ->where('business_id', $businessId)
+            ->when($options['branch'] ?? null, fn ($query, $branch) => $query->where('branch_id', (int) $branch))
             ->when($options['from'] ?? null, fn ($query, $from) => $query->whereDate('created_at', '>=', $from))
             ->when($options['to'] ?? null, fn ($query, $to) => $query->whereDate('created_at', '<=', $to));
     }
