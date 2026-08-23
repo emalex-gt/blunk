@@ -21,6 +21,11 @@ class OperationIdempotencyKey extends Model
         'locked_at',
         'completed_at',
         'expires_at',
+        'replay_count',
+        'conflict_count',
+        'last_replayed_at',
+        'last_conflict_at',
+        'last_error',
     ];
 
     protected $casts = [
@@ -28,6 +33,8 @@ class OperationIdempotencyKey extends Model
         'locked_at' => 'datetime',
         'completed_at' => 'datetime',
         'expires_at' => 'datetime',
+        'last_replayed_at' => 'datetime',
+        'last_conflict_at' => 'datetime',
     ];
 
     public function business(): BelongsTo

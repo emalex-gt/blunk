@@ -13,6 +13,8 @@ use App\Models\User;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Support\Ferrymas\CreditsFocusedAudit;
 use App\Support\GuatemalaNitCustomerResolver;
+use App\Support\IdempotencyHealthMonitor;
+use App\Support\IdempotencyKeyPruner;
 use App\Support\Products\MainPriceAuditor;
 use App\Support\SalesDuplicateAuditor;
 use App\Support\SystemIntegrityAuditor;
@@ -215,6 +217,92 @@ Artisan::command('system:audit-integrity {--business=} {--branch=} {--from=} {--
 
     return $result['has_critical'] ? self::FAILURE : self::SUCCESS;
 })->purpose('Read-only operational integrity audit with optional CSV reports');
+
+Artisan::command('system:idempotency-health {--business=} {--branch=} {--from=} {--to=} {--hours=24} {--report} {--operation=} {--stale-minutes=10}', function (IdempotencyHealthMonitor $monitor) {
+    try {
+        $result = $monitor->inspect([
+            'business' => $this->option('business'),
+            'branch' => $this->option('branch'),
+            'from' => $this->option('from'),
+            'to' => $this->option('to'),
+            'hours' => $this->option('hours'),
+            'operation' => $this->option('operation'),
+            'stale_minutes' => $this->option('stale-minutes'),
+            'report' => (bool) $this->option('report'),
+        ]);
+    } catch (Throwable $exception) {
+        $this->error($exception->getMessage());
+
+        return self::FAILURE;
+    }
+
+    $summary = $result['summary'];
+    $this->line('Salud de idempotencia');
+    $this->line('business_id: '.$result['business_id']);
+    if ($result['branch_id']) {
+        $this->line('branch_id: '.$result['branch_id']);
+    }
+    $this->line('periodo: '.$result['from']?->toDateTimeString().' -> '.$result['to']?->toDateTimeString());
+    $this->line('keys_totales: '.$summary['total_keys']);
+    $this->line('completed: '.$summary['completed_count']);
+    $this->line('processing: '.$summary['processing_count']);
+    $this->line('failed: '.$summary['failed_count']);
+    $this->line('replays: '.$summary['replay_count']);
+    $this->line('conflicts: '.$summary['payload_conflict_count']);
+    $this->line('processing_atrasados: '.$summary['stale_processing_count']);
+
+    if ($this->getOutput()->isVerbose()) {
+        foreach ($result['operations'] as $operation) {
+            $this->line(sprintf(
+                '%s: completed=%d processing=%d failed=%d stale=%d replays=%d conflicts=%d',
+                $operation['operation_type'],
+                $operation['completed_count'],
+                $operation['processing_count'],
+                $operation['failed_count'],
+                $operation['stale_processing_count'],
+                $operation['replay_count'],
+                $operation['conflict_count'],
+            ));
+        }
+    }
+
+    if ($result['report_path']) {
+        $this->line('reporte: '.$result['report_path']);
+    }
+
+    return $result['has_warnings'] ? self::FAILURE : self::SUCCESS;
+})->purpose('Read-only idempotency health monitoring with optional CSV reports');
+
+Artisan::command('system:idempotency-prune {--days=30} {--business=} {--dry-run} {--confirm}', function (IdempotencyKeyPruner $pruner) {
+    try {
+        $result = $pruner->prune([
+            'days' => $this->option('days'),
+            'business' => $this->option('business'),
+            'dry_run' => (bool) $this->option('dry-run'),
+            'confirm' => (bool) $this->option('confirm'),
+        ]);
+    } catch (Throwable $exception) {
+        $this->error($exception->getMessage());
+
+        return self::FAILURE;
+    }
+
+    $this->line('Limpieza controlada de idempotencia');
+    $this->line('modo: '.($result['confirmed'] ? 'confirmado' : 'dry-run'));
+    $this->line('antiguedad_minima_dias: '.$result['days']);
+    $this->line('candidatas: '.$result['eligible_count']);
+    $this->line('processing_antiguas_no_borradas: '.$result['old_processing_count']);
+    foreach ($result['counts'] as $count) {
+        $this->line("{$count['status']} {$count['operation_type']}: {$count['count']}");
+    }
+    if ($result['confirmed']) {
+        $this->line('eliminadas: '.$result['deleted']);
+    } else {
+        $this->line('No se borraron claves. Usa --confirm sin --dry-run para ejecutar la limpieza.');
+    }
+
+    return self::SUCCESS;
+})->purpose('Prune old completed or failed idempotency keys only when confirmed');
 
 Artisan::command('ferrymas:audit-credits {--business=1}', function (CreditsFocusedAudit $audit) {
     $businessId = (int) $this->option('business');
