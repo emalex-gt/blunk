@@ -53,20 +53,22 @@ git pull origin main
 composer install --no-dev --optimize-autoloader
 npm ci
 npm run build
-php artisan down
-php artisan migrate --force
-php artisan db:seed --class=PermissionSeeder --force
-php artisan db:seed --class=GuatemalaLocationSeeder --force
-php artisan optimize:clear
-php artisan config:cache
-php artisan route:cache
-php artisan queue:restart
-php artisan up
+php8.5 -v
+php8.5 -m | grep -i pgsql
+php8.5 artisan down
+php8.5 artisan migrate --force
+php8.5 artisan db:seed --class=PermissionSeeder --force
+php8.5 artisan db:seed --class=GuatemalaLocationSeeder --force
+php8.5 artisan optimize:clear
+php8.5 artisan config:cache
+php8.5 artisan route:cache
+php8.5 artisan queue:restart
+php8.5 artisan up
 ```
 
-Si una orden falla antes de `php artisan down`, el workflow termina sin entrar en
+Si una orden falla antes de `php8.5 artisan down`, el workflow termina sin entrar en
 mantenimiento. Si falla despues de activar mantenimiento, un `trap` intenta siempre
-ejecutar `php artisan up` antes de finalizar el proceso remoto.
+ejecutar `php8.5 artisan up` antes de finalizar el proceso remoto.
 
 ## Que revisar si falla
 
@@ -81,7 +83,7 @@ ejecutar `php artisan up` antes de finalizar el proceso remoto.
   ejecutar el workflow. No fuerces un deploy parcialmente construido.
 - **Migracion o seeder falla:** revisa el log de Artisan y el estado de la base de
   datos. El workflow intentara sacar la aplicacion de mantenimiento.
-- **La aplicacion queda en mantenimiento:** ejecuta `php artisan up` por SSH de forma
+- **La aplicacion queda en mantenimiento:** ejecuta `php8.5 artisan up` por SSH de forma
   inmediata y revisa el log de la ejecucion fallida.
 
 ## Deploy de emergencia por SSH
@@ -97,30 +99,32 @@ git pull origin main
 composer install --no-dev --optimize-autoloader
 npm ci
 npm run build
+php8.5 -v
+php8.5 -m | grep -i pgsql
 
 maintenance_enabled=false
 restore_application() {
   exit_code=$?
   if [ "$maintenance_enabled" = true ]; then
-    php artisan up || true
+    php8.5 artisan up || true
   fi
   exit "$exit_code"
 }
 trap restore_application EXIT
 
-php artisan down
+php8.5 artisan down
 maintenance_enabled=true
-php artisan migrate --force
-php artisan db:seed --class=PermissionSeeder --force
-php artisan db:seed --class=GuatemalaLocationSeeder --force
-php artisan optimize:clear
-php artisan config:cache
-php artisan route:cache
-php artisan queue:restart
-php artisan up
+php8.5 artisan migrate --force
+php8.5 artisan db:seed --class=PermissionSeeder --force
+php8.5 artisan db:seed --class=GuatemalaLocationSeeder --force
+php8.5 artisan optimize:clear
+php8.5 artisan config:cache
+php8.5 artisan route:cache
+php8.5 artisan queue:restart
+php8.5 artisan up
 maintenance_enabled=false
 ```
 
 No edites `.env` durante este procedimiento. Si cualquier paso posterior a `down`
-falla, confirma que `php artisan up` haya sido ejecutado antes de continuar el
+falla, confirma que `php8.5 artisan up` haya sido ejecutado antes de continuar el
 diagnostico.

@@ -72,13 +72,16 @@ jobs:
             exit_code=$?
             if [[ "$maintenance_enabled" == true ]]; then
               echo "Restoring application availability after deploy exit code ${exit_code}."
-              php artisan up || echo "WARNING: php artisan up failed; restore it manually immediately." >&2
+              php8.5 artisan up || echo "WARNING: php8.5 artisan up failed; restore it manually immediately." >&2
             fi
             exit "$exit_code"
           }
 
           trap restore_application EXIT
           cd "$PROD_PATH"
+
+          php8.5 -v
+          php8.5 -m | grep -i pgsql
 
           current_branch="$(git branch --show-current)"
           echo "Current branch: ${current_branch}"
@@ -102,17 +105,17 @@ jobs:
           npm ci
           npm run build
 
-          php artisan down
+          php8.5 artisan down
           maintenance_enabled=true
 
-          php artisan migrate --force
-          php artisan db:seed --class=PermissionSeeder --force
-          php artisan db:seed --class=GuatemalaLocationSeeder --force
-          php artisan optimize:clear
-          php artisan config:cache
-          php artisan route:cache
-          php artisan queue:restart
+          php8.5 artisan migrate --force
+          php8.5 artisan db:seed --class=PermissionSeeder --force
+          php8.5 artisan db:seed --class=GuatemalaLocationSeeder --force
+          php8.5 artisan optimize:clear
+          php8.5 artisan config:cache
+          php8.5 artisan route:cache
+          php8.5 artisan queue:restart
 
-          php artisan up
+          php8.5 artisan up
           maintenance_enabled=false
           REMOTE_SCRIPT
