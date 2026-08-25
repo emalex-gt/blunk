@@ -58,4 +58,9 @@ class RouteWorkDay extends Model
     {
         return $this->hasMany(PreSale::class);
     }
+
+    public function preparationBatches(): HasMany
+    {
+        return $this->hasMany(RoutePreparationBatch::class);
+    }
 }

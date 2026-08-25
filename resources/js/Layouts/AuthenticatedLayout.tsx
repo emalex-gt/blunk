@@ -100,6 +100,7 @@ export default function Authenticated({
         hasModule('routes') && can('routes.work') ? { label: 'Mis rutas', href: route('routes.mobile.zones'), active: route().current('routes.mobile.*') } : null,
         hasModule('routes') && can('routes.manage') ? { label: 'Rutas', href: route('routes.zones.index'), active: route().current('routes.zones.*') } : null,
         hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Jornadas cerradas', href: route('routes.work-days.closed'), active: route().current('routes.work-days.*') } : null,
+        hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Preparaciones', href: route('routes.preparation-batches.index'), active: route().current('routes.preparation-batches.*') } : null,
         hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Preventas enviadas', href: route('routes.pre-sales.index'), active: route().current('routes.pre-sales.*') } : null,
     ].filter(Boolean) as NavItem[];
 

@@ -65,6 +65,7 @@ class TenantController extends Controller
                 'pre_sale_price_type_id' => null,
                 'pre_sale_allow_manual_price' => false,
                 'route_pre_sale_invoicing_mode' => 'manual',
+                'route_pre_sale_stock_deduction_timing' => 'invoice',
                 'enable_credit_sales' => false,
                 'enable_credit_reservations' => false,
                 'reserve_stock_on_credit_reservations' => true,
@@ -148,6 +149,7 @@ class TenantController extends Controller
                 'pre_sale_price_type_id' => $business->tenantSetting?->pre_sale_price_type_id,
                 'pre_sale_allow_manual_price' => $business->tenantSetting?->pre_sale_allow_manual_price ?? false,
                 'route_pre_sale_invoicing_mode' => $business->tenantSetting?->route_pre_sale_invoicing_mode ?? 'manual',
+                'route_pre_sale_stock_deduction_timing' => $business->tenantSetting?->route_pre_sale_stock_deduction_timing ?? 'invoice',
                 'enable_credit_sales' => $business->tenantSetting?->enable_credit_sales ?? false,
                 'enable_credit_reservations' => $business->tenantSetting?->enable_credit_reservations ?? false,
                 'reserve_stock_on_credit_reservations' => $business->tenantSetting?->reserve_stock_on_credit_reservations ?? true,
@@ -281,7 +283,8 @@ class TenantController extends Controller
             'remember_last_customer_product_price' => ['nullable', 'boolean'],
             'pre_sale_price_type_id' => ['nullable', 'integer'],
             'pre_sale_allow_manual_price' => ['nullable', 'boolean'],
-            'route_pre_sale_invoicing_mode' => ['nullable', Rule::in(['manual', 'automatic'])],
+            'route_pre_sale_invoicing_mode' => ['nullable', Rule::in(['manual', 'automatic', 'automatic_all'])],
+            'route_pre_sale_stock_deduction_timing' => ['nullable', Rule::in(['picking', 'invoice'])],
             'enable_credit_sales' => ['nullable', 'boolean'],
             'enable_credit_reservations' => ['nullable', 'boolean'],
             'reserve_stock_on_credit_reservations' => ['nullable', 'boolean'],
@@ -355,7 +358,10 @@ class TenantController extends Controller
                 'pre_sale_price_type_id' => $preSalePriceTypeId,
                 'pre_sale_allow_manual_price' => (bool) ($validated['allow_manual_price'] ?? false)
                     && (bool) ($validated['pre_sale_allow_manual_price'] ?? false),
-                'route_pre_sale_invoicing_mode' => $validated['route_pre_sale_invoicing_mode'] ?? 'manual',
+                'route_pre_sale_invoicing_mode' => in_array($validated['route_pre_sale_invoicing_mode'] ?? 'manual', ['automatic', 'automatic_all'], true)
+                    ? 'automatic_all'
+                    : 'manual',
+                'route_pre_sale_stock_deduction_timing' => $validated['route_pre_sale_stock_deduction_timing'] ?? 'invoice',
                 'enable_credit_sales' => in_array('credits', $modules, true) && (bool) ($validated['enable_credit_sales'] ?? false),
                 'enable_credit_reservations' => in_array('credits', $modules, true) && (bool) ($validated['enable_credit_reservations'] ?? false),
                 'reserve_stock_on_credit_reservations' => (bool) ($validated['reserve_stock_on_credit_reservations'] ?? true),

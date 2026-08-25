@@ -30,6 +30,7 @@ class TenantSetting extends Model
         'pre_sale_price_type_id',
         'pre_sale_allow_manual_price',
         'route_pre_sale_invoicing_mode',
+        'route_pre_sale_stock_deduction_timing',
         'allow_receipts',
         'allow_invoices',
         'enable_credit_sales',

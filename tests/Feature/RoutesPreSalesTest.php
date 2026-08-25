@@ -1962,11 +1962,13 @@ class RoutesPreSalesTest extends TestCase
             'receipt_format' => 'ticket',
             'allow_receipts' => true,
             'allow_invoices' => false,
-            'route_pre_sale_invoicing_mode' => 'automatic',
+            'route_pre_sale_invoicing_mode' => 'automatic_all',
+            'route_pre_sale_stock_deduction_timing' => 'picking',
             'modules' => ['routes'],
         ])->assertSessionHasNoErrors();
 
-        $this->assertSame('automatic', TenantSetting::query()->where('business_id', $business->id)->value('route_pre_sale_invoicing_mode'));
+        $this->assertSame('automatic_all', TenantSetting::query()->where('business_id', $business->id)->value('route_pre_sale_invoicing_mode'));
+        $this->assertSame('picking', TenantSetting::query()->where('business_id', $business->id)->value('route_pre_sale_stock_deduction_timing'));
     }
 
     public function test_closed_work_days_menu_and_tenant_form_setting_are_exposed(): void
@@ -1978,7 +1980,8 @@ class RoutesPreSalesTest extends TestCase
         $this->assertStringContainsString("route('routes.work-days.closed')", $layoutSource);
         $this->assertStringContainsString('Facturación de preventas de ruta', $formSource);
         $this->assertStringContainsString('route_pre_sale_invoicing_mode', $formSource);
-        $this->assertStringContainsString('La facturación automática se aplicará cuando el flujo de facturación de preventas esté activo.', $formSource);
+        $this->assertStringContainsString('route_pre_sale_stock_deduction_timing', $formSource);
+        $this->assertStringContainsString('esta fase no emite ventas ni FEL automáticamente.', $formSource);
     }
 
     public function test_pre_sale_detail_shows_products_and_stock_reservation_info(): void

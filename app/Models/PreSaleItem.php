@@ -14,6 +14,7 @@ class PreSaleItem extends Model
         'price_type_id',
         'quantity',
         'picked_quantity',
+        'stock_deducted_quantity',
         'unit_price',
         'original_price',
         'manual_price',
@@ -26,6 +27,7 @@ class PreSaleItem extends Model
     protected $casts = [
         'quantity' => 'decimal:4',
         'picked_quantity' => 'decimal:4',
+        'stock_deducted_quantity' => 'decimal:4',
         'unit_price' => 'decimal:2',
         'original_price' => 'decimal:2',
         'manual_price' => 'boolean',

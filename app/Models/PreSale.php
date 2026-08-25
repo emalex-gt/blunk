@@ -112,4 +112,9 @@ class PreSale extends Model
     {
         return $this->belongsTo(RouteZone::class, 'route_zone_id');
     }
+
+    public function preparationBatchEntries(): HasMany
+    {
+        return $this->hasMany(RoutePreparationBatchPreSale::class);
+    }
 }

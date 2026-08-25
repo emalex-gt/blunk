@@ -60,14 +60,22 @@ type Props = {
     preSales: Page<PreSale>;
     canInvoice: boolean;
     activeBranchId: number;
+    preparation: {
+        can_prepare_all: boolean;
+        preparable_count: number;
+        stock_deduction_timing: 'picking' | 'invoice';
+        invoicing_mode: 'manual' | 'automatic_all';
+    };
 };
 
 const cancellationReasons = ['Cliente canceló', 'Producto no disponible', 'Duplicada', 'Error de captura', 'Otro'];
 
-export default function Show({ workDay, preSales, canInvoice, activeBranchId }: Props) {
+export default function Show({ workDay, preSales, canInvoice, activeBranchId, preparation }: Props) {
     const [cancelTarget, setCancelTarget] = useState<PreSale | null>(null);
     const [processingTarget, setProcessingTarget] = useState<PreSale | null>(null);
     const [processingPreSaleId, setProcessingPreSaleId] = useState<number | null>(null);
+    const [prepareAllOpen, setPrepareAllOpen] = useState(false);
+    const [preparingAll, setPreparingAll] = useState(false);
     const processingLockedRef = useRef(false);
     const cancelForm = useForm({
         idempotency_key: makeOperationKey('pre-sale-cancel'),
@@ -113,6 +121,21 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId }: 
         });
     };
 
+    const prepareAll = () => {
+        if (preparingAll) {
+            return;
+        }
+
+        setPreparingAll(true);
+        router.post(route('routes.work-days.prepare-all', workDay.id), {
+            idempotency_key: makeOperationKey('route-prepare-all'),
+        }, {
+            preserveScroll: true,
+            onFinish: () => setPreparingAll(false),
+            onSuccess: () => setPrepareAllOpen(false),
+        });
+    };
+
     return (
         <AuthenticatedLayout>
             <Head title={`Jornada ${workDay.work_date ?? `#${workDay.id}`}`} />
@@ -123,9 +146,14 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId }: 
                         <h1 className="mt-2 text-2xl font-semibold text-slate-950">Jornada {workDay.work_date ?? `#${workDay.id}`}</h1>
                         <p className="text-sm text-slate-500">Detalle administrativo de visitas y preventas de la jornada.</p>
                     </div>
-                    <Link href={route('routes.pre-sales.index')} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                        Cola de preventas
-                    </Link>
+                    <div className="flex flex-wrap gap-2">
+                        <Link href={route('routes.preparation-batches.index')} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                            Preparaciones
+                        </Link>
+                        <Link href={route('routes.pre-sales.index')} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                            Cola de preventas
+                        </Link>
+                    </div>
                 </div>
 
                 <div className="grid gap-4 lg:grid-cols-3">
@@ -162,7 +190,24 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId }: 
                             <h2 className="text-sm font-semibold text-slate-900">Preventas de la jornada</h2>
                             <p className="text-xs text-slate-500">Solo se muestran pedidos asociados a esta jornada.</p>
                         </div>
+                        {preparation.can_prepare_all ? (
+                            <button
+                                type="button"
+                                onClick={() => setPrepareAllOpen(true)}
+                                disabled={preparingAll}
+                                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                PREPARAR TODO ({preparation.preparable_count})
+                            </button>
+                        ) : preparation.preparable_count === 0 ? (
+                            <p className="text-xs font-medium text-slate-500">No hay preventas disponibles para preparar en esta jornada.</p>
+                        ) : null}
                     </div>
+                    {preparation.invoicing_mode === 'automatic_all' && (
+                        <div className="border-b border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                            La facturación automática está configurada, pero requiere definir documento y método de pago predeterminados antes de emitir documentos masivos.
+                        </div>
+                    )}
                     <div className="overflow-x-auto">
                         <table className="min-w-[1180px] divide-y divide-slate-200 text-sm">
                             <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
@@ -269,6 +314,23 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId }: 
                     }
                 }}
                 onConfirm={confirmMarkProcessing}
+            />
+
+            <ConfirmDialog
+                open={prepareAllOpen}
+                title="Preparar todas las preventas"
+                message={`Se prepararán ${preparation.preparable_count} preventa(s) de esta jornada.`}
+                details={preparation.stock_deduction_timing === 'picking'
+                    ? 'El stock físico se descontará ahora. Si una preventa no puede prepararse, no se preparará ninguna.'
+                    : 'Las reservas se conservarán hasta facturar. Si una preventa no puede prepararse, no se preparará ninguna.'}
+                confirmLabel="Sí, preparar todo"
+                processing={preparingAll}
+                onCancel={() => {
+                    if (!preparingAll) {
+                        setPrepareAllOpen(false);
+                    }
+                }}
+                onConfirm={prepareAll}
             />
 
             {cancelTarget && (

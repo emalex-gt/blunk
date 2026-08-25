@@ -81,7 +81,8 @@ export default function Form({
         remember_last_customer_product_price?: boolean;
         pre_sale_price_type_id?: number | null;
         pre_sale_allow_manual_price?: boolean;
-        route_pre_sale_invoicing_mode?: 'manual' | 'automatic';
+        route_pre_sale_invoicing_mode?: 'manual' | 'automatic_all';
+        route_pre_sale_stock_deduction_timing?: 'picking' | 'invoice';
         enable_credit_sales?: boolean;
         enable_credit_reservations?: boolean;
         reserve_stock_on_credit_reservations?: boolean;
@@ -120,6 +121,7 @@ export default function Form({
         pre_sale_price_type_id: settings.pre_sale_price_type_id ?? '',
         pre_sale_allow_manual_price: settings.pre_sale_allow_manual_price ?? false,
         route_pre_sale_invoicing_mode: settings.route_pre_sale_invoicing_mode ?? 'manual',
+        route_pre_sale_stock_deduction_timing: settings.route_pre_sale_stock_deduction_timing ?? 'invoice',
         enable_credit_sales: settings.enable_credit_sales ?? false,
         enable_credit_reservations: settings.enable_credit_reservations ?? false,
         reserve_stock_on_credit_reservations: settings.reserve_stock_on_credit_reservations ?? true,
@@ -435,23 +437,27 @@ export default function Form({
                                 <select
                                     className={inputClass}
                                     value={data.route_pre_sale_invoicing_mode}
-                                    disabled={!data.fel_enabled}
-                                    onChange={(event) => setData('route_pre_sale_invoicing_mode', event.target.value as 'manual' | 'automatic')}
+                                    onChange={(event) => setData('route_pre_sale_invoicing_mode', event.target.value as 'manual' | 'automatic_all')}
                                 >
                                     <option value="manual">Manual: elegir cuáles preventas facturar</option>
-                                    <option value="automatic">Automática: generar factura automáticamente</option>
+                                    <option value="automatic_all">Automática: preparar todas para facturación</option>
                                 </select>
                             </Field>
                             <p className="mt-2 text-xs text-slate-500">
-                                Define si las preventas de ruta preparadas se facturarán automáticamente o si el usuario decidirá cuáles emitir.
+                                La opción automática se guarda en el lote, pero esta fase no emite ventas ni FEL automáticamente.
                             </p>
-                            {!data.fel_enabled && (
-                                <p className="mt-2 text-xs font-semibold text-amber-700">
-                                    Disponible cuando FEL esté activo. El valor por defecto seguirá siendo manual.
-                                </p>
-                            )}
+                            <Field label="Momento de descuento de stock" error={errors.route_pre_sale_stock_deduction_timing}>
+                                <select
+                                    className={inputClass}
+                                    value={data.route_pre_sale_stock_deduction_timing}
+                                    onChange={(event) => setData('route_pre_sale_stock_deduction_timing', event.target.value as 'picking' | 'invoice')}
+                                >
+                                    <option value="invoice">Al facturar</option>
+                                    <option value="picking">Al preparar</option>
+                                </select>
+                            </Field>
                             <p className="mt-2 text-xs text-slate-500">
-                                La facturación automática se aplicará cuando el flujo de facturación de preventas esté activo.
+                                Al preparar descuenta una vez y la facturación posterior no vuelve a descontar stock. Al facturar conserva la reserva hasta convertir la preventa.
                             </p>
                         </div>
                     )}

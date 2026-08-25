@@ -12,6 +12,7 @@ type PreSaleItem = {
     product_name?: string | null;
     quantity: number;
     picked_quantity?: number | null;
+    stock_deducted_quantity?: number;
     picking_note?: string | null;
     reserved_quantity: number;
     unit_price: number;
@@ -58,17 +59,17 @@ type PreSale = {
 };
 
 type InvoiceOptions = {
-    mode: 'manual' | 'automatic';
+    mode: 'manual' | 'automatic_all';
     document_types: Array<'receipt' | 'invoice'>;
     credit_enabled: boolean;
     payment_methods: Array<'cash' | 'card' | 'transfer' | 'check'>;
 };
 
-type Props = { preSale: PreSale; canInvoice: boolean; invoiceOptions: InvoiceOptions };
+type Props = { preSale: PreSale; canInvoice: boolean; invoiceOptions: InvoiceOptions; stockDeductionTiming: 'picking' | 'invoice' };
 
 const cancellationReasons = ['Cliente canceló', 'Producto no disponible', 'Duplicada', 'Error de captura', 'Otro'];
 
-export default function Show({ preSale, canInvoice, invoiceOptions }: Props) {
+export default function Show({ preSale, canInvoice, invoiceOptions, stockDeductionTiming }: Props) {
     const [cancelOpen, setCancelOpen] = useState(false);
     const [invoiceOpen, setInvoiceOpen] = useState(false);
     const processingLockedRef = useRef(false);
@@ -220,9 +221,9 @@ export default function Show({ preSale, canInvoice, invoiceOptions }: Props) {
                     </section>
                 )}
 
-                {preSale.status === 'picked' && invoiceOptions.mode === 'automatic' && (
+                {preSale.status === 'picked' && invoiceOptions.mode === 'automatic_all' && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                        La facturación automática aún no está activa. Factura esta preventa manualmente.
+                        La facturación automática está configurada, pero requiere definir documento y método de pago predeterminados antes de emitir documentos masivos.
                     </div>
                 )}
 
@@ -352,7 +353,12 @@ export default function Show({ preSale, canInvoice, invoiceOptions }: Props) {
                         </div>
                         <label className="mt-4 block"><span className="text-xs font-semibold text-slate-600">Nota</span><textarea rows={3} value={invoiceForm.data.note} onChange={(event) => invoiceForm.setData('note', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" /></label>
 
-                        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Al confirmar, se creará una venta real, se descontará stock físico y se cerrarán las reservas de esta preventa.{invoiceForm.data.document_type === 'invoice' ? ' Si Digifact rechaza la factura, no se realizará ningún cambio.' : ''}</div>
+                        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                            {stockDeductionTiming === 'picking'
+                                ? 'Al confirmar, se creará una venta real. El stock y las reservas ya fueron procesados durante la preparación.'
+                                : 'Al confirmar, se creará una venta real, se descontará stock físico y se cerrarán las reservas de esta preventa.'}
+                            {invoiceForm.data.document_type === 'invoice' ? ' Si Digifact rechaza la factura, no se realizará ningún cambio de esta facturación.' : ''}
+                        </div>
                         {invoiceForm.errors.pre_sale && <p className="mt-2 text-sm font-semibold text-red-600">{invoiceForm.errors.pre_sale}</p>}
 
                         <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setInvoiceOpen(false)} disabled={invoiceForm.processing} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">Cancelar</button><button disabled={invoiceForm.processing} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60">{invoiceForm.processing ? 'Facturando...' : 'Confirmar facturación'}</button></div>

@@ -37,6 +37,7 @@ class RoutePreSaleInvoiceService
         $business = Business::query()->findOrFail($preSale->business_id);
         $settings = TenantSetting::query()->where('business_id', $business->id)->first();
         $felSettings = TenantFelSetting::query()->where('business_id', $business->id)->first();
+        $stockDeductionTiming = $this->stockDeductionTiming($settings);
         $isCreditSale = ($data['payment_condition'] ?? 'paid') === 'credit';
         $failedFel = null;
 
@@ -72,8 +73,8 @@ class RoutePreSaleInvoiceService
                 'route_pre_sale_invoice',
                 $data['idempotency_key'],
                 $this->idempotencyPayload($preSale, $data, $snapshotItems),
-                function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, &$failedFel) {
-                    return DB::transaction(function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, &$failedFel) {
+                function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $stockDeductionTiming, &$failedFel) {
+                    return DB::transaction(function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $stockDeductionTiming, &$failedFel) {
                         $lockedPreSale = PreSale::query()
                             ->where('business_id', $preSale->business_id)
                             ->whereKey($preSale->id)
@@ -99,25 +100,29 @@ class RoutePreSaleInvoiceService
                             ]);
                         }
 
-                        $productIds = $items->pluck('product_id')->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
-                        app(StockReservationService::class)->lockStockRowsForReservation(
-                            (int) $lockedPreSale->business_id,
-                            (int) $lockedPreSale->branch_id,
-                            $productIds,
-                        );
+                        $reservedByItem = collect();
 
-                        $reservedByItem = StockReservation::query()
-                            ->where('business_id', $lockedPreSale->business_id)
-                            ->where('branch_id', $lockedPreSale->branch_id)
-                            ->where('source_type', StockReservationService::SOURCE_PRE_SALE)
-                            ->where('source_id', $lockedPreSale->id)
-                            ->where('status', 'active')
-                            ->orderBy('product_id')
-                            ->orderBy('id')
-                            ->lockForUpdate()
-                            ->get()
-                            ->groupBy('source_item_id')
-                            ->map(fn ($rows) => round((float) $rows->sum('quantity'), 4));
+                        if ($stockDeductionTiming === 'invoice') {
+                            $productIds = $items->pluck('product_id')->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
+                            app(StockReservationService::class)->lockStockRowsForReservation(
+                                (int) $lockedPreSale->business_id,
+                                (int) $lockedPreSale->branch_id,
+                                $productIds,
+                            );
+
+                            $reservedByItem = StockReservation::query()
+                                ->where('business_id', $lockedPreSale->business_id)
+                                ->where('branch_id', $lockedPreSale->branch_id)
+                                ->where('source_type', StockReservationService::SOURCE_PRE_SALE)
+                                ->where('source_id', $lockedPreSale->id)
+                                ->where('status', 'active')
+                                ->orderBy('product_id')
+                                ->orderBy('id')
+                                ->lockForUpdate()
+                                ->get()
+                                ->groupBy('source_item_id')
+                                ->map(fn ($rows) => round((float) $rows->sum('quantity'), 4));
+                        }
 
                         $saleLines = [];
                         $subtotal = 0.0;
@@ -127,12 +132,23 @@ class RoutePreSaleInvoiceService
                             $pickedQuantity = round((float) $item->picked_quantity, 4);
                             $requestedQuantity = round((float) $item->quantity, 4);
                             $reservedQuantity = (float) ($reservedByItem->get($item->id) ?? 0);
+                            $stockDeductedQuantity = round((float) ($item->stock_deducted_quantity ?? 0), 4);
 
-                            if ($pickedQuantity <= 0
-                                || $pickedQuantity > $requestedQuantity
-                                || abs($pickedQuantity - $reservedQuantity) > 0.0001) {
+                            if ($pickedQuantity <= 0 || $pickedQuantity > $requestedQuantity) {
                                 throw ValidationException::withMessages([
                                     'pre_sale' => 'No se puede facturar porque las cantidades preparadas no coinciden con las reservas activas.',
+                                ]);
+                            }
+
+                            if ($stockDeductionTiming === 'invoice' && abs($pickedQuantity - $reservedQuantity) > 0.0001) {
+                                throw ValidationException::withMessages([
+                                    'pre_sale' => 'No se puede facturar porque las cantidades preparadas no coinciden con las reservas activas.',
+                                ]);
+                            }
+
+                            if ($stockDeductionTiming === 'picking' && abs($pickedQuantity - $stockDeductedQuantity) > 0.0001) {
+                                throw ValidationException::withMessages([
+                                    'pre_sale' => 'No se puede facturar porque el descuento de stock de la preparación no coincide con las cantidades preparadas.',
                                 ]);
                             }
 
@@ -246,19 +262,21 @@ class RoutePreSaleInvoiceService
                                 'total_after_discount' => $line['line_total'],
                             ]);
 
-                            [$previousStock, $newStock] = BranchInventory::decrease($product, (int) $lockedPreSale->branch_id, $line['quantity']);
+                            if ($stockDeductionTiming === 'invoice') {
+                                [$previousStock, $newStock] = BranchInventory::decrease($product, (int) $lockedPreSale->branch_id, $line['quantity']);
 
-                            StockMovement::query()->create([
-                                'business_id' => $sale->business_id,
-                                'branch_id' => $sale->branch_id,
-                                'product_id' => $product->id,
-                                'type' => 'sale',
-                                'quantity' => -1 * $line['quantity'],
-                                'previous_stock' => $previousStock,
-                                'new_stock' => $newStock,
-                                'note' => stockMovementNote('sale', $sale->business_number ?: $sale->id),
-                                'created_by' => $user->id,
-                            ]);
+                                StockMovement::query()->create([
+                                    'business_id' => $sale->business_id,
+                                    'branch_id' => $sale->branch_id,
+                                    'product_id' => $product->id,
+                                    'type' => 'sale',
+                                    'quantity' => -1 * $line['quantity'],
+                                    'previous_stock' => $previousStock,
+                                    'new_stock' => $newStock,
+                                    'note' => stockMovementNote('sale', $sale->business_number ?: $sale->id),
+                                    'created_by' => $user->id,
+                                ]);
+                            }
                         }
 
                         if (! $isCreditSale) {
@@ -326,16 +344,18 @@ class RoutePreSaleInvoiceService
                             AccountsReceivable::createCharge($sale->refresh(), $user->id);
                         }
 
-                        StockReservation::query()
-                            ->where('business_id', $lockedPreSale->business_id)
-                            ->where('branch_id', $lockedPreSale->branch_id)
-                            ->where('source_type', StockReservationService::SOURCE_PRE_SALE)
-                            ->where('source_id', $lockedPreSale->id)
-                            ->where('status', 'active')
-                            ->update([
-                                'status' => 'consumed',
-                                'consumed_at' => now(),
-                            ]);
+                        if ($stockDeductionTiming === 'invoice') {
+                            StockReservation::query()
+                                ->where('business_id', $lockedPreSale->business_id)
+                                ->where('branch_id', $lockedPreSale->branch_id)
+                                ->where('source_type', StockReservationService::SOURCE_PRE_SALE)
+                                ->where('source_id', $lockedPreSale->id)
+                                ->where('status', 'active')
+                                ->update([
+                                    'status' => 'consumed',
+                                    'consumed_at' => now(),
+                                ]);
+                        }
 
                         $lockedPreSale->update([
                             'status' => PreSale::STATUS_CONVERTED,
@@ -382,9 +402,16 @@ class RoutePreSaleInvoiceService
             }
 
             throw ValidationException::withMessages([
-                'document_type' => 'No se pudo emitir la factura FEL. La preventa no fue convertida y las reservas se mantienen.',
+                'document_type' => 'No se pudo emitir la factura FEL. La preventa no fue convertida y su preparación se mantiene para reintentar.',
             ]);
         }
+    }
+
+    private function stockDeductionTiming(?TenantSetting $settings): string
+    {
+        return $settings?->route_pre_sale_stock_deduction_timing === 'picking'
+            ? 'picking'
+            : 'invoice';
     }
 
     private function assertDocumentIsAvailable(Business $business, ?TenantSetting $settings, ?TenantFelSetting $felSettings, string $documentType): void

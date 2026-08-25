@@ -79,6 +79,69 @@ class RoutePreSaleInvoiceTest extends TestCase
         $this->assertNotNull($preSale->workDay->refresh()->completed_at);
     }
 
+    public function test_picking_timing_conversion_creates_sale_without_a_second_stock_deduction_or_reservation_consumption(): void
+    {
+        [$business, $admin, $branch] = $this->tenant();
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_pre_sale_stock_deduction_timing' => 'picking']);
+        $product = $this->product($business, $branch, stock: 10, price: 100);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product, quantity: 2, pickedQuantity: 2);
+        $item = $preSale->items()->firstOrFail();
+        $item->update(['stock_deducted_quantity' => 2]);
+        [$previousStock, $newStock] = BranchInventory::decrease($product, $branch->id, 2);
+        StockMovement::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+            'type' => 'pre_sale_picking',
+            'quantity' => -2,
+            'previous_stock' => $previousStock,
+            'new_stock' => $newStock,
+            'note' => 'Preparación de prueba',
+            'created_by' => $admin->id,
+        ]);
+        StockReservation::query()->where('source_id', $preSale->id)->update(['status' => 'consumed', 'consumed_at' => now()]);
+        $this->openCashRegister($business, $branch, $admin);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload('receipt', 'paid', 'cash'))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(8.0, (float) ProductBranchStock::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('product_id', $product->id)->count());
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale')->count());
+        $this->assertSame(PreSale::STATUS_CONVERTED, $preSale->refresh()->status);
+        $this->assertSame(1, StockReservation::query()->where('source_id', $preSale->id)->where('status', 'consumed')->count());
+    }
+
+    public function test_fel_failure_after_picking_deduction_keeps_the_prior_preparation_for_retry(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(allowInvoices: true);
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_pre_sale_stock_deduction_timing' => 'picking']);
+        $this->felSettings($business, $branch);
+        $product = $this->product($business, $branch, stock: 10, price: 100);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product, quantity: 2, pickedQuantity: 2);
+        $item = $preSale->items()->firstOrFail();
+        $item->update(['stock_deducted_quantity' => 2]);
+        [$previousStock, $newStock] = BranchInventory::decrease($product, $branch->id, 2);
+        StockMovement::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id, 'type' => 'pre_sale_picking', 'quantity' => -2, 'previous_stock' => $previousStock, 'new_stock' => $newStock, 'note' => 'Preparación de prueba', 'created_by' => $admin->id]);
+        StockReservation::query()->where('source_id', $preSale->id)->update(['status' => 'consumed', 'consumed_at' => now()]);
+        $this->openCashRegister($business, $branch, $admin);
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->once()->andThrow(new FelException('Digifact rechazó la factura.'));
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload('invoice', 'paid', 'cash'))
+            ->assertSessionHasErrors('document_type');
+
+        $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(8.0, (float) ProductBranchStock::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('type', 'pre_sale_picking')->count());
+        $this->assertSame(PreSale::STATUS_PICKED, $preSale->refresh()->status);
+        $this->assertSame(1, StockReservation::query()->where('source_id', $preSale->id)->where('status', 'consumed')->count());
+    }
+
     public function test_credit_conversion_creates_receivable_without_cash_movement(): void
     {
         [$business, $admin, $branch] = $this->tenant(enableCreditSales: true);

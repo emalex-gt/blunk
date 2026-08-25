@@ -17,6 +17,7 @@ use App\Http\Controllers\InventoryTransferController;
 use App\Http\Controllers\OperationDraftController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\RouteController;
+use App\Http\Controllers\RoutePreparationBatchController;
 use App\Http\Controllers\RoutePreSaleInvoiceController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\StockController;
@@ -250,6 +251,25 @@ Route::middleware('auth')->group(function () {
             Route::get('/work-days/{workDay}', [RouteController::class, 'showWorkDay'])
                 ->middleware('permission:routes.pre_sales.admin_view')
                 ->name('work-days.show');
+            Route::post('/work-days/{workDay}/prepare-all', [RoutePreparationBatchController::class, 'prepareAll'])
+                ->middleware('permission:routes.pre_sales.pick')
+                ->name('work-days.prepare-all');
+
+            Route::get('/preparation-batches', [RoutePreparationBatchController::class, 'index'])
+                ->middleware('permission:routes.pre_sales.admin_view')
+                ->name('preparation-batches.index');
+            Route::get('/preparation-batches/{batch}', [RoutePreparationBatchController::class, 'show'])
+                ->middleware('permission:routes.pre_sales.admin_view')
+                ->name('preparation-batches.show');
+            Route::get('/preparation-batches/{batch}/documents/consolidated', [RoutePreparationBatchController::class, 'consolidated'])
+                ->middleware('permission:routes.pre_sales.admin_view')
+                ->name('preparation-batches.documents.consolidated');
+            Route::get('/preparation-batches/{batch}/documents/receipts', [RoutePreparationBatchController::class, 'receipts'])
+                ->middleware('permission:routes.pre_sales.admin_view')
+                ->name('preparation-batches.documents.receipts');
+            Route::get('/preparation-batches/{batch}/documents/products', [RoutePreparationBatchController::class, 'products'])
+                ->middleware('permission:routes.pre_sales.admin_view')
+                ->name('preparation-batches.documents.products');
 
             Route::get('/pre-sales', [RouteController::class, 'preSales'])
                 ->middleware('permission:routes.pre_sales.admin_view')
