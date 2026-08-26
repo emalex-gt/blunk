@@ -128,3 +128,36 @@ maintenance_enabled=false
 No edites `.env` durante este procedimiento. Si cualquier paso posterior a `down`
 falla, confirma que `php8.5 artisan up` haya sido ejecutado antes de continuar el
 diagnostico.
+
+## Deploy interno desde Super Admin
+
+La pantalla **Super Admin > Sistema > Actualizaciones** permite consultar el checkout,
+historial y logs. La ejecución interna permanece bloqueada por defecto; no existe una
+alternativa síncrona desde HTTP.
+
+Antes de habilitarla en producción, configura Supervisor para mantener un worker de la
+cola `deploys`:
+
+```ini
+[program:kodbli-deploy-worker]
+command=php8.5 /home/kodbli-v2/htdocs/v2.kodbli.app/artisan queue:work database --queue=deploys,default --sleep=3 --tries=1 --timeout=900
+directory=/home/kodbli-v2/htdocs/v2.kodbli.app
+autostart=true
+autorestart=true
+stopwaitsecs=920
+user=USUARIO_WEB
+redirect_stderr=true
+stdout_logfile=/home/kodbli-v2/htdocs/v2.kodbli.app/storage/logs/deploy-worker.log
+```
+
+Ejecuta `supervisorctl reread`, `supervisorctl update` y confirma que el worker está
+activo y puede procesar una tarea de la cola antes de habilitar el deploy interno. Solo
+entonces agrega en producción:
+
+```dotenv
+DEPLOY_QUEUE_WORKER_ENABLED=true
+```
+
+El usuario de Supervisor debe poder ejecutar `git`, `composer`, `npm`, `php8.5` y el
+script fijo `scripts/deploy-production.sh`, además de escribir en `storage/logs/deploys`.
+No concedas sudo ni expongas comandos, ramas o rutas configurables desde la interfaz.

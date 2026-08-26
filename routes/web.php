@@ -23,6 +23,7 @@ use App\Http\Controllers\SaleController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\TenantUserController;
 use App\Http\Controllers\SuperAdmin\DashboardController as SuperAdminDashboardController;
+use App\Http\Controllers\SuperAdmin\DeployController as SuperAdminDeployController;
 use App\Http\Controllers\SuperAdmin\FelIncidentController as SuperAdminFelIncidentController;
 use App\Http\Controllers\SuperAdmin\ProductImportController as SuperAdminProductImportController;
 use App\Http\Controllers\SuperAdmin\SecurityController as SuperAdminSecurityController;
@@ -66,6 +67,11 @@ Route::middleware(['auth', 'super.admin'])
     ->name('super-admin.')
     ->group(function () {
         Route::get('/', SuperAdminDashboardController::class)->name('dashboard');
+        Route::get('/system/deploy', [SuperAdminDeployController::class, 'index'])->name('system.deploy.index');
+        Route::post('/system/deploy/check', [SuperAdminDeployController::class, 'check'])->name('system.deploy.check');
+        Route::post('/system/deploy/run', [SuperAdminDeployController::class, 'run'])->name('system.deploy.run');
+        Route::get('/system/deploy/{deployRun}', [SuperAdminDeployController::class, 'show'])->name('system.deploy.show');
+        Route::get('/system/deploy/{deployRun}/log', [SuperAdminDeployController::class, 'log'])->name('system.deploy.log');
         Route::get('/fel-incidents', [SuperAdminFelIncidentController::class, 'index'])->name('fel-incidents.index');
         Route::post('/fel-incidents/{incident}/review', [SuperAdminFelIncidentController::class, 'review'])->name('fel-incidents.review');
         Route::post('/fel-incidents/{incident}/resolve', [SuperAdminFelIncidentController::class, 'resolve'])->name('fel-incidents.resolve');
