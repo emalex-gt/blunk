@@ -148,6 +148,21 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
         || (auth.permissions ?? []).includes('fel.documents.view');
 
     function printSale() {
+        if (sale.electronic_document?.status === 'certified' && sale.electronic_document.has_printable_document) {
+            if (!canViewFelDocuments) {
+                toast.error('No tienes permisos para ver documentos FEL.');
+                return;
+            }
+
+            if (sale.fel_uuid) {
+                window.open(route('sales.fel-document', sale.id), '_blank');
+                return;
+            }
+
+            window.open(route('sales.invoice-document', sale.id), '_blank');
+            return;
+        }
+
         if (sale.document_type === 'receipt') {
             window.open(route('sales.receipt', sale.id), '_blank');
             return;
@@ -160,11 +175,6 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
 
         if (sale.fel_uuid) {
             window.open(route('sales.fel-document', sale.id), '_blank');
-            return;
-        }
-
-        if (sale.electronic_document?.status === 'certified' && sale.electronic_document.has_printable_document) {
-            window.open(route('sales.invoice-document', sale.id), '_blank');
             return;
         }
 

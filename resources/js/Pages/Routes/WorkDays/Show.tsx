@@ -205,7 +205,7 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                     </div>
                     {preparation.invoicing_mode === 'automatic_all' && (
                         <div className="border-b border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                            La facturación automática está configurada, pero requiere definir documento y método de pago predeterminados antes de emitir documentos masivos.
+                            La certificación FEL automática está configurada, pero aún no se ejecuta en esta fase. La preparación no crea ni certifica ventas automáticamente.
                         </div>
                     )}
                     <div className="overflow-x-auto">

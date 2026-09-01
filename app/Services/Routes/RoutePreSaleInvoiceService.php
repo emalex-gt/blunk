@@ -41,7 +41,13 @@ class RoutePreSaleInvoiceService
         $isCreditSale = ($data['payment_condition'] ?? 'paid') === 'credit';
         $failedFel = null;
 
-        $this->assertDocumentIsAvailable($business, $settings, $felSettings, $data['document_type']);
+        $this->assertDocumentIsAvailable(
+            $business,
+            $settings,
+            $felSettings,
+            $data['document_type'],
+            (bool) ($data['route_internal_receipt'] ?? false),
+        );
 
         if ($isCreditSale) {
             if (! Credits::salesEnabled($business->id)) {
@@ -414,8 +420,18 @@ class RoutePreSaleInvoiceService
             : 'invoice';
     }
 
-    private function assertDocumentIsAvailable(Business $business, ?TenantSetting $settings, ?TenantFelSetting $felSettings, string $documentType): void
+    private function assertDocumentIsAvailable(
+        Business $business,
+        ?TenantSetting $settings,
+        ?TenantFelSetting $felSettings,
+        string $documentType,
+        bool $isRouteInternalReceipt = false,
+    ): void
     {
+        if ($documentType === 'receipt' && $isRouteInternalReceipt) {
+            return;
+        }
+
         if ($documentType === 'receipt' && (bool) ($settings?->allow_receipts ?? true)) {
             return;
         }

@@ -23,6 +23,7 @@ type PreSale = {
     submitted_at?: string | null;
     picked_at?: string | null;
     converted_sale_id?: number | null;
+    fel_status?: 'not_requested' | 'pending' | 'failed' | 'unknown' | 'certified';
     reserved_quantity_total?: string | number;
     picked_quantity_total?: string | number;
     items_count: number;
@@ -54,6 +55,14 @@ const statuses = [
 ];
 
 const cancellationReasons = ['Cliente canceló', 'Producto no disponible', 'Duplicada', 'Error de captura', 'Otro'];
+const felStatuses = [
+    { value: '', label: 'Todos los estados FEL' },
+    { value: 'not_requested', label: 'Pendiente de solicitar' },
+    { value: 'pending', label: 'En proceso' },
+    { value: 'failed', label: 'Fallida' },
+    { value: 'unknown', label: 'Incierta / conciliación' },
+    { value: 'certified', label: 'Certificada' },
+];
 
 export default function Index({ preSales, filters, branches, sellers, zones, canInvoice, activeBranchId }: Props) {
     const [cancelTarget, setCancelTarget] = useState<PreSale | null>(null);
@@ -160,6 +169,11 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
                     <Field label="Producto">
                         <input name="product_search" defaultValue={filters.product_search ?? ''} placeholder="Producto / código" className="h-10 rounded-lg border-slate-200 text-sm" />
                     </Field>
+                    <Field label="FEL">
+                        <select name="fel_status" defaultValue={filters.fel_status ?? ''} className="h-10 rounded-lg border-slate-200 text-sm">
+                            {felStatuses.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+                        </select>
+                    </Field>
 
                     <div className="flex items-end gap-2 md:col-span-4 xl:col-span-8">
                         <button className="h-10 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white">Filtrar</button>
@@ -182,13 +196,14 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
                                     <th className="px-4 py-3">Preparado</th>
                                     <th className="px-4 py-3">Total</th>
                                     <th className="px-4 py-3">Estado</th>
+                                    <th className="px-4 py-3">FEL</th>
                                     <th className="w-[240px] min-w-[240px] px-4 py-3">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {preSales.data.length === 0 ? (
                                     <tr>
-                                        <td colSpan={11} className="px-4 py-10 text-center text-slate-500">No hay preventas para los filtros seleccionados.</td>
+                                        <td colSpan={12} className="px-4 py-10 text-center text-slate-500">No hay preventas para los filtros seleccionados.</td>
                                     </tr>
                                 ) : preSales.data.map((preSale) => (
                                     <tr key={preSale.id} className="hover:bg-slate-50/70">
@@ -213,6 +228,7 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
                                         </td>
                                         <td className="px-4 py-3">Q {Number(preSale.total).toFixed(2)}</td>
                                         <td className="px-4 py-3"><StatusBadge status={preSale.status} /></td>
+                                        <td className="px-4 py-3">{preSale.status === 'converted' ? <FelBadge status={preSale.fel_status ?? 'not_requested'} /> : '-'}</td>
                                         <td className="w-[240px] min-w-[240px] px-4 py-3">
                                             <div className="flex items-center gap-1.5 whitespace-nowrap">
                                                 <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">
@@ -358,6 +374,25 @@ function StatusBadge({ status }: { status: string }) {
     };
 
     return <span className={`rounded-full px-2 py-1 text-xs font-semibold ${styles[status] ?? 'bg-slate-100 text-slate-700'}`}>{labels[status] ?? status}</span>;
+}
+
+function FelBadge({ status }: { status: NonNullable<PreSale['fel_status']> }) {
+    const styles: Record<NonNullable<PreSale['fel_status']>, string> = {
+        not_requested: 'bg-slate-100 text-slate-700',
+        pending: 'bg-sky-50 text-sky-700',
+        failed: 'bg-red-50 text-red-700',
+        unknown: 'bg-amber-50 text-amber-700',
+        certified: 'bg-emerald-50 text-emerald-700',
+    };
+    const labels: Record<NonNullable<PreSale['fel_status']>, string> = {
+        not_requested: 'Pendiente',
+        pending: 'En proceso',
+        failed: 'Fallida',
+        unknown: 'Incierta',
+        certified: 'Certificada',
+    };
+
+    return <span className={`rounded-full px-2 py-1 text-xs font-semibold ${styles[status]}`}>{labels[status]}</span>;
 }
 
 function formatDate(value?: string | null) {

@@ -430,21 +430,21 @@ export default function Form({
                             <div className="mb-4">
                                 <h3 className="text-base font-semibold text-gray-900">Rutas y preventas</h3>
                                 <p className="mt-1 text-sm text-gray-500">
-                                    Define cómo se manejará la facturación cuando el flujo de preventas de ruta esté activo.
+                                    Define cuándo certificar FEL los comprobantes internos generados por preventas de ruta.
                                 </p>
                             </div>
-                            <Field label="Facturación de preventas de ruta" error={errors.route_pre_sale_invoicing_mode}>
+                            <Field label="Certificación FEL de preventas" error={errors.route_pre_sale_invoicing_mode}>
                                 <select
                                     className={inputClass}
                                     value={data.route_pre_sale_invoicing_mode}
                                     onChange={(event) => setData('route_pre_sale_invoicing_mode', event.target.value as 'manual' | 'automatic_all')}
                                 >
-                                    <option value="manual">Manual: elegir cuáles preventas facturar</option>
-                                    <option value="automatic_all">Automática: preparar todas para facturación</option>
+                                    <option value="manual">Elegir manualmente cuáles certificar FEL</option>
+                                    <option value="automatic_all">Certificar FEL automáticamente todas las preventas preparadas</option>
                                 </select>
                             </Field>
                             <p className="mt-2 text-xs text-slate-500">
-                                La opción automática se guarda en el lote, pero esta fase no emite ventas ni FEL automáticamente.
+                                Cada preventa cerrada genera siempre un comprobante interno. La automatización FEL se implementará en una fase posterior.
                             </p>
                             <Field label="Momento de descuento de stock" error={errors.route_pre_sale_stock_deduction_timing}>
                                 <select

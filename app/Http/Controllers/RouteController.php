@@ -11,6 +11,7 @@ use App\Models\RouteVisit;
 use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
 use App\Models\RouteZoneCustomer;
+use App\Models\Sale;
 use App\Models\TenantSetting;
 use App\Models\TenantFelSetting;
 use App\Models\User;
@@ -405,10 +406,20 @@ class RouteController extends Controller
             : null;
         $customerSearch = trim((string) $request->query('customer', ''));
         $productSearch = trim((string) $request->query('product_search', ''));
+        $felStatus = $request->string('fel_status')->toString();
+        $felStatus = in_array($felStatus, ['not_requested', 'pending', 'failed', 'unknown', 'certified'], true) ? $felStatus : null;
 
         $query = PreSale::query()
             ->where('business_id', $businessId)
-            ->with(['customer:id,name,commercial_name,contact_name,doc_number', 'seller:id,name', 'zone:id,name', 'branch:id,name', 'workDay:id,work_date,status'])
+            ->with([
+                'customer:id,name,commercial_name,contact_name,doc_number',
+                'seller:id,name',
+                'zone:id,name',
+                'branch:id,name',
+                'workDay:id,work_date,status',
+                'convertedSale:id,business_id,certification_status,electronic_document_id',
+                'convertedSale.electronicDocument:id,sale_id,status',
+            ])
             ->select('pre_sales.*')
             ->selectSub(function ($query) use ($businessId) {
                 $query->from('stock_reservations')
@@ -453,9 +464,23 @@ class RouteController extends Controller
                         ->orWhere('barcode', 'ilike', "%{$productSearch}%");
                 }));
         });
+        $query->when($felStatus === 'not_requested', fn ($query) => $query
+            ->where('status', PreSale::STATUS_CONVERTED)
+            ->whereDoesntHave('convertedSale.electronicDocument'));
+        $query->when($felStatus && $felStatus !== 'not_requested', fn ($query) => $query
+            ->whereHas('convertedSale.electronicDocument', fn ($document) => $document->where('status', $felStatus)));
+
+        $preSales = $query->paginate(25)
+            ->withQueryString()
+            ->through(function (PreSale $preSale) {
+                $payload = $preSale->toArray();
+                $payload['fel_status'] = $this->routePreSaleFelState($preSale->convertedSale)['status'];
+
+                return $payload;
+            });
 
         return Inertia::render('Routes/PreSales/Index', [
-            'preSales' => $query->paginate(25)->withQueryString(),
+            'preSales' => $preSales,
             'filters' => [
                 'status' => $status ?? '',
                 'branch_id' => $request->query('branch_id', ''),
@@ -465,6 +490,7 @@ class RouteController extends Controller
                 'date_to' => $request->query('date_to', ''),
                 'customer' => $customerSearch,
                 'product_search' => $productSearch,
+                'fel_status' => $felStatus ?? '',
             ],
             'branches' => Branch::query()->where('business_id', $businessId)->where('is_active', true)->orderBy('name')->get(['id', 'name']),
             'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
@@ -486,7 +512,8 @@ class RouteController extends Controller
             'processingUser:id,name',
             'pickedBy:id,name',
             'convertedBy:id,name',
-            'convertedSale:id,business_id,business_number,document_type,total',
+            'convertedSale:id,business_id,business_number,document_type,total,certification_status,fel_uuid,electronic_document_id',
+            'convertedSale.electronicDocument:id,sale_id,status,error_message,uuid,certification_date',
             'customer:id,name,commercial_name,contact_name,doc_number,address,phone',
             'workDay:id,work_date,status,started_at,closed_at',
             'visit:id,status,visit_order,no_sale_reason,no_sale_note,started_at,finished_at',
@@ -528,6 +555,7 @@ class RouteController extends Controller
                 'converted_at' => $preSale->converted_at?->toIso8601String(),
                 'converted_by' => $preSale->convertedBy,
                 'converted_sale' => $preSale->convertedSale,
+                'fel' => $this->routePreSaleFelState($preSale->convertedSale),
                 'cancelled_at' => $preSale->cancelled_at?->toIso8601String(),
                 'cancellation_reason' => $preSale->cancellation_reason,
                 'cancellation_note' => $preSale->cancellation_note,
@@ -572,6 +600,7 @@ class RouteController extends Controller
             ],
             'canInvoice' => $this->canInvoiceRoutePreSales(request()->user(), $invoiceOptions)
                 && (int) BranchInventory::activeBranch((int) $preSale->business_id)->id === (int) $preSale->branch_id,
+            'canCertifyFel' => $this->canCertifyRoutePreSaleFel($preSale, $invoiceOptions),
             'invoiceOptions' => $invoiceOptions,
             'stockDeductionTiming' => $tenantSettings?->route_pre_sale_stock_deduction_timing === 'picking' ? 'picking' : 'invoice',
         ]);
@@ -1878,10 +1907,9 @@ class RouteController extends Controller
 
         return [
             'mode' => in_array($settings?->route_pre_sale_invoicing_mode, ['automatic', 'automatic_all'], true) ? 'automatic_all' : 'manual',
-            'document_types' => array_values(array_filter([
-                (bool) ($settings?->allow_receipts ?? true) ? 'receipt' : null,
-                $invoiceAvailable ? 'invoice' : null,
-            ])),
+            // Route closures always create the internal receipt. FEL is a later, separate action.
+            'document_types' => ['receipt'],
+            'fel_available' => $invoiceAvailable,
             'credit_enabled' => (bool) ($settings?->enable_credit_sales ?? false)
                 && module_enabled('credits', $businessId)
                 && Permissions::userHas($user, Permissions::CREDITS_SALES_CREATE),
@@ -1893,6 +1921,26 @@ class RouteController extends Controller
     {
         return Permissions::userHas($user, Permissions::ROUTES_PRE_SALES_INVOICE)
             && $invoiceOptions['document_types'] !== [];
+    }
+
+    private function canCertifyRoutePreSaleFel(PreSale $preSale, array $invoiceOptions): bool
+    {
+        return $invoiceOptions['fel_available']
+            && Permissions::userHas(request()->user(), Permissions::ROUTES_PRE_SALES_ADMIN_VIEW)
+            && Permissions::userHas(request()->user(), Permissions::FEL_CERTIFY)
+            && (int) BranchInventory::activeBranch((int) $preSale->business_id)->id === (int) $preSale->branch_id;
+    }
+
+    private function routePreSaleFelState(?Sale $sale): array
+    {
+        $status = $sale?->electronicDocument?->status ?? $sale?->certification_status;
+        $status = in_array($status, ['pending', 'failed', 'unknown', 'certified'], true) ? $status : 'not_requested';
+
+        return [
+            'status' => $status,
+            'error_message' => $sale?->electronicDocument?->error_message,
+            'uuid' => $sale?->electronicDocument?->uuid ?: $sale?->fel_uuid,
+        ];
     }
 
     private function assignCustomerToZone(RouteZone $zone, Customer $customer, ?string $notes = null): RouteZoneCustomer

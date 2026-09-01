@@ -65,26 +65,27 @@ type InvoiceOptions = {
     payment_methods: Array<'cash' | 'card' | 'transfer' | 'check'>;
 };
 
-type Props = { preSale: PreSale; canInvoice: boolean; invoiceOptions: InvoiceOptions; stockDeductionTiming: 'picking' | 'invoice' };
+type FelState = { status: 'not_requested' | 'pending' | 'failed' | 'unknown' | 'certified'; error_message?: string | null; uuid?: string | null };
+type Props = { preSale: PreSale; canInvoice: boolean; canCertifyFel: boolean; invoiceOptions: InvoiceOptions; fel: FelState; stockDeductionTiming: 'picking' | 'invoice' };
 
 const cancellationReasons = ['Cliente canceló', 'Producto no disponible', 'Duplicada', 'Error de captura', 'Otro'];
 
-export default function Show({ preSale, canInvoice, invoiceOptions, stockDeductionTiming }: Props) {
+export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOptions, fel, stockDeductionTiming }: Props) {
     const [cancelOpen, setCancelOpen] = useState(false);
     const [invoiceOpen, setInvoiceOpen] = useState(false);
     const processingLockedRef = useRef(false);
     const invoiceSubmitLockedRef = useRef(false);
     const cancelForm = useForm({ idempotency_key: makeOperationKey('pre-sale-cancel'), cancellation_reason: '', cancellation_note: '' });
-    const initialDocumentType = invoiceOptions.document_types.includes('receipt') ? 'receipt' : (invoiceOptions.document_types[0] ?? 'receipt');
     const invoiceForm = useForm({
         idempotency_key: makeOperationKey('pre-sale-invoice'),
-        document_type: initialDocumentType,
         payment_condition: 'paid',
         payment_method: 'cash',
         due_date: '',
         note: '',
         pre_sale: '',
     });
+    const felForm = useForm({ idempotency_key: makeOperationKey('pre-sale-fel') });
+    const felErrors = felForm.errors as Record<string, string>;
 
     const markProcessing = () => {
         if (processingLockedRef.current) {
@@ -131,7 +132,6 @@ export default function Show({ preSale, canInvoice, invoiceOptions, stockDeducti
                 setInvoiceOpen(false);
                 invoiceForm.setData({
                     idempotency_key: makeOperationKey('pre-sale-invoice'),
-                    document_type: initialDocumentType,
                     payment_condition: 'paid',
                     payment_method: 'cash',
                     due_date: '',
@@ -143,6 +143,16 @@ export default function Show({ preSale, canInvoice, invoiceOptions, stockDeducti
                 invoiceSubmitLockedRef.current = false;
             },
         });
+    };
+
+    const certifyFel = () => {
+        if (!felForm.processing) {
+            felForm.post(route('routes.pre-sales.fel.certify', preSale.id), {
+                preserveScroll: true,
+                onSuccess: () => felForm.setData('idempotency_key', makeOperationKey('pre-sale-fel')),
+                onError: () => felForm.setData('idempotency_key', makeOperationKey('pre-sale-fel')),
+            });
+        }
     };
 
     return (
@@ -166,15 +176,20 @@ export default function Show({ preSale, canInvoice, invoiceOptions, stockDeducti
                                 Preparar pedido
                             </Link>
                         )}
-                        {preSale.status === 'picked' && canInvoice && invoiceOptions.document_types.length > 0 && !preSale.converted_sale && (
+                        {preSale.status === 'picked' && canInvoice && !preSale.converted_sale && (
                             <button onClick={() => setInvoiceOpen(true)} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700">
-                                Facturar
+                                Generar comprobante
                             </button>
                         )}
                         {preSale.status === 'converted' && preSale.converted_sale && (
                             <Link href={route('sales.show', preSale.converted_sale.id)} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700">
                                 Ver venta {preSale.converted_sale.business_number ? `V-${preSale.converted_sale.business_number}` : ''}
                             </Link>
+                        )}
+                        {preSale.status === 'converted' && preSale.converted_sale && canCertifyFel && ['not_requested', 'failed'].includes(fel.status) && (
+                            <button type="button" onClick={certifyFel} disabled={felForm.processing} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">
+                                {felForm.processing ? 'Certificando FEL...' : 'Certificar FEL'}
+                            </button>
                         )}
                         {['submitted', 'processing'].includes(preSale.status) && (
                             <button onClick={() => setCancelOpen(true)} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">
@@ -223,13 +238,16 @@ export default function Show({ preSale, canInvoice, invoiceOptions, stockDeducti
 
                 {preSale.status === 'picked' && invoiceOptions.mode === 'automatic_all' && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                        La facturación automática está configurada, pero requiere definir documento y método de pago predeterminados antes de emitir documentos masivos.
+                        La certificación FEL automática aún no está habilitada. Este cierre generará solamente el comprobante interno.
                     </div>
                 )}
 
-                {preSale.status === 'picked' && invoiceOptions.document_types.length === 0 && (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                        No hay documentos disponibles para facturar esta preventa.
+                {preSale.status === 'converted' && (
+                    <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                        <span className="font-semibold">FEL:</span> {felLabel(fel.status)}
+                        {fel.error_message && <span className="ml-1 text-red-700">{fel.error_message}</span>}
+                        {fel.status === 'unknown' && <span className="ml-1 text-amber-700">Requiere conciliación antes de reintentar.</span>}
+                        {felErrors.fel && <div className="mt-1 font-semibold text-red-700">{felErrors.fel}</div>}
                     </div>
                 )}
 
@@ -346,7 +364,7 @@ export default function Show({ preSale, canInvoice, invoiceOptions, stockDeducti
                         </div>
 
                         <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                            <label className="block"><span className="text-xs font-semibold text-slate-600">Documento</span><select value={invoiceForm.data.document_type} onChange={(event) => invoiceForm.setData('document_type', event.target.value as 'receipt' | 'invoice')} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm">{invoiceOptions.document_types.map((type) => <option key={type} value={type}>{type === 'invoice' ? 'Factura FEL' : 'Comprobante'}</option>)}</select>{invoiceForm.errors.document_type && <p className="mt-1 text-xs font-semibold text-red-600">{invoiceForm.errors.document_type}</p>}</label>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm"><div className="text-xs font-semibold text-slate-600">Documento</div><div className="mt-1 font-semibold text-slate-900">Comprobante interno</div></div>
                             <label className="block"><span className="text-xs font-semibold text-slate-600">Condición de pago</span><select value={invoiceForm.data.payment_condition} onChange={(event) => invoiceForm.setData('payment_condition', event.target.value as 'paid' | 'credit')} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm"><option value="paid">Contado</option>{invoiceOptions.credit_enabled && <option value="credit">Crédito</option>}</select>{invoiceForm.errors.payment_condition && <p className="mt-1 text-xs font-semibold text-red-600">{invoiceForm.errors.payment_condition}</p>}</label>
                             {invoiceForm.data.payment_condition === 'paid' && <label className="block"><span className="text-xs font-semibold text-slate-600">Forma de pago</span><select value={invoiceForm.data.payment_method} onChange={(event) => invoiceForm.setData('payment_method', event.target.value as 'cash' | 'card' | 'transfer' | 'check')} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm">{invoiceOptions.payment_methods.map((method) => <option key={method} value={method}>{paymentMethodLabel(method)}</option>)}</select>{invoiceForm.errors.payment_method && <p className="mt-1 text-xs font-semibold text-red-600">{invoiceForm.errors.payment_method}</p>}</label>}
                             {invoiceForm.data.payment_condition === 'credit' && <label className="block"><span className="text-xs font-semibold text-slate-600">Fecha de vencimiento</span><input type="date" value={invoiceForm.data.due_date} onChange={(event) => invoiceForm.setData('due_date', event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm" /></label>}
@@ -355,13 +373,13 @@ export default function Show({ preSale, canInvoice, invoiceOptions, stockDeducti
 
                         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                             {stockDeductionTiming === 'picking'
-                                ? 'Al confirmar, se creará una venta real. El stock y las reservas ya fueron procesados durante la preparación.'
-                                : 'Al confirmar, se creará una venta real, se descontará stock físico y se cerrarán las reservas de esta preventa.'}
-                            {invoiceForm.data.document_type === 'invoice' ? ' Si Digifact rechaza la factura, no se realizará ningún cambio de esta facturación.' : ''}
+                                ? 'Al confirmar, se creará el comprobante interno. El stock y las reservas ya fueron procesados durante la preparación.'
+                                : 'Al confirmar, se creará el comprobante interno, se descontará stock físico y se cerrarán las reservas de esta preventa.'}
+                            {' La certificación FEL se realiza después y no modifica estos efectos.'}
                         </div>
                         {invoiceForm.errors.pre_sale && <p className="mt-2 text-sm font-semibold text-red-600">{invoiceForm.errors.pre_sale}</p>}
 
-                        <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setInvoiceOpen(false)} disabled={invoiceForm.processing} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">Cancelar</button><button disabled={invoiceForm.processing} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60">{invoiceForm.processing ? 'Facturando...' : 'Confirmar facturación'}</button></div>
+                        <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setInvoiceOpen(false)} disabled={invoiceForm.processing} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">Cancelar</button><button disabled={invoiceForm.processing} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60">{invoiceForm.processing ? 'Generando...' : 'Generar comprobante'}</button></div>
                     </form>
                 </div>
             )}
@@ -398,6 +416,16 @@ function statusLabel(status: string) {
     };
 
     return labels[status] ?? status;
+}
+
+function felLabel(status: FelState['status']) {
+    return {
+        not_requested: 'Pendiente de solicitar',
+        pending: 'En proceso',
+        failed: 'Fallida; puede reintentarse manualmente',
+        unknown: 'Estado incierto',
+        certified: 'Certificada',
+    }[status];
 }
 
 function formatDate(value?: string | null) {

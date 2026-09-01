@@ -1978,10 +1978,10 @@ class RoutesPreSalesTest extends TestCase
 
         $this->assertStringContainsString('Jornadas cerradas', $layoutSource);
         $this->assertStringContainsString("route('routes.work-days.closed')", $layoutSource);
-        $this->assertStringContainsString('Facturación de preventas de ruta', $formSource);
+        $this->assertStringContainsString('Certificación FEL de preventas', $formSource);
         $this->assertStringContainsString('route_pre_sale_invoicing_mode', $formSource);
         $this->assertStringContainsString('route_pre_sale_stock_deduction_timing', $formSource);
-        $this->assertStringContainsString('esta fase no emite ventas ni FEL automáticamente.', $formSource);
+        $this->assertStringContainsString('La automatización FEL se implementará en una fase posterior.', $formSource);
     }
 
     public function test_pre_sale_detail_shows_products_and_stock_reservation_info(): void

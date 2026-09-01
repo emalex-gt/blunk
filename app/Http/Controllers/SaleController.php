@@ -1208,8 +1208,7 @@ class SaleController extends Controller
             }
 
             if (
-                $sale->document_type === 'invoice'
-                && $sale->electronicDocument
+                $sale->electronicDocument
                 && $sale->electronicDocument->status === 'certified'
             ) {
                 try {
@@ -1366,7 +1365,7 @@ class SaleController extends Controller
         $this->ensureSaleBelongsToCurrentBusiness($sale);
         $this->authorizeFelDocumentAccess($request, allowSignedUrl: true);
 
-        abort_unless($sale->document_type === 'invoice' && filled($sale->fel_uuid), 404);
+        abort_unless($this->hasCertifiedFelDocument($sale), 404);
 
         $businessId = currentBusinessId();
         $business = Business::query()
@@ -1478,7 +1477,7 @@ class SaleController extends Controller
         $this->ensureSaleBelongsToCurrentBusiness($sale);
         $this->authorizeFelDocumentAccess($request);
 
-        abort_unless($sale->document_type === 'invoice' && filled($sale->fel_uuid), 404);
+        abort_unless($this->hasCertifiedFelDocument($sale), 404);
 
         $sale->load('electronicDocument');
         $format = strtoupper($format);
@@ -1495,6 +1494,18 @@ class SaleController extends Controller
         } catch (FelException) {
             return response('No se pudo obtener el documento imprimible desde Digifact.', 404);
         }
+    }
+
+    private function hasCertifiedFelDocument(Sale $sale): bool
+    {
+        if ($sale->electronicDocument?->status === 'certified') {
+            return filled($sale->fel_uuid ?: $sale->electronicDocument->uuid);
+        }
+
+        // Legacy POS invoices created before electronic_documents was consistently persisted remain printable.
+        return $sale->document_type === 'invoice'
+            && $sale->certification_status === 'certified'
+            && filled($sale->fel_uuid);
     }
 
     private function saleIdempotencyPayload(array $data, int $branchId, int $businessId, int $userId): array
