@@ -32,6 +32,10 @@ use Illuminate\Validation\ValidationException;
 
 class RoutePreSaleInvoiceService
 {
+    public function __construct(private readonly RoutePreSaleFelEligibilityService $eligibility)
+    {
+    }
+
     public function convert(PreSale $preSale, array $data, User $user): IdempotencyResult
     {
         $business = Business::query()->findOrFail($preSale->business_id);
@@ -94,6 +98,17 @@ class RoutePreSaleInvoiceService
                             throw ValidationException::withMessages([
                                 'pre_sale' => 'Esta preventa ya fue facturada o no está disponible para facturar.',
                             ]);
+                        }
+
+                        if ((bool) ($data['route_internal_receipt'] ?? false)) {
+                            $felEligibility = $this->eligibility->persist($lockedPreSale);
+
+                            if ((bool) ($settings?->route_pre_sale_require_fel_eligible_customer ?? false)
+                                && ! $felEligibility['eligible']) {
+                                throw ValidationException::withMessages([
+                                    'pre_sale' => $felEligibility['reason'],
+                                ]);
+                            }
                         }
 
                         $items = $lockedPreSale->items

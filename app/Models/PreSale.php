@@ -36,6 +36,10 @@ class PreSale extends Model
         'converted_at',
         'converted_by',
         'converted_sale_id',
+        'fel_eligibility_status',
+        'fel_eligibility_reason_code',
+        'fel_eligibility_reason',
+        'fel_eligibility_checked_at',
         'cancelled_at',
         'cancelled_by',
         'cancellation_reason',
@@ -50,6 +54,7 @@ class PreSale extends Model
         'processing_started_at' => 'datetime',
         'picked_at' => 'datetime',
         'converted_at' => 'datetime',
+        'fel_eligibility_checked_at' => 'datetime',
         'cancelled_at' => 'datetime',
     ];
 

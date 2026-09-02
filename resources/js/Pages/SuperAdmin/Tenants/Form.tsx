@@ -83,6 +83,7 @@ export default function Form({
         pre_sale_allow_manual_price?: boolean;
         route_pre_sale_invoicing_mode?: 'manual' | 'automatic_all';
         route_pre_sale_stock_deduction_timing?: 'picking' | 'invoice';
+        route_pre_sale_require_fel_eligible_customer?: boolean;
         enable_credit_sales?: boolean;
         enable_credit_reservations?: boolean;
         reserve_stock_on_credit_reservations?: boolean;
@@ -122,6 +123,7 @@ export default function Form({
         pre_sale_allow_manual_price: settings.pre_sale_allow_manual_price ?? false,
         route_pre_sale_invoicing_mode: settings.route_pre_sale_invoicing_mode ?? 'manual',
         route_pre_sale_stock_deduction_timing: settings.route_pre_sale_stock_deduction_timing ?? 'invoice',
+        route_pre_sale_require_fel_eligible_customer: settings.route_pre_sale_require_fel_eligible_customer ?? false,
         enable_credit_sales: settings.enable_credit_sales ?? false,
         enable_credit_reservations: settings.enable_credit_reservations ?? false,
         reserve_stock_on_credit_reservations: settings.reserve_stock_on_credit_reservations ?? true,
@@ -459,6 +461,14 @@ export default function Form({
                             <p className="mt-2 text-xs text-slate-500">
                                 Al preparar descuenta una vez y la facturación posterior no vuelve a descontar stock. Al facturar conserva la reserva hasta convertir la preventa.
                             </p>
+                            <div className="mt-3">
+                                <Toggle
+                                    checked={data.route_pre_sale_require_fel_eligible_customer}
+                                    onChange={(checked) => setData('route_pre_sale_require_fel_eligible_customer', checked)}
+                                    label="Exigir cliente apto para FEL en preventas de ruta"
+                                    description="Permite capturar y preparar preventas, pero bloquea la generación del comprobante interno si el cliente no puede certificarse FEL."
+                                />
+                            </div>
                         </div>
                     )}
 

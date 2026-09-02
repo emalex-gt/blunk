@@ -34,6 +34,7 @@ type PreSale = {
     converted_at?: string | null;
     converted_by?: Related | null;
     converted_sale?: { id: number; business_number?: number | null; document_type?: string | null; total?: number | null } | null;
+    fel_eligibility?: { eligible: boolean; status: 'eligible' | 'not_eligible'; reason_code?: string | null; reason?: string | null };
     cancelled_at?: string | null;
     cancellation_reason?: string | null;
     cancellation_note?: string | null;
@@ -245,9 +246,19 @@ export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOption
                 {preSale.status === 'converted' && (
                     <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
                         <span className="font-semibold">FEL:</span> {felLabel(fel.status)}
+                        {preSale.fel_eligibility && <span className={preSale.fel_eligibility.eligible ? 'ml-2 font-semibold text-emerald-700' : 'ml-2 font-semibold text-amber-700'}>
+                            {preSale.fel_eligibility.eligible ? 'Elegible' : 'No elegible'}
+                        </span>}
+                        {preSale.fel_eligibility?.reason && <div className="mt-1 text-amber-700">{preSale.fel_eligibility.reason}</div>}
                         {fel.error_message && <span className="ml-1 text-red-700">{fel.error_message}</span>}
                         {fel.status === 'unknown' && <span className="ml-1 text-amber-700">Requiere conciliación antes de reintentar.</span>}
                         {felErrors.fel && <div className="mt-1 font-semibold text-red-700">{felErrors.fel}</div>}
+                    </div>
+                )}
+
+                {preSale.status === 'picked' && preSale.fel_eligibility && !preSale.fel_eligibility.eligible && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                        <span className="font-semibold">FEL no elegible:</span> {preSale.fel_eligibility.reason}
                     </div>
                 )}
 

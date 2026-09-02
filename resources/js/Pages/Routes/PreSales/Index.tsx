@@ -24,6 +24,7 @@ type PreSale = {
     picked_at?: string | null;
     converted_sale_id?: number | null;
     fel_status?: 'not_requested' | 'pending' | 'failed' | 'unknown' | 'certified';
+    fel_eligibility?: { eligible: boolean; status: 'eligible' | 'not_eligible'; reason?: string | null };
     reserved_quantity_total?: string | number;
     picked_quantity_total?: string | number;
     items_count: number;
@@ -62,6 +63,11 @@ const felStatuses = [
     { value: 'failed', label: 'Fallida' },
     { value: 'unknown', label: 'Incierta / conciliación' },
     { value: 'certified', label: 'Certificada' },
+];
+const felEligibilityStatuses = [
+    { value: '', label: 'Toda elegibilidad FEL' },
+    { value: 'eligible', label: 'FEL elegible' },
+    { value: 'not_eligible', label: 'FEL no elegible' },
 ];
 
 export default function Index({ preSales, filters, branches, sellers, zones, canInvoice, activeBranchId }: Props) {
@@ -174,6 +180,11 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
                             {felStatuses.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
                         </select>
                     </Field>
+                    <Field label="Elegibilidad FEL">
+                        <select name="fel_eligibility" defaultValue={filters.fel_eligibility ?? ''} className="h-10 rounded-lg border-slate-200 text-sm">
+                            {felEligibilityStatuses.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+                        </select>
+                    </Field>
 
                     <div className="flex items-end gap-2 md:col-span-4 xl:col-span-8">
                         <button className="h-10 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white">Filtrar</button>
@@ -228,7 +239,13 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
                                         </td>
                                         <td className="px-4 py-3">Q {Number(preSale.total).toFixed(2)}</td>
                                         <td className="px-4 py-3"><StatusBadge status={preSale.status} /></td>
-                                        <td className="px-4 py-3">{preSale.status === 'converted' ? <FelBadge status={preSale.fel_status ?? 'not_requested'} /> : '-'}</td>
+                                        <td className="px-4 py-3">
+                                            {preSale.status === 'converted' ? <FelBadge status={preSale.fel_status ?? 'not_requested'} /> : '-'}
+                                            {preSale.fel_eligibility && <div className={preSale.fel_eligibility.eligible ? 'mt-1 text-xs font-semibold text-emerald-700' : 'mt-1 text-xs font-semibold text-amber-700'}>
+                                                {preSale.fel_eligibility.eligible ? 'Elegible' : 'No elegible'}
+                                                {!preSale.fel_eligibility.eligible && preSale.fel_eligibility.reason && <div className="mt-0.5 max-w-48 font-normal text-amber-700">{preSale.fel_eligibility.reason}</div>}
+                                            </div>}
+                                        </td>
                                         <td className="w-[240px] min-w-[240px] px-4 py-3">
                                             <div className="flex items-center gap-1.5 whitespace-nowrap">
                                                 <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">

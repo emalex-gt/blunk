@@ -19,6 +19,10 @@ use Illuminate\Validation\ValidationException;
 
 class RoutePreSaleFelService
 {
+    public function __construct(private readonly RoutePreSaleFelEligibilityService $eligibility)
+    {
+    }
+
     public function certify(PreSale $preSale, User $user, string $idempotencyKey): IdempotencyResult
     {
         $prepared = app(IdempotencyService::class)->run(
@@ -38,6 +42,7 @@ class RoutePreSaleFelService
                     $lockedPreSale = PreSale::query()
                         ->where('business_id', $preSale->business_id)
                         ->whereKey($preSale->id)
+                        ->with('customer')
                         ->lockForUpdate()
                         ->firstOrFail();
 
@@ -55,7 +60,7 @@ class RoutePreSaleFelService
                     }
 
                     $this->assertFelAvailable($sale);
-                    $this->assertFelCustomer($sale);
+                    $this->eligibility->assertEligible($lockedPreSale);
 
                     $status = $sale->electronicDocument?->status ?? $sale->certification_status;
 
@@ -147,38 +152,6 @@ class RoutePreSaleFelService
             || ! (bool) $felSettings?->isConfigured()) {
             throw ValidationException::withMessages([
                 'fel' => 'La facturación electrónica FEL no está habilitada para este negocio.',
-            ]);
-        }
-    }
-
-    private function assertFelCustomer(Sale $sale): void
-    {
-        $customer = $sale->customer;
-
-        if (! $customer) {
-            throw ValidationException::withMessages([
-                'fel' => 'Selecciona un cliente antes de certificar FEL.',
-            ]);
-        }
-
-        $docType = strtoupper(trim((string) $customer->doc_type));
-        $docNumber = strtoupper((string) preg_replace('/[\s-]+/', '', trim((string) $customer->doc_number)));
-        $isFinalConsumer = $docType === 'CF' || $docNumber === 'CF' || (bool) $customer->is_final_consumer;
-
-        if ($isFinalConsumer) {
-            if ((float) $sale->total >= 2500) {
-                throw ValidationException::withMessages([
-                    'fel' => 'No se puede emitir factura FEL a Consumidor Final por Q2,500.00 o más.',
-                ]);
-            }
-
-            return;
-        }
-
-        if ($docType === 'CUI' || $docNumber === '' || ! preg_match('/^[A-Z0-9]+$/', $docNumber)
-            || ! $customer->tax_lookup_verified_at || ! $customer->name_locked) {
-            throw ValidationException::withMessages([
-                'fel' => 'El NIT debe validarse antes de certificar FEL.',
             ]);
         }
     }

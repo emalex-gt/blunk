@@ -27,6 +27,7 @@ use App\Support\PriceLists;
 use App\Support\RouteWorkDayCompletion;
 use App\Support\StockAvailability;
 use App\Services\Routes\RoutePreSalePreparationService;
+use App\Services\Routes\RoutePreSaleFelEligibilityService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -408,6 +409,8 @@ class RouteController extends Controller
         $productSearch = trim((string) $request->query('product_search', ''));
         $felStatus = $request->string('fel_status')->toString();
         $felStatus = in_array($felStatus, ['not_requested', 'pending', 'failed', 'unknown', 'certified'], true) ? $felStatus : null;
+        $felEligibility = $request->string('fel_eligibility')->toString();
+        $felEligibility = in_array($felEligibility, ['eligible', 'not_eligible'], true) ? $felEligibility : null;
 
         $query = PreSale::query()
             ->where('business_id', $businessId)
@@ -469,12 +472,14 @@ class RouteController extends Controller
             ->whereDoesntHave('convertedSale.electronicDocument'));
         $query->when($felStatus && $felStatus !== 'not_requested', fn ($query) => $query
             ->whereHas('convertedSale.electronicDocument', fn ($document) => $document->where('status', $felStatus)));
+        $query->when($felEligibility, fn ($query) => $query->where('fel_eligibility_status', $felEligibility));
 
         $preSales = $query->paginate(25)
             ->withQueryString()
             ->through(function (PreSale $preSale) {
                 $payload = $preSale->toArray();
                 $payload['fel_status'] = $this->routePreSaleFelState($preSale->convertedSale)['status'];
+                $payload['fel_eligibility'] = app(RoutePreSaleFelEligibilityService::class)->evaluate($preSale);
 
                 return $payload;
             });
@@ -491,6 +496,7 @@ class RouteController extends Controller
                 'customer' => $customerSearch,
                 'product_search' => $productSearch,
                 'fel_status' => $felStatus ?? '',
+                'fel_eligibility' => $felEligibility ?? '',
             ],
             'branches' => Branch::query()->where('business_id', $businessId)->where('is_active', true)->orderBy('name')->get(['id', 'name']),
             'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
@@ -541,6 +547,7 @@ class RouteController extends Controller
             $tenantSettings,
             $felSettings,
         );
+        $felEligibility = app(RoutePreSaleFelEligibilityService::class)->evaluate($preSale);
 
         return Inertia::render('Routes/PreSales/Show', [
             'preSale' => [
@@ -556,6 +563,7 @@ class RouteController extends Controller
                 'converted_by' => $preSale->convertedBy,
                 'converted_sale' => $preSale->convertedSale,
                 'fel' => $this->routePreSaleFelState($preSale->convertedSale),
+                'fel_eligibility' => $felEligibility,
                 'cancelled_at' => $preSale->cancelled_at?->toIso8601String(),
                 'cancellation_reason' => $preSale->cancellation_reason,
                 'cancellation_note' => $preSale->cancellation_note,
@@ -600,7 +608,7 @@ class RouteController extends Controller
             ],
             'canInvoice' => $this->canInvoiceRoutePreSales(request()->user(), $invoiceOptions)
                 && (int) BranchInventory::activeBranch((int) $preSale->business_id)->id === (int) $preSale->branch_id,
-            'canCertifyFel' => $this->canCertifyRoutePreSaleFel($preSale, $invoiceOptions),
+            'canCertifyFel' => $this->canCertifyRoutePreSaleFel($preSale, $invoiceOptions, $felEligibility),
             'invoiceOptions' => $invoiceOptions,
             'stockDeductionTiming' => $tenantSettings?->route_pre_sale_stock_deduction_timing === 'picking' ? 'picking' : 'invoice',
         ]);
@@ -1923,9 +1931,12 @@ class RouteController extends Controller
             && $invoiceOptions['document_types'] !== [];
     }
 
-    private function canCertifyRoutePreSaleFel(PreSale $preSale, array $invoiceOptions): bool
+    private function canCertifyRoutePreSaleFel(PreSale $preSale, array $invoiceOptions, ?array $eligibility = null): bool
     {
+        $eligibility ??= app(RoutePreSaleFelEligibilityService::class)->evaluate($preSale);
+
         return $invoiceOptions['fel_available']
+            && $eligibility['eligible']
             && Permissions::userHas(request()->user(), Permissions::ROUTES_PRE_SALES_ADMIN_VIEW)
             && Permissions::userHas(request()->user(), Permissions::FEL_CERTIFY)
             && (int) BranchInventory::activeBranch((int) $preSale->business_id)->id === (int) $preSale->branch_id;

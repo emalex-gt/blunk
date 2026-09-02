@@ -28,6 +28,7 @@ use App\Models\TenantSetting;
 use App\Models\User;
 use App\Services\Fel\FelException;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
+use App\Services\Routes\RoutePreSaleFelEligibilityService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -257,6 +258,124 @@ class RoutePreSaleInvoiceTest extends TestCase
                 ->component('Routes/PreSales/Index')
                 ->where('preSales.data.0.id', $preSale->id)
                 ->where('preSales.data.0.fel_status', 'not_requested')
+            ->where('preSales.total', 1));
+    }
+
+    public function testRoutePreSaleFelEligibilityAppliesCfThresholdAndVerifiedNitRules(): void
+    {
+        [$business, $admin, $branch] = $this->tenant();
+        $product = $this->product($business, $branch, price: 100);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product, quantity: 24, pickedQuantity: 24);
+        $eligibility = app(RoutePreSaleFelEligibilityService::class);
+
+        $preSale->customer->update(['doc_type' => 'CF', 'doc_number' => 'CF', 'is_final_consumer' => true]);
+        $this->assertSame('eligible', $eligibility->evaluate($preSale->fresh('customer'))['status']);
+
+        $preSale->update(['total' => 2500]);
+        $atLimit = $eligibility->evaluate($preSale->fresh('customer'));
+        $this->assertSame('not_eligible', $atLimit['status']);
+        $this->assertSame('final_consumer_limit', $atLimit['reason_code']);
+        $this->assertSame('Consumidor Final no puede certificarse por Q2,500.00 o más.', $atLimit['reason']);
+
+        $preSale->customer->update([
+            'doc_type' => 'NIT',
+            'doc_number' => '',
+            'is_final_consumer' => false,
+            'tax_lookup_verified_at' => now(),
+            'name_locked' => true,
+        ]);
+        $this->assertSame('invalid_tax_id', $eligibility->evaluate($preSale->fresh('customer'))['reason_code']);
+
+        $preSale->customer->update([
+            'doc_type' => 'NIT',
+            'doc_number' => '1234-567',
+            'is_final_consumer' => false,
+            'tax_lookup_verified_at' => null,
+            'name_locked' => false,
+        ]);
+        $this->assertSame('not_eligible', $eligibility->evaluate($preSale->fresh('customer'))['status']);
+
+        $preSale->customer->update(['tax_lookup_verified_at' => now(), 'name_locked' => true]);
+        $this->assertSame('eligible', $eligibility->evaluate($preSale->fresh('customer'))['status']);
+    }
+
+    public function test_ineligible_customer_does_not_block_internal_receipt_when_tenant_policy_is_disabled(): void
+    {
+        [$business, $admin, $branch] = $this->tenant();
+        $product = $this->product($business, $branch);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+        $preSale->customer->update(['doc_type' => 'NIT', 'doc_number' => '1234567', 'tax_lookup_verified_at' => null, 'name_locked' => false]);
+        $this->openCashRegister($business, $branch, $admin);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload())
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(PreSale::STATUS_CONVERTED, $preSale->refresh()->status);
+        $this->assertSame('not_eligible', $preSale->fel_eligibility_status);
+        $this->assertSame('nit_not_verified', $preSale->fel_eligibility_reason_code);
+    }
+
+    public function test_ineligible_customer_blocks_internal_receipt_when_tenant_requires_fel_eligibility(): void
+    {
+        [$business, $admin, $branch] = $this->tenant();
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_pre_sale_require_fel_eligible_customer' => true]);
+        $product = $this->product($business, $branch);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+        $preSale->customer->update(['doc_type' => 'NIT', 'doc_number' => '1234567', 'tax_lookup_verified_at' => null, 'name_locked' => false]);
+        $this->openCashRegister($business, $branch, $admin);
+
+        $this->actingAs($admin)
+            ->from(route('routes.pre-sales.show', $preSale))
+            ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload())
+            ->assertRedirect(route('routes.pre-sales.show', $preSale))
+            ->assertSessionHasErrors('pre_sale');
+
+        $this->assertSame(PreSale::STATUS_PICKED, $preSale->refresh()->status);
+        $this->assertNull($preSale->converted_sale_id);
+        $this->assertDatabaseCount('sales', 0);
+    }
+
+    public function test_ineligible_customer_cannot_start_manual_fel_or_create_an_electronic_document(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(allowInvoices: true);
+        $this->felSettings($business, $branch);
+        $product = $this->product($business, $branch);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+        $preSale->customer->update(['doc_type' => 'NIT', 'doc_number' => '1234567', 'tax_lookup_verified_at' => null, 'name_locked' => false]);
+        $this->openCashRegister($business, $branch, $admin);
+        $this->actingAs($admin)->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload())->assertSessionHasNoErrors();
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.fel.certify', $preSale), ['idempotency_key' => 'ineligible-route-fel-key'])
+            ->assertSessionHasErrors('fel');
+
+        $this->assertDatabaseCount('electronic_documents', 0);
+        $this->assertSame('not_eligible', $preSale->refresh()->fel_eligibility_status);
+    }
+
+    public function test_route_pre_sales_queue_filters_persisted_fel_ineligibility_within_the_current_tenant(): void
+    {
+        [$business, $admin, $branch] = $this->tenant();
+        $product = $this->product($business, $branch);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+        $preSale->customer->update(['doc_type' => 'NIT', 'doc_number' => '1234567', 'tax_lookup_verified_at' => null, 'name_locked' => false]);
+        $this->openCashRegister($business, $branch, $admin);
+        $this->actingAs($admin)->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload())->assertSessionHasNoErrors();
+
+        [$otherBusiness, $otherAdmin, $otherBranch] = $this->tenant();
+        $otherProduct = $this->product($otherBusiness, $otherBranch);
+        $otherPreSale = $this->pickedPreSale($otherBusiness, $otherBranch, $otherAdmin, $otherProduct);
+        $otherPreSale->customer->update(['doc_type' => 'NIT', 'doc_number' => '1234567', 'tax_lookup_verified_at' => null, 'name_locked' => false]);
+        $this->openCashRegister($otherBusiness, $otherBranch, $otherAdmin);
+        $this->actingAs($otherAdmin)->post(route('routes.pre-sales.invoice', $otherPreSale), $this->invoicePayload())->assertSessionHasNoErrors();
+
+        $this->actingAs($admin)
+            ->get(route('routes.pre-sales.index', ['status' => 'converted', 'fel_eligibility' => 'not_eligible']))
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/PreSales/Index')
+                ->where('preSales.data.0.id', $preSale->id)
+                ->where('preSales.data.0.fel_eligibility.status', 'not_eligible')
                 ->where('preSales.total', 1));
     }
 

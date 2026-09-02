@@ -1933,6 +1933,7 @@ class RoutesPreSalesTest extends TestCase
     {
         [$business] = $this->tenant(role: 'owner');
         $this->assertSame('manual', TenantSetting::query()->where('business_id', $business->id)->value('route_pre_sale_invoicing_mode'));
+        $this->assertFalse((bool) TenantSetting::query()->where('business_id', $business->id)->value('route_pre_sale_require_fel_eligible_customer'));
 
         $superAdmin = User::factory()->create([
             'role' => 'super_admin',
@@ -1964,11 +1965,13 @@ class RoutesPreSalesTest extends TestCase
             'allow_invoices' => false,
             'route_pre_sale_invoicing_mode' => 'automatic_all',
             'route_pre_sale_stock_deduction_timing' => 'picking',
+            'route_pre_sale_require_fel_eligible_customer' => true,
             'modules' => ['routes'],
         ])->assertSessionHasNoErrors();
 
         $this->assertSame('automatic_all', TenantSetting::query()->where('business_id', $business->id)->value('route_pre_sale_invoicing_mode'));
         $this->assertSame('picking', TenantSetting::query()->where('business_id', $business->id)->value('route_pre_sale_stock_deduction_timing'));
+        $this->assertTrue((bool) TenantSetting::query()->where('business_id', $business->id)->value('route_pre_sale_require_fel_eligible_customer'));
     }
 
     public function test_closed_work_days_menu_and_tenant_form_setting_are_exposed(): void
@@ -1981,6 +1984,7 @@ class RoutesPreSalesTest extends TestCase
         $this->assertStringContainsString('Certificación FEL de preventas', $formSource);
         $this->assertStringContainsString('route_pre_sale_invoicing_mode', $formSource);
         $this->assertStringContainsString('route_pre_sale_stock_deduction_timing', $formSource);
+        $this->assertStringContainsString('route_pre_sale_require_fel_eligible_customer', $formSource);
         $this->assertStringContainsString('La automatización FEL se implementará en una fase posterior.', $formSource);
     }
 
