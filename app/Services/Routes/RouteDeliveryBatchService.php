@@ -4,6 +4,8 @@ namespace App\Services\Routes;
 
 use App\Jobs\RoutePreSaleAutomaticFelJob;
 use App\Models\OperationIdempotencyKey;
+use App\Models\Branch;
+use App\Models\Business;
 use App\Models\PreSale;
 use App\Models\RouteDeliveryBatch;
 use App\Models\RouteDeliveryBatchPreSale;
@@ -14,6 +16,7 @@ use App\Support\BranchInventory;
 use App\Support\IdempotencyResult;
 use App\Support\IdempotencyService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class RouteDeliveryBatchService
@@ -23,6 +26,7 @@ class RouteDeliveryBatchService
     public function __construct(
         private readonly RoutePreSaleReceiptService $receipts,
         private readonly RoutePreSaleFelEligibilityService $eligibility,
+        private readonly RoutePreSaleFelAvailabilityService $availability,
         private readonly RouteCashOperationGuard $cash,
     ) {
     }
@@ -56,6 +60,12 @@ class RouteDeliveryBatchService
                     $timing = $settings?->route_pre_sale_stock_deduction_timing === 'picking' ? 'picking' : 'invoice';
                     $mode = in_array($settings?->route_pre_sale_invoicing_mode, ['automatic', 'automatic_all'], true) ? 'automatic_all' : 'manual';
                     $automationEnabled = $mode === 'automatic_all' && (bool) config('fel.route_automation_enabled');
+                    $felAvailability = $automationEnabled
+                        ? $this->availability->evaluate(
+                            Business::query()->findOrFail($businessId),
+                            Branch::query()->where('business_id', $businessId)->findOrFail($branchId),
+                        )
+                        : null;
 
                     $preSales = PreSale::query()
                         ->where('business_id', $businessId)
@@ -99,7 +109,7 @@ class RouteDeliveryBatchService
 
                     $totalItems = 0;
                     $totalAmount = 0.0;
-                    $automaticFelPreSales = [];
+                    $automaticFelSales = [];
 
                     foreach ($preSales as $preSale) {
                         $receipt = $this->receipts->convertToInternalReceipt($preSale, [
@@ -109,7 +119,28 @@ class RouteDeliveryBatchService
                             'note' => "Entrega de ruta #{$batch->id}",
                         ], $user);
                         $sale = $preSale->refresh()->convertedSale()->withCount('items')->firstOrFail();
-                        $eligibleForAutomaticFel = $automationEnabled && (bool) $eligibilityByPreSale[$preSale->id]['eligible'];
+                        $automaticFelReason = null;
+                        $eligibleForAutomaticFel = $automationEnabled && (bool) $eligibilityByPreSale[$preSale->id]['eligible'] && (bool) ($felAvailability['available'] ?? false);
+
+                        if ($automationEnabled && ! $eligibilityByPreSale[$preSale->id]['eligible']) {
+                            $automaticFelReason = $eligibilityByPreSale[$preSale->id]['reason'];
+                            Log::info('route_fel_auto.skipped_ineligible', [
+                                'business_id' => $businessId,
+                                'branch_id' => $branchId,
+                                'pre_sale_id' => $preSale->id,
+                                'reason_code' => $eligibilityByPreSale[$preSale->id]['reason_code'],
+                            ]);
+                        }
+
+                        if ($automationEnabled && $eligibilityByPreSale[$preSale->id]['eligible'] && ! ($felAvailability['available'] ?? false)) {
+                            $automaticFelReason = 'FEL no configurado para certificación automática.';
+                            Log::info('route_fel_auto.skipped_unavailable', [
+                                'business_id' => $businessId,
+                                'branch_id' => $branchId,
+                                'pre_sale_id' => $preSale->id,
+                                'reason_code' => $felAvailability['reason_code'],
+                            ]);
+                        }
 
                         RouteDeliveryBatchPreSale::query()->create([
                             'route_delivery_batch_id' => $batch->id,
@@ -118,12 +149,13 @@ class RouteDeliveryBatchService
                             'status' => 'delivered',
                             'payment_method' => $preSale->payment_method,
                             'fel_dispatch_status' => $eligibleForAutomaticFel ? 'queued' : 'not_requested',
+                            'error_message' => $automaticFelReason,
                         ]);
 
                         $totalItems += $sale->items_count;
                         $totalAmount += (float) $sale->total;
                         if ($eligibleForAutomaticFel) {
-                            $automaticFelPreSales[] = $preSale->id;
+                            $automaticFelSales[$preSale->id] = $sale->id;
                         }
                     }
 
@@ -135,11 +167,16 @@ class RouteDeliveryBatchService
                         'total_amount' => round($totalAmount, 2),
                     ]);
 
-                    if ($automaticFelPreSales !== []) {
-                        DB::afterCommit(function () use ($automaticFelPreSales, $user) {
-                            foreach ($automaticFelPreSales as $preSaleId) {
-                                RoutePreSaleAutomaticFelJob::dispatch($preSaleId, $user->id)
+                    if ($automaticFelSales !== []) {
+                        DB::afterCommit(function () use ($automaticFelSales, $user, $businessId, $branchId) {
+                            foreach ($automaticFelSales as $preSaleId => $saleId) {
+                                RoutePreSaleAutomaticFelJob::dispatch($preSaleId, $saleId, $businessId, $branchId, $user->id)
                                     ->onQueue((string) config('fel.route_automation_queue', 'fel'));
+                                Log::info('route_fel_auto.dispatched', [
+                                    'business_id' => $businessId,
+                                    'branch_id' => $branchId,
+                                    'pre_sale_id' => $preSaleId,
+                                ]);
                             }
                         });
                     }

@@ -28,6 +28,7 @@ use App\Support\RouteWorkDayCompletion;
 use App\Support\StockAvailability;
 use App\Services\Routes\RoutePreSalePreparationService;
 use App\Services\Routes\RoutePreSaleFelEligibilityService;
+use App\Services\Routes\RoutePreSaleFelAvailabilityService;
 use App\Services\Routes\RouteCashOperationGuard;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -568,6 +569,7 @@ class RouteController extends Controller
             $felSettings,
         );
         $felEligibility = app(RoutePreSaleFelEligibilityService::class)->evaluate($preSale);
+        $felAvailability = app(RoutePreSaleFelAvailabilityService::class)->evaluate($business, $preSale->branch);
         $routeCash = app(RouteCashOperationGuard::class)->status((int) $preSale->business_id, (int) $preSale->branch_id);
 
         return Inertia::render('Routes/PreSales/Show', [
@@ -585,6 +587,7 @@ class RouteController extends Controller
                 'converted_sale' => $preSale->convertedSale,
                 'fel' => $this->routePreSaleFelState($preSale->convertedSale),
                 'fel_eligibility' => $felEligibility,
+                'fel_availability' => $felAvailability,
                 'cancelled_at' => $preSale->cancelled_at?->toIso8601String(),
                 'cancellation_reason' => $preSale->cancellation_reason,
                 'cancellation_note' => $preSale->cancellation_note,
@@ -1954,6 +1957,7 @@ class RouteController extends Controller
 
         return [
             'mode' => in_array($settings?->route_pre_sale_invoicing_mode, ['automatic', 'automatic_all'], true) ? 'automatic_all' : 'manual',
+            'fel_automation_enabled' => (bool) config('fel.route_automation_enabled'),
             // Route closures always create the internal receipt. FEL is a later, separate action.
             'document_types' => ['receipt'],
             'fel_available' => $invoiceAvailable,

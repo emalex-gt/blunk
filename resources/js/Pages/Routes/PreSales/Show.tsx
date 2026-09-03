@@ -35,6 +35,7 @@ type PreSale = {
     converted_by?: Related | null;
     converted_sale?: { id: number; business_number?: number | null; document_type?: string | null; total?: number | null } | null;
     fel_eligibility?: { eligible: boolean; status: 'eligible' | 'not_eligible'; reason_code?: string | null; reason?: string | null };
+    fel_availability?: { available: boolean; reason_code?: string | null; reason?: string | null };
     cancelled_at?: string | null;
     cancellation_reason?: string | null;
     cancellation_note?: string | null;
@@ -65,6 +66,7 @@ type InvoiceOptions = {
     document_types: Array<'receipt' | 'invoice'>;
     credit_enabled: boolean;
     payment_methods: Array<'cash' | 'card' | 'transfer' | 'check'>;
+    fel_automation_enabled: boolean;
 };
 
 type FelState = { status: 'not_requested' | 'pending' | 'failed' | 'unknown' | 'certified'; error_message?: string | null; uuid?: string | null };
@@ -239,9 +241,15 @@ export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOption
                     </section>
                 )}
 
-                {preSale.status === 'picked' && invoiceOptions.mode === 'automatic_all' && (
+                {preSale.status === 'picked' && invoiceOptions.mode === 'automatic_all' && !invoiceOptions.fel_automation_enabled && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                         La certificación FEL automática aún no está habilitada. Este cierre generará solamente el comprobante interno.
+                    </div>
+                )}
+
+                {preSale.status === 'picked' && invoiceOptions.mode === 'automatic_all' && invoiceOptions.fel_automation_enabled && preSale.fel_availability && !preSale.fel_availability.available && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                        {preSale.fel_availability.reason ?? 'FEL no configurado para certificación automática.'}
                     </div>
                 )}
 
@@ -252,6 +260,7 @@ export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOption
                             {preSale.fel_eligibility.eligible ? 'Elegible' : 'No elegible'}
                         </span>}
                         {preSale.fel_eligibility?.reason && <div className="mt-1 text-amber-700">{preSale.fel_eligibility.reason}</div>}
+                        {preSale.fel_availability && !preSale.fel_availability.available && <div className="mt-1 text-amber-700">{preSale.fel_availability.reason ?? 'FEL no configurado para certificación automática.'}</div>}
                         {fel.error_message && <span className="ml-1 text-red-700">{fel.error_message}</span>}
                         {fel.status === 'unknown' && <span className="ml-1 text-amber-700">Requiere conciliación antes de reintentar.</span>}
                         {felErrors.fel && <div className="mt-1 font-semibold text-red-700">{felErrors.fel}</div>}

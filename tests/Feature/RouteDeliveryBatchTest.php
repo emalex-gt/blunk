@@ -4,17 +4,25 @@ namespace Tests\Feature;
 
 use App\Models\Business;
 use App\Models\CashRegisterSession;
+use App\Models\CashMovement;
 use App\Models\Customer;
+use App\Models\ElectronicDocument;
+use App\Models\FelReconciliationRequest;
 use App\Models\PreSale;
 use App\Models\PreSaleItem;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
 use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
+use App\Models\Sale;
 use App\Models\StockReservation;
 use App\Models\TenantModule;
+use App\Models\TenantFelPhrase;
+use App\Models\TenantFelSetting;
 use App\Models\TenantSetting;
 use App\Models\User;
+use App\Services\Fel\FelException;
+use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Routes\RouteDeliveryBatchService;
 use App\Jobs\RoutePreSaleAutomaticFelJob;
 use App\Support\BranchInventory;
@@ -23,6 +31,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Validation\ValidationException;
+use Mockery;
 use Tests\TestCase;
 
 class RouteDeliveryBatchTest extends TestCase
@@ -115,6 +124,7 @@ class RouteDeliveryBatchTest extends TestCase
     {
         [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'card');
         $this->openCashRegister($business, $branch, $user);
+        $this->configureFelAvailability($business, $branch);
         TenantSetting::query()->where('business_id', $business->id)->update(['route_pre_sale_invoicing_mode' => 'automatic_all']);
         config(['fel.route_automation_enabled' => true]);
         Queue::fake();
@@ -142,6 +152,7 @@ class RouteDeliveryBatchTest extends TestCase
     {
         [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'card');
         $this->openCashRegister($business, $branch, $user);
+        $this->configureFelAvailability($business, $branch);
         $preSale->update(['total' => 2500]);
         TenantSetting::query()->where('business_id', $business->id)->update(['route_pre_sale_invoicing_mode' => 'automatic_all']);
         config(['fel.route_automation_enabled' => true]);
@@ -150,7 +161,30 @@ class RouteDeliveryBatchTest extends TestCase
         app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-ineligible-auto-fel-key');
 
         Queue::assertNothingPushed();
-        $this->assertDatabaseHas('route_delivery_batch_pre_sales', ['pre_sale_id' => $preSale->id, 'fel_dispatch_status' => 'not_requested']);
+        $this->assertDatabaseHas('route_delivery_batch_pre_sales', [
+            'pre_sale_id' => $preSale->id,
+            'fel_dispatch_status' => 'not_requested',
+            'error_message' => 'Consumidor Final no puede certificarse por Q2,500.00 o más.',
+        ]);
+    }
+
+    public function test_automatic_all_does_not_dispatch_when_fel_is_unavailable_and_records_a_safe_reason(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'card');
+        $this->openCashRegister($business, $branch, $user);
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_pre_sale_invoicing_mode' => 'automatic_all']);
+        config(['fel.route_automation_enabled' => true]);
+        Queue::fake();
+
+        app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-auto-fel-unavailable-key');
+
+        Queue::assertNothingPushed();
+        $this->assertDatabaseHas('route_delivery_batch_pre_sales', [
+            'pre_sale_id' => $preSale->id,
+            'fel_dispatch_status' => 'not_requested',
+            'error_message' => 'FEL no configurado para certificación automática.',
+        ]);
+        $this->assertDatabaseCount('electronic_documents', 0);
     }
 
     public function test_required_fel_eligibility_blocks_the_whole_delivery_before_local_effects(): void
@@ -173,6 +207,156 @@ class RouteDeliveryBatchTest extends TestCase
         $this->assertSame(PreSale::STATUS_PICKED, $preSale->refresh()->status);
     }
 
+    public function test_automatic_fel_job_certifies_the_existing_receipt_without_creating_operational_effects(): void
+    {
+        [$business, $branch, $user, $preSale, $product] = $this->pickedPreSale('invoice', 'cash');
+        $this->openCashRegister($business, $branch, $user);
+        $this->configureFelAvailability($business, $branch);
+        config(['fel.route_automation_enabled' => true]);
+        $delivery = app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-auto-fel-certified-delivery-key');
+        $sale = $preSale->refresh()->convertedSale()->firstOrFail();
+        $stockBefore = (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock');
+        $cashBefore = CashMovement::query()->where('business_id', $business->id)->count();
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $certifiedSale): ElectronicDocument {
+            $document = $certifiedSale->electronicDocument()->firstOrFail();
+            $document->update(['status' => 'certified', 'uuid' => 'automatic-route-fel-uuid']);
+            $certifiedSale->update(['certification_status' => 'certified']);
+
+            return $document->refresh();
+        });
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->runAutomaticFelJob($preSale, $sale, $user, $business, $branch);
+
+        $this->assertDatabaseHas('electronic_documents', ['sale_id' => $sale->id, 'status' => 'certified']);
+        $this->assertDatabaseHas('route_delivery_batch_pre_sales', ['route_delivery_batch_id' => $delivery->resultId, 'pre_sale_id' => $preSale->id, 'fel_dispatch_status' => 'certified']);
+        $this->assertSame(1, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(1, \App\Models\SalePayment::query()->where('sale_id', $sale->id)->count());
+        $this->assertSame($cashBefore, CashMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame($stockBefore, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(0, StockReservation::query()->where('source_id', $preSale->id)->where('status', 'active')->count());
+    }
+
+    public function test_automatic_fel_job_marks_failed_without_repeating_receipt_effects(): void
+    {
+        [$business, $branch, $user, $preSale, $product] = $this->pickedPreSale('invoice', 'cash');
+        $this->openCashRegister($business, $branch, $user);
+        $this->configureFelAvailability($business, $branch);
+        config(['fel.route_automation_enabled' => true]);
+        app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-auto-fel-failed-delivery-key');
+        $sale = $preSale->refresh()->convertedSale()->firstOrFail();
+        $stockBefore = (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock');
+        $cashBefore = CashMovement::query()->where('business_id', $business->id)->count();
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $failedSale): never {
+            $failedSale->electronicDocument()->firstOrFail()->update(['status' => 'failed', 'error_message' => 'Digifact rechazó la solicitud.']);
+            $failedSale->update(['certification_status' => 'failed']);
+
+            throw new FelException('Digifact rechazó la solicitud.');
+        });
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->runAutomaticFelJob($preSale, $sale, $user, $business, $branch);
+
+        $this->assertDatabaseHas('electronic_documents', ['sale_id' => $sale->id, 'status' => 'failed']);
+        $this->assertDatabaseHas('route_delivery_batch_pre_sales', ['pre_sale_id' => $preSale->id, 'fel_dispatch_status' => 'failed']);
+        $this->assertSame(1, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(1, \App\Models\SalePayment::query()->where('sale_id', $sale->id)->count());
+        $this->assertSame($cashBefore, CashMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame($stockBefore, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(0, StockReservation::query()->where('source_id', $preSale->id)->where('status', 'active')->count());
+    }
+
+    public function test_automatic_fel_job_marks_unknown_creates_reconciliation_and_does_not_retry_it(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'card');
+        $this->openCashRegister($business, $branch, $user);
+        $this->configureFelAvailability($business, $branch);
+        config(['fel.route_automation_enabled' => true]);
+        app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-auto-fel-unknown-delivery-key');
+        $sale = $preSale->refresh()->convertedSale()->firstOrFail();
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $unknownSale): never {
+            $unknownSale->electronicDocument()->firstOrFail()->update(['status' => 'unknown', 'error_message' => 'Tiempo de espera agotado.']);
+            $unknownSale->update(['certification_status' => 'unknown']);
+
+            throw new FelException('Tiempo de espera agotado.');
+        });
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->runAutomaticFelJob($preSale, $sale, $user, $business, $branch);
+
+        $this->assertDatabaseHas('electronic_documents', ['sale_id' => $sale->id, 'status' => 'unknown']);
+        $this->assertDatabaseHas('fel_reconciliation_requests', ['business_id' => $business->id, 'sale_id' => $sale->id, 'status' => 'pending']);
+        $this->assertDatabaseHas('route_delivery_batch_pre_sales', ['pre_sale_id' => $preSale->id, 'fel_dispatch_status' => 'unknown']);
+
+        $retry = Mockery::mock(DigifactInvoiceService::class);
+        $retry->shouldReceive('certifySale')->never();
+        $this->app->instance(DigifactInvoiceService::class, $retry);
+
+        $this->runAutomaticFelJob($preSale->fresh(), $sale->fresh(), $user, $business, $branch);
+
+        $this->assertSame(1, FelReconciliationRequest::query()->where('sale_id', $sale->id)->count());
+        $this->assertSame(1, Sale::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_automatic_fel_job_revalidates_unavailable_fel_without_creating_an_electronic_document(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'card');
+        $this->openCashRegister($business, $branch, $user);
+        app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-auto-fel-revalidate-unavailable-key');
+        $sale = $preSale->refresh()->convertedSale()->firstOrFail();
+        config(['fel.route_automation_enabled' => true]);
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->never();
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->runAutomaticFelJob($preSale, $sale, $user, $business, $branch);
+
+        $this->assertDatabaseMissing('electronic_documents', ['sale_id' => $sale->id]);
+        $this->assertDatabaseHas('route_delivery_batch_pre_sales', [
+            'pre_sale_id' => $preSale->id,
+            'sale_id' => $sale->id,
+            'fel_dispatch_status' => 'not_requested',
+            'error_message' => 'FEL no configurado para certificación automática.',
+        ]);
+    }
+
+    public function test_automatic_fel_job_does_not_retry_a_failed_document(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'card');
+        $this->openCashRegister($business, $branch, $user);
+        $this->configureFelAvailability($business, $branch);
+        app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-auto-fel-no-failed-retry-key');
+        $sale = $preSale->refresh()->convertedSale()->firstOrFail();
+        $document = ElectronicDocument::query()->create([
+            'business_id' => $business->id,
+            'sale_id' => $sale->id,
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'document_type' => 'invoice',
+            'status' => 'failed',
+            'error_message' => 'Digifact rechazó la solicitud.',
+            'created_by' => $user->id,
+        ]);
+        $sale->update(['electronic_document_id' => $document->id, 'certification_status' => 'failed']);
+        config(['fel.route_automation_enabled' => true]);
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->never();
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->runAutomaticFelJob($preSale, $sale, $user, $business, $branch);
+
+        $this->assertDatabaseHas('electronic_documents', ['id' => $document->id, 'status' => 'failed']);
+        $this->assertDatabaseHas('route_delivery_batch_pre_sales', ['pre_sale_id' => $preSale->id, 'fel_dispatch_status' => 'failed']);
+    }
+
     private function pickedPreSale(string $timing, ?string $paymentMethod): array
     {
         $business = Business::query()->create([
@@ -185,7 +369,7 @@ class RouteDeliveryBatchTest extends TestCase
         $branch = BranchInventory::defaultBranchForBusiness($business);
         $user = User::factory()->create(['business_id' => $business->id, 'current_branch_id' => $branch->id, 'is_active' => true]);
         Permissions::assignRole($user, 'owner');
-        TenantSetting::query()->create(['business_id' => $business->id, 'use_branches' => true, 'allow_receipts' => true, 'route_pre_sale_stock_deduction_timing' => $timing]);
+        TenantSetting::query()->create(['business_id' => $business->id, 'use_branches' => true, 'allow_receipts' => true, 'allow_invoices' => true, 'route_pre_sale_stock_deduction_timing' => $timing]);
         TenantModule::query()->create(['business_id' => $business->id, 'module' => 'routes', 'is_enabled' => true, 'enabled_at' => now()]);
         TenantModule::query()->create(['business_id' => $business->id, 'module' => 'cash_register', 'is_enabled' => true, 'enabled_at' => now()]);
         $zone = RouteZone::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'assigned_user_id' => $user->id, 'name' => 'Zona '.uniqid(), 'is_active' => true]);
@@ -203,5 +387,48 @@ class RouteDeliveryBatchTest extends TestCase
     private function openCashRegister(Business $business, $branch, User $user): void
     {
         CashRegisterSession::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'opened_by' => $user->id, 'status' => 'open', 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now()]);
+    }
+
+    private function configureFelAvailability(Business $business, $branch): void
+    {
+        TenantModule::query()->create(['business_id' => $business->id, 'module' => 'fel_gt', 'is_enabled' => true, 'enabled_at' => now()]);
+        $settings = TenantFelSetting::query()->create([
+            'business_id' => $business->id,
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'enabled' => true,
+            'issuer_tax_id' => '5888492',
+            'username' => 'TESTUSER',
+            'password' => 'secret',
+            'test_base_url' => 'https://testnucgt.digifact.com/api',
+            'affiliate_type' => 'GEN',
+        ]);
+        TenantFelPhrase::query()->create([
+            'business_id' => $business->id,
+            'tenant_fel_setting_id' => $settings->id,
+            'data_identifier' => '1',
+            'phrase_type' => '1',
+            'scenario_code' => '2',
+            'type_data' => '1',
+            'type_value' => '1',
+            'scenario_data' => '1',
+            'scenario_value' => '2',
+        ]);
+        $branch->update([
+            'fel_establishment_code' => '1',
+            'fel_establishment_name' => 'Casa Matriz',
+            'fel_address' => 'Ciudad',
+            'fel_postal_code' => '01001',
+            'fel_municipality' => 'Guatemala',
+            'fel_department' => 'Guatemala',
+            'fel_country' => 'GT',
+        ]);
+    }
+
+    private function runAutomaticFelJob(PreSale $preSale, Sale $sale, User $user, Business $business, $branch): void
+    {
+        $job = new RoutePreSaleAutomaticFelJob($preSale->id, $sale->id, $business->id, $branch->id, $user->id);
+
+        $this->app->call([$job, 'handle']);
     }
 }
