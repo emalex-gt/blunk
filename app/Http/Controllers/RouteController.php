@@ -28,6 +28,7 @@ use App\Support\RouteWorkDayCompletion;
 use App\Support\StockAvailability;
 use App\Services\Routes\RoutePreSalePreparationService;
 use App\Services\Routes\RoutePreSaleFelEligibilityService;
+use App\Services\Routes\RouteCashOperationGuard;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -311,6 +312,14 @@ class RouteController extends Controller
             ->where('route_work_day_id', $workDay->id)
             ->whereIn('status', [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING])
             ->count();
+        $deliverableCount = PreSale::query()
+            ->where('business_id', $businessId)
+            ->where('branch_id', $workDay->branch_id)
+            ->where('route_work_day_id', $workDay->id)
+            ->where('status', PreSale::STATUS_PICKED)
+            ->whereNull('converted_sale_id')
+            ->count();
+        $routeCash = app(RouteCashOperationGuard::class)->status($businessId, (int) $workDay->branch_id);
         $workDay->load(['branch:id,name', 'zone:id,name', 'seller:id,name', 'completedBy:id,name']);
 
         $summary = [
@@ -377,13 +386,24 @@ class RouteController extends Controller
             'preSales' => $preSales,
             'canInvoice' => $this->canInvoiceRoutePreSales($request->user(), $invoiceOptions),
             'activeBranchId' => $activeBranchId,
+            'routeCash' => $routeCash,
             'preparation' => [
                 'can_prepare_all' => Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_PICK)
                     && (int) $workDay->branch_id === (int) $activeBranchId
+                    && $routeCash['is_open']
                     && $preparableCount > 0,
                 'preparable_count' => $preparableCount,
                 'stock_deduction_timing' => $routeSettings?->route_pre_sale_stock_deduction_timing === 'picking' ? 'picking' : 'invoice',
                 'invoicing_mode' => in_array($routeSettings?->route_pre_sale_invoicing_mode, ['automatic', 'automatic_all'], true) ? 'automatic_all' : 'manual',
+            ],
+            'delivery' => [
+                'can_deliver_all' => Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_PICK)
+                    && (int) $workDay->branch_id === (int) $activeBranchId
+                    && $routeCash['is_open']
+                    && $deliverableCount > 0,
+                'deliverable_count' => $deliverableCount,
+                'invoicing_mode' => in_array($routeSettings?->route_pre_sale_invoicing_mode, ['automatic', 'automatic_all'], true) ? 'automatic_all' : 'manual',
+                'fel_automation_enabled' => (bool) config('fel.route_automation_enabled'),
             ],
         ]);
     }
@@ -548,6 +568,7 @@ class RouteController extends Controller
             $felSettings,
         );
         $felEligibility = app(RoutePreSaleFelEligibilityService::class)->evaluate($preSale);
+        $routeCash = app(RouteCashOperationGuard::class)->status((int) $preSale->business_id, (int) $preSale->branch_id);
 
         return Inertia::render('Routes/PreSales/Show', [
             'preSale' => [
@@ -568,6 +589,7 @@ class RouteController extends Controller
                 'cancellation_reason' => $preSale->cancellation_reason,
                 'cancellation_note' => $preSale->cancellation_note,
                 'notes' => $preSale->notes,
+                'payment_method' => $preSale->payment_method,
                 'subtotal' => (float) $preSale->subtotal,
                 'discount_total' => (float) $preSale->discount_total,
                 'total' => (float) $preSale->total,
@@ -606,11 +628,12 @@ class RouteController extends Controller
                     ];
                 })->values(),
             ],
-            'canInvoice' => $this->canInvoiceRoutePreSales(request()->user(), $invoiceOptions)
+            'canInvoice' => $routeCash['is_open'] && $this->canInvoiceRoutePreSales(request()->user(), $invoiceOptions)
                 && (int) BranchInventory::activeBranch((int) $preSale->business_id)->id === (int) $preSale->branch_id,
-            'canCertifyFel' => $this->canCertifyRoutePreSaleFel($preSale, $invoiceOptions, $felEligibility),
+            'canCertifyFel' => $routeCash['is_open'] && $this->canCertifyRoutePreSaleFel($preSale, $invoiceOptions, $felEligibility),
             'invoiceOptions' => $invoiceOptions,
             'stockDeductionTiming' => $tenantSettings?->route_pre_sale_stock_deduction_timing === 'picking' ? 'picking' : 'invoice',
+            'routeCash' => $routeCash,
         ]);
     }
 
@@ -686,6 +709,7 @@ class RouteController extends Controller
     {
         abort_unless((int) $preSale->business_id === currentBusinessId(), 403);
         abort_unless(Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_PICK), 403);
+        app(RouteCashOperationGuard::class)->requireOpen((int) $preSale->business_id, (int) $preSale->branch_id);
 
         $data = $request->validate([
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
@@ -746,6 +770,7 @@ class RouteController extends Controller
 
         return Inertia::render('Routes/Mobile/Zones', [
             'branch' => ['id' => $branch->id, 'name' => $branch->name],
+            'routeCash' => app(RouteCashOperationGuard::class)->status(currentBusinessId(), (int) $branch->id),
             'zones' => RouteZone::query()
                 ->where('business_id', currentBusinessId())
                 ->where('branch_id', $branch->id)
@@ -760,6 +785,7 @@ class RouteController extends Controller
     public function startWorkDay(Request $request, RouteZone $zone): RedirectResponse
     {
         $this->authorizeSellerZone($request, $zone);
+        app(RouteCashOperationGuard::class)->requireOpen(currentBusinessId(), (int) $zone->branch_id);
 
         $today = now()->toDateString();
         $openWorkDay = RouteWorkDay::query()
@@ -819,9 +845,11 @@ class RouteController extends Controller
     public function workDay(Request $request, RouteWorkDay $workDay): Response
     {
         $this->authorizeSellerWorkDay($request, $workDay);
+        app(RouteCashOperationGuard::class)->requireOpen((int) $workDay->business_id, (int) $workDay->branch_id);
 
         return Inertia::render('Routes/Mobile/WorkDay', [
             'workDay' => $workDay->load(['zone:id,name', 'branch:id,name,department,municipality']),
+            'routeCash' => app(RouteCashOperationGuard::class)->status((int) $workDay->business_id, (int) $workDay->branch_id),
             'visits' => RouteVisit::query()
                 ->where('route_work_day_id', $workDay->id)
                 ->with([
@@ -874,6 +902,7 @@ class RouteController extends Controller
     public function visit(Request $request, RouteVisit $visit): Response
     {
         $this->authorizeSellerVisit($request, $visit);
+        app(RouteCashOperationGuard::class)->requireOpen((int) $visit->business_id, (int) $visit->branch_id);
         $search = $request->string('search')->toString();
 
         if ($visit->status === 'pending') {
@@ -892,6 +921,7 @@ class RouteController extends Controller
             'filters' => ['search' => $search],
             'allowNegativeStock' => \App\Support\Inventory\StockPolicy::allowsNegativeStockForBusinessId(currentBusinessId()),
             'allowManualPrice' => $this->preSaleManualPriceEnabled(currentBusinessId()),
+            'routeCash' => app(RouteCashOperationGuard::class)->status((int) $visit->business_id, (int) $visit->branch_id),
         ]);
     }
 
@@ -954,10 +984,12 @@ class RouteController extends Controller
     {
         $this->authorizeSellerVisit($request, $visit);
         $this->assertVisitEditable($visit);
+        app(RouteCashOperationGuard::class)->requireOpen(currentBusinessId(), (int) $visit->branch_id);
 
         $data = $request->validate([
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'notes' => ['nullable', 'string'],
+            'payment_method' => ['nullable', 'in:cash,card,transfer,check'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'integer'],
             'items.*.quantity' => ['required', 'numeric', 'gt:0'],
@@ -1104,8 +1136,15 @@ class RouteController extends Controller
                 $discountTotal += $discount;
             }
 
+            $paymentMethod = array_key_exists('payment_method', $data)
+                ? $data['payment_method']
+                : $preSale->payment_method;
+
             $preSale->update([
                 'notes' => $data['notes'] ?? null,
+                'payment_method' => $paymentMethod,
+                'payment_method_set_at' => $paymentMethod ? now() : null,
+                'payment_method_set_by' => $paymentMethod ? $request->user()->id : null,
                 'subtotal' => round($subtotal, 2),
                 'discount_total' => round($discountTotal, 2),
                 'total' => round(max(0, $subtotal - $discountTotal), 2),

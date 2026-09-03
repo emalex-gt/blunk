@@ -418,6 +418,7 @@ class RoutePreSaleInvoiceTest extends TestCase
         [$business, $admin, $branch] = $this->tenant(enableCreditSales: true);
         $product = $this->product($business, $branch, stock: 10, price: 75);
         $preSale = $this->pickedPreSale($business, $branch, $admin, $product, quantity: 2, pickedQuantity: 2);
+        $this->openCashRegister($business, $branch, $admin);
 
         $this->actingAs($admin)
             ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload('receipt', 'credit'))
@@ -459,6 +460,7 @@ class RoutePreSaleInvoiceTest extends TestCase
         $picked = $this->pickedPreSale($business, $branch, $admin, $product);
         $submitted = $this->pickedPreSale($business, $branch, $admin, $product);
         $submitted->update(['status' => PreSale::STATUS_SUBMITTED, 'picked_at' => null, 'picked_by' => null]);
+        $this->openCashRegister($business, $branch, $admin);
 
         $admin->roles()->detach();
         Permissions::assignDirectPermissions($admin, [Permissions::ROUTES_PRE_SALES_ADMIN_VIEW]);
@@ -476,6 +478,7 @@ class RoutePreSaleInvoiceTest extends TestCase
         TenantSetting::query()->where('business_id', $business->id)->update(['allow_receipts' => false]);
         $product = $this->product($business, $branch);
         $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+        $this->openCashRegister($business, $branch, $admin);
 
         $this->actingAs($admin)
             ->get(route('routes.pre-sales.show', $preSale))
@@ -490,6 +493,7 @@ class RoutePreSaleInvoiceTest extends TestCase
         [$business, $admin, $branch] = $this->tenant(enableCreditSales: true);
         $product = $this->product($business, $branch);
         $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+        $this->openCashRegister($business, $branch, $admin);
 
         $admin->roles()->detach();
         Permissions::assignDirectPermissions($admin, [
@@ -510,6 +514,7 @@ class RoutePreSaleInvoiceTest extends TestCase
         [$business, $admin, $branch] = $this->tenant(enableCreditSales: false);
         $product = $this->product($business, $branch);
         $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+        $this->openCashRegister($business, $branch, $admin);
 
         $this->actingAs($admin)
             ->get(route('routes.pre-sales.show', $preSale))

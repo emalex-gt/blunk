@@ -19,7 +19,10 @@ use Illuminate\Validation\ValidationException;
 
 class RoutePreSaleFelService
 {
-    public function __construct(private readonly RoutePreSaleFelEligibilityService $eligibility)
+    public function __construct(
+        private readonly RoutePreSaleFelEligibilityService $eligibility,
+        private readonly RouteCashOperationGuard $cash,
+    )
     {
     }
 
@@ -45,6 +48,8 @@ class RoutePreSaleFelService
                         ->with('customer')
                         ->lockForUpdate()
                         ->firstOrFail();
+
+                    $this->cash->requireOpen((int) $lockedPreSale->business_id, (int) $lockedPreSale->branch_id, true);
 
                     $sale = Sale::query()
                         ->where('business_id', $lockedPreSale->business_id)

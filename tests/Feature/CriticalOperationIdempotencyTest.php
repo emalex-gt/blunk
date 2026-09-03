@@ -243,6 +243,15 @@ class CriticalOperationIdempotencyTest extends TestCase
     public function test_route_pre_sale_replays_same_idempotency_key_without_duplicate_items_or_reservations(): void
     {
         [$business, $seller, $branch] = $this->tenant('pre_seller', ['routes'], reservePreSaleStock: true);
+        CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'opened_by' => $seller->id,
+            'status' => 'open',
+            'opening_amount' => 0,
+            'expected_cash' => 0,
+            'opened_at' => now(),
+        ]);
         $zone = RouteZone::query()->create([
             'business_id' => $business->id,
             'branch_id' => $branch->id,

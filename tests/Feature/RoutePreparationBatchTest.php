@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Business;
+use App\Models\CashRegisterSession;
 use App\Models\Customer;
 use App\Models\PreSale;
 use App\Models\PreSaleItem;
@@ -252,6 +253,8 @@ class RoutePreparationBatchTest extends TestCase
         $preSale = PreSale::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_work_day_id' => $workDay->id, 'route_zone_id' => $zone->id, 'customer_id' => $customer->id, 'seller_id' => $user->id, 'status' => PreSale::STATUS_SUBMITTED, 'subtotal' => 60, 'discount_total' => 0, 'total' => 60, 'submitted_at' => now()]);
         $item = PreSaleItem::query()->create(['business_id' => $business->id, 'pre_sale_id' => $preSale->id, 'product_id' => $product->id, 'quantity' => 3, 'unit_price' => 20, 'discount' => 0, 'total' => 60]);
         StockReservation::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id, 'source_type' => 'pre_sale', 'source_id' => $preSale->id, 'source_item_id' => $item->id, 'quantity' => 3, 'status' => 'active', 'created_by' => $user->id]);
+        $preSale->update(['payment_method' => 'cash', 'payment_method_set_at' => now(), 'payment_method_set_by' => $user->id]);
+        CashRegisterSession::query()->firstOrCreate(['business_id' => $business->id, 'branch_id' => $branch->id, 'status' => 'open'], ['opened_by' => $user->id, 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now()]);
 
         return [$business, $branch, $user, $preSale, $item, $product];
     }

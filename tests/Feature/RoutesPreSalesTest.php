@@ -6,6 +6,7 @@ use App\Models\Branch;
 use App\Models\BranchProductPrice;
 use App\Models\Business;
 use App\Models\CashMovement;
+use App\Models\CashRegisterSession;
 use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
 use App\Models\Customer;
@@ -2140,7 +2141,8 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
-                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
+            'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
+            'payment_method' => 'cash',
             'items' => [
                 ['product_id' => $firstProduct->id, 'quantity' => 2],
                 ['product_id' => $secondProduct->id, 'quantity' => 3],
@@ -2687,7 +2689,6 @@ class RoutesPreSalesTest extends TestCase
 
         $branch = BranchInventory::defaultBranchForBusiness($business);
         $user = $this->user($business, $branch, $role);
-
         return [$business, $user, $branch];
     }
 
@@ -2701,6 +2702,17 @@ class RoutesPreSalesTest extends TestCase
             'current_branch_id' => $branch?->id,
         ]);
         Permissions::assignRole($user, $role);
+        if ($branch) {
+            CashRegisterSession::query()->firstOrCreate(
+                ['business_id' => $business->id, 'branch_id' => $branch->id, 'status' => 'open'],
+                [
+                    'opened_by' => $user->id,
+                    'opening_amount' => 0,
+                    'expected_cash' => 0,
+                    'opened_at' => now(),
+                ],
+            );
+        }
 
         return $user;
     }
@@ -2811,7 +2823,8 @@ class RoutesPreSalesTest extends TestCase
         $visit = $this->startedVisit($business, $branch, $seller, $customerName);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
-                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
+            'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
+            'payment_method' => 'cash',
             'items' => [['product_id' => $product->id, 'quantity' => $quantity]],
         ])->assertSessionHasNoErrors();
 

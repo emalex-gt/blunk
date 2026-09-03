@@ -228,11 +228,10 @@ class RoutePreSaleInvoiceService
 
                         $cashSession = $isCreditSale
                             ? null
-                            : CashRegister::requireOpenSession(
+                            : app(RouteCashOperationGuard::class)->requireOpen(
                                 (int) $lockedPreSale->business_id,
-                                'Debes abrir caja antes de facturar la preventa.',
-                                true,
                                 (int) $lockedPreSale->branch_id,
+                                true,
                             );
 
                         $sale = Sale::query()->create([

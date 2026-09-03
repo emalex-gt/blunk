@@ -39,6 +39,7 @@ type PreSale = {
     cancellation_reason?: string | null;
     cancellation_note?: string | null;
     notes?: string | null;
+    payment_method?: 'cash' | 'card' | 'transfer' | 'check' | null;
     subtotal: number;
     discount_total: number;
     total: number;
@@ -67,11 +68,11 @@ type InvoiceOptions = {
 };
 
 type FelState = { status: 'not_requested' | 'pending' | 'failed' | 'unknown' | 'certified'; error_message?: string | null; uuid?: string | null };
-type Props = { preSale: PreSale; canInvoice: boolean; canCertifyFel: boolean; invoiceOptions: InvoiceOptions; fel: FelState; stockDeductionTiming: 'picking' | 'invoice' };
+type Props = { preSale: PreSale; canInvoice: boolean; canCertifyFel: boolean; invoiceOptions: InvoiceOptions; fel: FelState; stockDeductionTiming: 'picking' | 'invoice'; routeCash: { is_open: boolean } };
 
 const cancellationReasons = ['Cliente canceló', 'Producto no disponible', 'Duplicada', 'Error de captura', 'Otro'];
 
-export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOptions, fel, stockDeductionTiming }: Props) {
+export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOptions, fel, stockDeductionTiming, routeCash }: Props) {
     const [cancelOpen, setCancelOpen] = useState(false);
     const [invoiceOpen, setInvoiceOpen] = useState(false);
     const processingLockedRef = useRef(false);
@@ -80,7 +81,7 @@ export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOption
     const invoiceForm = useForm({
         idempotency_key: makeOperationKey('pre-sale-invoice'),
         payment_condition: 'paid',
-        payment_method: 'cash',
+        payment_method: preSale.payment_method ?? '',
         due_date: '',
         note: '',
         pre_sale: '',
@@ -134,7 +135,7 @@ export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOption
                 invoiceForm.setData({
                     idempotency_key: makeOperationKey('pre-sale-invoice'),
                     payment_condition: 'paid',
-                    payment_method: 'cash',
+                    payment_method: preSale.payment_method ?? '',
                     due_date: '',
                     note: '',
                     pre_sale: '',
@@ -160,6 +161,7 @@ export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOption
         <AuthenticatedLayout>
             <Head title={`Preventa #${preSale.id}`} />
             <div className="mx-auto max-w-[1600px] space-y-5 px-4 py-6 sm:px-6">
+                {!routeCash.is_open && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">No hay caja abierta para operar rutas y registrar comprobantes.</div>}
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                         <Link href={route('routes.pre-sales.index')} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800">Volver a preventas</Link>

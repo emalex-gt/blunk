@@ -27,6 +27,9 @@ class PreSale extends Model
         'subtotal',
         'discount_total',
         'total',
+        'payment_method',
+        'payment_method_set_at',
+        'payment_method_set_by',
         'notes',
         'submitted_at',
         'processing_started_at',
@@ -55,6 +58,7 @@ class PreSale extends Model
         'picked_at' => 'datetime',
         'converted_at' => 'datetime',
         'fel_eligibility_checked_at' => 'datetime',
+        'payment_method_set_at' => 'datetime',
         'cancelled_at' => 'datetime',
     ];
 
@@ -121,5 +125,10 @@ class PreSale extends Model
     public function preparationBatchEntries(): HasMany
     {
         return $this->hasMany(RoutePreparationBatchPreSale::class);
+    }
+
+    public function deliveryBatchEntries(): HasMany
+    {
+        return $this->hasMany(RouteDeliveryBatchPreSale::class);
     }
 }

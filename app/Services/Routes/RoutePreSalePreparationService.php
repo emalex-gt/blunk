@@ -46,6 +46,12 @@ class RoutePreSalePreparationService
             ]);
         }
 
+        if (! in_array($lockedPreSale->payment_method, ['cash', 'card', 'transfer', 'check'], true)) {
+            throw ValidationException::withMessages([
+                'payment_method' => 'Selecciona una forma de pago antes de preparar la preventa.',
+            ]);
+        }
+
         $rows = collect($rows)->keyBy(fn (array $row) => (int) ($row['id'] ?? 0));
         if ($rows->isEmpty() || $rows->has(0)) {
             throw ValidationException::withMessages([

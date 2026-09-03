@@ -66,16 +66,20 @@ type Props = {
         stock_deduction_timing: 'picking' | 'invoice';
         invoicing_mode: 'manual' | 'automatic_all';
     };
+    delivery: { can_deliver_all: boolean; deliverable_count: number; invoicing_mode: 'manual' | 'automatic_all'; fel_automation_enabled: boolean };
+    routeCash: { is_open: boolean };
 };
 
 const cancellationReasons = ['Cliente canceló', 'Producto no disponible', 'Duplicada', 'Error de captura', 'Otro'];
 
-export default function Show({ workDay, preSales, canInvoice, activeBranchId, preparation }: Props) {
+export default function Show({ workDay, preSales, canInvoice, activeBranchId, preparation, delivery, routeCash }: Props) {
     const [cancelTarget, setCancelTarget] = useState<PreSale | null>(null);
     const [processingTarget, setProcessingTarget] = useState<PreSale | null>(null);
     const [processingPreSaleId, setProcessingPreSaleId] = useState<number | null>(null);
     const [prepareAllOpen, setPrepareAllOpen] = useState(false);
     const [preparingAll, setPreparingAll] = useState(false);
+    const [deliverAllOpen, setDeliverAllOpen] = useState(false);
+    const [deliveringAll, setDeliveringAll] = useState(false);
     const processingLockedRef = useRef(false);
     const cancelForm = useForm({
         idempotency_key: makeOperationKey('pre-sale-cancel'),
@@ -136,6 +140,16 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
         });
     };
 
+    const deliverAll = () => {
+        if (deliveringAll) return;
+        setDeliveringAll(true);
+        router.post(route('routes.work-days.deliver-all', workDay.id), { idempotency_key: makeOperationKey('route-deliver-all') }, {
+            preserveScroll: true,
+            onFinish: () => setDeliveringAll(false),
+            onSuccess: () => setDeliverAllOpen(false),
+        });
+    };
+
     return (
         <AuthenticatedLayout>
             <Head title={`Jornada ${workDay.work_date ?? `#${workDay.id}`}`} />
@@ -149,6 +163,9 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                     <div className="flex flex-wrap gap-2">
                         <Link href={route('routes.preparation-batches.index')} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                             Preparaciones
+                        </Link>
+                        <Link href={route('routes.delivery-batches.index')} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                            Entregas
                         </Link>
                         <Link href={route('routes.pre-sales.index')} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                             Cola de preventas
@@ -185,11 +202,13 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                 </div>
 
                 <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+                    {!routeCash.is_open && <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">No hay caja abierta para operar rutas y registrar comprobantes.</div>}
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-4">
                         <div>
                             <h2 className="text-sm font-semibold text-slate-900">Preventas de la jornada</h2>
                             <p className="text-xs text-slate-500">Solo se muestran pedidos asociados a esta jornada.</p>
                         </div>
+                        <div className="flex flex-wrap gap-2">
                         {preparation.can_prepare_all ? (
                             <button
                                 type="button"
@@ -202,12 +221,15 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                         ) : preparation.preparable_count === 0 ? (
                             <p className="text-xs font-medium text-slate-500">No hay preventas disponibles para preparar en esta jornada.</p>
                         ) : null}
+                        {delivery.can_deliver_all && <button type="button" onClick={() => setDeliverAllOpen(true)} disabled={deliveringAll} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60">ENTREGAR TODO ({delivery.deliverable_count})</button>}
+                        </div>
                     </div>
                     {preparation.invoicing_mode === 'automatic_all' && (
                         <div className="border-b border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                            La certificación FEL automática está configurada, pero aún no se ejecuta en esta fase. La preparación no crea ni certifica ventas automáticamente.
+                            PREPARAR TODO solo realiza la preparación física. ENTREGAR TODO crea los comprobantes y puede solicitar FEL automática según la configuración operativa.
                         </div>
                     )}
+                    {delivery.invoicing_mode === 'automatic_all' && !delivery.fel_automation_enabled && <div className="border-b border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">Automatización FEL deshabilitada. Los comprobantes quedarán pendientes de certificación manual.</div>}
                     <div className="overflow-x-auto">
                         <table className="min-w-[1180px] divide-y divide-slate-200 text-sm">
                             <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
@@ -301,6 +323,18 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                 </section>
             </div>
 
+            <ConfirmDialog
+                open={deliverAllOpen}
+                title="Entregar todas las preventas preparadas"
+                message="Se crearán comprobantes internos pagados y se registrarán los pagos de cada preventa preparada."
+                details={`${delivery.deliverable_count} preventa(s) picked serán entregadas.`}
+                confirmLabel="Sí, entregar todo"
+                processing={deliveringAll}
+                onCancel={() => {
+                    if (!deliveringAll) setDeliverAllOpen(false);
+                }}
+                onConfirm={deliverAll}
+            />
             <ConfirmDialog
                 open={processingTarget !== null}
                 title="Marcar en preparación"

@@ -12,12 +12,14 @@ class RoutePreSaleReceiptService
     public function __construct(
         private readonly RoutePreSaleInvoiceService $conversion,
         private readonly RoutePreSaleFelEligibilityService $eligibility,
+        private readonly RouteCashOperationGuard $cash,
     )
     {
     }
 
     public function convertToInternalReceipt(PreSale $preSale, array $data, User $user): IdempotencyResult
     {
+        $this->cash->requireOpen((int) $preSale->business_id, (int) $preSale->branch_id);
         $result = $this->eligibility->persist($preSale);
         $requiresEligibleCustomer = (bool) TenantSetting::query()
             ->where('business_id', $preSale->business_id)

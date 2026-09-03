@@ -4,7 +4,7 @@ import { useState } from 'react';
 
 type Zone = { id: number; name: string; description: string | null; active_customers_count: number };
 
-export default function Zones({ zones, branch }: { zones: Zone[]; branch: { id: number; name: string } }) {
+export default function Zones({ zones, branch, routeCash }: { zones: Zone[]; branch: { id: number; name: string }; routeCash: { is_open: boolean } }) {
     const form = useForm({});
     const [openingZoneId, setOpeningZoneId] = useState<number | null>(null);
     const errors = usePage().props.errors as Record<string, string | undefined>;
@@ -29,6 +29,11 @@ export default function Zones({ zones, branch }: { zones: Zone[]; branch: { id: 
                     <h1 className="text-2xl font-semibold text-slate-950">Mis rutas</h1>
                     <p className="text-sm text-slate-500">Sucursal: {branch.name}</p>
                 </div>
+                {!routeCash.is_open && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+                        No hay caja abierta para operar rutas y registrar comprobantes.
+                    </div>
+                )}
                 {zones.length === 0 && (
                     <div className="rounded-lg bg-white p-5 text-sm text-slate-500 shadow-sm ring-1 ring-slate-200">
                         No tienes zonas asignadas para esta sucursal.
@@ -50,7 +55,7 @@ export default function Zones({ zones, branch }: { zones: Zone[]; branch: { id: 
                         </div>
                         <button
                             type="button"
-                            disabled={form.processing}
+                            disabled={form.processing || !routeCash.is_open}
                             onClick={() => openZone(zone.id)}
                             className="mt-4 w-full rounded-xl bg-indigo-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
                         >

@@ -63,4 +63,9 @@ class RouteWorkDay extends Model
     {
         return $this->hasMany(RoutePreparationBatch::class);
     }
+
+    public function deliveryBatches(): HasMany
+    {
+        return $this->hasMany(RouteDeliveryBatch::class);
+    }
 }

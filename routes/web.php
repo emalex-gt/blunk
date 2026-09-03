@@ -18,6 +18,7 @@ use App\Http\Controllers\OperationDraftController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\RouteController;
 use App\Http\Controllers\RoutePreparationBatchController;
+use App\Http\Controllers\RouteDeliveryBatchController;
 use App\Http\Controllers\RoutePreSaleFelController;
 use App\Http\Controllers\RoutePreSaleInvoiceController;
 use App\Http\Controllers\SaleController;
@@ -261,6 +262,15 @@ Route::middleware('auth')->group(function () {
             Route::post('/work-days/{workDay}/prepare-all', [RoutePreparationBatchController::class, 'prepareAll'])
                 ->middleware('permission:routes.pre_sales.pick')
                 ->name('work-days.prepare-all');
+            Route::post('/work-days/{workDay}/deliver-all', [RouteDeliveryBatchController::class, 'deliverAll'])
+                ->middleware('permission:routes.pre_sales.pick')
+                ->name('work-days.deliver-all');
+            Route::get('/delivery-batches', [RouteDeliveryBatchController::class, 'index'])
+                ->middleware('permission:routes.pre_sales.admin_view')
+                ->name('delivery-batches.index');
+            Route::get('/delivery-batches/{batch}', [RouteDeliveryBatchController::class, 'show'])
+                ->middleware('permission:routes.pre_sales.admin_view')
+                ->name('delivery-batches.show');
 
             Route::get('/preparation-batches', [RoutePreparationBatchController::class, 'index'])
                 ->middleware('permission:routes.pre_sales.admin_view')

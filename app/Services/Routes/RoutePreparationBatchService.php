@@ -17,8 +17,10 @@ use Illuminate\Validation\ValidationException;
 
 class RoutePreparationBatchService
 {
-    public function __construct(private readonly RoutePreSalePreparationService $preparation)
-    {
+    public function __construct(
+        private readonly RoutePreSalePreparationService $preparation,
+        private readonly RouteCashOperationGuard $cash,
+    ) {
     }
 
     public function prepareAll(RouteWorkDay $workDay, User $user, string $idempotencyKey): IdempotencyResult
@@ -58,6 +60,7 @@ class RoutePreparationBatchService
                     if ((int) $activeBranch->id !== $branchId) {
                         abort(403);
                     }
+                    $this->cash->requireOpen($businessId, $branchId, true);
 
                     $preSales = PreSale::query()
                         ->where('business_id', $businessId)
