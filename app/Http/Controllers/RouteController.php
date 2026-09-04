@@ -370,6 +370,71 @@ class RouteController extends Controller
             ->paginate(25)
             ->withQueryString();
 
+        $deliverablePreSales = PreSale::query()
+            ->where('business_id', $businessId)
+            ->where('branch_id', $workDay->branch_id)
+            ->where('route_work_day_id', $workDay->id)
+            ->where('status', PreSale::STATUS_PICKED)
+            ->whereNull('converted_sale_id')
+            ->with('customer:id,name,commercial_name,contact_name,doc_type,doc_number,is_final_consumer,tax_lookup_verified_at,name_locked')
+            ->get();
+        $eligibilityService = app(RoutePreSaleFelEligibilityService::class);
+        $paymentMethods = [];
+        $missingPaymentMethodIds = [];
+        $notEligible = [];
+
+        foreach ($deliverablePreSales as $deliverablePreSale) {
+            $paymentMethod = $deliverablePreSale->payment_method;
+
+            if (! $paymentMethod) {
+                $missingPaymentMethodIds[] = $deliverablePreSale->id;
+            } else {
+                $paymentMethods[$paymentMethod] ??= ['count' => 0, 'total' => 0.0];
+                $paymentMethods[$paymentMethod]['count']++;
+                $paymentMethods[$paymentMethod]['total'] += (float) $deliverablePreSale->total;
+            }
+
+            $eligibility = $eligibilityService->evaluate($deliverablePreSale);
+
+            if (! $eligibility['eligible']) {
+                $notEligible[] = [
+                    'pre_sale_id' => $deliverablePreSale->id,
+                    'reason_code' => $eligibility['reason_code'],
+                    'reason' => $eligibility['reason'],
+                ];
+            }
+        }
+
+        $invoicingMode = in_array($routeSettings?->route_pre_sale_invoicing_mode, ['automatic', 'automatic_all'], true) ? 'automatic_all' : 'manual';
+        $felAvailability = $invoicingMode === 'automatic_all'
+            ? app(RoutePreSaleFelAvailabilityService::class)->evaluate(Business::query()->findOrFail($businessId), $workDay->branch)
+            : null;
+        $requiresFelEligibleCustomer = (bool) ($routeSettings?->route_pre_sale_require_fel_eligible_customer ?? false);
+        $deliveryBlockingReason = ! $routeCash['is_open']
+            ? RouteCashOperationGuard::MESSAGE
+            : ($deliverablePreSales->isEmpty()
+                ? 'No hay preventas preparadas para entregar.'
+                : ($missingPaymentMethodIds !== []
+                    ? 'Todas las preventas preparadas deben tener una forma de pago definida.'
+                    : ($requiresFelEligibleCustomer && $notEligible !== []
+                        ? 'Hay preventas sin cliente apto para FEL. Corrige los datos fiscales antes de generar comprobantes.'
+                        : null)));
+        $canDeliverAll = Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_PICK)
+            && (int) $workDay->branch_id === (int) $activeBranchId
+            && $deliveryBlockingReason === null;
+        $deliveryPreview = [
+            'count' => $deliverablePreSales->count(),
+            'total' => round((float) $deliverablePreSales->sum('total'), 2),
+            'payment_methods' => $paymentMethods,
+            'missing_payment_method' => ['count' => count($missingPaymentMethodIds), 'pre_sale_ids' => $missingPaymentMethodIds],
+            'fel' => [
+                'not_eligible_count' => count($notEligible),
+                'not_eligible' => $notEligible,
+                'availability' => $felAvailability,
+            ],
+            'cash' => $routeCash,
+            'blocking_reason' => $deliveryBlockingReason,
+        ];
         return Inertia::render('Routes/WorkDays/Show', [
             'workDay' => [
                 'id' => $workDay->id,
@@ -385,7 +450,7 @@ class RouteController extends Controller
                 'summary' => $summary,
             ],
             'preSales' => $preSales,
-            'canInvoice' => $this->canInvoiceRoutePreSales($request->user(), $invoiceOptions),
+            'canInvoice' => $routeCash['is_open'] && $this->canInvoiceRoutePreSales($request->user(), $invoiceOptions),
             'activeBranchId' => $activeBranchId,
             'routeCash' => $routeCash,
             'preparation' => [
@@ -398,13 +463,11 @@ class RouteController extends Controller
                 'invoicing_mode' => in_array($routeSettings?->route_pre_sale_invoicing_mode, ['automatic', 'automatic_all'], true) ? 'automatic_all' : 'manual',
             ],
             'delivery' => [
-                'can_deliver_all' => Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_PICK)
-                    && (int) $workDay->branch_id === (int) $activeBranchId
-                    && $routeCash['is_open']
-                    && $deliverableCount > 0,
+                'can_deliver_all' => $canDeliverAll,
                 'deliverable_count' => $deliverableCount,
-                'invoicing_mode' => in_array($routeSettings?->route_pre_sale_invoicing_mode, ['automatic', 'automatic_all'], true) ? 'automatic_all' : 'manual',
+                'invoicing_mode' => $invoicingMode,
                 'fel_automation_enabled' => (bool) config('fel.route_automation_enabled'),
+                'preview' => $deliveryPreview,
             ],
         ]);
     }
@@ -505,6 +568,8 @@ class RouteController extends Controller
                 return $payload;
             });
 
+        $activeBranchId = BranchInventory::activeBranch($businessId)->id;
+        $routeCash = app(RouteCashOperationGuard::class)->status($businessId, (int) $activeBranchId);
         return Inertia::render('Routes/PreSales/Index', [
             'preSales' => $preSales,
             'filters' => [
@@ -522,8 +587,9 @@ class RouteController extends Controller
             'branches' => Branch::query()->where('business_id', $businessId)->where('is_active', true)->orderBy('name')->get(['id', 'name']),
             'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
             'zones' => RouteZone::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
-            'canInvoice' => $this->canInvoiceRoutePreSales($request->user(), $invoiceOptions),
-            'activeBranchId' => BranchInventory::activeBranch($businessId)->id,
+            'canInvoice' => $routeCash['is_open'] && $this->canInvoiceRoutePreSales($request->user(), $invoiceOptions),
+            'activeBranchId' => $activeBranchId,
+            'routeCash' => $routeCash,
         ]);
     }
 

@@ -1,8 +1,9 @@
+import { ReactNode } from 'react';
 type Props = {
     open: boolean;
     title: string;
     message: string;
-    details?: string;
+    details?: ReactNode;
     confirmLabel: string;
     cancelLabel?: string;
     processing?: boolean;
@@ -37,7 +38,7 @@ export default function ConfirmDialog({
                     {title}
                 </h2>
                 <p className="mt-2 text-sm text-slate-600">{message}</p>
-                {details && <p className="mt-2 text-sm font-semibold text-slate-800">{details}</p>}
+                {details && <div className="mt-3 text-sm text-slate-800">{details}</div>}
                 <div className="mt-5 grid grid-cols-2 gap-2">
                     <button
                         type="button"

@@ -171,12 +171,12 @@ export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOption
                         <p className="text-sm text-slate-500">Revisión administrativa de pedido enviado desde ruta.</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                        {preSale.status === 'submitted' && (
+                        {routeCash.is_open && preSale.status === 'submitted' && (
                             <button onClick={markProcessing} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
                                 Marcar en preparación
                             </button>
                         )}
-                        {['submitted', 'processing'].includes(preSale.status) && (
+                        {routeCash.is_open && ['submitted', 'processing'].includes(preSale.status) && (
                             <Link href={route('routes.pre-sales.pick', preSale.id)} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
                                 Preparar pedido
                             </Link>
@@ -227,8 +227,8 @@ export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOption
                         <Info label="En preparación" value={formatDate(preSale.processing_started_at)} />
                         <Info label="Lista para facturar" value={formatDate(preSale.picked_at)} />
                         <Info label="Preparada por" value={preSale.picked_by?.name} />
-                        <Info label="Facturada" value={formatDate(preSale.converted_at)} />
-                        <Info label="Facturada por" value={preSale.converted_by?.name} />
+                        <Info label="Comprobante generado" value={formatDate(preSale.converted_at)} />
+                        <Info label="Generado por" value={preSale.converted_by?.name} />
                         <Info label="Cancelada" value={formatDate(preSale.cancelled_at)} />
                         {preSale.cancellation_reason && <Info label="Motivo cancelación" value={preSale.cancellation_reason} />}
                     </InfoCard>
@@ -243,7 +243,7 @@ export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOption
 
                 {preSale.status === 'picked' && invoiceOptions.mode === 'automatic_all' && !invoiceOptions.fel_automation_enabled && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                        La certificación FEL automática aún no está habilitada. Este cierre generará solamente el comprobante interno.
+                        Automatización FEL deshabilitada. Los comprobantes quedarán pendientes de certificación manual.
                     </div>
                 )}
 

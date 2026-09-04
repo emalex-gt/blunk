@@ -1859,6 +1859,58 @@ class RoutesPreSalesTest extends TestCase
                 ->where('preSales.data.0.items_count', 1));
     }
 
+    public function test_work_day_delivery_preview_exposes_payment_fel_and_cash_readiness(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, customerName: 'Cliente entrega');
+        $preSale->update([
+            'status' => PreSale::STATUS_PICKED,
+            'picked_at' => now(),
+            'picked_by' => $admin->id,
+            'payment_method' => 'cash',
+            'total' => 100,
+        ]);
+        $missingPayment = $preSale->replicate(['id']);
+        $missingPayment->route_visit_id = null;
+        $missingPayment->payment_method = null;
+        $missingPayment->total = 25;
+        $missingPayment->save();
+
+        $this->actingAs($admin)
+            ->get(route('routes.work-days.show', $preSale->workDay))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('delivery.preview.count', 2)
+                ->where('delivery.preview.total', 125)
+                ->where('delivery.preview.payment_methods.cash.count', 1)
+                ->where('delivery.preview.payment_methods.cash.total', 100)
+                ->where('delivery.preview.missing_payment_method.count', 1)
+                ->where('delivery.preview.fel.not_eligible_count', 2)
+                ->where('delivery.preview.cash.is_open', true));
+    }
+
+    public function test_work_day_hides_operational_actions_when_cash_is_closed(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product);
+        CashRegisterSession::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->update(['status' => 'closed', 'closed_at' => now()]);
+
+        $this->actingAs($admin)
+            ->get(route('routes.work-days.show', $preSale->workDay))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('routeCash.is_open', false)
+                ->where('preparation.can_prepare_all', false)
+                ->where('delivery.can_deliver_all', false)
+                ->where('canInvoice', false));
+    }
     public function test_other_tenant_cannot_view_closed_work_day_detail(): void
     {
         [$business, , $branch] = $this->tenant(role: 'owner');

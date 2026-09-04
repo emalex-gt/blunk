@@ -24,6 +24,7 @@ type PreSale = {
     picked_at?: string | null;
     converted_sale_id?: number | null;
     fel_status?: 'not_requested' | 'pending' | 'failed' | 'unknown' | 'certified';
+    payment_method?: 'cash' | 'card' | 'transfer' | 'check' | null;
     fel_eligibility?: { eligible: boolean; status: 'eligible' | 'not_eligible'; reason?: string | null };
     reserved_quantity_total?: string | number;
     picked_quantity_total?: string | number;
@@ -43,6 +44,7 @@ type Props = {
     zones: Option[];
     canInvoice: boolean;
     activeBranchId: number;
+    routeCash: { is_open: boolean };
 };
 
 const statuses = [
@@ -50,7 +52,7 @@ const statuses = [
     { value: 'submitted', label: 'Enviadas' },
     { value: 'processing', label: 'En preparación' },
     { value: 'picked', label: 'Listas para facturar' },
-    { value: 'converted', label: 'Facturadas' },
+    { value: 'converted', label: 'Comprobantes generados' },
     { value: 'cancelled', label: 'Canceladas' },
     { value: 'draft', label: 'Borradores' },
 ];
@@ -70,7 +72,7 @@ const felEligibilityStatuses = [
     { value: 'not_eligible', label: 'FEL no elegible' },
 ];
 
-export default function Index({ preSales, filters, branches, sellers, zones, canInvoice, activeBranchId }: Props) {
+export default function Index({ preSales, filters, branches, sellers, zones, canInvoice, activeBranchId, routeCash }: Props) {
     const [cancelTarget, setCancelTarget] = useState<PreSale | null>(null);
     const [processingTarget, setProcessingTarget] = useState<PreSale | null>(null);
     const [processingPreSaleId, setProcessingPreSaleId] = useState<number | null>(null);
@@ -138,6 +140,12 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
                         <p className="text-sm text-slate-500">Cola administrativa para revisar pedidos enviados desde rutas.</p>
                     </div>
                 </div>
+
+                {!routeCash.is_open && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
+                        No hay caja abierta para operar rutas y registrar comprobantes.
+                    </div>
+                )}
 
                 <form onSubmit={submit} className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 md:grid-cols-4 xl:grid-cols-8">
                     <Field label="Desde">
@@ -208,13 +216,14 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
                                     <th className="px-4 py-3">Total</th>
                                     <th className="px-4 py-3">Estado</th>
                                     <th className="px-4 py-3">FEL</th>
+                                    <th className="px-4 py-3">Forma de pago</th>
                                     <th className="w-[240px] min-w-[240px] px-4 py-3">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {preSales.data.length === 0 ? (
                                     <tr>
-                                        <td colSpan={12} className="px-4 py-10 text-center text-slate-500">No hay preventas para los filtros seleccionados.</td>
+                                        <td colSpan={13} className="px-4 py-10 text-center text-slate-500">No hay preventas para los filtros seleccionados.</td>
                                     </tr>
                                 ) : preSales.data.map((preSale) => (
                                     <tr key={preSale.id} className="hover:bg-slate-50/70">
@@ -246,12 +255,13 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
                                                 {!preSale.fel_eligibility.eligible && preSale.fel_eligibility.reason && <div className="mt-0.5 max-w-48 font-normal text-amber-700">{preSale.fel_eligibility.reason}</div>}
                                             </div>}
                                         </td>
+                                        <td className={preSale.payment_method ? 'px-4 py-3' : 'px-4 py-3 font-semibold text-amber-700'}>{paymentMethodLabel(preSale.payment_method)}</td>
                                         <td className="w-[240px] min-w-[240px] px-4 py-3">
                                             <div className="flex items-center gap-1.5 whitespace-nowrap">
                                                 <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">
                                                     Ver
                                                 </Link>
-                                                {preSale.status === 'submitted' && (
+                                                {routeCash.is_open && preSale.status === 'submitted' && (
                                                     <button
                                                         type="button"
                                                         disabled={processingPreSaleId !== null || cancelForm.processing}
@@ -261,14 +271,14 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
                                                         Prep.
                                                     </button>
                                                 )}
-                                                {['submitted', 'processing'].includes(preSale.status) && (
+                                                {routeCash.is_open && ['submitted', 'processing'].includes(preSale.status) && (
                                                     <Link href={route('routes.pre-sales.pick', preSale.id)} className="rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700">
                                                         Pick
                                                     </Link>
                                                 )}
                                                 {preSale.status === 'picked' && canInvoice && preSale.branch_id === activeBranchId && (
                                                     <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-md bg-violet-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-violet-700">
-                                                        Facturar
+                                                        Generar comprobante
                                                     </Link>
                                                 )}
                                                 {preSale.status === 'converted' && preSale.converted_sale_id && (
@@ -415,7 +425,12 @@ function FelBadge({ status }: { status: NonNullable<PreSale['fel_status']> }) {
 function formatDate(value?: string | null) {
     return value ? new Date(value).toLocaleString() : '-';
 }
-
 function formatNumber(value: unknown) {
     return Number(value ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+function paymentMethodLabel(method?: PreSale['payment_method']) {
+    if (!method) return 'Sin definir';
+
+    return ({ cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', check: 'Cheque' } as const)[method];
 }

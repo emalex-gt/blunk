@@ -47,12 +47,24 @@ type PreSale = {
     picked_at?: string | null;
     converted_sale_id?: number | null;
     reserved_quantity_total?: string | number;
+    payment_method?: 'cash' | 'card' | 'transfer' | 'check' | null;
+    fel_eligibility?: { eligible: boolean; reason?: string | null };
     picked_quantity_total?: string | number;
     items_count: number;
     customer?: { name: string; commercial_name?: string | null; contact_name?: string | null; doc_number: string | null };
     seller?: { name: string };
     zone?: { name: string } | null;
     branch?: { name: string };
+};
+
+type DeliveryPreview = {
+    count: number;
+    total: number;
+    payment_methods: Record<string, { count: number; total: number }>;
+    missing_payment_method: { count: number; pre_sale_ids: number[] };
+    fel: { not_eligible_count: number; not_eligible: Array<{ pre_sale_id: number; reason?: string | null }>; availability: { available: boolean; reason?: string | null } | null };
+    cash: { is_open: boolean };
+    blocking_reason?: string | null;
 };
 
 type Props = {
@@ -66,7 +78,7 @@ type Props = {
         stock_deduction_timing: 'picking' | 'invoice';
         invoicing_mode: 'manual' | 'automatic_all';
     };
-    delivery: { can_deliver_all: boolean; deliverable_count: number; invoicing_mode: 'manual' | 'automatic_all'; fel_automation_enabled: boolean };
+    delivery: { can_deliver_all: boolean; deliverable_count: number; invoicing_mode: 'manual' | 'automatic_all'; fel_automation_enabled: boolean; preview: DeliveryPreview };
     routeCash: { is_open: boolean };
 };
 
@@ -189,7 +201,7 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                     <InfoCard title="Resumen monetario">
                         <Info label="Total preventas" value={`Q ${formatMoney(workDay.summary.pre_sales_total)}`} />
                         <Info label="Total preparado" value={`Q ${formatMoney(workDay.summary.prepared_total)}`} />
-                        <Info label="Total facturado" value={`Q ${formatMoney(workDay.summary.converted_total)}`} />
+                        <Info label="Total entregado" value={`Q ${formatMoney(workDay.summary.converted_total)}`} />
                     </InfoCard>
                 </div>
 
@@ -223,10 +235,18 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                         ) : null}
                         {delivery.can_deliver_all && <button type="button" onClick={() => setDeliverAllOpen(true)} disabled={deliveringAll} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60">ENTREGAR TODO ({delivery.deliverable_count})</button>}
                         </div>
+                        {!delivery.can_deliver_all && delivery.preview.count > 0 && delivery.preview.blocking_reason && (
+                            <p className="max-w-md text-xs font-semibold text-amber-700">{delivery.preview.blocking_reason}</p>
+                        )}
                     </div>
                     {preparation.invoicing_mode === 'automatic_all' && (
                         <div className="border-b border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                             PREPARAR TODO solo realiza la preparación física. ENTREGAR TODO crea los comprobantes y puede solicitar FEL automática según la configuración operativa.
+                        </div>
+                    )}
+                    {delivery.invoicing_mode === 'automatic_all' && delivery.fel_automation_enabled && delivery.preview.fel.availability && !delivery.preview.fel.availability.available && (
+                        <div className="border-b border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                            {delivery.preview.fel.availability.reason ?? 'FEL no configurado para certificación automática.'}
                         </div>
                     )}
                     {delivery.invoicing_mode === 'automatic_all' && !delivery.fel_automation_enabled && <div className="border-b border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">Automatización FEL deshabilitada. Los comprobantes quedarán pendientes de certificación manual.</div>}
@@ -244,13 +264,15 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                                     <th className="px-4 py-3">Preparado</th>
                                     <th className="px-4 py-3">Total</th>
                                     <th className="px-4 py-3">Estado</th>
+                                    <th className="px-4 py-3">Forma de pago</th>
+                                    <th className="px-4 py-3">FEL</th>
                                     <th className="w-[240px] min-w-[240px] px-4 py-3">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {preSales.data.length === 0 ? (
                                     <tr>
-                                        <td colSpan={11} className="px-4 py-10 text-center text-slate-500">Esta jornada no tiene preventas.</td>
+                                        <td colSpan={13} className="px-4 py-10 text-center text-slate-500">Esta jornada no tiene preventas.</td>
                                     </tr>
                                 ) : preSales.data.map((preSale) => (
                                     <tr key={preSale.id} className="hover:bg-slate-50/70">
@@ -272,12 +294,18 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                                         </td>
                                         <td className="px-4 py-3">Q {formatMoney(preSale.total)}</td>
                                         <td className="px-4 py-3"><StatusBadge status={preSale.status} /></td>
+                                        <td className={preSale.payment_method ? 'px-4 py-3' : 'px-4 py-3 font-semibold text-amber-700'}>
+                                            {paymentMethodLabel(preSale.payment_method)}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            {preSale.fel_eligibility?.eligible === false ? <span className="text-xs font-semibold text-amber-700">No elegible{preSale.fel_eligibility.reason ? `: ${preSale.fel_eligibility.reason}` : ''}</span> : <span className="text-xs font-semibold text-emerald-700">Elegible</span>}
+                                        </td>
                                         <td className="w-[240px] min-w-[240px] px-4 py-3">
                                             <div className="flex items-center gap-1.5 whitespace-nowrap">
                                                 <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">
                                                     Ver
                                                 </Link>
-                                                {preSale.status === 'submitted' && (
+                                                {routeCash.is_open && preSale.status === 'submitted' && (
                                                     <button
                                                         type="button"
                                                         disabled={processingPreSaleId !== null || cancelForm.processing}
@@ -287,14 +315,14 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                                                         Prep.
                                                     </button>
                                                 )}
-                                                {['submitted', 'processing'].includes(preSale.status) && (
+                                                {routeCash.is_open && ['submitted', 'processing'].includes(preSale.status) && (
                                                     <Link href={route('routes.pre-sales.pick', preSale.id)} className="rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700">
                                                         Pick
                                                     </Link>
                                                 )}
                                                 {preSale.status === 'picked' && canInvoice && preSale.branch_id === activeBranchId && (
                                                     <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-md bg-violet-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-violet-700">
-                                                        Facturar
+                                                        Generar comprobante
                                                     </Link>
                                                 )}
                                                 {preSale.status === 'converted' && preSale.converted_sale_id && (
@@ -326,8 +354,8 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
             <ConfirmDialog
                 open={deliverAllOpen}
                 title="Entregar todas las preventas preparadas"
-                message="Se crearán comprobantes internos pagados y se registrarán los pagos de cada preventa preparada."
-                details={`${delivery.deliverable_count} preventa(s) picked serán entregadas.`}
+                message="Esta acción generará los comprobantes internos, registrará los pagos y cerrará la entrega de las preventas preparadas."
+                details={`${delivery.preview.count} preventa(s) serán entregadas. Total: Q ${formatMoney(delivery.preview.total)}. Formas de pago: ${paymentMethodSummary(delivery.preview.payment_methods)}.${delivery.preview.missing_payment_method.count ? ` Faltan ${delivery.preview.missing_payment_method.count} forma(s) de pago.` : ''}${delivery.preview.fel.not_eligible_count ? ` ${delivery.preview.fel.not_eligible_count} preventa(s) no son elegibles para FEL.` : ''}${!delivery.preview.cash.is_open ? ' No hay caja abierta para operar rutas y registrar comprobantes.' : ''}${delivery.invoicing_mode === 'automatic_all' && !delivery.fel_automation_enabled ? ' Automatización FEL deshabilitada. Los comprobantes quedarán pendientes de certificación manual.' : ''}${delivery.invoicing_mode === 'automatic_all' && delivery.fel_automation_enabled && delivery.preview.fel.availability && !delivery.preview.fel.availability.available ? ` ${delivery.preview.fel.availability.reason ?? 'FEL no configurado para certificación automática.'}` : ''}`}
                 confirmLabel="Sí, entregar todo"
                 processing={deliveringAll}
                 onCancel={() => {
@@ -443,7 +471,7 @@ function StatusBadge({ status }: { status: string }) {
         processing: 'En preparación',
         picked: 'Lista para facturar',
         cancelled: 'Cancelada',
-        converted: 'Facturada',
+        converted: 'Comprobante generado',
         draft: 'Borrador',
     };
 
@@ -477,9 +505,20 @@ function Pagination<T>({ page }: { page: Page<T> }) {
 function formatDate(value?: string | null) {
     return value ? new Date(value).toLocaleString() : '-';
 }
+function paymentMethodLabel(method?: PreSale['payment_method']) {
+    if (!method) return 'Sin definir';
+
+    return ({ cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', check: 'Cheque' } as const)[method];
+}
 
 function formatMoney(value: unknown) {
     return Number(value ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function paymentMethodSummary(methods: DeliveryPreview['payment_methods']) {
+    const values = Object.entries(methods).map(([method, summary]) => `${paymentMethodLabel(method as PreSale['payment_method'])}: ${summary.count} (Q ${formatMoney(summary.total)})`);
+
+    return values.length > 0 ? values.join(', ') : 'Sin definir';
 }
 
 function formatNumber(value: unknown) {
