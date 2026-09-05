@@ -24,6 +24,7 @@ use App\Models\User;
 use App\Services\Fel\FelException;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Routes\RouteDeliveryBatchService;
+use App\Services\Routes\RoutePreSaleCollectionService;
 use App\Jobs\RoutePreSaleAutomaticFelJob;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
@@ -62,7 +63,7 @@ class RouteDeliveryBatchTest extends TestCase
         $this->assertDatabaseHas('route_delivery_batches', ['id' => $result->resultId, 'business_id' => $business->id, 'status' => 'completed']);
         $this->assertDatabaseHas('sales', ['id' => $preSale->refresh()->converted_sale_id, 'document_type' => 'receipt', 'payment_status' => 'paid', 'payment_method' => 'cash']);
         $this->assertDatabaseHas('sale_payments', ['sale_id' => $preSale->converted_sale_id, 'method' => 'cash', 'amount' => 60]);
-        $this->assertDatabaseHas('cash_movements', ['business_id' => $business->id, 'type' => 'sale_cash', 'amount' => 60]);
+        $this->assertDatabaseCount('cash_movements', 0);
         $this->assertSame(7.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
         $this->assertSame(0, StockReservation::query()->where('source_id', $preSale->id)->where('status', 'active')->count());
     }
@@ -76,7 +77,7 @@ class RouteDeliveryBatchTest extends TestCase
             app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-missing-payment-key');
             $this->fail('Expected a payment method validation error.');
         } catch (ValidationException $exception) {
-            $this->assertArrayHasKey('payment_method', $exception->errors());
+            $this->assertArrayHasKey('agreed_payment_method', $exception->errors());
         }
 
         $this->assertDatabaseCount('sales', 0);
@@ -89,6 +90,24 @@ class RouteDeliveryBatchTest extends TestCase
 
         $this->expectException(ValidationException::class);
         app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-no-cash-key');
+    }
+
+    public function test_delivery_agent_creates_an_unpaid_receipt_without_a_payment_or_cash_movement(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+        $this->openCashRegister($business, $branch, $user);
+
+        app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-agent-key');
+
+        $sale = $preSale->refresh()->convertedSale;
+        $this->assertSame('unpaid', $sale->payment_status);
+        $this->assertSame(0.0, (float) $sale->amount_paid);
+        $this->assertNull($sale->payment_method);
+        $this->assertFalse((bool) $sale->is_credit_sale);
+        $this->assertSame(0.0, (float) $sale->credit_balance);
+        $this->assertSame(0, $sale->payments()->count());
+        $this->assertDatabaseCount('cash_movements', 0);
     }
 
     public function test_picking_timing_delivery_does_not_decrease_stock_or_consume_reservations_twice(): void
@@ -151,9 +170,9 @@ class RouteDeliveryBatchTest extends TestCase
     public function test_automatic_all_does_not_dispatch_fel_for_an_ineligible_customer(): void
     {
         [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'card');
+        $preSale->update(['total' => 2500]);
         $this->openCashRegister($business, $branch, $user);
         $this->configureFelAvailability($business, $branch);
-        $preSale->update(['total' => 2500]);
         TenantSetting::query()->where('business_id', $business->id)->update(['route_pre_sale_invoicing_mode' => 'automatic_all']);
         config(['fel.route_automation_enabled' => true]);
         Queue::fake();
@@ -377,7 +396,7 @@ class RouteDeliveryBatchTest extends TestCase
         $customer = Customer::query()->create(['business_id' => $business->id, 'name' => 'Cliente '.uniqid(), 'doc_type' => 'CF', 'doc_number' => 'CF', 'country' => 'GT']);
         $product = Product::query()->create(['business_id' => $business->id, 'name' => 'Producto '.uniqid(), 'code' => 'DEL-'.uniqid(), 'cost_price' => 10, 'sale_price' => 20, 'stock' => 10, 'min_stock' => 0, 'is_active' => true]);
         ProductBranchStock::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id, 'stock' => 10]);
-        $preSale = PreSale::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_work_day_id' => $workDay->id, 'route_zone_id' => $zone->id, 'customer_id' => $customer->id, 'seller_id' => $user->id, 'status' => PreSale::STATUS_PICKED, 'subtotal' => 60, 'discount_total' => 0, 'total' => 60, 'payment_method' => $paymentMethod, 'picked_at' => now(), 'picked_by' => $user->id]);
+        $preSale = PreSale::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_work_day_id' => $workDay->id, 'route_zone_id' => $zone->id, 'customer_id' => $customer->id, 'seller_id' => $user->id, 'status' => PreSale::STATUS_PICKED, 'subtotal' => 60, 'discount_total' => 0, 'total' => 60, 'payment_method' => $paymentMethod, 'agreed_payment_method' => $paymentMethod, 'picked_at' => now(), 'picked_by' => $user->id]);
         $item = PreSaleItem::query()->create(['business_id' => $business->id, 'pre_sale_id' => $preSale->id, 'product_id' => $product->id, 'quantity' => 3, 'picked_quantity' => 3, 'unit_price' => 20, 'original_price' => 20, 'discount' => 0, 'total' => 60]);
         StockReservation::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id, 'source_type' => 'pre_sale', 'source_id' => $preSale->id, 'source_item_id' => $item->id, 'quantity' => 3, 'status' => 'active', 'created_by' => $user->id]);
 
@@ -387,6 +406,12 @@ class RouteDeliveryBatchTest extends TestCase
     private function openCashRegister(Business $business, $branch, User $user): void
     {
         CashRegisterSession::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'opened_by' => $user->id, 'status' => 'open', 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now()]);
+        if (TenantSetting::query()->where('business_id', $business->id)->value('route_collection_responsibility') === 'delivery_agent') {
+            return;
+        }
+        PreSale::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('seller_id', $user->id)->where('status', PreSale::STATUS_PICKED)->whereNotNull('agreed_payment_method')->each(function (PreSale $preSale) use ($user) {
+            app(RoutePreSaleCollectionService::class)->capture($preSale, ['amount' => $preSale->total, 'payment_method' => $preSale->agreed_payment_method, 'idempotency_key' => 'fixture-collection-'.$preSale->id], $user);
+        });
     }
 
     private function configureFelAvailability(Business $business, $branch): void

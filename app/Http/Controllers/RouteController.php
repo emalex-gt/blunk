@@ -370,21 +370,26 @@ class RouteController extends Controller
             ->paginate(25)
             ->withQueryString();
 
+        $collectionResponsibility = $routeSettings?->route_collection_responsibility === 'delivery_agent' ? 'delivery_agent' : 'pre_seller';
         $deliverablePreSales = PreSale::query()
             ->where('business_id', $businessId)
             ->where('branch_id', $workDay->branch_id)
             ->where('route_work_day_id', $workDay->id)
             ->where('status', PreSale::STATUS_PICKED)
             ->whereNull('converted_sale_id')
-            ->with('customer:id,name,commercial_name,contact_name,doc_type,doc_number,is_final_consumer,tax_lookup_verified_at,name_locked')
+            ->with([
+                'customer:id,name,commercial_name,contact_name,doc_type,doc_number,is_final_consumer,tax_lookup_verified_at,name_locked',
+                'collections' => fn ($query) => $query->whereIn('status', ['captured', 'linked']),
+            ])
             ->get();
         $eligibilityService = app(RoutePreSaleFelEligibilityService::class);
         $paymentMethods = [];
         $missingPaymentMethodIds = [];
+        $missingCollectionIds = [];
         $notEligible = [];
 
         foreach ($deliverablePreSales as $deliverablePreSale) {
-            $paymentMethod = $deliverablePreSale->payment_method;
+            $paymentMethod = $deliverablePreSale->agreed_payment_method;
 
             if (! $paymentMethod) {
                 $missingPaymentMethodIds[] = $deliverablePreSale->id;
@@ -392,6 +397,9 @@ class RouteController extends Controller
                 $paymentMethods[$paymentMethod] ??= ['count' => 0, 'total' => 0.0];
                 $paymentMethods[$paymentMethod]['count']++;
                 $paymentMethods[$paymentMethod]['total'] += (float) $deliverablePreSale->total;
+            }
+            if ($collectionResponsibility === 'pre_seller' && $deliverablePreSale->collections->isEmpty()) {
+                $missingCollectionIds[] = $deliverablePreSale->id;
             }
 
             $eligibility = $eligibilityService->evaluate($deliverablePreSale);
@@ -415,10 +423,12 @@ class RouteController extends Controller
             : ($deliverablePreSales->isEmpty()
                 ? 'No hay preventas preparadas para entregar.'
                 : ($missingPaymentMethodIds !== []
-                    ? 'Todas las preventas preparadas deben tener una forma de pago definida.'
+                    ? 'Todas las preventas preparadas deben tener un método de pago acordado.'
+                    : ($missingCollectionIds !== []
+                        ? 'Debe registrar el cobro completo de cada preventa antes de entregar.'
                     : ($requiresFelEligibleCustomer && $notEligible !== []
                         ? 'Hay preventas sin cliente apto para FEL. Corrige los datos fiscales antes de generar comprobantes.'
-                        : null)));
+                        : null))));
         $canDeliverAll = Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_PICK)
             && (int) $workDay->branch_id === (int) $activeBranchId
             && $deliveryBlockingReason === null;
@@ -427,6 +437,8 @@ class RouteController extends Controller
             'total' => round((float) $deliverablePreSales->sum('total'), 2),
             'payment_methods' => $paymentMethods,
             'missing_payment_method' => ['count' => count($missingPaymentMethodIds), 'pre_sale_ids' => $missingPaymentMethodIds],
+            'missing_collection' => ['count' => count($missingCollectionIds), 'pre_sale_ids' => $missingCollectionIds],
+            'collection_responsibility' => $collectionResponsibility,
             'fel' => [
                 'not_eligible_count' => count($notEligible),
                 'not_eligible' => $notEligible,
@@ -467,6 +479,7 @@ class RouteController extends Controller
                 'deliverable_count' => $deliverableCount,
                 'invoicing_mode' => $invoicingMode,
                 'fel_automation_enabled' => (bool) config('fel.route_automation_enabled'),
+                'collection_responsibility' => $collectionResponsibility,
                 'preview' => $deliveryPreview,
             ],
         ]);
@@ -611,6 +624,7 @@ class RouteController extends Controller
             'workDay:id,work_date,status,started_at,closed_at',
             'visit:id,status,visit_order,no_sale_reason,no_sale_note,started_at,finished_at',
             'items.product:id,business_id,name,code,barcode,image_url',
+            'collections' => fn ($query) => $query->whereIn('status', ['captured', 'linked'])->with(['collectedBy:id,name', 'recordedBy:id,name']),
         ]);
 
         $productIds = $preSale->items->pluck('product_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
@@ -637,6 +651,23 @@ class RouteController extends Controller
         $felEligibility = app(RoutePreSaleFelEligibilityService::class)->evaluate($preSale);
         $felAvailability = app(RoutePreSaleFelAvailabilityService::class)->evaluate($business, $preSale->branch);
         $routeCash = app(RouteCashOperationGuard::class)->status((int) $preSale->business_id, (int) $preSale->branch_id);
+        $collectionResponsibility = $tenantSettings?->route_collection_responsibility === 'delivery_agent' ? 'delivery_agent' : 'pre_seller';
+        $activeCollection = $preSale->collections->first();
+        $actor = request()->user();
+        $canOverrideCollection = Permissions::userHas($actor, Permissions::ROUTES_COLLECTIONS_OVERRIDE);
+        $requiresCollectionOverride = (int) $preSale->seller_id !== (int) $actor->id;
+        $canRegisterCollection = $collectionResponsibility === 'pre_seller'
+            && $routeCash['is_open']
+            && $activeCollection === null
+            && (! $requiresCollectionOverride || $canOverrideCollection)
+            && in_array($preSale->status, [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING, PreSale::STATUS_PICKED], true);
+        $collectionStatus = $activeCollection?->status ?? ($collectionResponsibility === 'delivery_agent' ? 'pending_delivery_collection' : 'pending_collection');
+        $collectionPayload = $activeCollection ? [
+            'amount' => (float) $activeCollection->amount, 'payment_method' => $activeCollection->payment_method,
+            'reference' => $activeCollection->reference, 'collected_by' => $activeCollection->collectedBy,
+            'recorded_by' => $activeCollection->recordedBy, 'collected_at' => $activeCollection->collected_at?->toIso8601String(),
+            'custody_status' => $activeCollection->custody_status,
+        ] : null;
 
         return Inertia::render('Routes/PreSales/Show', [
             'preSale' => [
@@ -659,6 +690,10 @@ class RouteController extends Controller
                 'cancellation_note' => $preSale->cancellation_note,
                 'notes' => $preSale->notes,
                 'payment_method' => $preSale->payment_method,
+                'agreed_payment_method' => $preSale->agreed_payment_method,
+                'collection_responsibility' => $collectionResponsibility,
+                'collection_status' => $collectionStatus,
+                'collection' => $collectionPayload,
                 'subtotal' => (float) $preSale->subtotal,
                 'discount_total' => (float) $preSale->discount_total,
                 'total' => (float) $preSale->total,
@@ -699,7 +734,18 @@ class RouteController extends Controller
             ],
             'canInvoice' => $routeCash['is_open'] && $this->canInvoiceRoutePreSales(request()->user(), $invoiceOptions)
                 && (int) BranchInventory::activeBranch((int) $preSale->business_id)->id === (int) $preSale->branch_id,
-            'canCertifyFel' => $routeCash['is_open'] && $this->canCertifyRoutePreSaleFel($preSale, $invoiceOptions, $felEligibility),
+            'canCertifyFel' => $this->canCertifyRoutePreSaleFel($preSale, $invoiceOptions, $felEligibility),
+            'canRegisterCollection' => $canRegisterCollection,
+            'canOverrideCollection' => $canOverrideCollection,
+            'requiresCollectionOverride' => $requiresCollectionOverride,
+            'collectionResponsibility' => $collectionResponsibility,
+            'collectionStatus' => $collectionStatus,
+            'activeCollection' => $collectionPayload,
+            'custodyStatus' => $collectionPayload['custody_status'] ?? null,
+            'deliveryAgentCollectionMessage' => $collectionResponsibility === 'delivery_agent' ? 'El cobro se registrará durante la entrega.' : null,
+            'collectionCollectors' => $canOverrideCollection
+                ? User::query()->where('business_id', $preSale->business_id)->where('is_active', true)->orderBy('name')->get(['id', 'name'])
+                : [],
             'invoiceOptions' => $invoiceOptions,
             'stockDeductionTiming' => $tenantSettings?->route_pre_sale_stock_deduction_timing === 'picking' ? 'picking' : 'invoice',
             'routeCash' => $routeCash,
@@ -1212,6 +1258,7 @@ class RouteController extends Controller
             $preSale->update([
                 'notes' => $data['notes'] ?? null,
                 'payment_method' => $paymentMethod,
+                'agreed_payment_method' => $paymentMethod,
                 'payment_method_set_at' => $paymentMethod ? now() : null,
                 'payment_method_set_by' => $paymentMethod ? $request->user()->id : null,
                 'subtotal' => round($subtotal, 2),

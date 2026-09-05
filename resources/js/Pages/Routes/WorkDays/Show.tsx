@@ -62,6 +62,7 @@ type DeliveryPreview = {
     total: number;
     payment_methods: Record<string, { count: number; total: number }>;
     missing_payment_method: { count: number; pre_sale_ids: number[] };
+    missing_collection?: { count: number; pre_sale_ids: number[] };
     fel: { not_eligible_count: number; not_eligible: Array<{ pre_sale_id: number; reason?: string | null }>; availability: { available: boolean; reason?: string | null } | null };
     cash: { is_open: boolean };
     blocking_reason?: string | null;
@@ -78,7 +79,7 @@ type Props = {
         stock_deduction_timing: 'picking' | 'invoice';
         invoicing_mode: 'manual' | 'automatic_all';
     };
-    delivery: { can_deliver_all: boolean; deliverable_count: number; invoicing_mode: 'manual' | 'automatic_all'; fel_automation_enabled: boolean; preview: DeliveryPreview };
+    delivery: { can_deliver_all: boolean; deliverable_count: number; invoicing_mode: 'manual' | 'automatic_all'; fel_automation_enabled: boolean; collection_responsibility: 'pre_seller' | 'delivery_agent'; preview: DeliveryPreview };
     routeCash: { is_open: boolean };
 };
 
@@ -177,7 +178,7 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                             Preparaciones
                         </Link>
                         <Link href={route('routes.delivery-batches.index')} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                            Entregas
+                            Lotes de comprobantes
                         </Link>
                         <Link href={route('routes.pre-sales.index')} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                             Cola de preventas
@@ -354,8 +355,8 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
             <ConfirmDialog
                 open={deliverAllOpen}
                 title="Entregar todas las preventas preparadas"
-                message="Esta acción generará los comprobantes internos, registrará los pagos y cerrará la entrega de las preventas preparadas."
-                details={`${delivery.preview.count} preventa(s) serán entregadas. Total: Q ${formatMoney(delivery.preview.total)}. Formas de pago: ${paymentMethodSummary(delivery.preview.payment_methods)}.${delivery.preview.missing_payment_method.count ? ` Faltan ${delivery.preview.missing_payment_method.count} forma(s) de pago.` : ''}${delivery.preview.fel.not_eligible_count ? ` ${delivery.preview.fel.not_eligible_count} preventa(s) no son elegibles para FEL.` : ''}${!delivery.preview.cash.is_open ? ' No hay caja abierta para operar rutas y registrar comprobantes.' : ''}${delivery.invoicing_mode === 'automatic_all' && !delivery.fel_automation_enabled ? ' Automatización FEL deshabilitada. Los comprobantes quedarán pendientes de certificación manual.' : ''}${delivery.invoicing_mode === 'automatic_all' && delivery.fel_automation_enabled && delivery.preview.fel.availability && !delivery.preview.fel.availability.available ? ` ${delivery.preview.fel.availability.reason ?? 'FEL no configurado para certificación automática.'}` : ''}`}
+                message={delivery.collection_responsibility === 'delivery_agent' ? 'Se generará un comprobante pendiente de cobro en entrega.' : 'Esta acción generará los comprobantes internos y cerrará la entrega de las preventas preparadas.'}
+                details={`${delivery.preview.count} preventa(s) serán entregadas. Total: Q ${formatMoney(delivery.preview.total)}. Métodos acordados: ${paymentMethodSummary(delivery.preview.payment_methods)}.${delivery.preview.missing_payment_method.count ? ` Faltan ${delivery.preview.missing_payment_method.count} método(s) acordado(s).` : ''}${delivery.preview.missing_collection?.count ? ` Faltan ${delivery.preview.missing_collection.count} cobro(s) completo(s) registrados.` : ''}${delivery.preview.fel.not_eligible_count ? ` ${delivery.preview.fel.not_eligible_count} preventa(s) no son elegibles para FEL.` : ''}${!delivery.preview.cash.is_open ? ' No hay caja abierta para operar rutas y registrar comprobantes.' : ''}${delivery.invoicing_mode === 'automatic_all' && !delivery.fel_automation_enabled ? ' Automatización FEL deshabilitada. Los comprobantes quedarán pendientes de certificación manual.' : ''}${delivery.invoicing_mode === 'automatic_all' && delivery.fel_automation_enabled && delivery.preview.fel.availability && !delivery.preview.fel.availability.available ? ` ${delivery.preview.fel.availability.reason ?? 'FEL no configurado para certificación automática.'}` : ''}`}
                 confirmLabel="Sí, entregar todo"
                 processing={deliveringAll}
                 onCancel={() => {

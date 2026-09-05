@@ -17,6 +17,7 @@ use App\Http\Controllers\InventoryTransferController;
 use App\Http\Controllers\OperationDraftController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\RouteController;
+use App\Http\Controllers\RoutePreSaleCollectionController;
 use App\Http\Controllers\RoutePreparationBatchController;
 use App\Http\Controllers\RouteDeliveryBatchController;
 use App\Http\Controllers\RoutePreSaleFelController;
@@ -306,6 +307,9 @@ Route::middleware('auth')->group(function () {
             Route::post('/pre-sales/{preSale}/invoice', [RoutePreSaleInvoiceController::class, 'store'])
                 ->middleware('permission:routes.pre_sales.invoice')
                 ->name('pre-sales.invoice');
+            Route::post('/pre-sales/{preSale}/collection', [RoutePreSaleCollectionController::class, 'store'])
+                ->middleware('permission:routes.pre_sales.view')
+                ->name('pre-sales.collection.store');
             Route::post('/pre-sales/{preSale}/fel/certify', [RoutePreSaleFelController::class, 'certify'])
                 ->middleware(['module:fel_gt', 'permission:fel.certify'])
                 ->name('pre-sales.fel.certify');

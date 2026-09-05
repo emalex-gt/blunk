@@ -28,6 +28,7 @@ class PreSale extends Model
         'discount_total',
         'total',
         'payment_method',
+        'agreed_payment_method',
         'payment_method_set_at',
         'payment_method_set_by',
         'notes',
@@ -130,5 +131,10 @@ class PreSale extends Model
     public function deliveryBatchEntries(): HasMany
     {
         return $this->hasMany(RouteDeliveryBatchPreSale::class);
+    }
+
+    public function collections(): HasMany
+    {
+        return $this->hasMany(RoutePreSaleCollection::class);
     }
 }

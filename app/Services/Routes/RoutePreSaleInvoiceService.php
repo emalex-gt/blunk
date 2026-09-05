@@ -43,6 +43,8 @@ class RoutePreSaleInvoiceService
         $felSettings = TenantFelSetting::query()->where('business_id', $business->id)->first();
         $stockDeductionTiming = $this->stockDeductionTiming($settings);
         $isCreditSale = ($data['payment_condition'] ?? 'paid') === 'credit';
+        $isUnpaidRouteReceipt = (bool) ($data['route_internal_receipt'] ?? false) && ($data['payment_condition'] ?? 'paid') === 'unpaid';
+        $skipPaymentPosting = (bool) ($data['skip_payment_posting'] ?? false);
         $failedFel = null;
 
         $this->assertDocumentIsAvailable(
@@ -63,7 +65,7 @@ class RoutePreSaleInvoiceService
             abort_unless(Permissions::userHas($user, Permissions::CREDITS_SALES_CREATE), 403);
         }
 
-        if (! $isCreditSale && empty($data['payment_method'])) {
+        if (! $isCreditSale && ! $isUnpaidRouteReceipt && empty($data['payment_method'])) {
             throw ValidationException::withMessages([
                 'payment_method' => 'Selecciona una forma de pago.',
             ]);
@@ -83,8 +85,8 @@ class RoutePreSaleInvoiceService
                 'route_pre_sale_invoice',
                 $data['idempotency_key'],
                 $this->idempotencyPayload($preSale, $data, $snapshotItems),
-                function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $stockDeductionTiming, &$failedFel) {
-                    return DB::transaction(function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $stockDeductionTiming, &$failedFel) {
+                function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $isUnpaidRouteReceipt, $skipPaymentPosting, $stockDeductionTiming, &$failedFel) {
+                    return DB::transaction(function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $isUnpaidRouteReceipt, $skipPaymentPosting, $stockDeductionTiming, &$failedFel) {
                         $lockedPreSale = PreSale::query()
                             ->where('business_id', $preSale->business_id)
                             ->whereKey($preSale->id)
@@ -226,7 +228,7 @@ class RoutePreSaleInvoiceService
                             AccountsReceivable::assertCanCharge($customer, $total, (int) $lockedPreSale->branch_id);
                         }
 
-                        $cashSession = $isCreditSale
+                        $cashSession = ($isCreditSale || $isUnpaidRouteReceipt || $skipPaymentPosting)
                             ? null
                             : app(RouteCashOperationGuard::class)->requireOpen(
                                 (int) $lockedPreSale->business_id,
@@ -240,9 +242,9 @@ class RoutePreSaleInvoiceService
                             'branch_id' => $lockedPreSale->branch_id,
                             'customer_id' => $customer?->id,
                             ...$this->customerSnapshot($customer),
-                            'payment_method' => $isCreditSale ? 'credit' : $data['payment_method'],
-                            'payment_status' => $isCreditSale ? 'unpaid' : 'paid',
-                            'amount_paid' => $isCreditSale ? 0 : $total,
+                            'payment_method' => $isCreditSale ? 'credit' : ($isUnpaidRouteReceipt ? null : $data['payment_method']),
+                            'payment_status' => ($isCreditSale || $isUnpaidRouteReceipt) ? 'unpaid' : 'paid',
+                            'amount_paid' => ($isCreditSale || $isUnpaidRouteReceipt) ? 0 : $total,
                             'credit_balance' => $isCreditSale ? $total : 0,
                             'is_credit_sale' => $isCreditSale,
                             'due_date' => $isCreditSale ? ($data['due_date'] ?? null) : null,
@@ -299,7 +301,7 @@ class RoutePreSaleInvoiceService
                             }
                         }
 
-                        if (! $isCreditSale) {
+                        if (! $isCreditSale && ! $isUnpaidRouteReceipt && ! $skipPaymentPosting) {
                             $sale->payments()->create([
                                 'business_id' => $sale->business_id,
                                 'method' => $data['payment_method'],

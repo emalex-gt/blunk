@@ -41,6 +41,10 @@ type PreSale = {
     cancellation_note?: string | null;
     notes?: string | null;
     payment_method?: 'cash' | 'card' | 'transfer' | 'check' | null;
+    agreed_payment_method?: 'cash' | 'card' | 'transfer' | 'check' | null;
+    collection_responsibility?: 'pre_seller' | 'delivery_agent';
+    collection_status?: string;
+    collection?: { amount: number; payment_method: string; reference?: string | null; collected_by?: Related | null; recorded_by?: Related | null; collected_at?: string | null; custody_status?: string | null } | null;
     subtotal: number;
     discount_total: number;
     total: number;
@@ -70,13 +74,14 @@ type InvoiceOptions = {
 };
 
 type FelState = { status: 'not_requested' | 'pending' | 'failed' | 'unknown' | 'certified'; error_message?: string | null; uuid?: string | null };
-type Props = { preSale: PreSale; canInvoice: boolean; canCertifyFel: boolean; invoiceOptions: InvoiceOptions; fel: FelState; stockDeductionTiming: 'picking' | 'invoice'; routeCash: { is_open: boolean } };
+type Props = { preSale: PreSale; canInvoice: boolean; canCertifyFel: boolean; canRegisterCollection: boolean; canOverrideCollection: boolean; requiresCollectionOverride: boolean; collectionCollectors: Related[]; invoiceOptions: InvoiceOptions; fel: FelState; stockDeductionTiming: 'picking' | 'invoice'; routeCash: { is_open: boolean } };
 
 const cancellationReasons = ['Cliente canceló', 'Producto no disponible', 'Duplicada', 'Error de captura', 'Otro'];
 
-export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOptions, fel, stockDeductionTiming, routeCash }: Props) {
+export default function Show({ preSale, canInvoice, canCertifyFel, canRegisterCollection, canOverrideCollection, requiresCollectionOverride, collectionCollectors, invoiceOptions, fel, stockDeductionTiming, routeCash }: Props) {
     const [cancelOpen, setCancelOpen] = useState(false);
     const [invoiceOpen, setInvoiceOpen] = useState(false);
+    const [collectionOpen, setCollectionOpen] = useState(false);
     const processingLockedRef = useRef(false);
     const invoiceSubmitLockedRef = useRef(false);
     const cancelForm = useForm({ idempotency_key: makeOperationKey('pre-sale-cancel'), cancellation_reason: '', cancellation_note: '' });
@@ -89,6 +94,15 @@ export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOption
         pre_sale: '',
     });
     const felForm = useForm({ idempotency_key: makeOperationKey('pre-sale-fel') });
+    const collectionForm = useForm({
+        idempotency_key: makeOperationKey('pre-sale-collection'),
+        amount: String(preSale.total),
+        payment_method: preSale.agreed_payment_method ?? '',
+        reference: '',
+        collected_by: preSale.seller?.id ? String(preSale.seller.id) : '',
+        collected_at: '',
+        override_reason: '',
+    });
     const felErrors = felForm.errors as Record<string, string>;
 
     const markProcessing = () => {
@@ -159,6 +173,27 @@ export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOption
         }
     };
 
+    const submitCollection = (event: FormEvent) => {
+        event.preventDefault();
+        if (collectionForm.processing) return;
+
+        collectionForm.post(route('routes.pre-sales.collection.store', preSale.id), {
+            preserveScroll: true,
+            onSuccess: () => {
+                setCollectionOpen(false);
+                collectionForm.setData({
+                    idempotency_key: makeOperationKey('pre-sale-collection'),
+                    amount: String(preSale.total),
+                    payment_method: preSale.agreed_payment_method ?? '',
+                    reference: '',
+                    collected_by: preSale.seller?.id ? String(preSale.seller.id) : '',
+                    collected_at: '',
+                    override_reason: '',
+                });
+            },
+        });
+    };
+
     return (
         <AuthenticatedLayout>
             <Head title={`Preventa #${preSale.id}`} />
@@ -203,6 +238,11 @@ export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOption
                         )}
                     </div>
                 </div>
+                <section className="rounded-lg border border-slate-200 bg-white p-4">
+                    <h2 className="text-sm font-semibold text-slate-900">Cobro</h2>
+                    <p className="mt-1 text-sm text-slate-600">Método de pago acordado: {paymentMethodLabel(preSale.agreed_payment_method)}</p>
+                    {preSale.collection_responsibility === 'delivery_agent' ? <p className="mt-2 text-sm font-semibold text-amber-800">El cobro se registrará durante la entrega.</p> : preSale.collection ? <div className="mt-2 grid gap-1 text-sm text-slate-700"><div><span className="font-semibold">Cobro registrado</span>: {paymentMethodLabel(preSale.collection.payment_method as PreSale['payment_method'])} · Q {preSale.collection.amount.toFixed(2)}</div><div>Cobrador: {preSale.collection.collected_by?.name ?? '-'} · Fecha/hora: {preSale.collection.collected_at ? new Date(preSale.collection.collected_at).toLocaleString() : '-'}</div>{preSale.collection.recorded_by && preSale.collection.recorded_by.id !== preSale.collection.collected_by?.id && <div>Registrado por: {preSale.collection.recorded_by.name}</div>}<div>Custodia: {custodyLabel(preSale.collection.custody_status)}</div>{preSale.collection.reference && <div>Referencia: {preSale.collection.reference}</div>}</div> : <div className="mt-2 flex items-center gap-3"><span className="text-sm font-semibold text-amber-800">Cobro pendiente</span>{canRegisterCollection && <button type="button" onClick={() => setCollectionOpen(true)} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Registrar cobro</button>}{canOverrideCollection && <span className="text-xs text-slate-500">Override administrativo disponible</span>}</div>}
+                </section>
 
                 <div className="grid gap-4 lg:grid-cols-3">
                     <InfoCard title="Cliente">
@@ -357,6 +397,22 @@ export default function Show({ preSale, canInvoice, canCertifyFel, invoiceOption
                 </div>
             )}
 
+            {collectionOpen && (
+                <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/50 p-4 sm:flex sm:items-center sm:justify-center">
+                    <form onSubmit={submitCollection} className="mx-auto w-full max-w-lg rounded-xl bg-white p-5 shadow-xl">
+                        <div className="flex items-start justify-between gap-4"><div><h2 className="text-lg font-semibold text-slate-950">Registrar cobro</h2><p className="mt-1 text-sm text-slate-600">Registra el cobro real completo de esta preventa.</p></div><button type="button" onClick={() => setCollectionOpen(false)} disabled={collectionForm.processing} className="text-sm font-semibold text-slate-500 hover:text-slate-800">Cerrar</button></div>
+                        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                            <label className="block"><span className="text-xs font-semibold text-slate-600">Método real</span><select value={collectionForm.data.payment_method} onChange={(event) => collectionForm.setData('payment_method', event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm"><option value="">Selecciona</option>{invoiceOptions.payment_methods.map((method) => <option key={method} value={method}>{paymentMethodLabel(method)}</option>)}</select>{collectionForm.errors.payment_method && <p className="mt-1 text-xs font-semibold text-red-600">{collectionForm.errors.payment_method}</p>}</label>
+                            <label className="block"><span className="text-xs font-semibold text-slate-600">Importe completo</span><input type="number" min="0.01" step="0.01" value={collectionForm.data.amount} onChange={(event) => collectionForm.setData('amount', event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm" />{collectionForm.errors.amount && <p className="mt-1 text-xs font-semibold text-red-600">{collectionForm.errors.amount}</p>}</label>
+                        </div>
+                        <label className="mt-4 block"><span className="text-xs font-semibold text-slate-600">Referencia</span><input value={collectionForm.data.reference} onChange={(event) => collectionForm.setData('reference', event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm" />{collectionForm.errors.reference && <p className="mt-1 text-xs font-semibold text-red-600">{collectionForm.errors.reference}</p>}</label>
+                        {requiresCollectionOverride && <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4"><p className="text-sm font-semibold text-amber-900">Registro por override</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><label><span className="text-xs font-semibold text-slate-600">Cobrador</span><select value={collectionForm.data.collected_by} onChange={(event) => collectionForm.setData('collected_by', event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm"><option value="">Selecciona</option>{collectionCollectors.map((collector) => <option key={collector.id} value={collector.id}>{collector.name}</option>)}</select>{collectionForm.errors.collected_by && <p className="mt-1 text-xs font-semibold text-red-600">{collectionForm.errors.collected_by}</p>}</label><label><span className="text-xs font-semibold text-slate-600">Fecha y hora de cobro</span><input type="datetime-local" value={collectionForm.data.collected_at} onChange={(event) => collectionForm.setData('collected_at', event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm" />{collectionForm.errors.collected_at && <p className="mt-1 text-xs font-semibold text-red-600">{collectionForm.errors.collected_at}</p>}</label></div><label className="mt-3 block"><span className="text-xs font-semibold text-slate-600">Motivo del override</span><textarea rows={3} value={collectionForm.data.override_reason} onChange={(event) => collectionForm.setData('override_reason', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />{collectionForm.errors.override_reason && <p className="mt-1 text-xs font-semibold text-red-600">{collectionForm.errors.override_reason}</p>}</label></div>}
+                        {(collectionForm.errors as Record<string, string | undefined>).collection && <p className="mt-3 text-sm font-semibold text-red-600">{(collectionForm.errors as Record<string, string | undefined>).collection}</p>}
+                        <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setCollectionOpen(false)} disabled={collectionForm.processing} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">Volver</button><button disabled={collectionForm.processing} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">{collectionForm.processing ? 'Registrando...' : 'Confirmar cobro'}</button></div>
+                    </form>
+                </div>
+            )}
+
             {invoiceOpen && (
                 <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/50 p-4 sm:flex sm:items-center sm:justify-center">
                     <form onSubmit={submitInvoice} className="mx-auto w-full max-w-3xl rounded-xl bg-white p-5 shadow-xl">
@@ -469,6 +525,10 @@ function preparedLineTotal(item: PreSaleItem) {
     return Math.max(0, (pickedQuantity * item.unit_price) - ((item.discount / quantity) * pickedQuantity));
 }
 
-function paymentMethodLabel(method: InvoiceOptions['payment_methods'][number]) {
-    return ({ cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', check: 'Cheque' } as const)[method];
+function paymentMethodLabel(method?: InvoiceOptions['payment_methods'][number] | null) {
+    return ({ cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', check: 'Cheque' } as Record<string, string>)[method ?? ''] ?? 'Sin definir';
+}
+
+function custodyLabel(status?: string | null) {
+    return ({ held_by_collector: 'En custodia del cobrador', posted_to_branch_cash: 'Registrado en caja', not_applicable: 'No aplica' } as Record<string, string>)[status ?? ''] ?? 'No aplica';
 }

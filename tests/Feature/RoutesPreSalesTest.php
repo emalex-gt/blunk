@@ -1870,11 +1870,13 @@ class RoutesPreSalesTest extends TestCase
             'picked_at' => now(),
             'picked_by' => $admin->id,
             'payment_method' => 'cash',
+            'agreed_payment_method' => 'cash',
             'total' => 100,
         ]);
         $missingPayment = $preSale->replicate(['id']);
         $missingPayment->route_visit_id = null;
         $missingPayment->payment_method = null;
+        $missingPayment->agreed_payment_method = null;
         $missingPayment->total = 25;
         $missingPayment->save();
 

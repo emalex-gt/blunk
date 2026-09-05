@@ -29,6 +29,7 @@ use App\Models\User;
 use App\Services\Fel\FelException;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Routes\RoutePreSaleFelEligibilityService;
+use App\Services\Routes\RoutePreSaleInvoiceService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -137,6 +138,51 @@ class RoutePreSaleInvoiceTest extends TestCase
         $this->assertDatabaseHas('electronic_documents', ['sale_id' => $sale->id, 'status' => 'certified']);
         $this->assertSame($stockBeforeCertification, (float) ProductBranchStock::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('product_id', $product->id)->value('stock'));
         $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('product_id', $product->id)->count());
+    }
+
+    public function test_unpaid_route_receipt_can_be_certified_without_an_open_cash_register_or_financial_posting(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(allowInvoices: true);
+        $this->felSettings($business, $branch);
+        $product = $this->product($business, $branch, stock: 10, price: 100);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product, quantity: 2, pickedQuantity: 2);
+
+        app(RoutePreSaleInvoiceService::class)->convert($preSale, [
+            'idempotency_key' => 'route-unpaid-receipt-without-cash',
+            'document_type' => 'receipt',
+            'payment_condition' => 'unpaid',
+            'payment_method' => null,
+            'route_internal_receipt' => true,
+            'note' => 'Cobro pendiente de entrega.',
+        ], $admin);
+
+        $sale = $preSale->refresh()->convertedSale()->firstOrFail();
+        $stockMovementsBeforeFel = StockMovement::query()->where('business_id', $business->id)->count();
+        $activeReservationsBeforeFel = StockReservation::query()->where('source_id', $preSale->id)->where('status', 'active')->count();
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $certifiedSale): ElectronicDocument {
+            $document = $certifiedSale->electronicDocument()->firstOrFail();
+            $document->update(['status' => 'certified', 'uuid' => 'route-unpaid-fel-uuid', 'series' => 'A', 'number' => '1', 'certification_date' => now()]);
+            $certifiedSale->update(['certification_status' => 'certified', 'fel_status' => 'CERTIFIED', 'fel_uuid' => 'route-unpaid-fel-uuid']);
+
+            return $document->refresh();
+        });
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.fel.certify', $preSale), ['idempotency_key' => 'route-unpaid-fel-without-cash'])
+            ->assertRedirect(route('routes.pre-sales.show', $preSale))
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('electronic_documents', ['sale_id' => $sale->id, 'status' => 'certified']);
+        $this->assertSame('unpaid', $sale->refresh()->payment_status);
+        $this->assertSame(0.0, (float) $sale->amount_paid);
+        $this->assertSame(0, $sale->payments()->count());
+        $this->assertSame(0, \App\Models\CashMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CustomerAccountMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame($stockMovementsBeforeFel, StockMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame($activeReservationsBeforeFel, StockReservation::query()->where('source_id', $preSale->id)->where('status', 'active')->count());
     }
 
     public function test_failed_route_fel_keeps_the_internal_receipt_and_all_existing_operational_effects(): void

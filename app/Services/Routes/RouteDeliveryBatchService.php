@@ -10,6 +10,7 @@ use App\Models\PreSale;
 use App\Models\RouteDeliveryBatch;
 use App\Models\RouteDeliveryBatchPreSale;
 use App\Models\RouteWorkDay;
+use App\Models\RoutePreSaleCollection;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\BranchInventory;
@@ -57,6 +58,7 @@ class RouteDeliveryBatchService
                     $this->cash->requireOpen($businessId, $branchId, true);
 
                     $settings = TenantSetting::query()->where('business_id', $businessId)->first();
+                    $collectionResponsibility = $settings?->route_collection_responsibility === 'delivery_agent' ? 'delivery_agent' : 'pre_seller';
                     $timing = $settings?->route_pre_sale_stock_deduction_timing === 'picking' ? 'picking' : 'invoice';
                     $mode = in_array($settings?->route_pre_sale_invoicing_mode, ['automatic', 'automatic_all'], true) ? 'automatic_all' : 'manual';
                     $automationEnabled = $mode === 'automatic_all' && (bool) config('fel.route_automation_enabled');
@@ -84,8 +86,11 @@ class RouteDeliveryBatchService
 
                     $eligibilityByPreSale = [];
                     foreach ($preSales as $preSale) {
-                        if (! in_array($preSale->payment_method, self::PAYMENT_METHODS, true)) {
-                            throw ValidationException::withMessages(['payment_method' => 'Cada preventa preparada debe tener una forma de pago antes de entregar.']);
+                        if (! in_array($preSale->agreed_payment_method, self::PAYMENT_METHODS, true)) {
+                            throw ValidationException::withMessages(['agreed_payment_method' => 'Cada preventa preparada debe tener un método de pago acordado antes de entregar.']);
+                        }
+                        if ($collectionResponsibility === 'pre_seller' && ! RoutePreSaleCollection::query()->where('business_id', $businessId)->where('branch_id', $branchId)->where('pre_sale_id', $preSale->id)->whereIn('status', ['captured', 'linked'])->lockForUpdate()->exists()) {
+                            throw ValidationException::withMessages(['collection' => 'Debe registrar el cobro antes de generar el comprobante.']);
                         }
 
                         $eligibility = $this->eligibility->persist($preSale);
@@ -112,13 +117,27 @@ class RouteDeliveryBatchService
                     $automaticFelSales = [];
 
                     foreach ($preSales as $preSale) {
+                        $collection = $collectionResponsibility === 'pre_seller'
+                            ? RoutePreSaleCollection::query()->where('business_id', $businessId)->where('branch_id', $branchId)->where('pre_sale_id', $preSale->id)->where('status', 'captured')->lockForUpdate()->firstOrFail()
+                            : null;
+                        if ($collection && round((float) $collection->amount, 2) !== round((float) $preSale->total, 2)) {
+                            throw ValidationException::withMessages(['collection' => 'El cobro debe coincidir con el total final de la preventa.']);
+                        }
                         $receipt = $this->receipts->convertToInternalReceipt($preSale, [
                             'idempotency_key' => 'route-delivery-'.hash('sha256', "{$batch->id}:{$preSale->id}:{$idempotencyKey}"),
-                            'payment_condition' => 'paid',
-                            'payment_method' => $preSale->payment_method,
+                            'payment_condition' => $collectionResponsibility === 'delivery_agent' ? 'unpaid' : 'paid',
+                            'payment_method' => $collection?->payment_method,
+                            'skip_payment_posting' => $collectionResponsibility === 'pre_seller',
                             'note' => "Entrega de ruta #{$batch->id}",
                         ], $user);
                         $sale = $preSale->refresh()->convertedSale()->withCount('items')->firstOrFail();
+                        if ($collection) {
+                            $sale->payments()->firstOrCreate(
+                                ['route_pre_sale_collection_id' => $collection->id],
+                                ['business_id' => $businessId, 'method' => $collection->payment_method, 'amount' => $sale->total, 'reference' => $collection->reference, 'collected_by' => $collection->collected_by, 'collected_at' => $collection->collected_at, 'cash_register_session_id' => $collection->cash_register_session_id],
+                            );
+                            $collection->update(['status' => 'linked']);
+                        }
                         $automaticFelReason = null;
                         $eligibleForAutomaticFel = $automationEnabled && (bool) $eligibilityByPreSale[$preSale->id]['eligible'] && (bool) ($felAvailability['available'] ?? false);
 
@@ -147,7 +166,7 @@ class RouteDeliveryBatchService
                             'pre_sale_id' => $preSale->id,
                             'sale_id' => $sale->id,
                             'status' => 'delivered',
-                            'payment_method' => $preSale->payment_method,
+                            'payment_method' => $collection?->payment_method ?? $preSale->agreed_payment_method,
                             'fel_dispatch_status' => $eligibleForAutomaticFel ? 'queued' : 'not_requested',
                             'error_message' => $automaticFelReason,
                         ]);

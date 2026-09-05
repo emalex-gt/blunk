@@ -84,6 +84,9 @@ export default function Form({
         route_pre_sale_invoicing_mode?: 'manual' | 'automatic_all';
         route_pre_sale_stock_deduction_timing?: 'picking' | 'invoice';
         route_pre_sale_require_fel_eligible_customer?: boolean;
+        route_collection_responsibility?: 'pre_seller' | 'delivery_agent';
+        route_delivery_tracking?: 'external' | 'in_app';
+        route_cash_custody_policy?: 'collector_custody_until_settlement' | 'immediate_branch_register';
         enable_credit_sales?: boolean;
         enable_credit_reservations?: boolean;
         reserve_stock_on_credit_reservations?: boolean;
@@ -124,6 +127,9 @@ export default function Form({
         route_pre_sale_invoicing_mode: settings.route_pre_sale_invoicing_mode ?? 'manual',
         route_pre_sale_stock_deduction_timing: settings.route_pre_sale_stock_deduction_timing ?? 'invoice',
         route_pre_sale_require_fel_eligible_customer: settings.route_pre_sale_require_fel_eligible_customer ?? false,
+        route_collection_responsibility: settings.route_collection_responsibility ?? 'pre_seller',
+        route_delivery_tracking: settings.route_delivery_tracking ?? 'external',
+        route_cash_custody_policy: settings.route_cash_custody_policy ?? 'collector_custody_until_settlement',
         enable_credit_sales: settings.enable_credit_sales ?? false,
         enable_credit_reservations: settings.enable_credit_reservations ?? false,
         reserve_stock_on_credit_reservations: settings.reserve_stock_on_credit_reservations ?? true,
@@ -413,6 +419,26 @@ export default function Form({
                                     label="Permitir reservas de crédito"
                                     description="Permite crear reservas de productos sin facturar ni descontar stock físico."
                                 />
+                            </div>
+                            <div className="mt-4 grid gap-4 md:grid-cols-3">
+                                <Field label="Quién cobra las ventas de ruta" error={errors.route_collection_responsibility}>
+                                    <select className={inputClass} value={data.route_collection_responsibility} onChange={(event) => setData('route_collection_responsibility', event.target.value as 'pre_seller' | 'delivery_agent')}>
+                                        <option value="pre_seller">Cobra el prevendedor</option>
+                                        <option value="delivery_agent">Cobra el entregador</option>
+                                    </select>
+                                </Field>
+                                <Field label="Gestión de la entrega" error={errors.route_delivery_tracking}>
+                                    <select className={inputClass} value={data.route_delivery_tracking} onChange={(event) => setData('route_delivery_tracking', event.target.value as 'external' | 'in_app')}>
+                                        <option value="external">Entrega fuera del sistema</option>
+                                        <option value="in_app">Gestionar entregas en Blunk</option>
+                                    </select>
+                                </Field>
+                                <Field label="Custodia de efectivo" error={errors.route_cash_custody_policy}>
+                                    <select className={inputClass} value={data.route_cash_custody_policy} onChange={(event) => setData('route_cash_custody_policy', event.target.value as 'collector_custody_until_settlement' | 'immediate_branch_register')}>
+                                        <option value="collector_custody_until_settlement">En custodia hasta liquidación</option>
+                                        <option value="immediate_branch_register">Registrar de inmediato en caja</option>
+                                    </select>
+                                </Field>
                             </div>
                             {data.enable_credit_reservations && (
                                 <div className="mt-3">

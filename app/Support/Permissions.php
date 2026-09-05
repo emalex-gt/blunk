@@ -89,6 +89,7 @@ class Permissions
     public const ROUTES_PRE_SALES_ADMIN_VIEW = 'routes.pre_sales.admin_view';
     public const ROUTES_PRE_SALES_PICK = 'routes.pre_sales.pick';
     public const ROUTES_PRE_SALES_INVOICE = 'routes.pre_sales.invoice';
+    public const ROUTES_COLLECTIONS_OVERRIDE = 'routes.collections.override';
     public const ROUTES_WORK_DAYS_CLOSE = 'routes.work_days.close';
 
     public const CREDITS_VIEW = 'credits.view';
@@ -205,6 +206,7 @@ class Permissions
             self::ROUTES_PRE_SALES_ADMIN_VIEW => ['name' => 'Ver preventas como administrador', 'group' => 'Rutas'],
             self::ROUTES_PRE_SALES_PICK => ['name' => 'Preparar preventas de ruta', 'group' => 'Rutas'],
             self::ROUTES_PRE_SALES_INVOICE => ['name' => 'Facturar preventas de ruta', 'group' => 'Rutas'],
+            self::ROUTES_COLLECTIONS_OVERRIDE => ['name' => 'Registrar cobros de ruta por override', 'group' => 'Rutas'],
             self::ROUTES_WORK_DAYS_CLOSE => ['name' => 'Cerrar jornadas de ruta', 'group' => 'Rutas'],
             self::CREDITS_VIEW => ['name' => 'Ver créditos', 'group' => 'Créditos'],
             self::CREDITS_CREATE => ['name' => 'Crear créditos', 'group' => 'Créditos'],
