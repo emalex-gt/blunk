@@ -300,21 +300,37 @@ class SystemIntegrityAuditor
             ->where('business_id', $businessId)
             ->where('reference_type', 'sale')
             ->groupBy('reference_id');
-        $cashPayments = DB::table('sale_payments')
-            ->select('sale_id', DB::raw("COALESCE(SUM(CASE WHEN method = 'cash' THEN amount ELSE 0 END), 0) as cash_paid"))
-            ->where('business_id', $businessId)
+        $cashPayments = DB::table('sale_payments as sp')
+            ->leftJoin('route_pre_sale_collections as pre_collection', 'pre_collection.id', '=', 'sp.route_pre_sale_collection_id')
+            ->leftJoin('route_delivery_collections as delivery_collection', 'delivery_collection.id', '=', 'sp.route_delivery_collection_id')
+            ->select('sp.sale_id', DB::raw("COALESCE(SUM(CASE WHEN sp.method = 'cash' THEN sp.amount ELSE 0 END), 0) as cash_paid"), DB::raw("COALESCE(SUM(CASE WHEN sp.method = 'cash' AND (pre_collection.custody_status = 'held_by_collector' OR delivery_collection.custody_status = 'held_by_collector') THEN sp.amount ELSE 0 END), 0) as held_route_cash"))
+            ->where('sp.business_id', $businessId)
+            ->groupBy('sp.sale_id');
+        $preSaleRouteCash = DB::table('cash_movements as cm')
+            ->join('route_pre_sale_collections as collection', 'collection.id', '=', 'cm.reference_id')
+            ->join('sale_payments as payment', 'payment.route_pre_sale_collection_id', '=', 'collection.id')
+            ->where('cm.business_id', $businessId)->where('cm.reference_type', 'route_pre_sale_collection')->where('cm.type', 'sale_cash')
+            ->select('payment.sale_id', 'cm.amount');
+        $deliveryRouteCash = DB::table('cash_movements as cm')
+            ->join('route_delivery_collections as collection', 'collection.id', '=', 'cm.reference_id')
+            ->join('sale_payments as payment', 'payment.route_delivery_collection_id', '=', 'collection.id')
+            ->where('cm.business_id', $businessId)->where('cm.reference_type', 'route_delivery_collection')->where('cm.type', 'sale_cash')
+            ->select('payment.sale_id', 'cm.amount');
+        $routeCashMovements = DB::query()->fromSub($preSaleRouteCash->unionAll($deliveryRouteCash), 'route_cash')
+            ->select('sale_id', DB::raw('COALESCE(SUM(amount), 0) as cash_in'))
             ->groupBy('sale_id');
 
         $sales = DB::table('sales as s')
             ->leftJoinSub($itemTotals, 'items', fn ($join) => $join->on('items.sale_id', '=', 's.id'))
             ->leftJoinSub($cashMovements, 'cash', fn ($join) => $join->on('cash.reference_id', '=', 's.id'))
             ->leftJoinSub($cashPayments, 'payments', fn ($join) => $join->on('payments.sale_id', '=', 's.id'))
+            ->leftJoinSub($routeCashMovements, 'route_cash', fn ($join) => $join->on('route_cash.sale_id', '=', 's.id'))
             ->leftJoin('customers as c', 'c.id', '=', 's.customer_id')
             ->leftJoin('branches as b', 'b.id', '=', 's.branch_id')
             ->where('s.business_id', $businessId)
             ->when($context['branch_id'], fn (Builder $q, $branch) => $q->where('s.branch_id', $branch))
             ->tap(fn (Builder $q) => $this->applyDates($q, 's.created_at', $context))
-            ->select('s.*', DB::raw('COALESCE(items.item_count, 0) as item_count'), DB::raw('COALESCE(items.expected_total, 0) as expected_total'), DB::raw('COALESCE(cash.cash_in, 0) as cash_in'), DB::raw('COALESCE(cash.cash_cancel, 0) as cash_cancel'), DB::raw('COALESCE(payments.cash_paid, 0) as cash_paid'), 'c.business_id as customer_business_id', 'b.business_id as branch_business_id')
+            ->select('s.*', DB::raw('COALESCE(items.item_count, 0) as item_count'), DB::raw('COALESCE(items.expected_total, 0) as expected_total'), DB::raw('COALESCE(cash.cash_in, 0) as cash_in'), DB::raw('COALESCE(cash.cash_cancel, 0) as cash_cancel'), DB::raw('COALESCE(payments.cash_paid, 0) as cash_paid'), DB::raw('COALESCE(payments.held_route_cash, 0) as held_route_cash'), DB::raw('COALESCE(route_cash.cash_in, 0) as route_cash_in'), 'c.business_id as customer_business_id', 'b.business_id as branch_business_id')
             ->orderBy('s.id')
             ->cursor();
 
@@ -344,8 +360,10 @@ class SystemIntegrityAuditor
                 $issues[] = $this->issue($base, 'critical', 'sale_branch_cross_tenant', 'La venta apunta a una sucursal inexistente o de otro negocio.', 'Requiere revisión inmediata de aislamiento tenant.');
             }
 
-            $cashExpected = max((float) $sale->cash_paid, $sale->payment_method === 'cash' && ! $sale->is_credit_sale ? (float) $sale->total : 0);
-            $cashNet = round((float) $sale->cash_in + (float) $sale->cash_cancel, 2);
+            $cashExpected = (float) $sale->cash_paid > 0
+                ? max(0, (float) $sale->cash_paid - (float) $sale->held_route_cash)
+                : ($sale->payment_method === 'cash' && ! $sale->is_credit_sale ? (float) $sale->total : 0);
+            $cashNet = round((float) $sale->cash_in + (float) $sale->route_cash_in + (float) $sale->cash_cancel, 2);
 
             if (($sale->status ?? 'completed') === 'cancelled' && $cashExpected > 0 && $cashNet > 0.001) {
                 $issues[] = $this->issue($base, 'critical', 'cancelled_sale_cash_not_reversed', 'Venta anulada conserva efectivo activo en caja.', 'Revisar la reversa de caja asociada a la anulación.');

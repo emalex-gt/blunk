@@ -90,6 +90,9 @@ class Permissions
     public const ROUTES_PRE_SALES_PICK = 'routes.pre_sales.pick';
     public const ROUTES_PRE_SALES_INVOICE = 'routes.pre_sales.invoice';
     public const ROUTES_COLLECTIONS_OVERRIDE = 'routes.collections.override';
+    public const ROUTES_EXTERNAL_DELIVERY_RECONCILE = 'routes.external_delivery.reconcile';
+    public const ROUTES_EXTERNAL_DELIVERY_COLLECTION_OVERRIDE = 'routes.external_delivery.collection.override';
+    public const ROUTES_EXTERNAL_DELIVERY_RECONCILE_CORRECT = 'routes.external_delivery.reconcile.correct';
     public const ROUTES_WORK_DAYS_CLOSE = 'routes.work_days.close';
 
     public const CREDITS_VIEW = 'credits.view';
@@ -207,6 +210,9 @@ class Permissions
             self::ROUTES_PRE_SALES_PICK => ['name' => 'Preparar preventas de ruta', 'group' => 'Rutas'],
             self::ROUTES_PRE_SALES_INVOICE => ['name' => 'Facturar preventas de ruta', 'group' => 'Rutas'],
             self::ROUTES_COLLECTIONS_OVERRIDE => ['name' => 'Registrar cobros de ruta por override', 'group' => 'Rutas'],
+            self::ROUTES_EXTERNAL_DELIVERY_RECONCILE => ['name' => 'Conciliar entrega externa', 'group' => 'Rutas'],
+            self::ROUTES_EXTERNAL_DELIVERY_COLLECTION_OVERRIDE => ['name' => 'Registrar cobro externo por override', 'group' => 'Rutas'],
+            self::ROUTES_EXTERNAL_DELIVERY_RECONCILE_CORRECT => ['name' => 'Corregir conciliación externa', 'group' => 'Rutas'],
             self::ROUTES_WORK_DAYS_CLOSE => ['name' => 'Cerrar jornadas de ruta', 'group' => 'Rutas'],
             self::CREDITS_VIEW => ['name' => 'Ver créditos', 'group' => 'Créditos'],
             self::CREDITS_CREATE => ['name' => 'Crear créditos', 'group' => 'Créditos'],

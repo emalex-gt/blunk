@@ -18,6 +18,7 @@ class SalePayment extends Model
         'collected_at',
         'cash_register_session_id',
         'route_pre_sale_collection_id',
+        'route_delivery_collection_id',
     ];
 
     protected $casts = [
@@ -39,6 +40,11 @@ class SalePayment extends Model
     public function routePreSaleCollection(): BelongsTo
     {
         return $this->belongsTo(RoutePreSaleCollection::class);
+    }
+
+    public function routeDeliveryCollection(): BelongsTo
+    {
+        return $this->belongsTo(RouteDeliveryCollection::class);
     }
 
     public function collectedBy(): BelongsTo

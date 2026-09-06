@@ -4,8 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\RouteWorkDay;
 use App\Models\RouteDeliveryBatch;
-use App\Models\TenantSetting;
+use App\Models\User;
 use App\Services\Routes\RouteDeliveryBatchService;
+use App\Services\Routes\ExternalDeliveryEligibility;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
@@ -37,27 +38,50 @@ class RouteDeliveryBatchController extends Controller
             'preSales.preSale.collections' => fn ($query) => $query->whereIn('status', ['captured', 'linked'])->with(['collectedBy:id,name', 'recordedBy:id,name']),
             'preSales.sale:id,business_id,business_number,total,document_type,payment_status,payment_method,certification_status,electronic_document_id',
             'preSales.sale.electronicDocument:id,sale_id,status,error_message',
-            'preSales.sale.payments:id,sale_id,method,amount',
+            'preSales.sale.payments:id,sale_id,method,amount,collected_by,collected_at,route_pre_sale_collection_id,route_delivery_collection_id',
+            'preSales.externalDeliveryReconciliationItem.deliveryCollection.collectedBy:id,name',
         ]);
 
-        $collectionResponsibility = TenantSetting::query()->where('business_id', $batch->business_id)->value('route_collection_responsibility') === 'delivery_agent' ? 'delivery_agent' : 'pre_seller';
-
+        $eligibility = app(ExternalDeliveryEligibility::class);
+        $reconciled = $batch->preSales->filter(fn ($entry) => $entry->externalDeliveryReconciliationItem !== null)->count();
+        $canOverrideCollector = Permissions::userHas(request()->user(), Permissions::ROUTES_EXTERNAL_DELIVERY_COLLECTION_OVERRIDE);
         return Inertia::render('Routes/DeliveryBatches/Show', [
-            'batch' => [...$this->payload($batch), 'pre_sales' => $batch->preSales->map(fn ($entry) => [
+            'can_reconcile_external_delivery' => $batch->isExternalDeliveryTracking() && Permissions::userHas(request()->user(), Permissions::ROUTES_EXTERNAL_DELIVERY_RECONCILE),
+            'can_override_external_delivery_collector' => $canOverrideCollector,
+            'branch_collectors' => $canOverrideCollector
+                ? User::query()->where('business_id', $batch->business_id)->where('current_branch_id', $batch->branch_id)->where('is_active', true)->orderBy('name')->get(['id', 'name'])
+                : [],
+            'current_user_id' => request()->user()->id,
+            'batch' => [...$this->payload($batch), 'pre_sales' => $batch->preSales->map(function ($entry) use ($eligibility) {
+                $context = $eligibility->forEntry($entry);
+                $collectionResponsibility = $context['responsibility'] ?? 'review_required';
+                $preSaleCollection = $entry->preSale?->collections->first();
+                $deliveryCollection = $entry->externalDeliveryReconciliationItem?->deliveryCollection;
+
+                return [
                 'id' => $entry->id, 'status' => $entry->status, 'payment_method' => $entry->payment_method,
                 'fel_dispatch_status' => $entry->fel_dispatch_status, 'error_message' => $entry->error_message,
                 'pre_sale' => $entry->preSale, 'sale' => $entry->sale,
                 'collection_responsibility' => $collectionResponsibility,
-                'collection_status' => $collectionResponsibility === 'delivery_agent' ? 'pending_delivery_collection' : ($entry->preSale?->collections->first()?->status ?? 'pending_collection'),
-                'collection' => $entry->preSale?->collections->first() ? [
-                    'amount' => (float) $entry->preSale->collections->first()->amount,
-                    'payment_method' => $entry->preSale->collections->first()->payment_method,
-                    'collected_by' => $entry->preSale->collections->first()->collectedBy,
-                    'recorded_by' => $entry->preSale->collections->first()->recordedBy,
-                    'collected_at' => $entry->preSale->collections->first()->collected_at?->toIso8601String(),
-                    'custody_status' => $entry->preSale->collections->first()->custody_status,
+                'collection_status' => $collectionResponsibility === 'delivery_agent' ? 'pending_delivery_collection' : ($collectionResponsibility === 'review_required' ? 'review_required' : ($entry->preSale?->collections->first()?->status ?? 'pending_collection')),
+                'collection' => $preSaleCollection ? [
+                    'amount' => (float) $preSaleCollection->amount,
+                    'payment_method' => $preSaleCollection->payment_method,
+                    'collected_by' => $preSaleCollection->collectedBy,
+                    'recorded_by' => $preSaleCollection->recordedBy,
+                    'collected_at' => $preSaleCollection->collected_at?->toIso8601String(),
+                    'custody_status' => $preSaleCollection->custody_status,
                 ] : null,
-            ])->values()],
+                'financial_collection' => $deliveryCollection ? [
+                    'payment_method' => $deliveryCollection->payment_method,
+                    'collected_by' => $deliveryCollection->collectedBy,
+                    'collected_at' => $deliveryCollection->collected_at?->toIso8601String(),
+                    'custody_status' => $deliveryCollection->custody_status,
+                ] : null,
+                'reconciliation' => $entry->externalDeliveryReconciliationItem ? ['id' => $entry->externalDeliveryReconciliationItem->id, 'delivery_status' => $entry->externalDeliveryReconciliationItem->delivery_status, 'not_delivered_reason' => $entry->externalDeliveryReconciliationItem->not_delivered_reason, 'notes' => $entry->externalDeliveryReconciliationItem->notes] : null,
+                'external_eligibility' => $context,
+                ];
+            })->values(), 'reconciliation_progress' => ['total' => $batch->preSales->count(), 'reconciled' => $reconciled, 'pending' => $batch->preSales->count() - $reconciled]],
         ]);
     }
 
@@ -86,6 +110,8 @@ class RouteDeliveryBatchController extends Controller
             'id' => $batch->id, 'status' => $batch->status, 'delivered_at' => $batch->delivered_at?->toIso8601String(),
             'stock_deduction_timing' => $batch->stock_deduction_timing, 'invoicing_mode' => $batch->invoicing_mode,
             'fel_automation_enabled' => $batch->fel_automation_enabled, 'total_pre_sales' => $batch->total_pre_sales,
+            'delivery_tracking_snapshot' => $batch->delivery_tracking_snapshot,
+            'collection_responsibility_snapshot' => $batch->collection_responsibility_snapshot,
             'total_items' => $batch->total_items, 'total_amount' => (float) $batch->total_amount,
             'branch' => $batch->branch, 'zone' => $batch->zone, 'delivered_by' => $batch->deliveredBy, 'work_day' => $batch->workDay,
         ];

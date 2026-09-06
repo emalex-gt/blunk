@@ -59,6 +59,7 @@ class RouteDeliveryBatchService
 
                     $settings = TenantSetting::query()->where('business_id', $businessId)->first();
                     $collectionResponsibility = $settings?->route_collection_responsibility === 'delivery_agent' ? 'delivery_agent' : 'pre_seller';
+                    $deliveryTracking = $settings?->route_delivery_tracking === 'in_app' ? 'in_app' : 'external';
                     $timing = $settings?->route_pre_sale_stock_deduction_timing === 'picking' ? 'picking' : 'invoice';
                     $mode = in_array($settings?->route_pre_sale_invoicing_mode, ['automatic', 'automatic_all'], true) ? 'automatic_all' : 'manual';
                     $automationEnabled = $mode === 'automatic_all' && (bool) config('fel.route_automation_enabled');
@@ -110,6 +111,9 @@ class RouteDeliveryBatchService
                         'stock_deduction_timing' => $timing,
                         'invoicing_mode' => $mode,
                         'fel_automation_enabled' => $automationEnabled,
+                        'delivery_tracking_snapshot' => $deliveryTracking,
+                        'collection_responsibility_snapshot' => $collectionResponsibility,
+                        'operation_settings_snapshotted_at' => now(),
                     ]);
 
                     $totalItems = 0;

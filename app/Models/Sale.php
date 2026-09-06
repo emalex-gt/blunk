@@ -98,6 +98,11 @@ class Sale extends Model
         return $this->hasMany(SalePayment::class);
     }
 
+    public function routeDeliveryCollection(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(RouteDeliveryCollection::class);
+    }
+
     public function creditPaymentAllocations(): HasMany
     {
         return $this->hasMany(CustomerCreditPaymentAllocation::class);

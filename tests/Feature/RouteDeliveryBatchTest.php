@@ -53,6 +53,28 @@ class RouteDeliveryBatchTest extends TestCase
         $this->assertTrue(Schema::hasTable('route_delivery_batch_pre_sales'));
     }
 
+    public function test_deliver_all_snapshots_external_tracking_and_collection_responsibility(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'card');
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'route_delivery_tracking' => 'external',
+            'route_collection_responsibility' => 'delivery_agent',
+        ]);
+        $this->openCashRegister($business, $branch, $user);
+
+        $result = app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-snapshot-key');
+
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'route_delivery_tracking' => 'in_app',
+            'route_collection_responsibility' => 'pre_seller',
+        ]);
+
+        $batch = \App\Models\RouteDeliveryBatch::query()->findOrFail($result->resultId);
+
+        $this->assertSame('external', $batch->delivery_tracking_snapshot);
+        $this->assertSame('delivery_agent', $batch->collection_responsibility_snapshot);
+    }
+
     public function test_deliver_all_creates_paid_receipt_payment_and_cash_movement_for_picked_cash_pre_sale(): void
     {
         [$business, $branch, $user, $preSale, $product] = $this->pickedPreSale('invoice', 'cash');

@@ -20,6 +20,7 @@ use App\Http\Controllers\RouteController;
 use App\Http\Controllers\RoutePreSaleCollectionController;
 use App\Http\Controllers\RoutePreparationBatchController;
 use App\Http\Controllers\RouteDeliveryBatchController;
+use App\Http\Controllers\RouteExternalDeliveryReconciliationController;
 use App\Http\Controllers\RoutePreSaleFelController;
 use App\Http\Controllers\RoutePreSaleInvoiceController;
 use App\Http\Controllers\SaleController;
@@ -272,6 +273,12 @@ Route::middleware('auth')->group(function () {
             Route::get('/delivery-batches/{batch}', [RouteDeliveryBatchController::class, 'show'])
                 ->middleware('permission:routes.pre_sales.admin_view')
                 ->name('delivery-batches.show');
+            Route::post('/delivery-batches/{batch}/entries/{entry}/external-reconciliation', [RouteExternalDeliveryReconciliationController::class, 'store'])
+                ->middleware('permission:routes.external_delivery.reconcile')
+                ->name('delivery-batches.external-reconciliation.store');
+            Route::post('/external-delivery-reconciliation-items/{item}/correct', [RouteExternalDeliveryReconciliationController::class, 'correct'])
+                ->middleware('permission:routes.external_delivery.reconcile.correct')
+                ->name('external-delivery-reconciliation-items.correct');
 
             Route::get('/preparation-batches', [RoutePreparationBatchController::class, 'index'])
                 ->middleware('permission:routes.pre_sales.admin_view')
