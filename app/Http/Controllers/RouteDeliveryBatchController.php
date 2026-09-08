@@ -25,7 +25,11 @@ class RouteDeliveryBatchController extends Controller
             ->latest('delivered_at')->latest('id')->paginate(25)
             ->through(fn (RouteDeliveryBatch $batch) => $this->payload($batch));
 
-        return Inertia::render('Routes/DeliveryBatches/Index', ['batches' => $batches]);
+        return Inertia::render('Routes/DeliveryBatches/Index', [
+            'batches' => $batches,
+            'can_view_cash_settlements' => Permissions::userHas(request()->user(), Permissions::ROUTES_CASH_SETTLEMENTS_VIEW)
+                || Permissions::userHas(request()->user(), Permissions::ROUTES_CASH_SETTLEMENTS_REVIEW),
+        ]);
     }
 
     public function show(RouteDeliveryBatch $batch): Response

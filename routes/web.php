@@ -23,6 +23,7 @@ use App\Http\Controllers\RouteDeliveryBatchController;
 use App\Http\Controllers\RouteExternalDeliveryReconciliationController;
 use App\Http\Controllers\RouteDeliveryRunController;
 use App\Http\Controllers\RouteDeliveryStopController;
+use App\Http\Controllers\RouteCashSettlementController;
 use App\Http\Controllers\RoutePreSaleFelController;
 use App\Http\Controllers\RoutePreSaleInvoiceController;
 use App\Http\Controllers\SaleController;
@@ -295,6 +296,14 @@ Route::middleware('auth')->group(function () {
             Route::post('/delivery-stops/{stop}/complete', [RouteDeliveryStopController::class, 'complete'])->middleware('permission:routes.delivery_runs.execute')->name('delivery-stops.complete');
             Route::post('/delivery-stops/{stop}/collect', [RouteDeliveryStopController::class, 'collect'])->middleware('permission:routes.delivery_runs.execute')->name('delivery-stops.collect');
             Route::post('/delivery-stops/{stop}/correct', [RouteDeliveryStopController::class, 'correct'])->middleware('permission:routes.delivery_runs.correct')->name('delivery-stops.correct');
+
+            Route::get('/cash-settlements', [RouteCashSettlementController::class, 'index'])->name('cash-settlements.index');
+            Route::post('/cash-settlements', [RouteCashSettlementController::class, 'store'])->name('cash-settlements.store');
+            Route::get('/cash-settlements/{settlement}', [RouteCashSettlementController::class, 'show'])->name('cash-settlements.show');
+            Route::post('/cash-settlements/{settlement}/items', [RouteCashSettlementController::class, 'addItems'])->name('cash-settlements.items.store');
+            Route::delete('/cash-settlements/{settlement}/items/{item}', [RouteCashSettlementController::class, 'removeItem'])->name('cash-settlements.items.destroy');
+            Route::post('/cash-settlements/{settlement}/cancel', [RouteCashSettlementController::class, 'cancel'])->name('cash-settlements.cancel');
+            Route::post('/cash-settlements/{settlement}/confirm', [RouteCashSettlementController::class, 'confirm'])->name('cash-settlements.confirm');
 
             Route::get('/preparation-batches', [RoutePreparationBatchController::class, 'index'])
                 ->middleware('permission:routes.pre_sales.admin_view')

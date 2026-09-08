@@ -317,7 +317,23 @@ class SystemIntegrityAuditor
             ->join('sale_payments as payment', 'payment.route_delivery_collection_id', '=', 'collection.id')
             ->where('cm.business_id', $businessId)->where('cm.reference_type', 'route_delivery_collection')->where('cm.type', 'sale_cash')
             ->select('payment.sale_id', 'cm.amount');
-        $routeCashMovements = DB::query()->fromSub($preSaleRouteCash->unionAll($deliveryRouteCash), 'route_cash')
+        $settledPreSaleRouteCash = DB::table('route_cash_settlement_items as item')
+            ->join('route_cash_settlements as settlement', 'settlement.id', '=', 'item.route_cash_settlement_id')
+            ->join('cash_movements as cm', 'cm.id', '=', 'settlement.cash_movement_id')
+            ->join('sale_payments as payment', 'payment.route_pre_sale_collection_id', '=', 'item.route_pre_sale_collection_id')
+            ->where('settlement.business_id', $businessId)->where('settlement.status', 'confirmed')->where('item.is_active', true)
+            ->where('cm.type', 'route_cash_settlement')->where('cm.reference_type', 'route_cash_settlement')
+            ->whereColumn('cm.reference_id', 'settlement.id')
+            ->select('payment.sale_id', 'item.amount_snapshot as amount');
+        $settledDeliveryRouteCash = DB::table('route_cash_settlement_items as item')
+            ->join('route_cash_settlements as settlement', 'settlement.id', '=', 'item.route_cash_settlement_id')
+            ->join('cash_movements as cm', 'cm.id', '=', 'settlement.cash_movement_id')
+            ->join('sale_payments as payment', 'payment.route_delivery_collection_id', '=', 'item.route_delivery_collection_id')
+            ->where('settlement.business_id', $businessId)->where('settlement.status', 'confirmed')->where('item.is_active', true)
+            ->where('cm.type', 'route_cash_settlement')->where('cm.reference_type', 'route_cash_settlement')
+            ->whereColumn('cm.reference_id', 'settlement.id')
+            ->select('payment.sale_id', 'item.amount_snapshot as amount');
+        $routeCashMovements = DB::query()->fromSub($preSaleRouteCash->unionAll($deliveryRouteCash)->unionAll($settledPreSaleRouteCash)->unionAll($settledDeliveryRouteCash), 'route_cash')
             ->select('sale_id', DB::raw('COALESCE(SUM(amount), 0) as cash_in'))
             ->groupBy('sale_id');
 
@@ -473,7 +489,20 @@ class SystemIntegrityAuditor
             $issues[] = $this->issue(['sale_id' => null, 'correlative' => null, 'branch_id' => null, 'customer_id' => null, 'status' => null, 'total' => null, 'expected_total' => null, 'difference' => null, 'route_delivery_collection_id' => $duplicate->route_delivery_collection_id], 'critical', 'duplicate_sale_payment_for_delivery_collection', 'Un cobro de entrega tiene más de un pago financiero.', 'Mantener un único sale_payment por cobro de entrega.');
         }
 
-        foreach (DB::table('route_delivery_collections')->where('business_id', $businessId)->where('payment_method', 'cash')->where('cash_posting_state', 'posted_to_current_session')->whereNull('cash_movement_id')->select('id', 'branch_id')->cursor() as $collection) {
+        foreach (DB::table('route_delivery_collections as collection')
+            ->where('collection.business_id', $businessId)
+            ->where('collection.payment_method', 'cash')
+            ->where('collection.cash_posting_state', 'posted_to_current_session')
+            ->whereNull('collection.cash_movement_id')
+            ->whereNotExists(function (Builder $query) {
+                $query->selectRaw('1')
+                    ->from('route_cash_settlement_items as item')
+                    ->join('route_cash_settlements as settlement', 'settlement.id', '=', 'item.route_cash_settlement_id')
+                    ->whereColumn('item.route_delivery_collection_id', 'collection.id')
+                    ->where('item.is_active', true)
+                    ->where('settlement.status', 'confirmed');
+            })
+            ->select('collection.id', 'collection.branch_id')->cursor() as $collection) {
             $issues[] = $this->issue(['sale_id' => null, 'correlative' => null, 'branch_id' => $collection->branch_id, 'customer_id' => null, 'status' => null, 'total' => null, 'expected_total' => null, 'difference' => null, 'route_delivery_collection_id' => $collection->id], 'critical', 'posted_route_cash_without_movement', 'Efectivo de ruta marcado como recibido en caja sin movimiento de caja.', 'Revisar la recepción física actual y el movimiento vinculado.');
         }
 
@@ -533,7 +562,7 @@ class SystemIntegrityAuditor
 
         foreach (DB::table('cash_movements')
             ->where('business_id', $businessId)
-            ->whereIn('type', ['sale_cash', 'purchase_cash', 'credit_payment_cash'])
+            ->whereIn('type', ['sale_cash', 'purchase_cash', 'credit_payment_cash', 'route_cash_settlement'])
             ->whereNotNull('reference_type')
             ->whereNotNull('reference_id')
             ->when($context['branch_id'], fn (Builder $q, $branch) => $q->where('branch_id', $branch))
@@ -577,6 +606,102 @@ class SystemIntegrityAuditor
             }
             if ($payment->status === 'cancelled' && $cashNet > 0.001) {
                 $issues[] = $this->issue($base, 'critical', 'cancelled_credit_payment_cash_not_reversed', 'Abono en efectivo anulado conserva ingreso activo en caja.', 'Revisar la reversa de caja del abono.');
+            }
+        }
+
+        return [...$issues, ...$this->auditRouteCashSettlements($context)];
+    }
+
+    private function auditRouteCashSettlements(array $context): array
+    {
+        if (! Schema::hasTable('route_cash_settlements') || ! Schema::hasTable('route_cash_settlement_items')) {
+            return [];
+        }
+
+        $issues = [];
+        $businessId = $context['business_id'];
+        $itemTotals = DB::table('route_cash_settlement_items')
+            ->select('route_cash_settlement_id', DB::raw("COALESCE(SUM(CASE WHEN is_active THEN amount_snapshot ELSE 0 END), 0) AS expected_items"))
+            ->groupBy('route_cash_settlement_id');
+        $settlements = DB::table('route_cash_settlements as settlement')
+            ->leftJoinSub($itemTotals, 'items', fn ($join) => $join->on('items.route_cash_settlement_id', '=', 'settlement.id'))
+            ->leftJoin('cash_movements as movement', 'movement.id', '=', 'settlement.cash_movement_id')
+            ->leftJoin('cash_register_sessions as session', 'session.id', '=', 'settlement.cash_register_session_id')
+            ->where('settlement.business_id', $businessId)
+            ->when($context['branch_id'], fn (Builder $query, $branch) => $query->where('settlement.branch_id', $branch))
+            ->select('settlement.*', DB::raw('COALESCE(items.expected_items, 0) AS expected_items'), 'movement.business_id as movement_business_id', 'movement.branch_id as movement_branch_id', 'movement.cash_register_session_id as movement_session_id', 'movement.type as movement_type', 'movement.reference_type as movement_reference_type', 'movement.reference_id as movement_reference_id', 'movement.amount as movement_amount', 'session.business_id as session_business_id', 'session.branch_id as session_branch_id')
+            ->orderBy('settlement.id')->cursor();
+
+        foreach ($settlements as $settlement) {
+            $base = ['cash_register_id' => $settlement->cash_register_session_id, 'cash_movement_id' => $settlement->cash_movement_id, 'reference_type' => 'route_cash_settlement', 'reference_id' => $settlement->id, 'amount' => (float) $settlement->expected_amount, 'movement_type' => 'route_cash_settlement'];
+            if (round((float) $settlement->expected_amount, 2) !== round((float) $settlement->expected_items, 2)) {
+                $issues[] = $this->issue($base, 'critical', 'route_cash_settlement_expected_mismatch', 'El importe esperado no coincide con la suma de sus items activos.', 'Revisar los items reservados sin modificar cobros históricos.');
+            }
+            if ($settlement->status === 'confirmed') {
+                $validMovement = $settlement->cash_movement_id
+                    && (int) $settlement->movement_business_id === $businessId
+                    && (int) $settlement->movement_branch_id === (int) $settlement->branch_id
+                    && (int) $settlement->movement_session_id === (int) $settlement->cash_register_session_id
+                    && $settlement->movement_type === 'route_cash_settlement'
+                    && $settlement->movement_reference_type === 'route_cash_settlement'
+                    && (int) $settlement->movement_reference_id === (int) $settlement->id
+                    && round((float) $settlement->movement_amount, 2) === round((float) $settlement->received_amount, 2)
+                    && (int) $settlement->session_business_id === $businessId
+                    && (int) $settlement->session_branch_id === (int) $settlement->branch_id;
+                if (! $validMovement) {
+                    $issues[] = $this->issue($base, 'critical', 'confirmed_route_cash_settlement_invalid_movement', 'Liquidación confirmada sin su único movimiento consolidado válido en la caja actual.', 'Revisar la cadena liquidación → movimiento de caja sin crear movimientos por cobro.');
+                }
+                if (round((float) $settlement->received_amount, 2) !== round((float) $settlement->expected_amount, 2) || round((float) $settlement->difference_amount, 2) !== 0.0) {
+                    $issues[] = $this->issue($base, 'critical', 'confirmed_route_cash_settlement_difference', 'Liquidación confirmada con diferencia de efectivo.', 'La fase no permite confirmar faltantes ni sobrantes.');
+                }
+            } elseif ($settlement->cash_movement_id !== null) {
+                $issues[] = $this->issue($base, 'critical', 'unconfirmed_route_cash_settlement_with_movement', 'Un borrador o una liquidación cancelada tiene movimiento de caja.', 'La liquidación debe confirmar antes de afectar caja.');
+            }
+        }
+
+        foreach ([['route_pre_sale_collection_id', 'route_pre_sale_collections'], ['route_delivery_collection_id', 'route_delivery_collections']] as [$column, $table]) {
+            foreach (DB::table('route_cash_settlement_items as item')
+                ->join('route_cash_settlements as settlement', 'settlement.id', '=', 'item.route_cash_settlement_id')
+                ->where('settlement.business_id', $businessId)->where('item.is_active', true)->whereNotNull("item.{$column}")
+                ->select("item.{$column}", DB::raw('COUNT(*) AS duplicated'))
+                ->groupBy("item.{$column}")->havingRaw('COUNT(*) > 1')->cursor() as $duplicate) {
+                $issues[] = $this->issue(['cash_register_id' => null, 'cash_movement_id' => null, 'reference_type' => 'route_cash_settlement_item', 'reference_id' => $duplicate->{$column}, 'amount' => null, 'movement_type' => 'route_cash_settlement'], 'critical', 'duplicate_active_route_cash_settlement_item', 'Un mismo cobro está reservado en más de una liquidación activa.', 'Mantener una única reserva activa por cobro físico.');
+            }
+            foreach (DB::table('route_cash_settlement_items as item')
+                ->join('route_cash_settlements as settlement', 'settlement.id', '=', 'item.route_cash_settlement_id')
+                ->join("{$table} as collection", 'collection.id', '=', "item.{$column}")
+                ->where('settlement.business_id', $businessId)->where('item.is_active', true)
+                ->where(function (Builder $query) {
+                    $query->whereColumn('collection.business_id', '<>', 'settlement.business_id')
+                        ->orWhereColumn('collection.branch_id', '<>', 'settlement.branch_id')
+                        ->orWhereColumn('collection.collected_by', '<>', 'settlement.collector_user_id')
+                        ->orWhere('collection.payment_method', '<>', 'cash');
+                })->select('item.id')->cursor() as $item) {
+                $issues[] = $this->issue(['cash_register_id' => null, 'cash_movement_id' => null, 'reference_type' => 'route_cash_settlement_item', 'reference_id' => $item->id, 'amount' => null, 'movement_type' => 'route_cash_settlement'], 'critical', 'route_cash_settlement_collection_scope_mismatch', 'Item de liquidación incompatible con negocio, sucursal, cobrador o efectivo.', 'Revisar la reserva y conservar la custodia física trazable.');
+            }
+        }
+
+        foreach (DB::table('route_cash_settlement_items as item')
+            ->join('route_cash_settlements as settlement', 'settlement.id', '=', 'item.route_cash_settlement_id')
+            ->leftJoin('route_pre_sale_collections as pre', 'pre.id', '=', 'item.route_pre_sale_collection_id')
+            ->leftJoin('route_delivery_collections as delivery', 'delivery.id', '=', 'item.route_delivery_collection_id')
+            ->where('settlement.business_id', $businessId)->where('settlement.status', 'confirmed')->where('item.is_active', true)
+            ->where(function (Builder $query) {
+                $query->where('pre.custody_status', '!=', 'posted_to_branch_cash')->orWhere('delivery.custody_status', '!=', 'posted_to_branch_cash');
+            })->select('item.id')->cursor() as $item) {
+            $issues[] = $this->issue(['cash_register_id' => null, 'cash_movement_id' => null, 'reference_type' => 'route_cash_settlement_item', 'reference_id' => $item->id, 'amount' => null, 'movement_type' => 'route_cash_settlement'], 'critical', 'confirmed_route_cash_settlement_collection_not_posted', 'Liquidación confirmada conserva un cobro bajo custodia del cobrador.', 'Revisar la transición de custodia en la misma transacción de confirmación.');
+        }
+
+        foreach ([['route_pre_sale_collections', 'route_pre_sale_collection_id'], ['route_delivery_collections', 'route_delivery_collection_id']] as [$table, $column]) {
+            foreach (DB::table("{$table} as collection")
+                ->where('collection.business_id', $businessId)
+                ->where('collection.payment_method', 'cash')->where('collection.custody_status', 'posted_to_branch_cash')->whereNull('collection.cash_movement_id')
+                ->whereNotExists(function (Builder $query) use ($column) {
+                    $query->selectRaw('1')->from('route_cash_settlement_items as item')
+                        ->join('route_cash_settlements as settlement', 'settlement.id', '=', 'item.route_cash_settlement_id')
+                        ->whereColumn("item.{$column}", 'collection.id')->where('item.is_active', true)->where('settlement.status', 'confirmed');
+                })->select('collection.id', 'collection.branch_id')->cursor() as $collection) {
+                $issues[] = $this->issue(['cash_register_id' => null, 'cash_movement_id' => null, 'reference_type' => 'route_cash_collection', 'reference_id' => $collection->id, 'amount' => null, 'movement_type' => 'route_cash_settlement'], 'critical', 'route_cash_collection_posted_without_confirmed_settlement', 'Efectivo de ruta marcado como ingresado sin movimiento propio ni liquidación confirmada.', 'Revisar la recepción física y mantener una sola cadena de custodia.');
             }
         }
 

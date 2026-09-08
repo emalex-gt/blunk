@@ -98,6 +98,10 @@ class Permissions
     public const ROUTES_DELIVERY_RUNS_MANAGE = 'routes.delivery_runs.manage';
     public const ROUTES_DELIVERY_RUNS_CORRECT = 'routes.delivery_runs.correct';
     public const ROUTES_DELIVERY_COLLECTIONS_OVERRIDE = 'routes.delivery_collections.override';
+    public const ROUTES_CASH_SETTLEMENTS_VIEW = 'routes.cash_settlements.view';
+    public const ROUTES_CASH_SETTLEMENTS_CREATE = 'routes.cash_settlements.create';
+    public const ROUTES_CASH_SETTLEMENTS_CONFIRM = 'routes.cash_settlements.confirm';
+    public const ROUTES_CASH_SETTLEMENTS_REVIEW = 'routes.cash_settlements.review';
     public const ROUTES_WORK_DAYS_CLOSE = 'routes.work_days.close';
 
     public const CREDITS_VIEW = 'credits.view';
@@ -223,6 +227,10 @@ class Permissions
             self::ROUTES_DELIVERY_RUNS_MANAGE => ['name' => 'Gestionar jornadas de entrega', 'group' => 'Rutas'],
             self::ROUTES_DELIVERY_RUNS_CORRECT => ['name' => 'Corregir jornadas de entrega', 'group' => 'Rutas'],
             self::ROUTES_DELIVERY_COLLECTIONS_OVERRIDE => ['name' => 'Registrar cobros de entrega por override', 'group' => 'Rutas'],
+            self::ROUTES_CASH_SETTLEMENTS_VIEW => ['name' => 'Ver liquidaciones de efectivo de rutas', 'group' => 'Rutas'],
+            self::ROUTES_CASH_SETTLEMENTS_CREATE => ['name' => 'Crear liquidaciones de efectivo de rutas', 'group' => 'Rutas'],
+            self::ROUTES_CASH_SETTLEMENTS_CONFIRM => ['name' => 'Confirmar liquidaciones de efectivo de rutas', 'group' => 'Rutas'],
+            self::ROUTES_CASH_SETTLEMENTS_REVIEW => ['name' => 'Revisar historial de liquidaciones de rutas', 'group' => 'Rutas'],
             self::ROUTES_WORK_DAYS_CLOSE => ['name' => 'Cerrar jornadas de ruta', 'group' => 'Rutas'],
             self::CREDITS_VIEW => ['name' => 'Ver créditos', 'group' => 'Créditos'],
             self::CREDITS_CREATE => ['name' => 'Crear créditos', 'group' => 'Créditos'],
