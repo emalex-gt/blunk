@@ -16,8 +16,6 @@ use Illuminate\Validation\ValidationException;
 
 class RouteExternalDeliveryReconciliationService
 {
-    private const REASONS = ['customer_absent', 'customer_rejected', 'address_issue', 'business_closed', 'damaged_goods', 'other'];
-
     public function __construct(
         private readonly ExternalDeliveryEligibility $eligibility,
         private readonly RouteDeliveryCollectionService $collections,
@@ -47,21 +45,14 @@ class RouteExternalDeliveryReconciliationService
                     if (! $context['eligible']) {
                         throw ValidationException::withMessages(['reconciliation' => 'Revisión administrativa requerida para esta línea histórica.']);
                     }
-                    $status = (string) ($data['delivery_status'] ?? '');
-                    if (! in_array($status, ['delivered', 'not_delivered'], true)) {
-                        throw ValidationException::withMessages(['delivery_status' => 'El estado de entrega no es válido.']);
-                    }
-                    $reason = $data['not_delivered_reason'] ?? null;
-                    $notes = blank($data['notes'] ?? null) ? null : trim((string) $data['notes']);
-                    if ($status === 'not_delivered' && ! in_array($reason, self::REASONS, true)) {
-                        throw ValidationException::withMessages(['not_delivered_reason' => 'Debe indicar el motivo de la no entrega.']);
-                    }
-                    if ($status === 'not_delivered' && $reason === 'other' && $notes === null) {
-                        throw ValidationException::withMessages(['notes' => 'Debe explicar el motivo seleccionado como otro.']);
-                    }
-                    if ($status === 'delivered') {
-                        $reason = null;
-                    }
+                    $outcome = DeliveryOutcomeRules::normalize(
+                        (string) ($data['delivery_status'] ?? ''),
+                        $data['not_delivered_reason'] ?? null,
+                        $data['notes'] ?? null,
+                    );
+                    $status = $outcome['delivery_status'];
+                    $reason = $outcome['not_delivered_reason_code'];
+                    $notes = $outcome['delivery_notes'];
 
                     $reconciliation = RouteExternalDeliveryReconciliation::query()->where('route_delivery_batch_id', $lockedBatch->id)->lockForUpdate()->first();
                     if (! $reconciliation) {

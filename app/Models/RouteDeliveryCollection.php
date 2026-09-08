@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 class RouteDeliveryCollection extends Model
 {
     protected $fillable = [
-        'business_id', 'branch_id', 'sale_id', 'pre_sale_id', 'route_external_delivery_reconciliation_item_id',
+        'business_id', 'branch_id', 'sale_id', 'pre_sale_id', 'route_external_delivery_reconciliation_item_id', 'route_delivery_stop_id', 'delivery_origin',
         'collected_by', 'recorded_by', 'amount', 'payment_method', 'reference', 'details', 'collected_at',
         'cash_custody_policy_snapshot', 'custody_status', 'cash_posting_state',
         'physical_branch_receipt_confirmed_at', 'physical_branch_receipt_confirmed_by',
@@ -24,6 +24,7 @@ class RouteDeliveryCollection extends Model
     public function sale(): BelongsTo { return $this->belongsTo(Sale::class); }
     public function preSale(): BelongsTo { return $this->belongsTo(PreSale::class); }
     public function reconciliationItem(): BelongsTo { return $this->belongsTo(RouteExternalDeliveryReconciliationItem::class, 'route_external_delivery_reconciliation_item_id'); }
+    public function stop(): BelongsTo { return $this->belongsTo(RouteDeliveryStop::class, 'route_delivery_stop_id'); }
     public function collectedBy(): BelongsTo { return $this->belongsTo(User::class, 'collected_by'); }
     public function recordedBy(): BelongsTo { return $this->belongsTo(User::class, 'recorded_by'); }
     public function cashSession(): BelongsTo { return $this->belongsTo(CashRegisterSession::class, 'cash_register_session_id'); }

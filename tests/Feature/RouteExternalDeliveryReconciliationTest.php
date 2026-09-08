@@ -146,6 +146,28 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         $this->assertDatabaseCount('cash_movements', 0);
     }
 
+    public function test_external_correction_preserves_optional_delivered_note_through_shared_rules(): void
+    {
+        [$business, $entry] = $this->deliveryAgentEntry();
+        $actor = User::query()->findOrFail($entry->batch->delivered_by);
+        $result = app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
+            'idempotency_key' => 'external-delivered-note-source-key',
+            'delivery_status' => 'not_delivered',
+            'not_delivered_reason' => 'customer_absent',
+            'collected' => false,
+        ], $actor);
+
+        $corrected = app(RouteExternalDeliveryReconciliationCorrectionService::class)->correctDeliveryResult(
+            RouteExternalDeliveryReconciliationItem::query()->findOrFail($result->resultId),
+            ['delivery_status' => 'delivered', 'notes' => 'Recibió recepción.', 'correction_reason' => 'Confirmación del cliente'],
+            $actor,
+        );
+
+        $this->assertSame('delivered', $corrected->delivery_status);
+        $this->assertNull($corrected->not_delivered_reason);
+        $this->assertSame('Recibió recepción.', $corrected->notes);
+    }
+
     public function test_immediate_cash_without_physical_receipt_stays_held_without_a_cash_session(): void
     {
         [$business, $item, $actor] = $this->deliveryAgentReconciliationItem();

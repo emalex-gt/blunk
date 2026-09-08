@@ -13,4 +13,5 @@ class RouteDeliveryBatchPreSale extends Model
     public function preSale(): BelongsTo { return $this->belongsTo(PreSale::class); }
     public function sale(): BelongsTo { return $this->belongsTo(Sale::class); }
     public function externalDeliveryReconciliationItem(): \Illuminate\Database\Eloquent\Relations\HasOne { return $this->hasOne(RouteExternalDeliveryReconciliationItem::class); }
+    public function deliveryStop(): \Illuminate\Database\Eloquent\Relations\HasOne { return $this->hasOne(RouteDeliveryStop::class); }
 }

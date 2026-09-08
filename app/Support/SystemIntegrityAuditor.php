@@ -8,6 +8,7 @@ use App\Models\Sale;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use InvalidArgumentException;
 
@@ -428,6 +429,57 @@ class SystemIntegrityAuditor
             ], 'critical', 'suspected_duplicate_sale', 'Grupo detectado por sales:audit-duplicates.', $group['recommendation']);
         }
 
+        $issues = [...$issues, ...$this->auditDeliveryRuns($context)];
+
+        return $issues;
+    }
+
+    private function auditDeliveryRuns(array $context): array
+    {
+        if (! Schema::hasTable('route_delivery_runs') || ! Schema::hasTable('route_delivery_stops')) {
+            return [];
+        }
+
+        $issues = []; $businessId = $context['business_id'];
+        foreach (DB::table('route_delivery_runs as r')->leftJoin('route_delivery_stops as st', 'st.route_delivery_run_id', '=', 'r.id')->where('r.business_id', $businessId)->when($context['branch_id'], fn ($q, $branch) => $q->where('r.branch_id', $branch))->groupBy('r.id', 'r.business_id', 'r.branch_id', 'r.status')->select('r.id', 'r.business_id', 'r.branch_id', 'r.status', DB::raw("COUNT(*) FILTER (WHERE st.status = 'pending') AS pending"))->cursor() as $run) {
+            $base = ['sale_id' => null, 'correlative' => null, 'branch_id' => $run->branch_id, 'customer_id' => null, 'status' => $run->status, 'total' => null, 'expected_total' => null, 'difference' => null, 'run_id' => $run->id];
+            if ($run->status === 'closed' && (int) $run->pending > 0) $issues[] = $this->issue($base, 'critical', 'delivery_run_closed_with_pending_stops', 'Jornada cerrada con paradas pendientes.', 'Reabrir mediante el flujo administrativo futuro o revisar la integridad.');
+        }
+        foreach (DB::table('route_delivery_stops as st')->join('route_delivery_runs as r', 'r.id', '=', 'st.route_delivery_run_id')->join('route_delivery_batch_pre_sales as e', 'e.id', '=', 'st.route_delivery_batch_pre_sale_id')->join('route_delivery_batches as b', 'b.id', '=', 'e.route_delivery_batch_id')->where('st.business_id', $businessId)->where(function ($q) { $q->whereColumn('st.business_id', '<>', 'r.business_id')->orWhereColumn('st.branch_id', '<>', 'r.branch_id')->orWhereColumn('st.business_id', '<>', 'b.business_id')->orWhereColumn('st.branch_id', '<>', 'b.branch_id')->orWhere('b.delivery_tracking_snapshot', '<>', 'in_app')->orWhere('st.delivery_tracking_snapshot', '<>', 'in_app')->orWhere('r.delivery_tracking_snapshot', '<>', 'in_app')->orWhereColumn('st.collection_responsibility_snapshot', '<>', 'b.collection_responsibility_snapshot')->orWhereColumn('st.collection_responsibility_snapshot', '<>', 'r.collection_responsibility_snapshot'); })->select('st.id', 'st.branch_id')->cursor() as $stop) {
+            $issues[] = $this->issue(['sale_id' => null, 'correlative' => null, 'branch_id' => $stop->branch_id, 'customer_id' => null, 'status' => null, 'total' => null, 'expected_total' => null, 'difference' => null, 'stop_id' => $stop->id], 'critical', 'delivery_stop_snapshot_or_scope_mismatch', 'Parada de entrega incompatible con su jornada o lote documental.', 'Revisar aislamiento, snapshots y asignación.');
+        }
+
+        foreach (DB::table('route_delivery_stops')->where('business_id', $businessId)->select('route_delivery_batch_pre_sale_id', DB::raw('COUNT(*) AS duplicated'))->groupBy('route_delivery_batch_pre_sale_id')->havingRaw('COUNT(*) > 1')->cursor() as $duplicate) {
+            $issues[] = $this->issue(['sale_id' => null, 'correlative' => null, 'branch_id' => null, 'customer_id' => null, 'status' => null, 'total' => null, 'expected_total' => null, 'difference' => null, 'route_delivery_batch_pre_sale_id' => $duplicate->route_delivery_batch_pre_sale_id], 'critical', 'duplicate_delivery_stop', 'Un comprobante tiene más de una parada de entrega dentro de Blunk.', 'Conservar una única asignación operativa y revisar concurrencia.');
+        }
+
+        foreach (DB::table('route_delivery_stops as st')->join('route_external_delivery_reconciliation_items as er', 'er.route_delivery_batch_pre_sale_id', '=', 'st.route_delivery_batch_pre_sale_id')->where('st.business_id', $businessId)->select('st.id', 'st.branch_id')->cursor() as $duplicate) {
+            $issues[] = $this->issue(['sale_id' => null, 'correlative' => null, 'branch_id' => $duplicate->branch_id, 'customer_id' => null, 'status' => null, 'total' => null, 'expected_total' => null, 'difference' => null, 'stop_id' => $duplicate->id], 'critical', 'external_and_in_app_delivery', 'Un comprobante aparece en conciliación externa y entrega dentro de Blunk.', 'Mantener una sola fuente de resultado físico.');
+        }
+
+        if (! Schema::hasTable('route_delivery_collections')) {
+            return $issues;
+        }
+
+        foreach (DB::table('route_delivery_collections')->where('business_id', $businessId)->where(function ($q) { $q->where(function ($q) { $q->where('delivery_origin', 'external_reconciliation')->where(function ($q) { $q->whereNull('route_external_delivery_reconciliation_item_id')->orWhereNotNull('route_delivery_stop_id'); }); })->orWhere(function ($q) { $q->where('delivery_origin', 'in_app_stop')->where(function ($q) { $q->whereNull('route_delivery_stop_id')->orWhereNotNull('route_external_delivery_reconciliation_item_id'); }); })->orWhereNotIn('delivery_origin', ['external_reconciliation', 'in_app_stop']); })->select('id', 'branch_id')->cursor() as $collection) {
+            $issues[] = $this->issue(['sale_id' => null, 'correlative' => null, 'branch_id' => $collection->branch_id, 'customer_id' => null, 'status' => null, 'total' => null, 'expected_total' => null, 'difference' => null, 'route_delivery_collection_id' => $collection->id], 'critical', 'delivery_collection_invalid_origin', 'Cobro de entrega sin un único origen válido.', 'Restaurar exactamente un origen con integridad referencial.');
+        }
+
+        foreach (DB::table('route_delivery_collections')->where('business_id', $businessId)->select('sale_id', 'branch_id', DB::raw('COUNT(*) AS duplicated'))->groupBy('sale_id', 'branch_id')->havingRaw('COUNT(*) > 1')->cursor() as $duplicate) {
+            $issues[] = $this->issue(['sale_id' => $duplicate->sale_id, 'correlative' => null, 'branch_id' => $duplicate->branch_id, 'customer_id' => null, 'status' => null, 'total' => null, 'expected_total' => null, 'difference' => null], 'critical', 'duplicate_delivery_collection_for_sale', 'Una venta tiene más de un cobro de entrega.', 'Mantener un único cobro postventa por venta.');
+        }
+
+        foreach (DB::table('sale_payments')->whereNotNull('route_delivery_collection_id')->select('route_delivery_collection_id', DB::raw('COUNT(*) AS duplicated'))->groupBy('route_delivery_collection_id')->havingRaw('COUNT(*) > 1')->cursor() as $duplicate) {
+            $issues[] = $this->issue(['sale_id' => null, 'correlative' => null, 'branch_id' => null, 'customer_id' => null, 'status' => null, 'total' => null, 'expected_total' => null, 'difference' => null, 'route_delivery_collection_id' => $duplicate->route_delivery_collection_id], 'critical', 'duplicate_sale_payment_for_delivery_collection', 'Un cobro de entrega tiene más de un pago financiero.', 'Mantener un único sale_payment por cobro de entrega.');
+        }
+
+        foreach (DB::table('route_delivery_collections')->where('business_id', $businessId)->where('payment_method', 'cash')->where('cash_posting_state', 'posted_to_current_session')->whereNull('cash_movement_id')->select('id', 'branch_id')->cursor() as $collection) {
+            $issues[] = $this->issue(['sale_id' => null, 'correlative' => null, 'branch_id' => $collection->branch_id, 'customer_id' => null, 'status' => null, 'total' => null, 'expected_total' => null, 'difference' => null, 'route_delivery_collection_id' => $collection->id], 'critical', 'posted_route_cash_without_movement', 'Efectivo de ruta marcado como recibido en caja sin movimiento de caja.', 'Revisar la recepción física actual y el movimiento vinculado.');
+        }
+
+        foreach (DB::table('route_delivery_runs as r')->leftJoin('users as u', 'u.id', '=', 'r.delivery_user_id')->where('r.business_id', $businessId)->where(function ($q) { $q->whereNull('u.id')->orWhereColumn('u.business_id', '<>', 'r.business_id')->orWhereColumn('u.current_branch_id', '<>', 'r.branch_id'); })->select('r.id', 'r.branch_id')->cursor() as $run) {
+            $issues[] = $this->issue(['sale_id' => null, 'correlative' => null, 'branch_id' => $run->branch_id, 'customer_id' => null, 'status' => null, 'total' => null, 'expected_total' => null, 'difference' => null, 'run_id' => $run->id], 'critical', 'delivery_run_delivery_user_scope_mismatch', 'El entregador asignado no pertenece al negocio o sucursal de la jornada.', 'Reasignar mediante el flujo administrativo autorizado.');
+        }
         return $issues;
     }
 

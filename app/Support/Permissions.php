@@ -93,6 +93,11 @@ class Permissions
     public const ROUTES_EXTERNAL_DELIVERY_RECONCILE = 'routes.external_delivery.reconcile';
     public const ROUTES_EXTERNAL_DELIVERY_COLLECTION_OVERRIDE = 'routes.external_delivery.collection.override';
     public const ROUTES_EXTERNAL_DELIVERY_RECONCILE_CORRECT = 'routes.external_delivery.reconcile.correct';
+    public const ROUTES_DELIVERY_RUNS_VIEW = 'routes.delivery_runs.view';
+    public const ROUTES_DELIVERY_RUNS_EXECUTE = 'routes.delivery_runs.execute';
+    public const ROUTES_DELIVERY_RUNS_MANAGE = 'routes.delivery_runs.manage';
+    public const ROUTES_DELIVERY_RUNS_CORRECT = 'routes.delivery_runs.correct';
+    public const ROUTES_DELIVERY_COLLECTIONS_OVERRIDE = 'routes.delivery_collections.override';
     public const ROUTES_WORK_DAYS_CLOSE = 'routes.work_days.close';
 
     public const CREDITS_VIEW = 'credits.view';
@@ -213,6 +218,11 @@ class Permissions
             self::ROUTES_EXTERNAL_DELIVERY_RECONCILE => ['name' => 'Conciliar entrega externa', 'group' => 'Rutas'],
             self::ROUTES_EXTERNAL_DELIVERY_COLLECTION_OVERRIDE => ['name' => 'Registrar cobro externo por override', 'group' => 'Rutas'],
             self::ROUTES_EXTERNAL_DELIVERY_RECONCILE_CORRECT => ['name' => 'Corregir conciliación externa', 'group' => 'Rutas'],
+            self::ROUTES_DELIVERY_RUNS_VIEW => ['name' => 'Ver jornadas de entrega', 'group' => 'Rutas'],
+            self::ROUTES_DELIVERY_RUNS_EXECUTE => ['name' => 'Ejecutar jornadas de entrega', 'group' => 'Rutas'],
+            self::ROUTES_DELIVERY_RUNS_MANAGE => ['name' => 'Gestionar jornadas de entrega', 'group' => 'Rutas'],
+            self::ROUTES_DELIVERY_RUNS_CORRECT => ['name' => 'Corregir jornadas de entrega', 'group' => 'Rutas'],
+            self::ROUTES_DELIVERY_COLLECTIONS_OVERRIDE => ['name' => 'Registrar cobros de entrega por override', 'group' => 'Rutas'],
             self::ROUTES_WORK_DAYS_CLOSE => ['name' => 'Cerrar jornadas de ruta', 'group' => 'Rutas'],
             self::CREDITS_VIEW => ['name' => 'Ver créditos', 'group' => 'Créditos'],
             self::CREDITS_CREATE => ['name' => 'Crear créditos', 'group' => 'Créditos'],
@@ -287,6 +297,10 @@ class Permissions
                 self::ROUTES_PRE_SALES_EDIT,
                 self::ROUTES_WORK_DAYS_CLOSE,
             ],
+            'delivery_agent' => [
+                self::ROUTES_DELIVERY_RUNS_VIEW,
+                self::ROUTES_DELIVERY_RUNS_EXECUTE,
+            ],
             'stock_manager' => [
                 self::PRODUCTS_VIEW,
                 self::PRODUCTS_CREATE,
@@ -348,6 +362,7 @@ class Permissions
             'admin' => 'Admin',
             'cashier' => 'Cajero',
             'pre_seller' => 'Preventista',
+            'delivery_agent' => 'Entregador',
             'stock_manager' => 'Inventario',
             'purchases' => 'Compras',
             'reports' => 'Reportes',

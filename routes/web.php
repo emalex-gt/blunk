@@ -21,6 +21,8 @@ use App\Http\Controllers\RoutePreSaleCollectionController;
 use App\Http\Controllers\RoutePreparationBatchController;
 use App\Http\Controllers\RouteDeliveryBatchController;
 use App\Http\Controllers\RouteExternalDeliveryReconciliationController;
+use App\Http\Controllers\RouteDeliveryRunController;
+use App\Http\Controllers\RouteDeliveryStopController;
 use App\Http\Controllers\RoutePreSaleFelController;
 use App\Http\Controllers\RoutePreSaleInvoiceController;
 use App\Http\Controllers\SaleController;
@@ -279,6 +281,20 @@ Route::middleware('auth')->group(function () {
             Route::post('/external-delivery-reconciliation-items/{item}/correct', [RouteExternalDeliveryReconciliationController::class, 'correct'])
                 ->middleware('permission:routes.external_delivery.reconcile.correct')
                 ->name('external-delivery-reconciliation-items.correct');
+
+            Route::get('/delivery-runs', [RouteDeliveryRunController::class, 'index'])->middleware('permission:routes.delivery_runs.view')->name('delivery-runs.index');
+            Route::post('/delivery-runs', [RouteDeliveryRunController::class, 'store'])->middleware('permission:routes.delivery_runs.manage')->name('delivery-runs.store');
+            Route::get('/delivery-runs/{run}', [RouteDeliveryRunController::class, 'show'])->middleware('permission:routes.delivery_runs.view')->name('delivery-runs.show');
+            Route::post('/delivery-runs/{run}/assign', [RouteDeliveryRunController::class, 'assign'])->middleware('permission:routes.delivery_runs.manage')->name('delivery-runs.assign');
+            Route::post('/delivery-runs/{run}/batches/{batch}/assign', [RouteDeliveryRunController::class, 'assignBatch'])->middleware('permission:routes.delivery_runs.manage')->name('delivery-runs.assign-batch');
+            Route::delete('/delivery-runs/{run}/stops/{stop}', [RouteDeliveryRunController::class, 'remove'])->middleware('permission:routes.delivery_runs.manage')->name('delivery-runs.stops.destroy');
+            Route::put('/delivery-runs/{run}/order', [RouteDeliveryRunController::class, 'reorder'])->middleware('permission:routes.delivery_runs.manage')->name('delivery-runs.reorder');
+            Route::post('/delivery-runs/{run}/start', [RouteDeliveryRunController::class, 'start'])->middleware('permission:routes.delivery_runs.execute')->name('delivery-runs.start');
+            Route::post('/delivery-runs/{run}/close', [RouteDeliveryRunController::class, 'close'])->middleware('permission:routes.delivery_runs.execute')->name('delivery-runs.close');
+            Route::get('/delivery-stops/{stop}', [RouteDeliveryStopController::class, 'show'])->middleware('permission:routes.delivery_runs.view')->name('delivery-stops.show');
+            Route::post('/delivery-stops/{stop}/complete', [RouteDeliveryStopController::class, 'complete'])->middleware('permission:routes.delivery_runs.execute')->name('delivery-stops.complete');
+            Route::post('/delivery-stops/{stop}/collect', [RouteDeliveryStopController::class, 'collect'])->middleware('permission:routes.delivery_runs.execute')->name('delivery-stops.collect');
+            Route::post('/delivery-stops/{stop}/correct', [RouteDeliveryStopController::class, 'correct'])->middleware('permission:routes.delivery_runs.correct')->name('delivery-stops.correct');
 
             Route::get('/preparation-batches', [RoutePreparationBatchController::class, 'index'])
                 ->middleware('permission:routes.pre_sales.admin_view')
