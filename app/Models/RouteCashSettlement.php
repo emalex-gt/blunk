@@ -13,4 +13,5 @@ class RouteCashSettlement extends Model
     public function receivedBy() { return $this->belongsTo(User::class, 'received_by'); }
     public function cashSession() { return $this->belongsTo(CashRegisterSession::class, 'cash_register_session_id'); }
     public function cashMovement() { return $this->belongsTo(CashMovement::class); }
+    public function variance() { return $this->hasOne(RouteCashSettlementVariance::class, 'route_cash_settlement_id'); }
 }

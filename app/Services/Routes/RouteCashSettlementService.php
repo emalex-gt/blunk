@@ -5,6 +5,7 @@ namespace App\Services\Routes;
 use App\Models\OperationIdempotencyKey;
 use App\Models\RouteCashSettlement;
 use App\Models\RouteCashSettlementItem;
+use App\Models\RouteCashSettlementVariance;
 use App\Models\RouteDeliveryCollection;
 use App\Models\RoutePreSaleCollection;
 use App\Models\User;
@@ -16,7 +17,7 @@ use Illuminate\Validation\ValidationException;
 
 class RouteCashSettlementService
 {
-    public function confirm(RouteCashSettlement $settlement, User $actor, int $receivedBy, mixed $receivedAmount, ?string $notes, string $key): IdempotencyResult
+    public function confirm(RouteCashSettlement $settlement, User $actor, int $receivedBy, mixed $receivedAmount, ?string $notes, string $key, array $variance = []): IdempotencyResult
     {
         $businessId = (int) $settlement->business_id;
         $branchId = (int) $settlement->branch_id;
@@ -31,9 +32,9 @@ class RouteCashSettlementService
 
         return app(IdempotencyService::class)->run(
             $businessId, $branchId, $actor->id, 'route_cash_settlement_confirm', $key,
-            ['settlement_id' => $settlement->id, 'received_by' => $receivedBy, 'received_amount' => $amount, 'notes' => $notes],
-            function () use ($settlement, $actor, $receivedBy, $amount, $notes, $businessId, $branchId, $key) {
-                return DB::transaction(function () use ($settlement, $actor, $receivedBy, $amount, $notes, $businessId, $branchId, $key) {
+            ['settlement_id' => $settlement->id, 'received_by' => $receivedBy, 'received_amount' => $amount, 'notes' => $notes, 'variance' => $variance],
+            function () use ($settlement, $actor, $receivedBy, $amount, $notes, $businessId, $branchId, $key, $variance) {
+                return DB::transaction(function () use ($settlement, $actor, $receivedBy, $amount, $notes, $businessId, $branchId, $key, $variance) {
                     $this->assertActorScope($actor, $businessId, $branchId);
                     $locked = RouteCashSettlement::query()
                         ->where('business_id', $businessId)
@@ -63,8 +64,19 @@ class RouteCashSettlementService
                     [$preCollections, $deliveryCollections] = $this->lockAndValidateCollections($items, $locked);
                     $expected = round((float) $items->sum(fn (RouteCashSettlementItem $item) => (float) $item->amount_snapshot), 2);
                     $difference = round($amount - $expected, 2);
+                    if ($amount <= 0) {
+                        throw ValidationException::withMessages(['received_amount' => 'Debe recibirse efectivo físico mayor que cero para confirmar.']);
+                    }
                     if ($difference !== 0.0) {
-                        throw ValidationException::withMessages(['received_amount' => 'El efectivo recibido debe coincidir exactamente con el importe esperado.']);
+                        $reason = $variance['reason_code'] ?? null;
+                        $explanation = trim((string) ($variance['explanation'] ?? ''));
+                        if (($variance['confirmed'] ?? false) !== true || ! $reason || $explanation === '') {
+                            throw ValidationException::withMessages(['received_amount' => 'La diferencia exige motivo, explicación y confirmación explícita.']);
+                        }
+                        $allowed = $difference < 0 ? ['counting_difference','collector_reported_loss','missing_cash','other'] : ['counting_difference','unidentified_extra_cash','other'];
+                        if (! in_array($reason, $allowed, true)) {
+                            throw ValidationException::withMessages(['variance_reason_code' => 'El motivo no corresponde al tipo de diferencia.']);
+                        }
                     }
 
                     $session = CashRegister::requireOpenSession($businessId, 'Debe existir una caja abierta actual para confirmar la recepción física.', true, $branchId);
@@ -77,6 +89,14 @@ class RouteCashSettlementService
                         "Liquidación de efectivo del cobrador #{$locked->collector_user_id}",
                         $actor->id,
                     );
+                    if ($difference !== 0.0) {
+                        RouteCashSettlementVariance::query()->create([
+                            'business_id' => $businessId, 'branch_id' => $branchId, 'route_cash_settlement_id' => $locked->id,
+                            'collector_user_id' => $locked->collector_user_id, 'difference_amount' => $difference, 'status' => 'open',
+                            'reason_code' => $variance['reason_code'], 'explanation' => trim($variance['explanation']),
+                            'opened_by' => $actor->id, 'opened_at' => now(),
+                        ]);
+                    }
 
                     RoutePreSaleCollection::query()->whereIn('id', $preCollections->keys())->update(['custody_status' => 'posted_to_branch_cash']);
                     RouteDeliveryCollection::query()->whereIn('id', $deliveryCollections->keys())->update([
@@ -99,7 +119,7 @@ class RouteCashSettlementService
                         'operation_idempotency_key_id' => $idempotencyId,
                         'expected_amount' => $expected,
                         'received_amount' => $amount,
-                        'difference_amount' => 0,
+                        'difference_amount' => $difference,
                         'notes' => filled($notes) ? trim($notes) : null,
                         'status' => 'confirmed',
                         'confirmed_at' => now(),

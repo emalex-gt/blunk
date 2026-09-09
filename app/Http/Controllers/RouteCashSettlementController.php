@@ -57,6 +57,8 @@ class RouteCashSettlementController extends Controller
                 : [],
             'can_create' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CREATE),
             'can_confirm' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM),
+            'can_confirm_variance' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM_VARIANCE),
+            'can_view_variances' => Permissions::userHas($actor, Permissions::ROUTES_CASH_VARIANCES_VIEW),
             'can_review' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_REVIEW),
         ]);
     }
@@ -114,6 +116,7 @@ class RouteCashSettlementController extends Controller
                 ->values(),
             'can_create' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CREATE),
             'can_confirm' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM),
+            'can_confirm_variance' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM_VARIANCE),
             'can_review' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_REVIEW),
         ]);
     }
@@ -179,9 +182,16 @@ class RouteCashSettlementController extends Controller
             'received_by' => ['required', 'integer', Rule::exists('users', 'id')],
             'received_amount' => ['required', 'numeric', 'min:0'],
             'notes' => ['nullable', 'string', 'max:2000'],
+            'variance_reason_code' => ['nullable', 'string', 'max:32'],
+            'variance_explanation' => ['nullable', 'string', 'max:2000'],
+            'confirm_variance' => ['nullable', 'boolean'],
         ]);
+        $difference = round((float) $data['received_amount'] - (float) $settlement->expected_amount, 2);
+        if ($difference !== 0.0) {
+            $this->requirePermission($request, Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM_VARIANCE);
+        }
         $this->receivedBy((int) $data['received_by'], $request->user());
-        $settlements->confirm($settlement, $request->user(), (int) $data['received_by'], $data['received_amount'], $data['notes'] ?? null, $data['idempotency_key']);
+        $settlements->confirm($settlement, $request->user(), (int) $data['received_by'], $data['received_amount'], $data['notes'] ?? null, $data['idempotency_key'], ['reason_code' => $data['variance_reason_code'] ?? null, 'explanation' => $data['variance_explanation'] ?? null, 'confirmed' => (bool) ($data['confirm_variance'] ?? false)]);
 
         return redirect()->route('routes.cash-settlements.show', $settlement)->with('success', 'Efectivo recibido y liquidación confirmada.');
     }

@@ -597,7 +597,7 @@ class SystemIntegrityAuditor
                 }
             }
 
-            if ((float) $movement->amount < 0 && ! in_array($movement->type, ['purchase_cash', 'expense', 'sale_cash_cancel', 'credit_payment_cash_cancel', 'closing_adjustment'], true)) {
+            if ((float) $movement->amount < 0 && ! in_array($movement->type, ['purchase_cash', 'expense', 'sale_cash_cancel', 'credit_payment_cash_cancel', 'closing_adjustment', 'route_cash_variance_overage_returned'], true)) {
                 $issues[] = $this->issue($base, 'warning', 'invalid_negative_cash_movement', 'Movimiento de caja negativo con tipo que no representa una salida o reversa válida.', 'Revisar tipo, referencia y evidencia del movimiento.');
             }
 
@@ -697,9 +697,6 @@ class SystemIntegrityAuditor
                 if (! $validMovement) {
                     $issues[] = $this->issue($base, 'critical', 'confirmed_route_cash_settlement_invalid_movement', 'Liquidación confirmada sin su único movimiento consolidado válido en la caja actual.', 'Revisar la cadena liquidación → movimiento de caja sin crear movimientos por cobro.');
                 }
-                if (round((float) $settlement->received_amount, 2) !== round((float) $settlement->expected_amount, 2) || round((float) $settlement->difference_amount, 2) !== 0.0) {
-                    $issues[] = $this->issue($base, 'critical', 'confirmed_route_cash_settlement_difference', 'Liquidación confirmada con diferencia de efectivo.', 'La fase no permite confirmar faltantes ni sobrantes.');
-                }
             } elseif ($settlement->cash_movement_id !== null) {
                 $issues[] = $this->issue($base, 'critical', 'unconfirmed_route_cash_settlement_with_movement', 'Un borrador o una liquidación cancelada tiene movimiento de caja.', 'La liquidación debe confirmar antes de afectar caja.');
             }
@@ -748,6 +745,91 @@ class SystemIntegrityAuditor
                         ->whereColumn("item.{$column}", 'collection.id')->where('item.is_active', true)->where('settlement.status', 'confirmed');
                 })->select('collection.id', 'collection.branch_id')->cursor() as $collection) {
                 $issues[] = $this->issue(['cash_register_id' => null, 'cash_movement_id' => null, 'reference_type' => 'route_cash_collection', 'reference_id' => $collection->id, 'amount' => null, 'movement_type' => 'route_cash_settlement'], 'critical', 'route_cash_collection_posted_without_confirmed_settlement', 'Efectivo de ruta marcado como ingresado sin movimiento propio ni liquidación confirmada.', 'Revisar la recepción física y mantener una sola cadena de custodia.');
+            }
+        }
+
+        $issues = [...$issues, ...$this->auditRouteCashSettlementVariances($context)];
+
+        return $issues;
+    }
+
+    private function auditRouteCashSettlementVariances(array $context): array
+    {
+        if (! Schema::hasTable('route_cash_settlement_variances')) {
+            return [];
+        }
+
+        $issues = [];
+        $businessId = $context['business_id'];
+        $base = static fn ($variance, ?int $movementId = null): array => [
+            'cash_register_id' => null,
+            'cash_movement_id' => $movementId,
+            'reference_type' => 'route_cash_settlement_variance',
+            'reference_id' => $variance->id,
+            'amount' => (float) $variance->difference_amount,
+            'movement_type' => 'route_cash_settlement_variance',
+        ];
+
+        foreach (DB::table('route_cash_settlements as s')
+            ->leftJoin('route_cash_settlement_variances as v', 'v.route_cash_settlement_id', '=', 's.id')
+            ->where('s.business_id', $businessId)
+            ->where('s.status', 'confirmed')
+            ->where(function (Builder $query) {
+                $query->where(function (Builder $query) { $query->where('s.difference_amount', '!=', 0)->whereNull('v.id'); })
+                    ->orWhere(function (Builder $query) { $query->where('s.difference_amount', 0)->whereNotNull('v.id'); })
+                    ->orWhereColumn('v.difference_amount', '!=', 's.difference_amount')
+                    ->orWhereColumn('v.business_id', '!=', 's.business_id')
+                    ->orWhereColumn('v.branch_id', '!=', 's.branch_id')
+                    ->orWhereColumn('v.collector_user_id', '!=', 's.collector_user_id');
+            })->select('s.id as settlement_id', 's.branch_id as settlement_branch_id', 's.difference_amount as settlement_difference', 'v.*')->cursor() as $row) {
+            $issues[] = $this->issue([
+                'cash_register_id' => null, 'cash_movement_id' => null, 'reference_type' => 'route_cash_settlement', 'reference_id' => $row->settlement_id,
+                'amount' => (float) $row->settlement_difference, 'movement_type' => 'route_cash_settlement',
+            ], 'critical', 'route_cash_settlement_variance_mismatch', 'La liquidación confirmada y su variance no son coherentes en diferencia, scope o cobrador.', 'Revisar la cadena settlement → variance sin alterar cobros de cliente.');
+        }
+
+        $varianceRows = DB::table('route_cash_settlement_variances as v')
+            ->join('route_cash_settlements as s', 's.id', '=', 'v.route_cash_settlement_id')
+            ->where('v.business_id', $businessId)
+            ->select('v.*', 's.status as settlement_status', 's.business_id as settlement_business_id', 's.branch_id as settlement_branch_id', 's.collector_user_id as settlement_collector_user_id', 's.difference_amount as settlement_difference')
+            ->cursor();
+        foreach ($varianceRows as $variance) {
+            $rowBase = $base($variance);
+            if ($variance->settlement_status !== 'confirmed' || (int) $variance->branch_id !== (int) $variance->settlement_branch_id || (int) $variance->business_id !== (int) $variance->settlement_business_id || (int) $variance->collector_user_id !== (int) $variance->settlement_collector_user_id || round((float) $variance->difference_amount, 2) !== round((float) $variance->settlement_difference, 2)) {
+                $issues[] = $this->issue($rowBase, 'critical', 'route_cash_settlement_variance_scope_mismatch', 'La variance no coincide con su liquidación confirmada.', 'Restaurar exclusivamente la relación y snapshots de custodia válidos.');
+            }
+            $resolved = (float) DB::table('route_cash_settlement_variance_resolutions')->where('variance_id', $variance->id)->sum('amount');
+            $remaining = round(abs((float) $variance->difference_amount) - $resolved, 2);
+            if (($variance->status === 'resolved' && $remaining !== 0.0) || ($variance->status === 'open' && $remaining === 0.0)) {
+                $issues[] = $this->issue($rowBase, 'critical', 'route_cash_settlement_variance_status_balance_mismatch', 'El estado de la variance no coincide con su saldo físico derivado.', 'Revisar únicamente el ledger de resoluciones y su evidencia de caja.');
+            }
+            if ($remaining < 0) {
+                $issues[] = $this->issue($rowBase, 'critical', 'route_cash_settlement_variance_over_resolved', 'Las resoluciones físicas superan la diferencia original.', 'No crear más movimientos; revisar la evidencia y futura reversión administrativa.');
+            }
+        }
+
+        foreach (DB::table('route_cash_settlement_variance_resolutions as r')
+            ->join('route_cash_settlement_variances as v', 'v.id', '=', 'r.variance_id')
+            ->leftJoin('cash_movements as m', 'm.id', '=', 'r.cash_movement_id')
+            ->leftJoin('cash_register_sessions as cs', 'cs.id', '=', 'r.cash_register_session_id')
+            ->where('r.business_id', $businessId)
+            ->select('r.*', 'v.difference_amount', 'v.collector_user_id', 'v.business_id as variance_business_id', 'v.branch_id as variance_branch_id', 'm.business_id as movement_business_id', 'm.branch_id as movement_branch_id', 'm.cash_register_session_id as movement_session_id', 'm.type as movement_type', 'm.amount as movement_amount', 'm.reference_type as movement_reference_type', 'm.reference_id as movement_reference_id', 'cs.business_id as session_business_id', 'cs.branch_id as session_branch_id')->cursor() as $resolution) {
+            $signValid = (float) $resolution->difference_amount < 0
+                ? $resolution->type === 'shortage_cash_received' && round((float) $resolution->movement_amount, 2) === round((float) $resolution->amount, 2) && $resolution->movement_type === 'route_cash_variance_shortage_received'
+                : $resolution->type === 'overage_cash_returned' && round((float) $resolution->movement_amount, 2) === -round((float) $resolution->amount, 2) && $resolution->movement_type === 'route_cash_variance_overage_returned';
+            $valid = $signValid
+                && (int) $resolution->business_id === (int) $resolution->variance_business_id
+                && (int) $resolution->branch_id === (int) $resolution->variance_branch_id
+                && (int) $resolution->counterparty_user_id === (int) $resolution->collector_user_id
+                && (int) $resolution->movement_business_id === (int) $resolution->variance_business_id
+                && (int) $resolution->movement_branch_id === (int) $resolution->variance_branch_id
+                && (int) $resolution->movement_session_id === (int) $resolution->cash_register_session_id
+                && (int) $resolution->session_business_id === (int) $resolution->variance_business_id
+                && (int) $resolution->session_branch_id === (int) $resolution->variance_branch_id
+                && $resolution->movement_reference_type === 'route_cash_settlement_variance_resolution'
+                && (int) $resolution->movement_reference_id === (int) $resolution->id;
+            if (! $valid) {
+                $issues[] = $this->issue(['cash_register_id' => $resolution->cash_register_session_id, 'cash_movement_id' => $resolution->cash_movement_id, 'reference_type' => 'route_cash_settlement_variance_resolution', 'reference_id' => $resolution->id, 'amount' => (float) $resolution->amount, 'movement_type' => $resolution->type], 'critical', 'route_cash_settlement_variance_invalid_resolution', 'La resolution no conserva un único movimiento, scope, signo, sesión, referencia o cobrador válidos.', 'Revisar la evidencia física sin modificar pagos de cliente.');
             }
         }
 

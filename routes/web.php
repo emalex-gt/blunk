@@ -24,6 +24,7 @@ use App\Http\Controllers\RouteExternalDeliveryReconciliationController;
 use App\Http\Controllers\RouteDeliveryRunController;
 use App\Http\Controllers\RouteDeliveryStopController;
 use App\Http\Controllers\RouteCashSettlementController;
+use App\Http\Controllers\RouteCashSettlementVarianceController;
 use App\Http\Controllers\RoutePendingCollectionController;
 use App\Http\Controllers\RoutePreSaleFelController;
 use App\Http\Controllers\RoutePreSaleInvoiceController;
@@ -300,12 +301,16 @@ Route::middleware('auth')->group(function () {
 
             Route::get('/cash-settlements', [RouteCashSettlementController::class, 'index'])->name('cash-settlements.index');
             Route::post('/cash-settlements', [RouteCashSettlementController::class, 'store'])->name('cash-settlements.store');
+            Route::get('/cash-settlements/variances', [RouteCashSettlementVarianceController::class, 'index'])->name('cash-settlement-variances.index');
+            Route::get('/cash-settlements/variances/{variance}', [RouteCashSettlementVarianceController::class, 'show'])->name('cash-settlement-variances.show');
+            Route::post('/cash-settlements/variances/{variance}/events', [RouteCashSettlementVarianceController::class, 'event'])->name('cash-settlement-variances.events.store');
+            Route::patch('/cash-settlements/variances/{variance}/assignment', [RouteCashSettlementVarianceController::class, 'assignment'])->name('cash-settlement-variances.assignment.update');
+            Route::post('/cash-settlements/variances/{variance}/resolutions', [RouteCashSettlementVarianceController::class, 'resolve'])->name('cash-settlement-variances.resolutions.store');
             Route::get('/cash-settlements/{settlement}', [RouteCashSettlementController::class, 'show'])->name('cash-settlements.show');
             Route::post('/cash-settlements/{settlement}/items', [RouteCashSettlementController::class, 'addItems'])->name('cash-settlements.items.store');
             Route::delete('/cash-settlements/{settlement}/items/{item}', [RouteCashSettlementController::class, 'removeItem'])->name('cash-settlements.items.destroy');
             Route::post('/cash-settlements/{settlement}/cancel', [RouteCashSettlementController::class, 'cancel'])->name('cash-settlements.cancel');
             Route::post('/cash-settlements/{settlement}/confirm', [RouteCashSettlementController::class, 'confirm'])->name('cash-settlements.confirm');
-
             Route::get('/pending-collections', [RoutePendingCollectionController::class, 'index'])->middleware('permission:routes.pending_collections.view')->name('pending-collections.index');
             Route::get('/pending-collections/sales/{sale}', [RoutePendingCollectionController::class, 'showSale'])->middleware('permission:routes.pending_collections.view')->name('pending-collections.sales.show');
             Route::post('/pending-collections/sales/{sale}/events', [RoutePendingCollectionController::class, 'eventForSale'])->middleware('permission:routes.pending_collections.manage')->name('pending-collections.sales.events.store');
