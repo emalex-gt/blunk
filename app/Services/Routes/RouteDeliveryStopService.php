@@ -14,7 +14,11 @@ use Illuminate\Validation\ValidationException;
 
 class RouteDeliveryStopService
 {
-    public function __construct(private readonly RouteCashOperationGuard $cash, private readonly RouteDeliveryCollectionService $collections) {}
+    public function __construct(
+        private readonly RouteCashOperationGuard $cash,
+        private readonly RouteDeliveryCollectionService $collections,
+        private readonly RoutePendingCollectionCaseService $pendingCases,
+    ) {}
 
     public function complete(RouteDeliveryStop $stop, array $data, User $actor, string $key): IdempotencyResult
     {
@@ -46,6 +50,7 @@ class RouteDeliveryStopService
                 if ($locked->collection_responsibility_snapshot === 'delivery_agent' && (bool) ($data['collected'] ?? false)) {
                     $collection = $this->collections->captureFull($locked, $data, $actor);
                 }
+                $this->pendingCases->syncDeliveredOutcome($locked, $actor);
                 return ['result_id' => $locked->id, 'response_payload' => ['stop_id' => $locked->id, 'collection_id' => $collection?->id]];
             });
         }, 'route_delivery_stop');

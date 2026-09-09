@@ -19,6 +19,7 @@ class RouteExternalDeliveryReconciliationService
     public function __construct(
         private readonly ExternalDeliveryEligibility $eligibility,
         private readonly RouteDeliveryCollectionService $collections,
+        private readonly RoutePendingCollectionCaseService $pendingCases,
     ) {
     }
 
@@ -79,6 +80,7 @@ class RouteExternalDeliveryReconciliationService
                     if ($context['responsibility'] === 'delivery_agent' && (bool) ($data['collected'] ?? false)) {
                         $collection = $this->collections->captureFull($item, $data, $actor);
                     }
+                    $this->pendingCases->syncDeliveredOutcome($item, $actor);
                     $total = RouteDeliveryBatchPreSale::query()->where('route_delivery_batch_id', $lockedBatch->id)->count();
                     $reconciled = RouteExternalDeliveryReconciliationItem::query()->where('route_external_delivery_reconciliation_id', $reconciliation->id)->count();
                     if ($reconciled === $total && ! $reconciliation->completed_at) {

@@ -4,6 +4,7 @@ namespace App\Services\Routes;
 
 use App\Models\RouteExternalDeliveryReconciliationItem;
 use App\Models\RouteExternalDeliveryReconciliationItemRevision;
+use App\Models\RouteDeliveryCollection;
 use App\Models\User;
 use App\Support\Permissions;
 use Illuminate\Support\Facades\DB;
@@ -11,6 +12,8 @@ use Illuminate\Validation\ValidationException;
 
 class RouteExternalDeliveryReconciliationCorrectionService
 {
+    public function __construct(private readonly RoutePendingCollectionCaseService $pendingCases) {}
+
     private const FORBIDDEN = ['collected', 'amount', 'payment_method', 'collected_by', 'collected_at', 'reference', 'details', 'custody_status', 'cash_register_session_id', 'cash_movement_id', 'receive_cash_in_current_session'];
 
     public function correctDeliveryResult(RouteExternalDeliveryReconciliationItem $item, array $data, User $actor): RouteExternalDeliveryReconciliationItem
@@ -36,6 +39,9 @@ class RouteExternalDeliveryReconciliationCorrectionService
             $notes = $outcome['delivery_notes'];
             $previous = ['delivery_status' => $locked->delivery_status, 'not_delivered_reason' => $locked->not_delivered_reason, 'notes' => $locked->notes];
             $next = ['delivery_status' => $status, 'not_delivered_reason' => $reason, 'notes' => $notes];
+            if ($locked->delivery_status === 'delivered' && $next['delivery_status'] === 'not_delivered' && RouteDeliveryCollection::query()->where('route_external_delivery_reconciliation_item_id', $locked->id)->lockForUpdate()->exists()) {
+                throw ValidationException::withMessages(['correction' => 'La corrección requiere una reversión financiera o logística que aún no existe.']);
+            }
             $version = (int) RouteExternalDeliveryReconciliationItemRevision::query()->where('route_external_delivery_reconciliation_item_id', $locked->id)->max('version') + 1;
             RouteExternalDeliveryReconciliationItemRevision::query()->create([
                 'business_id' => $locked->business_id, 'branch_id' => $locked->branch_id,
@@ -44,6 +50,7 @@ class RouteExternalDeliveryReconciliationCorrectionService
                 'corrected_by' => $actor->id, 'corrected_at' => now(),
             ]);
             $locked->update($next);
+            $this->pendingCases->synchronizePhysicalCorrection($locked, $actor, trim((string) $data['correction_reason']));
 
             return $locked->refresh();
         });

@@ -20,7 +20,17 @@ class RouteDeliveryCollectionService
 
     public function captureFull(RouteExternalDeliveryReconciliationItem|RouteDeliveryStop $item, array $data, User $actor): RouteDeliveryCollection
     {
-        return DB::transaction(function () use ($item, $data, $actor) {
+        return $this->capture($item, $data, $actor, true, false);
+    }
+
+    public function capturePostDeliveryFull(RouteExternalDeliveryReconciliationItem|RouteDeliveryStop $item, array $data, User $actor): RouteDeliveryCollection
+    {
+        return $this->capture($item, $data, $actor, false, true);
+    }
+
+    private function capture(RouteExternalDeliveryReconciliationItem|RouteDeliveryStop $item, array $data, User $actor, bool $liveInAppExecution, bool $requireDelivered): RouteDeliveryCollection
+    {
+        return DB::transaction(function () use ($item, $data, $actor, $liveInAppExecution, $requireDelivered) {
             $external = $item instanceof RouteExternalDeliveryReconciliationItem;
             $lockedItem = $external
                 ? RouteExternalDeliveryReconciliationItem::query()->whereKey($item->id)->lockForUpdate()->firstOrFail()
@@ -32,7 +42,10 @@ class RouteDeliveryCollectionService
             if ($lockedItem->collection_responsibility_snapshot !== 'delivery_agent') {
                 throw ValidationException::withMessages(['collection' => 'Sólo el entregador puede registrar este cobro posterior a la venta.']);
             }
-            if (! $external) {
+            if ($requireDelivered && (($external && $lockedItem->delivery_status !== 'delivered') || (! $external && $lockedItem->status !== 'delivered'))) {
+                throw ValidationException::withMessages(['delivery' => 'El cobro posterior sólo puede registrarse sobre una entrega realizada.']);
+            }
+            if ($liveInAppExecution && ! $external) {
                 abort_unless($lockedItem->run && $lockedItem->run->status === 'open' && (int) $lockedItem->run->delivery_user_id === (int) $actor->id, 403);
                 abort_unless(Permissions::userHas($actor, Permissions::ROUTES_DELIVERY_RUNS_EXECUTE), 403);
             }
@@ -60,7 +73,7 @@ class RouteDeliveryCollectionService
             if (! $collector || (int) $collector->current_branch_id !== $branchId) {
                 throw ValidationException::withMessages(['collected_by' => 'El cobrador debe ser un usuario activo de la sucursal.']);
             }
-            $isOverride = (int) $collector->id !== (int) $actor->id;
+            $isOverride = (int) $collector->id !== (int) $actor->id || (bool) ($data['_historical_collected_at'] ?? false);
             if ($isOverride && ! (Permissions::userHas($actor, Permissions::ROUTES_EXTERNAL_DELIVERY_COLLECTION_OVERRIDE) || Permissions::userHas($actor, Permissions::ROUTES_DELIVERY_COLLECTIONS_OVERRIDE))) {
                 abort(403);
             }

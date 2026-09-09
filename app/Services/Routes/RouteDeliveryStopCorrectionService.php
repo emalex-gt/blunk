@@ -4,6 +4,7 @@ namespace App\Services\Routes;
 
 use App\Models\RouteDeliveryStop;
 use App\Models\RouteDeliveryStopRevision;
+use App\Models\RouteDeliveryCollection;
 use App\Models\User;
 use App\Support\Permissions;
 use Illuminate\Support\Facades\DB;
@@ -11,6 +12,8 @@ use Illuminate\Validation\ValidationException;
 
 class RouteDeliveryStopCorrectionService
 {
+    public function __construct(private readonly RoutePendingCollectionCaseService $pendingCases) {}
+
     private const FORBIDDEN = [
         'collected', 'amount', 'payment_method', 'collected_by', 'collected_at',
         'reference', 'details', 'override_reason', 'receive_cash_in_current_session',
@@ -32,9 +35,13 @@ class RouteDeliveryStopCorrectionService
             $outcome = DeliveryOutcomeRules::normalize((string) ($data['delivery_status'] ?? ''), $data['not_delivered_reason_code'] ?? $data['not_delivered_reason'] ?? null, $data['delivery_notes'] ?? $data['notes'] ?? null);
             $previous = ['delivery_status' => $locked->status, 'not_delivered_reason_code' => $locked->not_delivered_reason_code, 'delivery_notes' => $locked->delivery_notes];
             $next = ['status' => $outcome['delivery_status'], 'not_delivered_reason_code' => $outcome['not_delivered_reason_code'], 'delivery_notes' => $outcome['delivery_notes']];
+            if ($locked->status === 'delivered' && $next['status'] === 'not_delivered' && RouteDeliveryCollection::query()->where('route_delivery_stop_id', $locked->id)->lockForUpdate()->exists()) {
+                throw ValidationException::withMessages(['correction' => 'La corrección requiere una reversión financiera o logística que aún no existe.']);
+            }
             $version = (int) RouteDeliveryStopRevision::query()->where('route_delivery_stop_id', $locked->id)->max('version') + 1;
             RouteDeliveryStopRevision::query()->create(['business_id' => $locked->business_id, 'branch_id' => $locked->branch_id, 'route_delivery_stop_id' => $locked->id, 'version' => $version, 'previous_values' => $previous, 'new_values' => $next, 'correction_reason' => trim($data['correction_reason']), 'corrected_by' => $actor->id, 'corrected_at' => now()]);
             $locked->update($next);
+            $this->pendingCases->synchronizePhysicalCorrection($locked, $actor, trim((string) $data['correction_reason']));
             return $locked->refresh();
         });
     }

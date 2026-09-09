@@ -24,6 +24,7 @@ use App\Http\Controllers\RouteExternalDeliveryReconciliationController;
 use App\Http\Controllers\RouteDeliveryRunController;
 use App\Http\Controllers\RouteDeliveryStopController;
 use App\Http\Controllers\RouteCashSettlementController;
+use App\Http\Controllers\RoutePendingCollectionController;
 use App\Http\Controllers\RoutePreSaleFelController;
 use App\Http\Controllers\RoutePreSaleInvoiceController;
 use App\Http\Controllers\SaleController;
@@ -304,6 +305,15 @@ Route::middleware('auth')->group(function () {
             Route::delete('/cash-settlements/{settlement}/items/{item}', [RouteCashSettlementController::class, 'removeItem'])->name('cash-settlements.items.destroy');
             Route::post('/cash-settlements/{settlement}/cancel', [RouteCashSettlementController::class, 'cancel'])->name('cash-settlements.cancel');
             Route::post('/cash-settlements/{settlement}/confirm', [RouteCashSettlementController::class, 'confirm'])->name('cash-settlements.confirm');
+
+            Route::get('/pending-collections', [RoutePendingCollectionController::class, 'index'])->middleware('permission:routes.pending_collections.view')->name('pending-collections.index');
+            Route::get('/pending-collections/sales/{sale}', [RoutePendingCollectionController::class, 'showSale'])->middleware('permission:routes.pending_collections.view')->name('pending-collections.sales.show');
+            Route::post('/pending-collections/sales/{sale}/events', [RoutePendingCollectionController::class, 'eventForSale'])->middleware('permission:routes.pending_collections.manage')->name('pending-collections.sales.events.store');
+            Route::post('/pending-collections/sales/{sale}/collect', [RoutePendingCollectionController::class, 'collectForSale'])->middleware('permission:routes.pending_collections.collect')->name('pending-collections.sales.collect');
+            Route::get('/pending-collections/{case}', [RoutePendingCollectionController::class, 'show'])->whereNumber('case')->middleware('permission:routes.pending_collections.view')->name('pending-collections.show');
+            Route::post('/pending-collections/{case}/events', [RoutePendingCollectionController::class, 'event'])->whereNumber('case')->middleware('permission:routes.pending_collections.manage')->name('pending-collections.events.store');
+            Route::patch('/pending-collections/{case}/assignment', [RoutePendingCollectionController::class, 'assignment'])->whereNumber('case')->middleware('permission:routes.pending_collections.manage')->name('pending-collections.assignment.update');
+            Route::post('/pending-collections/{case}/collect', [RoutePendingCollectionController::class, 'collect'])->whereNumber('case')->middleware('permission:routes.pending_collections.collect')->name('pending-collections.collect');
 
             Route::get('/preparation-batches', [RoutePreparationBatchController::class, 'index'])
                 ->middleware('permission:routes.pre_sales.admin_view')
