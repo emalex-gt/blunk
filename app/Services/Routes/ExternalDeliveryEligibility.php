@@ -16,8 +16,8 @@ class ExternalDeliveryEligibility
 
         $responsibility = $batch->collection_responsibility_snapshot;
         if ($responsibility === null) {
-            $hasPreSalePayment = $entry->sale?->payments()->whereNotNull('route_pre_sale_collection_id')->exists() ?? false;
-            $hasAnyPayment = $entry->sale?->payments()->exists() ?? false;
+            $hasPreSalePayment = $entry->sale?->capturedPayments()->whereNotNull('route_pre_sale_collection_id')->exists() ?? false;
+            $hasAnyPayment = $entry->sale?->capturedPayments()->exists() ?? false;
             if ($hasPreSalePayment) {
                 $responsibility = 'pre_seller';
             } elseif ($entry->sale?->payment_status === 'unpaid' && ! $hasAnyPayment) {

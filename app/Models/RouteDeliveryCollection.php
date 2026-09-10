@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
@@ -13,7 +14,7 @@ class RouteDeliveryCollection extends Model
         'collected_by', 'recorded_by', 'amount', 'payment_method', 'reference', 'details', 'collected_at',
         'cash_custody_policy_snapshot', 'custody_status', 'cash_posting_state',
         'physical_branch_receipt_confirmed_at', 'physical_branch_receipt_confirmed_by',
-        'cash_register_session_id', 'cash_movement_id', 'operation_idempotency_key_id', 'override_reason',
+        'cash_register_session_id', 'cash_movement_id', 'operation_idempotency_key_id', 'override_reason', 'status',
     ];
 
     protected $casts = [
@@ -30,4 +31,8 @@ class RouteDeliveryCollection extends Model
     public function cashSession(): BelongsTo { return $this->belongsTo(CashRegisterSession::class, 'cash_register_session_id'); }
     public function cashMovement(): BelongsTo { return $this->belongsTo(CashMovement::class, 'cash_movement_id'); }
     public function salePayment(): HasOne { return $this->hasOne(SalePayment::class, 'route_delivery_collection_id'); }
+    public function reversal(): HasOne { return $this->hasOne(RouteDeliveryCollectionReversal::class); }
+
+    public function scopeCaptured(Builder $query): Builder { return $query->where($query->qualifyColumn('status'), 'captured'); }
+    public function scopeReversed(Builder $query): Builder { return $query->where($query->qualifyColumn('status'), 'reversed'); }
 }

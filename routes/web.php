@@ -23,6 +23,7 @@ use App\Http\Controllers\RouteDeliveryBatchController;
 use App\Http\Controllers\RouteExternalDeliveryReconciliationController;
 use App\Http\Controllers\RouteDeliveryRunController;
 use App\Http\Controllers\RouteDeliveryStopController;
+use App\Http\Controllers\RouteDeliveryCollectionReversalController;
 use App\Http\Controllers\RouteCashSettlementController;
 use App\Http\Controllers\RouteCashSettlementVarianceController;
 use App\Http\Controllers\RoutePendingCollectionController;
@@ -298,6 +299,7 @@ Route::middleware('auth')->group(function () {
             Route::post('/delivery-stops/{stop}/complete', [RouteDeliveryStopController::class, 'complete'])->middleware('permission:routes.delivery_runs.execute')->name('delivery-stops.complete');
             Route::post('/delivery-stops/{stop}/collect', [RouteDeliveryStopController::class, 'collect'])->middleware('permission:routes.delivery_runs.execute')->name('delivery-stops.collect');
             Route::post('/delivery-stops/{stop}/correct', [RouteDeliveryStopController::class, 'correct'])->middleware('permission:routes.delivery_runs.correct')->name('delivery-stops.correct');
+            Route::post('/delivery-collections/{collection}/reverse', [RouteDeliveryCollectionReversalController::class, 'store'])->middleware('permission:routes.delivery_collections.reverse')->name('delivery-collections.reverse');
 
             Route::get('/cash-settlements', [RouteCashSettlementController::class, 'index'])->name('cash-settlements.index');
             Route::post('/cash-settlements', [RouteCashSettlementController::class, 'store'])->name('cash-settlements.store');

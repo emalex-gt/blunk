@@ -483,6 +483,172 @@ class RoutePendingCollectionEligibilityTest extends TestCase
         $this->assertDatabaseHas('route_pending_collection_cases', ['id' => $case->id, 'status' => 'open']);
     }
 
+    public function test_route_delivery_collection_reversal_of_late_transfer_leaves_no_cash_movement(): void
+    {
+        [$business, , $item] = $this->externalDeliveredUnpaid();
+        $actor = User::query()->findOrFail($item->reconciled_by);
+        $case = RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->firstOrFail();
+        $collection = \App\Models\RouteDeliveryCollection::query()->findOrFail(
+            app(RoutePendingCollectionService::class)->collect($case, ['amount' => 60, 'payment_method' => 'transfer'], $actor, 'reversal-transfer-capture-0001')->resultId
+        );
+
+        $result = app(\App\Services\Routes\RouteDeliveryCollectionReversalService::class)->reverse($collection, [
+            'reason_code' => 'payment_recorded_by_mistake',
+            'explanation' => 'El cliente no efectuó el pago registrado.',
+            'confirmed' => true,
+        ], $actor, 'reversal-transfer-0001');
+
+        $reversal = \App\Models\RouteDeliveryCollectionReversal::query()->findOrFail($result->resultId);
+        $this->assertSame('reversed', $collection->fresh()->status);
+        $this->assertSame('reversed', $collection->salePayment->fresh()->status);
+        $this->assertSame('unpaid', $collection->sale->fresh()->payment_status);
+        $this->assertSame('none', $reversal->cash_correction_type);
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertDatabaseHas('route_pending_collection_cases', ['id' => $case->id, 'status' => 'open', 'resolved_by' => null, 'resolution_route_delivery_collection_id' => null]);
+        $this->assertDatabaseHas('route_pending_collection_events', ['route_pending_collection_case_id' => $case->id, 'type' => 'collection_reversed', 'recorded_by' => $actor->id]);
+    }
+
+    public function test_route_delivery_collection_reversal_replays_one_ledger_and_one_case_event_for_the_same_key(): void
+    {
+        [, , $item] = $this->externalDeliveredUnpaid();
+        $actor = User::query()->findOrFail($item->reconciled_by);
+        $case = RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->firstOrFail();
+        $collection = \App\Models\RouteDeliveryCollection::query()->findOrFail(
+            app(RoutePendingCollectionService::class)->collect($case, ['amount' => 60, 'payment_method' => 'transfer'], $actor, 'reversal-replay-capture-0001')->resultId
+        );
+        $payload = ['reason_code' => 'payment_recorded_by_mistake', 'explanation' => 'Doble toque controlado.', 'confirmed' => true];
+        $service = app(\App\Services\Routes\RouteDeliveryCollectionReversalService::class);
+        $first = $service->reverse($collection, $payload, $actor, 'reversal-replay-0001');
+        $second = $service->reverse($collection, $payload, $actor, 'reversal-replay-0001');
+
+        $this->assertFalse($first->replayed);
+        $this->assertTrue($second->replayed);
+        $this->assertSame($first->resultId, $second->resultId);
+        $this->assertDatabaseCount('route_delivery_collection_reversals', 1);
+        $this->assertSame(1, RoutePendingCollectionCase::query()->findOrFail($case->id)->events()->where('type', 'collection_reversed')->count());
+    }
+
+    public function test_route_delivery_collection_reversal_rejects_an_already_open_case(): void
+    {
+        [, , $item] = $this->externalDeliveredUnpaid();
+        $actor = User::query()->findOrFail($item->reconciled_by);
+        $case = RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->firstOrFail();
+        $collection = \App\Models\RouteDeliveryCollection::query()->findOrFail(
+            app(RoutePendingCollectionService::class)->collect($case, ['amount' => 60, 'payment_method' => 'transfer'], $actor, 'reversal-open-case-capture-0001')->resultId
+        );
+        $case->fresh()->update(['status' => 'open', 'resolved_by' => null, 'resolved_at' => null, 'resolution_route_delivery_collection_id' => null]);
+
+        try {
+            app(\App\Services\Routes\RouteDeliveryCollectionReversalService::class)->reverse($collection, [
+                'reason_code' => 'payment_recorded_by_mistake', 'explanation' => 'Fixture corrupto controlado.', 'confirmed' => true,
+            ], $actor, 'reversal-open-case-0001');
+            $this->fail('An already open case must not be reopened through a collection reversal.');
+        } catch (\Illuminate\Validation\ValidationException) {
+        }
+
+        $this->assertSame('captured', $collection->fresh()->status);
+        $this->assertDatabaseCount('route_delivery_collection_reversals', 0);
+    }
+
+    public function test_route_delivery_collection_reversal_chain_is_accepted_by_the_integrity_auditor(): void
+    {
+        [$business, , $item] = $this->externalDeliveredUnpaid();
+        $actor = User::query()->findOrFail($item->reconciled_by);
+        $case = RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->firstOrFail();
+        $collection = \App\Models\RouteDeliveryCollection::query()->findOrFail(
+            app(RoutePendingCollectionService::class)->collect($case, ['amount' => 60, 'payment_method' => 'transfer'], $actor, 'reversal-audit-capture-0001')->resultId
+        );
+        app(\App\Services\Routes\RouteDeliveryCollectionReversalService::class)->reverse($collection, [
+            'reason_code' => 'payment_recorded_by_mistake', 'explanation' => 'Prueba de integridad.', 'confirmed' => true,
+        ], $actor, 'reversal-audit-0001');
+
+        $issues = collect(app(\App\Support\SystemIntegrityAuditor::class)->audit(['business' => $business->id, 'section' => 'sales'])['results']['sales'])->pluck('issue_type');
+
+        $this->assertFalse($issues->contains(fn (string $issue) => str_starts_with($issue, 'delivery_collection_reversal_')));
+        $this->assertFalse($issues->contains('reversed_delivery_collection_without_ledger'));
+    }
+
+    public function test_route_delivery_collection_reversal_allows_one_new_captured_collection_for_the_sale(): void
+    {
+        [, , $item] = $this->externalDeliveredUnpaid();
+        $actor = User::query()->findOrFail($item->reconciled_by);
+        $case = RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->firstOrFail();
+        $first = \App\Models\RouteDeliveryCollection::query()->findOrFail(
+            app(RoutePendingCollectionService::class)->collect($case, ['amount' => 60, 'payment_method' => 'transfer'], $actor, 'reversal-recapture-first-0001')->resultId
+        );
+        app(\App\Services\Routes\RouteDeliveryCollectionReversalService::class)->reverse($first, [
+            'reason_code' => 'payment_recorded_by_mistake', 'explanation' => 'El primer cobro fue falso.', 'confirmed' => true,
+        ], $actor, 'reversal-recapture-reverse-0001');
+
+        $second = app(RoutePendingCollectionService::class)->collect($case->fresh(), ['amount' => 60, 'payment_method' => 'transfer'], $actor, 'reversal-recapture-second-0001');
+
+        $this->assertDatabaseCount('route_delivery_collections', 2);
+        $this->assertDatabaseHas('route_delivery_collections', ['id' => $first->id, 'status' => 'reversed']);
+        $this->assertDatabaseHas('route_delivery_collections', ['id' => $second->resultId, 'status' => 'captured']);
+        $this->assertDatabaseHas('route_pending_collection_cases', ['id' => $case->id, 'status' => 'resolved', 'resolution_route_delivery_collection_id' => $second->resultId]);
+    }
+
+    public function test_route_delivery_collection_reversal_of_posted_cash_uses_one_negative_adjustment_in_the_open_original_session(): void
+    {
+        [$business, $branch, $item] = $this->externalDeliveredUnpaid();
+        $actor = User::query()->findOrFail($item->reconciled_by);
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_cash_custody_policy' => 'immediate_branch_register']);
+        $case = RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->firstOrFail();
+        $collection = \App\Models\RouteDeliveryCollection::query()->findOrFail(
+            app(RoutePendingCollectionService::class)->collect($case, ['amount' => 60, 'payment_method' => 'cash', 'receive_cash_in_current_session' => true], $actor, 'reversal-cash-capture-0001')->resultId
+        );
+        $session = \App\Models\CashRegisterSession::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('status', 'open')->firstOrFail();
+
+        $result = app(\App\Services\Routes\RouteDeliveryCollectionReversalService::class)->reverse($collection, [
+            'reason_code' => 'payment_recorded_by_mistake',
+            'explanation' => 'El efectivo nunca fue cobrado.',
+            'confirmed' => true,
+            'confirm_cash_adjustment' => true,
+        ], $actor, 'reversal-cash-open-0001');
+
+        $reversal = \App\Models\RouteDeliveryCollectionReversal::query()->findOrFail($result->resultId);
+        $this->assertSame('current_open_session_adjustment', $reversal->cash_correction_type);
+        $this->assertSame(-60.0, (float) $reversal->compensatingCashMovement->amount);
+        $this->assertSame($session->id, $reversal->compensatingCashMovement->cash_register_session_id);
+        $this->assertSame(0.0, (float) $session->fresh()->expected_cash);
+    }
+
+    public function test_route_delivery_collection_reversal_of_closed_session_cash_uses_ledger_only(): void
+    {
+        [$business, $branch, $item] = $this->externalDeliveredUnpaid();
+        $actor = User::query()->findOrFail($item->reconciled_by);
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_cash_custody_policy' => 'immediate_branch_register']);
+        $case = RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->firstOrFail();
+        $collection = \App\Models\RouteDeliveryCollection::query()->findOrFail(
+            app(RoutePendingCollectionService::class)->collect($case, ['amount' => 60, 'payment_method' => 'cash', 'receive_cash_in_current_session' => true], $actor, 'reversal-cash-closed-capture-0001')->resultId
+        );
+        $session = \App\Models\CashRegisterSession::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('status', 'open')->firstOrFail();
+        $session->update(['status' => 'closed', 'closed_at' => now()]);
+        $before = [
+            'expected_cash' => $session->fresh()->expected_cash,
+            'counted_cash' => $session->fresh()->counted_cash,
+            'difference' => $session->fresh()->difference,
+            'closed_at' => $session->fresh()->closed_at?->format('Y-m-d H:i:s'),
+        ];
+
+        $result = app(\App\Services\Routes\RouteDeliveryCollectionReversalService::class)->reverse($collection, [
+            'reason_code' => 'payment_recorded_by_mistake',
+            'explanation' => 'El efectivo no fue recibido en la visita.',
+            'confirmed' => true,
+        ], $actor, 'reversal-cash-closed-0001');
+
+        $reversal = \App\Models\RouteDeliveryCollectionReversal::query()->findOrFail($result->resultId);
+        $this->assertSame('historical_closed_session_ledger', $reversal->cash_correction_type);
+        $this->assertNull($reversal->compensating_cash_movement_id);
+        $this->assertSame($before, [
+            'expected_cash' => $session->fresh()->expected_cash,
+            'counted_cash' => $session->fresh()->counted_cash,
+            'difference' => $session->fresh()->difference,
+            'closed_at' => $session->fresh()->closed_at?->format('Y-m-d H:i:s'),
+        ]);
+        $this->assertDatabaseCount('cash_movements', 1);
+    }
+
     /** @return array{0: Business, 1: \App\Models\Branch, 2: \App\Models\RouteExternalDeliveryReconciliationItem} */
     private function externalDeliveredUnpaid(): array
     {

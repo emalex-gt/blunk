@@ -86,8 +86,8 @@ class RoutePendingCollectionEligibility
             ->with([
                 'sale:id,business_id,branch_id,customer_id,customer_name,total,payment_status,amount_paid,is_credit_sale,credit_balance',
                 'sale.customer:id,name',
-                'sale.payments:id,sale_id',
-                'sale.routeDeliveryCollection:id,sale_id',
+                'sale.capturedPayments:id,sale_id,status',
+                'sale.activeRouteDeliveryCollection:id,sale_id,status',
                 'reconciliationItem',
                 'stop.run:id,delivery_user_id',
             ])
@@ -125,13 +125,13 @@ class RoutePendingCollectionEligibility
             ->where('amount_paid', 0)
             ->where('is_credit_sale', false)
             ->where('credit_balance', 0)
-            ->whereDoesntHave('payments')
-            ->whereDoesntHave('routeDeliveryCollection');
+            ->whereDoesntHave('capturedPayments')
+            ->whereDoesntHave('activeRouteDeliveryCollection');
     }
 
     private function eligiblePersistedCase(RoutePendingCollectionCase $case): bool
     {
-        if (! $case->sale || $case->sale->payments->isNotEmpty() || $case->sale->routeDeliveryCollection) {
+        if (! $case->sale || $case->sale->capturedPayments->isNotEmpty() || $case->sale->activeRouteDeliveryCollection) {
             return false;
         }
 

@@ -51,10 +51,10 @@ class RouteDeliveryCollectionService
             }
 
             $sale = Sale::query()->where('business_id', $businessId)->where('branch_id', $branchId)->whereKey($lockedItem->sale_id)->lockForUpdate()->firstOrFail();
-            if ($sale->payment_status !== 'unpaid' || (float) $sale->amount_paid !== 0.0 || $sale->payments()->lockForUpdate()->exists()) {
+            if ($sale->payment_status !== 'unpaid' || (float) $sale->amount_paid !== 0.0 || $sale->capturedPayments()->lockForUpdate()->exists()) {
                 throw ValidationException::withMessages(['sale' => 'La venta ya tiene un pago registrado.']);
             }
-            if (RouteDeliveryCollection::query()->where('business_id', $businessId)->where('branch_id', $branchId)->where('sale_id', $sale->id)->lockForUpdate()->exists()) {
+            if (RouteDeliveryCollection::query()->captured()->where('business_id', $businessId)->where('branch_id', $branchId)->where('sale_id', $sale->id)->lockForUpdate()->exists()) {
                 throw ValidationException::withMessages(['collection' => 'La venta ya tiene un cobro de entrega.']);
             }
 

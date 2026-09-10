@@ -186,7 +186,7 @@ class RouteCashSettlementDraftService
         $preIds = collect($sources)->where('origin', 'pre_sale_collection')->pluck('collection_id')->all();
         $deliveryIds = collect($sources)->where('origin', 'delivery_collection')->pluck('collection_id')->all();
         $pre = RoutePreSaleCollection::query()->whereIn('id', $preIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
-        $delivery = RouteDeliveryCollection::query()->whereIn('id', $deliveryIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        $delivery = RouteDeliveryCollection::query()->captured()->whereIn('id', $deliveryIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
         if ($pre->count() !== count($preIds) || $delivery->count() !== count($deliveryIds)) {
             throw ValidationException::withMessages(['sources' => 'Uno de los cobros seleccionados ya no existe.']);
         }

@@ -67,6 +67,8 @@ class RoutePendingCollectionController extends Controller
             'events.recordedBy:id,name',
             'assignedTo:id,name',
             'originalDeliveryUser:id,name',
+            'resolutionCollection.salePayment',
+            'resolutionCollection.cashSession:id,status,opened_at,closed_at',
         ]);
         $actor = $request->user();
 
@@ -76,6 +78,8 @@ class RoutePendingCollectionController extends Controller
             'can_manage' => Permissions::userHas($actor, Permissions::ROUTES_PENDING_COLLECTIONS_MANAGE),
             'can_collect' => Permissions::userHas($actor, Permissions::ROUTES_PENDING_COLLECTIONS_COLLECT),
             'can_override' => Permissions::userHas($actor, Permissions::ROUTES_DELIVERY_COLLECTIONS_OVERRIDE),
+            'can_reverse' => Permissions::userHas($actor, Permissions::ROUTES_DELIVERY_COLLECTIONS_REVERSE),
+            'resolution_collection' => $case->resolutionCollection,
             ...$this->actionContext($actor),
         ]);
     }
@@ -99,6 +103,8 @@ class RoutePendingCollectionController extends Controller
             'can_manage' => Permissions::userHas($actor, Permissions::ROUTES_PENDING_COLLECTIONS_MANAGE),
             'can_collect' => Permissions::userHas($actor, Permissions::ROUTES_PENDING_COLLECTIONS_COLLECT),
             'can_override' => Permissions::userHas($actor, Permissions::ROUTES_DELIVERY_COLLECTIONS_OVERRIDE),
+            'can_reverse' => Permissions::userHas($actor, Permissions::ROUTES_DELIVERY_COLLECTIONS_REVERSE),
+            'resolution_collection' => null,
             ...$this->actionContext($actor),
         ]);
     }

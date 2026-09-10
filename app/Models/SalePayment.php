@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class SalePayment extends Model
@@ -19,6 +20,7 @@ class SalePayment extends Model
         'cash_register_session_id',
         'route_pre_sale_collection_id',
         'route_delivery_collection_id',
+        'status',
     ];
 
     protected $casts = [
@@ -47,6 +49,11 @@ class SalePayment extends Model
         return $this->belongsTo(RouteDeliveryCollection::class);
     }
 
+    public function routeDeliveryCollectionReversal(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(RouteDeliveryCollectionReversal::class);
+    }
+
     public function collectedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'collected_by');
@@ -55,5 +62,15 @@ class SalePayment extends Model
     public function cashRegisterSession(): BelongsTo
     {
         return $this->belongsTo(CashRegisterSession::class);
+    }
+
+    public function scopeCaptured(Builder $query): Builder
+    {
+        return $query->where($query->qualifyColumn('status'), 'captured');
+    }
+
+    public function scopeReversed(Builder $query): Builder
+    {
+        return $query->where($query->qualifyColumn('status'), 'reversed');
     }
 }

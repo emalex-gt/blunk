@@ -199,6 +199,7 @@ class ReportController extends Controller
         $receiptCount = (int) (clone $summaryBase)->where('sales.document_type', 'receipt')->count();
         $paymentTotals = DB::table('sale_payments')
             ->where('sale_payments.business_id', $businessId)
+            ->where('sale_payments.status', 'captured')
             ->whereIn('sale_payments.sale_id', (clone $summaryBase)->select('sales.id'))
             ->when($paymentMethod !== 'all', fn ($query) => $query->where('sale_payments.method', $salePaymentMethod))
             ->groupBy('sale_payments.method')
@@ -608,6 +609,7 @@ class ReportController extends Controller
         $cashSales = (float) DB::table('sale_payments')
             ->join('sales', 'sale_payments.sale_id', '=', 'sales.id')
             ->where('sale_payments.business_id', $businessId)
+            ->where('sale_payments.status', 'captured')
             ->where('sales.business_id', $businessId)
             ->where('sales.branch_id', $scope->branch->id)
             ->where('sale_payments.method', $salePaymentMethod === 'all' ? 'cash' : $salePaymentMethod)

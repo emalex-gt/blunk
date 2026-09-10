@@ -66,6 +66,7 @@ class RouteCashSettlementEligibility
     private function eligibleDeliveryCollections(int $businessId, int $branchId, int $collectorId): Collection
     {
         $query = RouteDeliveryCollection::query()
+            ->captured()
             ->leftJoin('sales', 'sales.id', '=', 'route_delivery_collections.sale_id')
             ->leftJoin('customers', 'customers.id', '=', 'sales.customer_id')
             ->leftJoin('route_delivery_stops', 'route_delivery_stops.id', '=', 'route_delivery_collections.route_delivery_stop_id')

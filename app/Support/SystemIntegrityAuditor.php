@@ -306,6 +306,7 @@ class SystemIntegrityAuditor
             ->leftJoin('route_delivery_collections as delivery_collection', 'delivery_collection.id', '=', 'sp.route_delivery_collection_id')
             ->select('sp.sale_id', DB::raw("COALESCE(SUM(CASE WHEN sp.method = 'cash' THEN sp.amount ELSE 0 END), 0) as cash_paid"), DB::raw("COALESCE(SUM(CASE WHEN sp.method = 'cash' AND (pre_collection.custody_status = 'held_by_collector' OR delivery_collection.custody_status = 'held_by_collector') THEN sp.amount ELSE 0 END), 0) as held_route_cash"))
             ->where('sp.business_id', $businessId)
+            ->where('sp.status', 'captured')
             ->groupBy('sp.sale_id');
         $preSaleRouteCash = DB::table('cash_movements as cm')
             ->join('route_pre_sale_collections as collection', 'collection.id', '=', 'cm.reference_id')
@@ -316,6 +317,7 @@ class SystemIntegrityAuditor
             ->join('route_delivery_collections as collection', 'collection.id', '=', 'cm.reference_id')
             ->join('sale_payments as payment', 'payment.route_delivery_collection_id', '=', 'collection.id')
             ->where('cm.business_id', $businessId)->where('cm.reference_type', 'route_delivery_collection')->where('cm.type', 'sale_cash')
+            ->where('payment.status', 'captured')->where('collection.status', 'captured')
             ->select('payment.sale_id', 'cm.amount');
         $settledPreSaleRouteCash = DB::table('route_cash_settlement_items as item')
             ->join('route_cash_settlements as settlement', 'settlement.id', '=', 'item.route_cash_settlement_id')
@@ -328,10 +330,12 @@ class SystemIntegrityAuditor
         $settledDeliveryRouteCash = DB::table('route_cash_settlement_items as item')
             ->join('route_cash_settlements as settlement', 'settlement.id', '=', 'item.route_cash_settlement_id')
             ->join('cash_movements as cm', 'cm.id', '=', 'settlement.cash_movement_id')
+            ->join('route_delivery_collections as collection', 'collection.id', '=', 'item.route_delivery_collection_id')
             ->join('sale_payments as payment', 'payment.route_delivery_collection_id', '=', 'item.route_delivery_collection_id')
             ->where('settlement.business_id', $businessId)->where('settlement.status', 'confirmed')->where('item.is_active', true)
             ->where('cm.type', 'route_cash_settlement')->where('cm.reference_type', 'route_cash_settlement')
             ->whereColumn('cm.reference_id', 'settlement.id')
+            ->where('collection.status', 'captured')->where('payment.status', 'captured')
             ->select('payment.sale_id', 'item.amount_snapshot as amount');
         $routeCashMovements = DB::query()->fromSub($preSaleRouteCash->unionAll($deliveryRouteCash)->unionAll($settledPreSaleRouteCash)->unionAll($settledDeliveryRouteCash), 'route_cash')
             ->select('sale_id', DB::raw('COALESCE(SUM(amount), 0) as cash_in'))
@@ -481,7 +485,7 @@ class SystemIntegrityAuditor
             $issues[] = $this->issue(['sale_id' => null, 'correlative' => null, 'branch_id' => $collection->branch_id, 'customer_id' => null, 'status' => null, 'total' => null, 'expected_total' => null, 'difference' => null, 'route_delivery_collection_id' => $collection->id], 'critical', 'delivery_collection_invalid_origin', 'Cobro de entrega sin un único origen válido.', 'Restaurar exactamente un origen con integridad referencial.');
         }
 
-        foreach (DB::table('route_delivery_collections')->where('business_id', $businessId)->select('sale_id', 'branch_id', DB::raw('COUNT(*) AS duplicated'))->groupBy('sale_id', 'branch_id')->havingRaw('COUNT(*) > 1')->cursor() as $duplicate) {
+        foreach (DB::table('route_delivery_collections')->where('business_id', $businessId)->where('status', 'captured')->select('sale_id', 'branch_id', DB::raw('COUNT(*) AS duplicated'))->groupBy('sale_id', 'branch_id')->havingRaw('COUNT(*) > 1')->cursor() as $duplicate) {
             $issues[] = $this->issue(['sale_id' => $duplicate->sale_id, 'correlative' => null, 'branch_id' => $duplicate->branch_id, 'customer_id' => null, 'status' => null, 'total' => null, 'expected_total' => null, 'difference' => null], 'critical', 'duplicate_delivery_collection_for_sale', 'Una venta tiene más de un cobro de entrega.', 'Mantener un único cobro postventa por venta.');
         }
 
@@ -520,7 +524,7 @@ class SystemIntegrityAuditor
                 ->select('pc.id', 'pc.sale_id', 'pc.branch_id', 'pc.status')->cursor() as $case) {
                 $issues[] = $this->issue(['sale_id' => $case->sale_id, 'correlative' => null, 'branch_id' => $case->branch_id, 'customer_id' => null, 'status' => $case->status, 'total' => null, 'expected_total' => null, 'difference' => null, 'route_pending_collection_case_id' => $case->id], 'critical', 'pending_collection_case_financial_state_mismatch', 'El case operativo no coincide con el estado financiero de la venta.', 'Revisar collection, sale_payment y la transición del case.');
             }
-            foreach (DB::table('route_pending_collection_cases as pc')->join('route_delivery_collections as dc', 'dc.sale_id', '=', 'pc.sale_id')->where('pc.business_id', $businessId)->where('pc.status', 'open')->select('pc.id', 'pc.sale_id', 'pc.branch_id')->cursor() as $case) {
+            foreach (DB::table('route_pending_collection_cases as pc')->join('route_delivery_collections as dc', 'dc.sale_id', '=', 'pc.sale_id')->where('dc.status', 'captured')->where('pc.business_id', $businessId)->where('pc.status', 'open')->select('pc.id', 'pc.sale_id', 'pc.branch_id')->cursor() as $case) {
                 $issues[] = $this->issue(['sale_id' => $case->sale_id, 'correlative' => null, 'branch_id' => $case->branch_id, 'customer_id' => null, 'status' => 'open', 'total' => null, 'expected_total' => null, 'difference' => null, 'route_pending_collection_case_id' => $case->id], 'critical', 'pending_collection_open_with_delivery_collection', 'Case abierto aunque la venta ya tiene un cobro postventa.', 'Resolver el case usando el cobro real; no crear un segundo pago.');
             }
             foreach (DB::table('route_pending_collection_cases as pc')->leftJoin('route_delivery_collections as dc', 'dc.id', '=', 'pc.resolution_route_delivery_collection_id')->where('pc.business_id', $businessId)->where('pc.status', 'resolved')->where(function ($q) { $q->whereNull('dc.id')->orWhereColumn('dc.sale_id', '<>', 'pc.sale_id')->orWhereColumn('dc.business_id', '<>', 'pc.business_id')->orWhereColumn('dc.branch_id', '<>', 'pc.branch_id'); })->select('pc.id', 'pc.sale_id', 'pc.branch_id')->cursor() as $case) {
@@ -555,6 +559,56 @@ class SystemIntegrityAuditor
                 }
             }
         }
+        return [...$issues, ...$this->auditRouteDeliveryCollectionReversals($context)];
+    }
+
+    private function auditRouteDeliveryCollectionReversals(array $context): array
+    {
+        if (! Schema::hasTable('route_delivery_collection_reversals')) {
+            return [];
+        }
+
+        $issues = []; $businessId = $context['business_id'];
+        $base = fn ($row) => ['sale_id' => $row->sale_id ?? null, 'correlative' => null, 'branch_id' => $row->branch_id ?? null, 'customer_id' => null, 'status' => null, 'total' => null, 'expected_total' => null, 'difference' => null, 'route_delivery_collection_id' => $row->collection_id ?? null, 'route_delivery_collection_reversal_id' => $row->reversal_id ?? null];
+        $add = function ($row, string $type, string $message, string $recommendation) use (&$issues, $base): void {
+            $issues[] = $this->issue($base($row), 'critical', $type, $message, $recommendation);
+        };
+
+        foreach (DB::table('route_delivery_collections as c')->leftJoin('route_delivery_collection_reversals as r', 'r.route_delivery_collection_id', '=', 'c.id')->where('c.business_id', $businessId)->where('c.status', 'reversed')->whereNull('r.id')->select('c.id as collection_id', 'c.sale_id', 'c.branch_id')->cursor() as $row) {
+            $add($row, 'reversed_delivery_collection_without_ledger', 'Cobro de entrega reversado sin ledger append-only.', 'Restaurar el ledger de reversa; no borrar la collection.');
+        }
+        foreach (DB::table('route_delivery_collection_reversals as r')->join('route_delivery_collections as c', 'c.id', '=', 'r.route_delivery_collection_id')->join('sale_payments as p', 'p.id', '=', 'r.sale_payment_id')->join('sales as s', 's.id', '=', 'c.sale_id')->leftJoin('route_delivery_collections as replacement', function ($join) {
+            $join->on('replacement.sale_id', '=', 'c.sale_id')->where('replacement.status', '=', 'captured');
+        })->leftJoin('sale_payments as replacement_payment', function ($join) {
+            $join->on('replacement_payment.route_delivery_collection_id', '=', 'replacement.id')->where('replacement_payment.status', '=', 'captured');
+        })->where('r.business_id', $businessId)->where(function ($q) {
+            $q->where('c.status', '<>', 'reversed')->orWhere('p.status', '<>', 'reversed')->orWhereColumn('p.route_delivery_collection_id', '<>', 'c.id')->orWhereColumn('c.business_id', '<>', 'r.business_id')->orWhereColumn('c.branch_id', '<>', 'r.branch_id')->orWhereColumn('p.business_id', '<>', 'r.business_id')->orWhereColumn('s.business_id', '<>', 'r.business_id')->orWhereColumn('s.branch_id', '<>', 'r.branch_id')
+                ->orWhere(function ($q) { $q->whereNull('replacement.id')->where(function ($q) { $q->where('s.payment_status', '<>', 'unpaid')->orWhere('s.amount_paid', '<>', 0)->orWhereNotNull('s.payment_method'); }); })
+                ->orWhere(function ($q) { $q->whereNotNull('replacement.id')->where(function ($q) { $q->where('s.payment_status', '<>', 'paid')->orWhereColumn('s.amount_paid', '<>', 's.total')->orWhereNull('replacement_payment.id'); }); });
+        })->select('r.id as reversal_id', 'c.id as collection_id', 'c.sale_id', 'c.branch_id')->cursor() as $row) {
+            $add($row, 'delivery_collection_reversal_financial_mismatch', 'El ledger de reversa no coincide con collection, pago y proyección financiera.', 'Revisar la transacción de reversa sin generar pagos nuevos.');
+        }
+        foreach (DB::table('route_delivery_collections as c')->join('route_delivery_collection_reversals as r', 'r.route_delivery_collection_id', '=', 'c.id')->leftJoin('route_external_delivery_reconciliation_items as er', 'er.id', '=', 'c.route_external_delivery_reconciliation_item_id')->leftJoin('route_delivery_stops as st', 'st.id', '=', 'c.route_delivery_stop_id')->where('c.business_id', $businessId)->where(function ($q) {
+            $q->where(function ($q) { $q->where('c.delivery_origin', 'external_reconciliation')->where(function ($q) { $q->whereNull('er.id')->orWhere('er.delivery_status', '<>', 'delivered')->orWhere('er.collection_responsibility_snapshot', '<>', 'delivery_agent'); }); })
+                ->orWhere(function ($q) { $q->where('c.delivery_origin', 'in_app_stop')->where(function ($q) { $q->whereNull('st.id')->orWhere('st.status', '<>', 'delivered')->orWhere('st.collection_responsibility_snapshot', '<>', 'delivery_agent'); }); });
+        })->select('r.id as reversal_id', 'c.id as collection_id', 'c.sale_id', 'c.branch_id')->cursor() as $row) {
+            $add($row, 'delivery_collection_reversal_origin_mismatch', 'La reversa apunta a un origen físico que no es entrega realizada por delivery_agent.', 'Bloquear nuevas mutaciones y revisar el origen físico.');
+        }
+        foreach (DB::table('route_delivery_collection_reversals as r')->leftJoin('route_delivery_collections as original_collection', 'original_collection.id', '=', 'r.route_delivery_collection_id')->leftJoin('route_delivery_collections as replacement', function ($join) {
+            $join->on('replacement.sale_id', '=', 'original_collection.sale_id')->where('replacement.status', '=', 'captured');
+        })->leftJoin('route_pending_collection_cases as pc', 'pc.id', '=', 'r.route_pending_collection_case_id')->leftJoin('route_pending_collection_events as ev', function ($join) {
+            $join->on('ev.route_pending_collection_case_id', '=', 'pc.id')->where('ev.type', '=', 'collection_reversed')->whereColumn('ev.business_id', '=', 'r.business_id')->whereColumn('ev.branch_id', '=', 'r.branch_id')->whereColumn('ev.recorded_by', '=', 'r.reversed_by')->whereColumn('ev.occurred_at', '=', 'r.reversed_at');
+        })->where('r.business_id', $businessId)->groupBy('r.id', 'r.route_delivery_collection_id', 'r.business_id', 'r.branch_id', 'r.route_pending_collection_case_id', 'r.previous_case_resolved_by', 'r.previous_case_resolved_at', 'original_collection.sale_id', 'replacement.id', 'pc.id', 'pc.sale_id', 'pc.business_id', 'pc.branch_id', 'pc.status', 'pc.resolved_by', 'pc.resolved_at', 'pc.resolution_route_delivery_collection_id')->havingRaw("(r.route_pending_collection_case_id IS NULL AND (r.previous_case_resolved_by IS NOT NULL OR r.previous_case_resolved_at IS NOT NULL)) OR (r.route_pending_collection_case_id IS NOT NULL AND (pc.id IS NULL OR pc.business_id <> r.business_id OR pc.branch_id <> r.branch_id OR r.previous_case_resolved_by IS NULL OR r.previous_case_resolved_at IS NULL OR COUNT(ev.id) <> 1 OR (replacement.id IS NULL AND (pc.status <> 'open' OR pc.resolved_by IS NOT NULL OR pc.resolved_at IS NOT NULL OR pc.resolution_route_delivery_collection_id IS NOT NULL)) OR (replacement.id IS NOT NULL AND (pc.status <> 'resolved' OR pc.resolved_by IS NULL OR pc.resolved_at IS NULL OR pc.resolution_route_delivery_collection_id <> replacement.id))))")->select('r.id as reversal_id', 'r.route_delivery_collection_id as collection_id', 'pc.sale_id', 'r.branch_id')->cursor() as $row) {
+            $add($row, 'delivery_collection_reversal_case_mismatch', 'La reapertura excepcional del case no conserva su post-state y evento interno requeridos.', 'Restaurar únicamente mediante una reparación auditada.');
+        }
+        foreach (DB::table('route_delivery_collection_reversals as r')->join('route_delivery_collections as c', 'c.id', '=', 'r.route_delivery_collection_id')->leftJoin('cash_movements as original', 'original.id', '=', 'c.cash_movement_id')->leftJoin('cash_register_sessions as original_session', 'original_session.id', '=', 'original.cash_register_session_id')->leftJoin('cash_movements as compensating', 'compensating.id', '=', 'r.compensating_cash_movement_id')->where('r.business_id', $businessId)->where(function ($q) {
+            $q->where(function ($q) { $q->where('r.cash_correction_type', 'none')->where(function ($q) { $q->whereNotNull('r.compensating_cash_movement_id')->orWhere(function ($q) { $q->where('c.payment_method', 'cash')->where('c.custody_status', 'posted_to_branch_cash'); }); }); })
+                ->orWhere(function ($q) { $q->where('r.cash_correction_type', 'historical_closed_session_ledger')->where(function ($q) { $q->whereNotNull('r.compensating_cash_movement_id')->orWhereNull('original.id')->orWhere('original_session.status', '<>', 'closed'); }); })
+                ->orWhere(function ($q) { $q->where('r.cash_correction_type', 'current_open_session_adjustment')->where(function ($q) { $q->whereNull('compensating.id')->orWhere('compensating.amount', '>=', 0)->orWhere('compensating.type', '<>', 'route_delivery_collection_reversal_current_session')->orWhere('compensating.reference_type', '<>', 'route_delivery_collection_reversal')->orWhereColumn('compensating.reference_id', '<>', 'r.id')->orWhereColumn('compensating.cash_register_session_id', '<>', 'c.cash_register_session_id'); }); });
+        })->select('r.id as reversal_id', 'c.id as collection_id', 'c.sale_id', 'c.branch_id')->cursor() as $row) {
+            $add($row, 'delivery_collection_reversal_cash_mismatch', 'La corrección de caja de la reversa no corresponde a su política y sesión original.', 'No crear movimientos históricos; revisar el ledger y la sesión vigente.');
+        }
+
         return $issues;
     }
 
@@ -597,7 +651,7 @@ class SystemIntegrityAuditor
                 }
             }
 
-            if ((float) $movement->amount < 0 && ! in_array($movement->type, ['purchase_cash', 'expense', 'sale_cash_cancel', 'credit_payment_cash_cancel', 'closing_adjustment', 'route_cash_variance_overage_returned'], true)) {
+            if ((float) $movement->amount < 0 && ! in_array($movement->type, ['purchase_cash', 'expense', 'sale_cash_cancel', 'credit_payment_cash_cancel', 'closing_adjustment', 'route_cash_variance_overage_returned', 'route_delivery_collection_reversal_current_session'], true)) {
                 $issues[] = $this->issue($base, 'warning', 'invalid_negative_cash_movement', 'Movimiento de caja negativo con tipo que no representa una salida o reversa válida.', 'Revisar tipo, referencia y evidencia del movimiento.');
             }
 
@@ -606,9 +660,34 @@ class SystemIntegrityAuditor
             }
         }
 
+        if (Schema::hasTable('route_delivery_collection_reversals')) {
+            foreach (DB::table('cash_movements as cm')
+                ->leftJoin('route_delivery_collection_reversals as reversal', function ($join) {
+                    $join->on('reversal.compensating_cash_movement_id', '=', 'cm.id')
+                        ->where('reversal.cash_correction_type', '=', 'current_open_session_adjustment');
+                })
+                ->leftJoin('route_delivery_collections as collection', 'collection.id', '=', 'reversal.route_delivery_collection_id')
+                ->where('cm.business_id', $businessId)
+                ->where('cm.type', 'route_delivery_collection_reversal_current_session')
+                ->where(function ($q) {
+                    $q->whereNull('reversal.id')->orWhere('cm.amount', '>=', 0)->orWhere('cm.reference_type', '<>', 'route_delivery_collection_reversal')->orWhereColumn('cm.reference_id', '<>', 'reversal.id')->orWhereColumn('cm.cash_register_session_id', '<>', 'collection.cash_register_session_id');
+                })
+                ->select('cm.id', 'cm.cash_register_session_id', 'cm.reference_type', 'cm.reference_id', 'cm.amount', 'cm.type')
+                ->cursor() as $movement) {
+                $issues[] = $this->issue([
+                    'cash_register_id' => $movement->cash_register_session_id,
+                    'cash_movement_id' => $movement->id,
+                    'reference_type' => $movement->reference_type,
+                    'reference_id' => $movement->reference_id,
+                    'amount' => (float) $movement->amount,
+                    'movement_type' => $movement->type,
+                ], 'critical', 'route_delivery_collection_reversal_cash_movement_mismatch', 'Ajuste de caja de reversa sin ledger, signo, referencia o sesión original válidos.', 'No mover efectivo entre sesiones; restaurar el vínculo auditado.');
+            }
+        }
+
         foreach (DB::table('cash_movements')
             ->where('business_id', $businessId)
-            ->whereIn('type', ['sale_cash', 'purchase_cash', 'credit_payment_cash', 'route_cash_settlement'])
+            ->whereIn('type', ['sale_cash', 'purchase_cash', 'credit_payment_cash', 'route_cash_settlement', 'route_delivery_collection_reversal_current_session'])
             ->whereNotNull('reference_type')
             ->whereNotNull('reference_id')
             ->when($context['branch_id'], fn (Builder $q, $branch) => $q->where('branch_id', $branch))

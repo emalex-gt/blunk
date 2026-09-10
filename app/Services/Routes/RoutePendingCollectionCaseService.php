@@ -40,7 +40,7 @@ class RoutePendingCollectionCaseService
             ->firstOrFail();
         $sale->payments()->lockForUpdate()->get();
 
-        if (! $this->isEligibleSale($sale) || RouteDeliveryCollection::query()
+        if (! $this->isEligibleSale($sale) || RouteDeliveryCollection::query()->captured()
             ->where('business_id', $lockedSource->business_id)
             ->where('branch_id', $lockedSource->branch_id)
             ->where('sale_id', $sale->id)
@@ -281,7 +281,7 @@ class RoutePendingCollectionCaseService
         if ($case && $case->status === 'not_applicable') {
             $sale = Sale::query()->whereKey($lockedSource->sale_id)->lockForUpdate()->firstOrFail();
             $sale->payments()->lockForUpdate()->get();
-            $hasCollection = RouteDeliveryCollection::query()->where('sale_id', $sale->id)->lockForUpdate()->exists();
+            $hasCollection = RouteDeliveryCollection::query()->captured()->where('sale_id', $sale->id)->lockForUpdate()->exists();
             if ($this->isEligibleSource($lockedSource, $external) && $this->isEligibleSale($sale) && ! $hasCollection) {
                 $case->update([
                     'status' => 'open',
@@ -323,7 +323,7 @@ class RoutePendingCollectionCaseService
             && (float) $sale->amount_paid === 0.0
             && ! $sale->is_credit_sale
             && (float) $sale->credit_balance === 0.0
-            && ! $sale->payments()->exists();
+            && ! $sale->capturedPayments()->exists();
     }
 
     private function assertActorScope(RoutePendingCollectionCase $case, User $actor): void

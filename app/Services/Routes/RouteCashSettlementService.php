@@ -151,7 +151,7 @@ class RouteCashSettlementService
         }
 
         $pre = RoutePreSaleCollection::query()->whereIn('id', $preIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
-        $delivery = RouteDeliveryCollection::query()->whereIn('id', $deliveryIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        $delivery = RouteDeliveryCollection::query()->captured()->whereIn('id', $deliveryIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
         if ($pre->count() !== count($preIds) || $delivery->count() !== count($deliveryIds)) {
             throw ValidationException::withMessages(['items' => 'Uno de los cobros de la liquidación ya no existe.']);
         }

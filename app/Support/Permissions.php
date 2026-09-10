@@ -98,6 +98,7 @@ class Permissions
     public const ROUTES_DELIVERY_RUNS_MANAGE = 'routes.delivery_runs.manage';
     public const ROUTES_DELIVERY_RUNS_CORRECT = 'routes.delivery_runs.correct';
     public const ROUTES_DELIVERY_COLLECTIONS_OVERRIDE = 'routes.delivery_collections.override';
+    public const ROUTES_DELIVERY_COLLECTIONS_REVERSE = 'routes.delivery_collections.reverse';
     public const ROUTES_PENDING_COLLECTIONS_VIEW = 'routes.pending_collections.view';
     public const ROUTES_PENDING_COLLECTIONS_MANAGE = 'routes.pending_collections.manage';
     public const ROUTES_PENDING_COLLECTIONS_COLLECT = 'routes.pending_collections.collect';
@@ -234,6 +235,7 @@ class Permissions
             self::ROUTES_DELIVERY_RUNS_MANAGE => ['name' => 'Gestionar jornadas de entrega', 'group' => 'Rutas'],
             self::ROUTES_DELIVERY_RUNS_CORRECT => ['name' => 'Corregir jornadas de entrega', 'group' => 'Rutas'],
             self::ROUTES_DELIVERY_COLLECTIONS_OVERRIDE => ['name' => 'Registrar cobros de entrega por override', 'group' => 'Rutas'],
+            self::ROUTES_DELIVERY_COLLECTIONS_REVERSE => ['name' => 'Reversar cobros de entrega registrados por error', 'group' => 'Rutas'],
             self::ROUTES_PENDING_COLLECTIONS_VIEW => ['name' => 'Ver pendientes de cobro de rutas', 'group' => 'Rutas'],
             self::ROUTES_PENDING_COLLECTIONS_MANAGE => ['name' => 'Gestionar pendientes de cobro de rutas', 'group' => 'Rutas'],
             self::ROUTES_PENDING_COLLECTIONS_COLLECT => ['name' => 'Registrar cobros posteriores de rutas', 'group' => 'Rutas'],

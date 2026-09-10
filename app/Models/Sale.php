@@ -98,9 +98,24 @@ class Sale extends Model
         return $this->hasMany(SalePayment::class);
     }
 
+    public function capturedPayments(): HasMany
+    {
+        return $this->hasMany(SalePayment::class)->captured();
+    }
+
     public function routeDeliveryCollection(): \Illuminate\Database\Eloquent\Relations\HasOne
     {
         return $this->hasOne(RouteDeliveryCollection::class);
+    }
+
+    public function routeDeliveryCollections(): HasMany
+    {
+        return $this->hasMany(RouteDeliveryCollection::class);
+    }
+
+    public function activeRouteDeliveryCollection(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(RouteDeliveryCollection::class)->captured();
     }
 
     public function creditPaymentAllocations(): HasMany
