@@ -29,6 +29,7 @@ use App\Support\StockAvailability;
 use App\Services\Routes\RoutePreSalePreparationService;
 use App\Services\Routes\RoutePreSaleFelEligibilityService;
 use App\Services\Routes\RoutePreSaleFelAvailabilityService;
+use App\Services\Routes\RoutePreSalePaymentMethodPolicy;
 use App\Services\Routes\RouteCashOperationGuard;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -1014,7 +1015,7 @@ class RouteController extends Controller
             ->with('success', $message);
     }
 
-    public function visit(Request $request, RouteVisit $visit): Response
+    public function visit(Request $request, RouteVisit $visit, RoutePreSalePaymentMethodPolicy $paymentMethodPolicy): Response
     {
         $this->authorizeSellerVisit($request, $visit);
         app(RouteCashOperationGuard::class)->requireOpen((int) $visit->business_id, (int) $visit->branch_id);
@@ -1037,6 +1038,7 @@ class RouteController extends Controller
             'allowNegativeStock' => \App\Support\Inventory\StockPolicy::allowsNegativeStockForBusinessId(currentBusinessId()),
             'allowManualPrice' => $this->preSaleManualPriceEnabled(currentBusinessId()),
             'routeCash' => app(RouteCashOperationGuard::class)->status((int) $visit->business_id, (int) $visit->branch_id),
+            'payment_policy' => $paymentMethodPolicy->forBranch((int) $visit->business_id, (int) $visit->branch_id),
         ]);
     }
 
@@ -1095,7 +1097,7 @@ class RouteController extends Controller
         }
     }
 
-    public function savePreSale(Request $request, RouteVisit $visit, StockReservationService $reservations): RedirectResponse
+    public function savePreSale(Request $request, RouteVisit $visit, StockReservationService $reservations, RoutePreSalePaymentMethodPolicy $paymentMethodPolicy): RedirectResponse
     {
         $this->authorizeSellerVisit($request, $visit);
         $this->assertVisitEditable($visit);
@@ -1129,8 +1131,8 @@ class RouteController extends Controller
                 'visit_id' => $visit->id,
                 'data' => $data,
             ],
-            function () use ($request, $visit, $data, $reservations) {
-                $preSaleId = DB::transaction(function () use ($request, $visit, $data, $reservations) {
+            function () use ($request, $visit, $data, $reservations, $paymentMethodPolicy) {
+                $preSaleId = DB::transaction(function () use ($request, $visit, $data, $reservations, $paymentMethodPolicy) {
             $workDay = RouteWorkDay::query()
                 ->where('business_id', currentBusinessId())
                 ->whereKey($visit->route_work_day_id)
@@ -1156,7 +1158,8 @@ class RouteController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            if (! $preSale) {
+            $creating = ! $preSale;
+            if ($creating) {
                 abort_unless(Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_CREATE), 403);
                 $preSale = PreSale::query()->create([
                     'business_id' => currentBusinessId(),
@@ -1251,9 +1254,14 @@ class RouteController extends Controller
                 $discountTotal += $discount;
             }
 
-            $paymentMethod = array_key_exists('payment_method', $data)
-                ? $data['payment_method']
-                : $preSale->payment_method;
+            $paymentMethod = $paymentMethodPolicy->resolveForSave(
+                (int) currentBusinessId(),
+                (int) $visit->branch_id,
+                $data['payment_method'] ?? null,
+                $request->exists('payment_method'),
+                $preSale->payment_method,
+                $creating,
+            );
 
             $preSale->update([
                 'notes' => $data['notes'] ?? null,
