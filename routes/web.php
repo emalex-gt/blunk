@@ -29,6 +29,7 @@ use App\Http\Controllers\RouteCashSettlementVarianceController;
 use App\Http\Controllers\RoutePendingCollectionController;
 use App\Http\Controllers\RoutePreSaleFelController;
 use App\Http\Controllers\RoutePreSaleInvoiceController;
+use App\Http\Controllers\RouteGlobalOperationsController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\TenantUserController;
@@ -233,6 +234,18 @@ Route::middleware('auth')->group(function () {
         });
 
         Route::middleware('module:routes')->prefix('routes')->name('routes.')->group(function () {
+            Route::get('/global-operations', [RouteGlobalOperationsController::class, 'index'])
+                ->middleware('permission:routes.pre_sales.admin_view')->name('global-operations.index');
+            Route::post('/global-operations/prepare', [RouteGlobalOperationsController::class, 'prepare'])
+                ->middleware('permission:routes.pre_sales.pick')->name('global-operations.prepare');
+            Route::post('/global-operations/generate-sales', [RouteGlobalOperationsController::class, 'generateSales'])
+                ->middleware('permission:routes.pre_sales.pick')->name('global-operations.generate-sales');
+            Route::get('/global-operations/documents/consolidated', [RouteGlobalOperationsController::class, 'consolidated'])
+                ->middleware('permission:routes.pre_sales.admin_view')->name('global-operations.documents.consolidated');
+            Route::get('/global-operations/documents/products', [RouteGlobalOperationsController::class, 'products'])
+                ->middleware('permission:routes.pre_sales.admin_view')->name('global-operations.documents.products');
+            Route::get('/global-operations/documents/receipts', [RouteGlobalOperationsController::class, 'receipts'])
+                ->middleware('permission:routes.pre_sales.admin_view')->name('global-operations.documents.receipts');
             Route::get('/zones', [RouteController::class, 'zones'])
                 ->middleware('permission:routes.manage')
                 ->name('zones.index');
