@@ -43,28 +43,77 @@ class RouteGlobalOperationsService
             ->orderBy('seller_id')->orderBy('id')->get();
         $sellerGroups = [];
         $blocked = [];
+        $seenPreSaleIds = [];
 
         foreach ($workDays as $workDay) {
             foreach ($workDay->preSales as $preSale) {
+                if (isset($seenPreSaleIds[$preSale->id])) {
+                    continue;
+                }
+                $seenPreSaleIds[$preSale->id] = true;
+
+                $sellerGroups[$workDay->seller_id] ??= [
+                    'seller' => ['id' => $workDay->seller_id, 'name' => $workDay->seller?->name],
+                    'work_day_ids' => [],
+                    'pre_sales' => [],
+                    'total' => 0.0,
+                    'total_pre_sales' => 0,
+                    'total_amount' => 0.0,
+                    'prepared_count' => 0,
+                    'converted_count' => 0,
+                    'preparation_eligible_count' => 0,
+                    'sales_eligible_count' => 0,
+                    'preparation_blocked_count' => 0,
+                    'sales_blocked_count' => 0,
+                ];
+                $seller = &$sellerGroups[$workDay->seller_id];
+                $seller['total_pre_sales']++;
+                $seller['total_amount'] += (float) $preSale->total;
+
+                $prepared = in_array($preSale->status, [PreSale::STATUS_PICKED, PreSale::STATUS_CONVERTED], true) || $preSale->converted_sale_id !== null;
+                if ($prepared) {
+                    $seller['prepared_count']++;
+                }
+                if ($preSale->converted_sale_id !== null) {
+                    $seller['converted_count']++;
+                }
+
+                $preparationEligible = in_array($preSale->status, [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING], true);
+                $salesEligible = $preSale->status === PreSale::STATUS_PICKED && $preSale->converted_sale_id === null;
+                $seller[$preparationEligible ? 'preparation_eligible_count' : 'preparation_blocked_count']++;
+                $seller[$salesEligible ? 'sales_eligible_count' : 'sales_blocked_count']++;
+
                 $eligible = in_array($preSale->status, $eligibleStatuses, true) && (! $requireUnconverted || $preSale->converted_sale_id === null);
                 if (! $eligible) {
                     $blocked[] = ['work_day_id' => $workDay->id, 'pre_sale_id' => $preSale->id, 'seller_id' => $workDay->seller_id, 'reason_code' => $preSale->converted_sale_id ? 'pre_sale_already_converted' : 'pre_sale_status_ineligible'];
+                    unset($seller);
                     continue;
                 }
-                $sellerGroups[$workDay->seller_id] ??= ['seller' => ['id' => $workDay->seller_id, 'name' => $workDay->seller?->name], 'work_day_ids' => [], 'pre_sales' => [], 'total' => 0.0];
-                $sellerGroups[$workDay->seller_id]['work_day_ids'][] = $workDay->id;
-                $sellerGroups[$workDay->seller_id]['pre_sales'][] = ['id' => $preSale->id, 'work_day_id' => $workDay->id, 'total' => (float) $preSale->total];
-                $sellerGroups[$workDay->seller_id]['total'] += (float) $preSale->total;
+                $seller['work_day_ids'][] = $workDay->id;
+                $seller['pre_sales'][] = ['id' => $preSale->id, 'work_day_id' => $workDay->id, 'total' => (float) $preSale->total];
+                $seller['total'] += (float) $preSale->total;
+                unset($seller);
             }
         }
         foreach ($sellerGroups as &$seller) {
             $seller['work_day_ids'] = array_values(array_unique($seller['work_day_ids']));
             $seller['total'] = round($seller['total'], 2);
+            $seller['total_amount'] = round($seller['total_amount'], 2);
         }
         unset($seller);
         $sellers = array_values($sellerGroups);
-        $workDayIds = $sellers === [] ? [] : array_merge(...array_map(fn (array $group) => $group['work_day_ids'], $sellers));
-        return ['summary' => ['sellers' => count($sellers), 'work_days' => count(array_unique($workDayIds)), 'pre_sales' => array_sum(array_map(fn ($group) => count($group['pre_sales']), $sellers)), 'total' => round(array_sum(array_map(fn ($group) => $group['total'], $sellers)), 2)], 'sellers' => $sellers, 'blocked' => $blocked];
+        return ['summary' => [
+            'sellers' => count($sellers),
+            'work_days' => $workDays->count(),
+            'pre_sales' => count($seenPreSaleIds),
+            'total' => round(array_sum(array_map(fn ($group) => $group['total_amount'], $sellers)), 2),
+            'prepared_count' => array_sum(array_column($sellers, 'prepared_count')),
+            'converted_count' => array_sum(array_column($sellers, 'converted_count')),
+            'preparation_eligible_count' => array_sum(array_column($sellers, 'preparation_eligible_count')),
+            'sales_eligible_count' => array_sum(array_column($sellers, 'sales_eligible_count')),
+            'preparation_blocked_count' => array_sum(array_column($sellers, 'preparation_blocked_count')),
+            'sales_blocked_count' => array_sum(array_column($sellers, 'sales_blocked_count')),
+        ], 'sellers' => $sellers, 'blocked' => $blocked];
     }
 
     private function execute(User $actor, string $globalKey, array $statuses, string $operation, callable $child, bool $requireUnconverted = false): array

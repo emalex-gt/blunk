@@ -52,12 +52,73 @@ class RouteGlobalOperationsTest extends TestCase
 
         $preview = app(RouteGlobalOperationsService::class)->preparationPreview($business->id, $branch->id);
 
-        $this->assertSame(2, $preview['summary']['pre_sales']);
+        $this->assertSame(3, $preview['summary']['pre_sales']);
         $this->assertSame(2, $preview['summary']['sellers']);
-        $this->assertSame(175.5, $preview['summary']['total']);
+        $this->assertSame(225.5, $preview['summary']['total']);
+        $this->assertSame(0, $preview['summary']['prepared_count']);
+        $this->assertSame(0, $preview['summary']['converted_count']);
+        $this->assertSame(2, $preview['summary']['preparation_eligible_count']);
+        $this->assertSame(0, $preview['summary']['sales_eligible_count']);
         $this->assertCount(2, $preview['sellers']);
         $this->assertCount(1, $preview['blocked']);
         $this->assertSame('pre_sale_status_ineligible', $preview['blocked'][0]['reason_code']);
+    }
+
+    public function test_global_previews_expose_unique_commercial_metrics_per_seller_across_work_days(): void
+    {
+        [$business, $branch, $actor, $sellerA, $sellerB, $workDays] = $this->preparationExecutionFixture();
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'route_collection_responsibility' => 'delivery_agent',
+            'route_delivery_tracking' => 'external',
+            'route_pre_sale_invoicing_mode' => 'manual',
+        ]);
+
+        $converted = $this->preparablePreSale($business, $branch, $workDays[0], $sellerA, '60.00');
+        app(RouteGlobalOperationsService::class)->prepareAll($actor, 'global-metrics-prepare-0001');
+        app(RouteGlobalOperationsService::class)->generateSales($actor, 'global-metrics-sales-0001');
+        $this->assertNotNull($converted->refresh()->converted_sale_id);
+
+        $this->preSale($business->id, $branch->id, $workDays[0]->id, $sellerA->id, '10.00', PreSale::STATUS_SUBMITTED);
+        $this->preSale($business->id, $branch->id, $workDays[1]->id, $sellerA->id, '20.00', PreSale::STATUS_PROCESSING);
+        $this->preSale($business->id, $branch->id, $workDays[1]->id, $sellerA->id, '40.00', PreSale::STATUS_PICKED);
+        $this->preSale($business->id, $branch->id, $workDays[2]->id, $sellerB->id, '30.00', PreSale::STATUS_SUBMITTED);
+        $this->preSale($business->id, $branch->id, $workDays[2]->id, $sellerB->id, '50.00', PreSale::STATUS_PICKED);
+
+        $preparation = app(RouteGlobalOperationsService::class)->preparationPreview($business->id, $branch->id);
+        $sales = app(RouteGlobalOperationsService::class)->salesPreview($business->id, $branch->id);
+        $sellers = collect($preparation['sellers'])->keyBy('seller.id');
+
+        $this->assertSame(6, $preparation['summary']['pre_sales']);
+        $this->assertSame(210.0, $preparation['summary']['total']);
+        $this->assertSame(3, $preparation['summary']['prepared_count']);
+        $this->assertSame(1, $preparation['summary']['converted_count']);
+        $this->assertSame(3, $preparation['summary']['preparation_eligible_count']);
+        $this->assertSame(2, $preparation['summary']['sales_eligible_count']);
+        $this->assertSame(3, $sales['summary']['prepared_count']);
+        $this->assertSame(1, $sales['summary']['converted_count']);
+        $this->assertSame(2, $sales['summary']['sales_eligible_count']);
+        $this->assertSame(4, $sellers[$sellerA->id]['total_pre_sales']);
+        $this->assertSame(130.0, $sellers[$sellerA->id]['total_amount']);
+        $this->assertSame(2, $sellers[$sellerA->id]['prepared_count']);
+        $this->assertSame(1, $sellers[$sellerA->id]['converted_count']);
+        $this->assertSame(2, $sellers[$sellerA->id]['preparation_eligible_count']);
+        $this->assertSame(1, $sellers[$sellerA->id]['sales_eligible_count']);
+        $this->assertSame(2, $sellers[$sellerB->id]['total_pre_sales']);
+        $this->assertSame(80.0, $sellers[$sellerB->id]['total_amount']);
+        $this->assertSame(1, $sellers[$sellerB->id]['prepared_count']);
+        $this->assertSame(0, $sellers[$sellerB->id]['converted_count']);
+    }
+
+    public function test_global_operations_markup_uses_operation_specific_eligibility_for_disabled_actions(): void
+    {
+        $markup = file_get_contents(resource_path('js/Pages/Routes/GlobalOperations/Index.tsx'));
+
+        $this->assertStringContainsString("const preparationEligible = preparation_preview.summary.preparation_eligible_count;", $markup);
+        $this->assertStringContainsString("const salesEligible = sales_preview.summary.sales_eligible_count;", $markup);
+        $this->assertStringContainsString('disabled={preparationEligible === 0}', $markup);
+        $this->assertStringContainsString('disabled={salesEligible === 0}', $markup);
+        $this->assertStringContainsString('No hay pedidos listos para preparar.', $markup);
+        $this->assertStringContainsString('No hay pedidos listos para generar ventas.', $markup);
     }
 
     public function test_prepare_all_executes_real_child_batches_per_eligible_work_day_and_replays_without_duplicate_stock(): void
