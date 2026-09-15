@@ -3,6 +3,7 @@
 namespace App\Services\Routes;
 
 use App\Models\PreSale;
+use App\Models\CashRegisterSession;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\IdempotencyResult;
@@ -17,9 +18,9 @@ class RoutePreSaleReceiptService
     {
     }
 
-    public function convertToInternalReceipt(PreSale $preSale, array $data, User $user, bool $requiresOpenCashSession = true): IdempotencyResult
+    public function convertToInternalReceipt(PreSale $preSale, array $data, User $user, bool $requiresOpenCashSession = true, ?CashRegisterSession $cashSession = null): IdempotencyResult
     {
-        if ($requiresOpenCashSession) {
+        if ($requiresOpenCashSession && $cashSession === null) {
             $this->cash->requireOpen((int) $preSale->business_id, (int) $preSale->branch_id);
         }
         $result = $this->eligibility->persist($preSale);
@@ -35,6 +36,6 @@ class RoutePreSaleReceiptService
             ...$data,
             'document_type' => 'receipt',
             'route_internal_receipt' => true,
-        ], $user);
+        ], $user, $cashSession);
     }
 }

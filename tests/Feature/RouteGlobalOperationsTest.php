@@ -154,12 +154,34 @@ class RouteGlobalOperationsTest extends TestCase
         $this->assertNull($invalid->fresh()->converted_sale_id);
     }
 
-    public function test_sales_preview_explains_the_temporary_immediate_paid_block_without_marking_the_work_day_eligible(): void
+    public function test_sales_preview_allows_immediate_paid_when_an_open_cash_session_exists(): void
+    {
+        [$business, $branch, $actor, $sellerA, $sellerB, $workDays] = $this->preparationExecutionFixture();
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+        $preSale = $this->preparablePreSale($business, $branch, $workDays[0], $sellerA, '60.00');
+        app(RouteGlobalOperationsService::class)->prepareAll($actor, 'global-immediate-preview-prepare');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'immediate_paid',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+
+        $preview = app(RouteGlobalOperationsService::class)->salesPreview($business->id, $branch->id);
+        $execution = app(RouteGlobalOperationsService::class)->generateSales($actor, 'global-immediate-preview-sales');
+
+        $this->assertSame(1, $preview['summary']['sales_eligible_count']);
+        $this->assertSame([], $preview['blocked']);
+        $this->assertCount(1, $execution['processed']);
+        $this->assertSame('paid', $preSale->fresh()->convertedSale->payment_status);
+    }
+
+    public function test_sales_preview_requires_a_cash_session_for_immediate_paid(): void
     {
         [$business, $branch, $actor, $sellerA, $sellerB, $workDays] = $this->preparationExecutionFixture();
         TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
         $this->preparablePreSale($business, $branch, $workDays[0], $sellerA, '60.00');
-        app(RouteGlobalOperationsService::class)->prepareAll($actor, 'global-immediate-preview-prepare');
+        app(RouteGlobalOperationsService::class)->prepareAll($actor, 'global-immediate-preview-no-cash-prepare');
+        CashRegisterSession::query()->where('business_id', $business->id)->update(['status' => 'closed', 'closed_at' => now()]);
         app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
             'collection_workflow_mode' => 'immediate_paid',
             'allowed_payment_methods' => ['cash'],
@@ -169,7 +191,7 @@ class RouteGlobalOperationsTest extends TestCase
         $preview = app(RouteGlobalOperationsService::class)->salesPreview($business->id, $branch->id);
 
         $this->assertSame(0, $preview['summary']['sales_eligible_count']);
-        $this->assertSame('immediate_paid_financial_flow_unavailable', $preview['blocked'][0]['reason_code']);
+        $this->assertSame('cash_session_required', $preview['blocked'][0]['reason_code']);
         $this->assertNull($preview['blocked'][0]['pre_sale_id']);
     }
 

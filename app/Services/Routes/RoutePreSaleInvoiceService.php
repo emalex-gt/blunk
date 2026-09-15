@@ -3,6 +3,7 @@
 namespace App\Services\Routes;
 
 use App\Models\Business;
+use App\Models\CashRegisterSession;
 use App\Models\ElectronicDocument;
 use App\Models\FelReconciliationRequest;
 use App\Models\PreSale;
@@ -36,7 +37,7 @@ class RoutePreSaleInvoiceService
     {
     }
 
-    public function convert(PreSale $preSale, array $data, User $user): IdempotencyResult
+    public function convert(PreSale $preSale, array $data, User $user, ?CashRegisterSession $cashSession = null): IdempotencyResult
     {
         $business = Business::query()->findOrFail($preSale->business_id);
         $settings = TenantSetting::query()->where('business_id', $business->id)->first();
@@ -85,8 +86,8 @@ class RoutePreSaleInvoiceService
                 'route_pre_sale_invoice',
                 $data['idempotency_key'],
                 $this->idempotencyPayload($preSale, $data, $snapshotItems),
-                function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $isUnpaidRouteReceipt, $skipPaymentPosting, $stockDeductionTiming, &$failedFel) {
-                    return DB::transaction(function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $isUnpaidRouteReceipt, $skipPaymentPosting, $stockDeductionTiming, &$failedFel) {
+                function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $isUnpaidRouteReceipt, $skipPaymentPosting, $stockDeductionTiming, $cashSession, &$failedFel) {
+                    return DB::transaction(function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $isUnpaidRouteReceipt, $skipPaymentPosting, $stockDeductionTiming, $cashSession, &$failedFel) {
                         $lockedPreSale = PreSale::query()
                             ->where('business_id', $preSale->business_id)
                             ->whereKey($preSale->id)
@@ -228,13 +229,23 @@ class RoutePreSaleInvoiceService
                             AccountsReceivable::assertCanCharge($customer, $total, (int) $lockedPreSale->branch_id);
                         }
 
+                        if ($cashSession !== null && (
+                            (int) $cashSession->business_id !== (int) $lockedPreSale->business_id
+                            || (int) $cashSession->branch_id !== (int) $lockedPreSale->branch_id
+                            || $cashSession->status !== 'open'
+                        )) {
+                            throw ValidationException::withMessages([
+                                'cash_session_required' => 'La caja abierta seleccionada ya no es válida para esta sucursal.',
+                            ]);
+                        }
+
                         $cashSession = ($isCreditSale || $isUnpaidRouteReceipt || $skipPaymentPosting)
                             ? null
-                            : app(RouteCashOperationGuard::class)->requireOpen(
+                            : ($cashSession ?? app(RouteCashOperationGuard::class)->requireOpen(
                                 (int) $lockedPreSale->business_id,
                                 (int) $lockedPreSale->branch_id,
                                 true,
-                            );
+                            ));
 
                         $sale = Sale::query()->create([
                             'business_id' => $lockedPreSale->business_id,

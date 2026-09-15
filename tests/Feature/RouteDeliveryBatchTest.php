@@ -13,9 +13,12 @@ use App\Models\PreSaleItem;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
 use App\Models\RouteWorkDay;
+use App\Models\RouteDeliveryBatchPreSale;
 use App\Models\RouteZone;
 use App\Models\Sale;
+use App\Models\SalePayment;
 use App\Models\StockReservation;
+use App\Models\StockMovement;
 use App\Models\TenantModule;
 use App\Models\TenantFelPhrase;
 use App\Models\TenantFelSetting;
@@ -95,6 +98,210 @@ class RouteDeliveryBatchTest extends TestCase
         $this->assertDatabaseCount('customer_account_movements', 0);
     }
 
+    public function test_immediate_paid_converts_a_pre_seller_cash_pre_sale_without_a_legacy_collection(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
+        $this->openEmptyCashRegister($business, $branch, $user);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'immediate_paid',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+
+        $result = app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-immediate-pre-seller-cash-key');
+
+        $batch = \App\Models\RouteDeliveryBatch::query()->findOrFail($result->resultId);
+        $entry = $batch->preSales()->firstOrFail();
+        $sale = $preSale->fresh()->convertedSale()->firstOrFail();
+        $movement = CashMovement::query()->where('business_id', $business->id)->sole();
+
+        $this->assertSame('immediate_paid', $batch->collection_workflow_mode_snapshot);
+        $this->assertSame('cash', $entry->agreed_payment_method_snapshot);
+        $this->assertSame('cash', $entry->payment_method);
+        $this->assertSame('paid', $sale->payment_status);
+        $this->assertSame(60.0, (float) $sale->amount_paid);
+        $this->assertSame(0.0, (float) $sale->credit_balance);
+        $this->assertFalse((bool) $sale->is_credit_sale);
+        $this->assertNull($sale->due_date);
+        $this->assertSame(1, $sale->payments()->count());
+        $this->assertSame('cash', $sale->payments()->sole()->method);
+        $this->assertSame(60.0, (float) $sale->payments()->sole()->amount);
+        $this->assertSame('sale_cash', $movement->type);
+        $this->assertSame($sale->id, (int) $movement->reference_id);
+        $this->assertSame(60.0, (float) $movement->amount);
+        $this->assertDatabaseCount('route_pre_sale_collections', 0);
+        $this->assertDatabaseCount('route_delivery_collections', 0);
+        $this->assertDatabaseCount('route_pending_collection_cases', 0);
+        $this->assertDatabaseCount('customer_account_movements', 0);
+        $this->assertDatabaseCount('route_cash_settlement_items', 0);
+    }
+
+    public function test_immediate_paid_uses_each_agreed_method_as_the_real_payment_method_for_delivery_agents(): void
+    {
+        foreach (['cash', 'card', 'transfer', 'check'] as $method) {
+            [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', $method);
+            TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+            $session = $this->openEmptyCashRegister($business, $branch, $user);
+            $this->setPreSaleTotal($preSale, 123.47);
+            app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+                'collection_workflow_mode' => 'immediate_paid',
+                'allowed_payment_methods' => ['cash', 'card', 'transfer', 'check'],
+                'primary_payment_method' => 'cash',
+            ]);
+
+            app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-immediate-method-'.$method);
+
+            $sale = $preSale->fresh()->convertedSale()->firstOrFail();
+            $entry = RouteDeliveryBatchPreSale::query()->where('sale_id', $sale->id)->sole();
+            $payment = $sale->payments()->sole();
+
+            $this->assertSame('paid', $sale->payment_status);
+            $this->assertSame($method, $sale->payment_method);
+            $this->assertSame(123.47, (float) $sale->amount_paid);
+            $this->assertSame(123.47, (float) $payment->amount);
+            $this->assertSame($method, $payment->method);
+            $this->assertSame($method, $entry->agreed_payment_method_snapshot);
+            $this->assertSame($method, $entry->payment_method);
+            $this->assertSame($method === 'cash' ? 1 : 0, CashMovement::query()->where('business_id', $business->id)->count());
+            if ($method === 'cash') {
+                $movement = CashMovement::query()->where('business_id', $business->id)->sole();
+                $this->assertSame($session->id, (int) $movement->cash_register_session_id);
+                $this->assertSame(123.47, (float) $movement->amount);
+            }
+            $this->assertDatabaseCount('route_pre_sale_collections', 0);
+            $this->assertDatabaseCount('route_delivery_collections', 0);
+            $this->assertDatabaseCount('customer_account_movements', 0);
+        }
+    }
+
+    public function test_immediate_paid_requires_an_open_cash_session_without_creating_any_financial_fact(): void
+    {
+        [$business, $branch, $user, $preSale, $product] = $this->pickedPreSale('invoice', 'card');
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'immediate_paid',
+            'allowed_payment_methods' => ['card'],
+            'primary_payment_method' => 'card',
+        ]);
+
+        try {
+            app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-immediate-no-cash-key');
+            $this->fail('Expected immediate paid delivery to require an open cash session.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('cash_session_required', $exception->errors());
+        }
+
+        $this->assertDatabaseCount('route_delivery_batches', 0);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('sale_payments', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertSame(10.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+    }
+
+    public function test_immediate_paid_same_key_replay_preserves_the_original_policy_and_creates_no_duplicate_payment_or_cash_movement(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
+        $this->openEmptyCashRegister($business, $branch, $user);
+        $settings = app(RouteBranchCollectionSettingsService::class);
+        $settings->save($business->id, $branch, [
+            'collection_workflow_mode' => 'immediate_paid',
+            'allowed_payment_methods' => ['cash', 'transfer'],
+            'primary_payment_method' => 'cash',
+        ]);
+
+        $first = app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-immediate-replay-key');
+        $batch = \App\Models\RouteDeliveryBatch::query()->findOrFail($first->resultId);
+        $settings->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+
+        $replay = app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-immediate-replay-key');
+
+        $this->assertTrue($replay->replayed);
+        $this->assertSame($batch->id, $replay->resultId);
+        $this->assertSame('immediate_paid', $batch->fresh()->collection_workflow_mode_snapshot);
+        $this->assertSame(['cash', 'transfer'], $batch->fresh()->allowed_payment_methods_snapshot);
+        $this->assertSame(1, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(1, SalePayment::query()->where('business_id', $business->id)->count());
+        $this->assertSame(1, CashMovement::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_immediate_paid_preserves_existing_picking_stock_timing_without_a_second_deduction(): void
+    {
+        [$business, $branch, $user, $preSale, $product] = $this->pickedPreSale('picking', 'card');
+        ProductBranchStock::query()->where('product_id', $product->id)->update(['stock' => 7]);
+        PreSaleItem::query()->where('pre_sale_id', $preSale->id)->update(['stock_deducted_quantity' => 3]);
+        StockReservation::query()->where('source_id', $preSale->id)->update(['status' => 'consumed', 'consumed_at' => now()]);
+        $this->openEmptyCashRegister($business, $branch, $user);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'immediate_paid',
+            'allowed_payment_methods' => ['card'],
+            'primary_payment_method' => 'card',
+        ]);
+
+        app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-immediate-picking-key');
+
+        $this->assertSame('paid', $preSale->fresh()->convertedSale->payment_status);
+        $this->assertSame(7.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->count());
+        $this->assertDatabaseCount('cash_movements', 0);
+    }
+
+    public function test_immediate_paid_keeps_existing_fel_automation_dispatch_behavior(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'card');
+        $this->openEmptyCashRegister($business, $branch, $user);
+        $this->configureFelAvailability($business, $branch);
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_pre_sale_invoicing_mode' => 'automatic_all']);
+        config(['fel.route_automation_enabled' => true]);
+        Queue::fake();
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'immediate_paid',
+            'allowed_payment_methods' => ['card'],
+            'primary_payment_method' => 'card',
+        ]);
+
+        app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-immediate-fel-key');
+
+        $this->assertSame('paid', $preSale->fresh()->convertedSale->payment_status);
+        Queue::assertPushed(RoutePreSaleAutomaticFelJob::class);
+        $this->assertDatabaseHas('route_delivery_batch_pre_sales', [
+            'pre_sale_id' => $preSale->id,
+            'fel_dispatch_status' => 'queued',
+        ]);
+    }
+
+    public function test_immediate_paid_rolls_back_each_financial_write_failure_and_allows_a_retry(): void
+    {
+        foreach ([
+            RouteDeliveryBatchPreSale::class,
+            SalePayment::class,
+            CashMovement::class,
+        ] as $model) {
+            [$business, $branch, $user, $preSale, $product] = $this->pickedPreSale('invoice', 'cash');
+            $this->openEmptyCashRegister($business, $branch, $user);
+            app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+                'collection_workflow_mode' => 'immediate_paid',
+                'allowed_payment_methods' => ['cash'],
+                'primary_payment_method' => 'cash',
+            ]);
+
+            $this->assertImmediatePaidCreatingFailureRollsBack($model, $preSale, $user, 'route-delivery-immediate-rollback-'.class_basename($model));
+
+            $this->assertSame(0, \App\Models\RouteDeliveryBatch::query()->where('business_id', $business->id)->count());
+            $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
+            $this->assertSame(0, SalePayment::query()->where('business_id', $business->id)->count());
+            $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->count());
+            $this->assertSame(10.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+
+            $retry = app(RouteDeliveryBatchService::class)->deliverAll($preSale->fresh()->workDay, $user, 'route-delivery-immediate-rollback-'.class_basename($model));
+            $this->assertNotNull($retry->resultId);
+            $this->assertDatabaseHas('sales', ['id' => $preSale->fresh()->converted_sale_id, 'payment_status' => 'paid']);
+        }
+    }
+
     public function test_policy_snapshot_constraints_accept_legacy_nulls_and_reject_invalid_bundles_and_methods(): void
     {
         [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
@@ -170,8 +377,6 @@ class RouteDeliveryBatchTest extends TestCase
     public function test_policy_aware_child_fails_closed_for_unsupported_workflows_and_corrupted_policy(): void
     {
         foreach ([
-            ['workflow' => 'immediate_paid', 'responsibility' => 'pre_seller', 'reason' => 'immediate_paid_financial_flow_unavailable'],
-            ['workflow' => 'immediate_paid', 'responsibility' => 'delivery_agent', 'reason' => 'immediate_paid_financial_flow_unavailable'],
             ['workflow' => 'per_order_collection', 'responsibility' => 'pre_seller', 'reason' => 'pre_seller_post_conversion_collection_unavailable'],
         ] as $case) {
             [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
@@ -746,6 +951,49 @@ class RouteDeliveryBatchTest extends TestCase
         PreSale::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('seller_id', $user->id)->where('status', PreSale::STATUS_PICKED)->whereNotNull('agreed_payment_method')->each(function (PreSale $preSale) use ($user) {
             app(RoutePreSaleCollectionService::class)->capture($preSale, ['amount' => $preSale->total, 'payment_method' => $preSale->agreed_payment_method, 'idempotency_key' => 'fixture-collection-'.$preSale->id], $user);
         });
+    }
+
+    private function openEmptyCashRegister(Business $business, $branch, User $user): CashRegisterSession
+    {
+        return CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'opened_by' => $user->id,
+            'status' => 'open',
+            'opening_amount' => 0,
+            'expected_cash' => 0,
+            'opened_at' => now(),
+        ]);
+    }
+
+    private function setPreSaleTotal(PreSale $preSale, float $total): void
+    {
+        $item = $preSale->items()->sole();
+        $item->update([
+            'quantity' => 1,
+            'picked_quantity' => 1,
+            'unit_price' => $total,
+            'original_price' => $total,
+            'total' => $total,
+        ]);
+        StockReservation::query()->where('source_item_id', $item->id)->update(['quantity' => 1]);
+        $preSale->update(['subtotal' => $total, 'total' => $total]);
+    }
+
+    private function assertImmediatePaidCreatingFailureRollsBack(string $model, PreSale $preSale, User $user, string $idempotencyKey): void
+    {
+        $model::creating(function (): void {
+            throw new \RuntimeException('Intentional Task 6 persistence failure.');
+        });
+
+        try {
+            app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, $idempotencyKey);
+            $this->fail('Expected the immediate paid child transaction to roll back.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('Intentional Task 6 persistence failure.', $exception->getMessage());
+        } finally {
+            $model::flushEventListeners();
+        }
     }
 
     private function configureFelAvailability(Business $business, $branch): void
