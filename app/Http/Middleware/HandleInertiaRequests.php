@@ -68,6 +68,8 @@ class HandleInertiaRequests extends Middleware
                     'credit_receipt_id' => fn () => $request->session()->get('credit_receipt_id'),
                     'credit_payment_print_url' => fn () => $request->session()->get('credit_payment_print_url'),
                     'cash_closing_print_id' => fn () => $request->session()->get('cash_closing_print_id'),
+                    'global_preparation_result' => fn () => $request->session()->get('global_preparation_result'),
+                    'global_sales_result' => fn () => $request->session()->get('global_sales_result'),
                 ],
             ]);
         }
@@ -218,6 +220,8 @@ class HandleInertiaRequests extends Middleware
                 'credit_receipt_id' => fn () => $request->session()->get('credit_receipt_id'),
                 'credit_payment_print_url' => fn () => $request->session()->get('credit_payment_print_url'),
                 'cash_closing_print_id' => fn () => $request->session()->get('cash_closing_print_id'),
+                'global_preparation_result' => fn () => $request->session()->get('global_preparation_result'),
+                'global_sales_result' => fn () => $request->session()->get('global_sales_result'),
             ],
         ]);
     }

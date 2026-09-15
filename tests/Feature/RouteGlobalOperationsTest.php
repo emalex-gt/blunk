@@ -24,6 +24,7 @@ use App\Models\StockReservation;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
+use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
 class RouteGlobalOperationsTest extends TestCase
@@ -428,13 +429,60 @@ class RouteGlobalOperationsTest extends TestCase
         $this->actingAs($denied)->get(route('routes.global-operations.index'))->assertForbidden();
     }
 
+    public function test_global_operation_result_flashes_are_shared_with_inertia_and_keep_exact_child_batch_ids(): void
+    {
+        [$business, $branch, $actor] = $this->preparationExecutionFixture();
+        $preparationResult = [
+            'processed' => [['work_day_id' => 41, 'seller_id' => 19, 'seller_name' => 'Carlos', 'batch_id' => 701, 'total_pre_sales' => 3]],
+            'blocked' => [['work_day_id' => 42, 'seller_id' => 20, 'seller_name' => 'María', 'reason_code' => 'child_validation_blocked', 'message' => 'No hay caja abierta para operar rutas.']],
+            'failed' => [],
+        ];
+        $salesResult = [
+            'processed' => [],
+            'blocked' => [['work_day_id' => 41, 'seller_id' => 19, 'seller_name' => 'Carlos', 'reason_code' => 'child_validation_blocked', 'message' => 'Debe registrar el cobro antes de generar el comprobante.']],
+            'failed' => [],
+        ];
+
+        $this->withSession([
+            'active_business_id' => $business->id,
+            'global_preparation_result' => $preparationResult,
+            'global_sales_result' => $salesResult,
+        ])->actingAs($actor)->get(route('routes.global-operations.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/GlobalOperations/Index')
+                ->where('flash.global_preparation_result.processed.0.batch_id', 701)
+                ->where('flash.global_preparation_result.processed.0.total_pre_sales', 3)
+                ->where('flash.global_preparation_result.blocked.0.message', 'No hay caja abierta para operar rutas.')
+                ->where('flash.global_sales_result.blocked.0.message', 'Debe registrar el cobro antes de generar el comprobante.'));
+    }
+
+    public function test_global_operation_markup_renders_feedback_downloads_and_prevents_double_submit_while_processing(): void
+    {
+        $markup = file_get_contents(resource_path('js/Pages/Routes/GlobalOperations/Index.tsx'));
+
+        $this->assertStringContainsString('PREPARACIÓN COMPLETADA', $markup);
+        $this->assertStringContainsString('GENERACIÓN DE VENTAS COMPLETADA', $markup);
+        $this->assertStringContainsString('{flash.global_preparation_result && <ResultPanel', $markup);
+        $this->assertStringContainsString('{flash.global_sales_result && <ResultPanel', $markup);
+        $this->assertStringContainsString('routes.global-operations.documents.${name}', $markup);
+        $this->assertStringContainsString('flash.global_preparation_result?.processed.map(row => row.batch_id)', $markup);
+        $this->assertStringContainsString('useRef(false)', $markup);
+        $this->assertStringContainsString('submissionLockedRef.current', $markup);
+        $this->assertStringContainsString("setProcessing(operation)", $markup);
+        $this->assertStringContainsString("processing ? 'Procesando...' : 'Confirmar'", $markup);
+        $this->assertStringContainsString('{resultReason(row)}', $markup);
+        $this->assertStringContainsString('return row.message ||', $markup);
+    }
+
     public function test_global_operation_http_prepares_and_downloads_only_the_exact_completed_child_batches(): void
     {
         [$business, $branch, $actor, $sellerA, $sellerB, $workDays] = $this->preparationExecutionFixture();
         $this->preparablePreSale($business, $branch, $workDays[0], $sellerA, '60.00');
 
         $this->actingAs($actor)->post(route('routes.global-operations.prepare'), ['idempotency_key' => 'global-http-prepare-0001'])
-            ->assertRedirect();
+            ->assertRedirect()
+            ->assertSessionHas('global_preparation_result.processed.0.batch_id');
         $batchId = RoutePreparationBatch::query()->where('business_id', $business->id)->value('id');
 
         $this->actingAs($actor)->get(route('routes.global-operations.documents.receipts', ['batch_ids' => [$batchId]]))

@@ -4,6 +4,8 @@ namespace App\Services\Routes;
 
 use App\Models\PreSale;
 use App\Models\OperationIdempotencyKey;
+use App\Models\RouteDeliveryBatch;
+use App\Models\RoutePreparationBatch;
 use App\Models\RouteWorkDay;
 use App\Models\User;
 use Illuminate\Validation\ValidationException;
@@ -134,7 +136,14 @@ class RouteGlobalOperationsService
                 ->where('operation_type', $operation === 'prepare' ? 'route_prepare_all' : 'route_deliver_all')
                 ->where('idempotency_key', $childKey)->where('status', 'completed')->value('result_id');
             if ($existingResultId) {
-                $result['processed'][] = ['work_day_id' => $workDay->id, 'seller_id' => $workDay->seller_id, 'seller_name' => $workDay->seller?->name, 'batch_id' => (int) $existingResultId, 'replayed' => true];
+                $result['processed'][] = [
+                    'work_day_id' => $workDay->id,
+                    'seller_id' => $workDay->seller_id,
+                    'seller_name' => $workDay->seller?->name,
+                    'batch_id' => (int) $existingResultId,
+                    'total_pre_sales' => $this->batchPreSales($operation, (int) $existingResultId),
+                    'replayed' => true,
+                ];
                 continue;
             }
             if (! $eligibleWorkDayIds->has($workDay->id)) {
@@ -142,13 +151,33 @@ class RouteGlobalOperationsService
             }
             try {
                 $childResult = $child($workDay, $childKey);
-                $result['processed'][] = ['work_day_id' => $workDay->id, 'seller_id' => $workDay->seller_id, 'seller_name' => $workDay->seller?->name, 'batch_id' => $childResult->resultId, 'replayed' => $childResult->replayed];
+                $result['processed'][] = [
+                    'work_day_id' => $workDay->id,
+                    'seller_id' => $workDay->seller_id,
+                    'seller_name' => $workDay->seller?->name,
+                    'batch_id' => $childResult->resultId,
+                    'total_pre_sales' => (int) ($childResult->responsePayload['total_pre_sales'] ?? $this->batchPreSales($operation, $childResult->resultId)),
+                    'replayed' => $childResult->replayed,
+                ];
             } catch (ValidationException $exception) {
-                $result['blocked'][] = ['work_day_id' => $workDay->id, 'seller_id' => $workDay->seller_id, 'seller_name' => $workDay->seller?->name, 'reason_code' => 'child_validation_blocked', 'message' => $exception->getMessage()];
+                $result['blocked'][] = [
+                    'work_day_id' => $workDay->id,
+                    'seller_id' => $workDay->seller_id,
+                    'seller_name' => $workDay->seller?->name,
+                    'reason_code' => 'child_validation_blocked',
+                    'message' => collect($exception->errors())->flatten()->first() ?? $exception->getMessage(),
+                ];
             } catch (\Throwable $exception) {
                 $result['failed'][] = ['work_day_id' => $workDay->id, 'seller_id' => $workDay->seller_id, 'seller_name' => $workDay->seller?->name, 'reason_code' => 'unexpected_child_failure', 'message' => $exception->getMessage()];
             }
         }
         return $result;
+    }
+
+    private function batchPreSales(string $operation, int $batchId): int
+    {
+        $model = $operation === 'prepare' ? RoutePreparationBatch::class : RouteDeliveryBatch::class;
+
+        return (int) $model::query()->whereKey($batchId)->value('total_pre_sales');
     }
 }

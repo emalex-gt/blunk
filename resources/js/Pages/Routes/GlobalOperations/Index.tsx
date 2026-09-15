@@ -1,6 +1,6 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, router, usePage } from '@inertiajs/react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 type Seller = {
     seller: { id: number; name: string | null };
@@ -35,10 +35,12 @@ type Preview = {
 };
 
 type Result = {
-    processed: { batch_id: number; seller_name?: string | null; work_day_id: number }[];
-    blocked: unknown[];
-    failed: { message?: string }[];
+    processed: { batch_id: number; seller_id?: number; seller_name?: string | null; work_day_id: number; total_pre_sales?: number }[];
+    blocked: ResultRow[];
+    failed: ResultRow[];
 };
+
+type ResultRow = { work_day_id?: number; seller_id?: number; seller_name?: string | null; reason_code?: string; message?: string };
 
 export default function Index({ preparation_preview, sales_preview, stock_deduction_timing, fel_enabled }: {
     preparation_preview: Preview;
@@ -47,6 +49,8 @@ export default function Index({ preparation_preview, sales_preview, stock_deduct
     fel_enabled: boolean;
 }) {
     const [confirming, setConfirming] = useState<'prepare' | 'sales' | null>(null);
+    const [processing, setProcessing] = useState<'prepare' | 'sales' | null>(null);
+    const submissionLockedRef = useRef(false);
     const flash = (usePage().props as { flash?: { global_preparation_result?: Result; global_sales_result?: Result } }).flash ?? {};
     const preparationEligible = preparation_preview.summary.preparation_eligible_count;
     const salesEligible = sales_preview.summary.sales_eligible_count;
@@ -54,7 +58,26 @@ export default function Index({ preparation_preview, sales_preview, stock_deduct
         ? 'No hay pedidos pendientes de preparar.'
         : preparationEligible === 1 ? '1 pedido pendiente de preparar.' : `${preparationEligible} pedidos pendientes de preparar.`;
     const batchIds = flash.global_preparation_result?.processed.map(row => row.batch_id) ?? [];
-    const submit = (url: string) => router.post(url, { idempotency_key: `global-${crypto.randomUUID()}` }, { preserveScroll: true });
+    const submit = (operation: 'prepare' | 'sales') => {
+        if (submissionLockedRef.current || processing) {
+            return;
+        }
+
+        submissionLockedRef.current = true;
+        setProcessing(operation);
+        router.post(
+            route(operation === 'prepare' ? 'routes.global-operations.prepare' : 'routes.global-operations.generate-sales'),
+            { idempotency_key: `global-${crypto.randomUUID()}` },
+            {
+                preserveScroll: true,
+                onFinish: () => {
+                    submissionLockedRef.current = false;
+                    setProcessing(null);
+                    setConfirming(null);
+                },
+            },
+        );
+    };
     const documentUrl = (name: 'consolidated' | 'products' | 'receipts') => `${route(`routes.global-operations.documents.${name}`)}?${batchIds.map(id => `batch_ids[]=${id}`).join('&')}`;
     const activePreview = confirming === 'prepare' ? preparation_preview : sales_preview;
     const readyCount = confirming === 'prepare' ? preparationEligible : salesEligible;
@@ -88,14 +111,20 @@ export default function Index({ preparation_preview, sales_preview, stock_deduct
             </section>
 
             <section className="rounded-lg border border-slate-200 bg-white p-5 text-sm shadow-sm"><p><strong>Inventario:</strong> {stock_deduction_timing === 'picking' ? 'El inventario ya fue descontado durante preparación.' : 'Se descontará al generar las ventas.'}</p><p className="mt-1"><strong>Facturación electrónica:</strong> {fel_enabled ? 'según la configuración existente.' : 'desactivada.'}</p></section>
-            {flash.global_preparation_result && <ResultPanel title="Resultado de preparación" result={flash.global_preparation_result} links={batchIds.length ? <div className="mt-3 flex flex-wrap gap-2"><a className="rounded border px-3 py-2" href={documentUrl('consolidated')}>Consolidado</a><a className="rounded border px-3 py-2" href={documentUrl('products')}>Resumen de productos</a><a className="rounded border px-3 py-2" href={documentUrl('receipts')}>Recibos</a></div> : null} />}
-            {flash.global_sales_result && <ResultPanel title="Resultado de ventas" result={flash.global_sales_result} />}
+            {flash.global_preparation_result && <ResultPanel title="PREPARACIÓN COMPLETADA" processedLabel="Pedidos procesados" result={flash.global_preparation_result} links={batchIds.length ? <div className="mt-3 flex flex-wrap gap-2"><a className="rounded border px-3 py-2" href={documentUrl('consolidated')}>Consolidado</a><a className="rounded border px-3 py-2" href={documentUrl('products')}>Resumen de productos</a><a className="rounded border px-3 py-2" href={documentUrl('receipts')}>Recibos</a></div> : null} />}
+            {flash.global_sales_result && <ResultPanel title="GENERACIÓN DE VENTAS COMPLETADA" processedLabel="Ventas procesadas" result={flash.global_sales_result} />}
 
-            {confirming && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl"><h2 className="text-lg font-semibold">{confirming === 'prepare' ? 'Preparar todo' : 'Generar ventas'}</h2><p className="mt-2 text-sm text-slate-600">{activePreview.summary.sellers} vendedores · {activePreview.summary.work_days} jornadas · {activePreview.summary.pre_sales} pedidos.</p><p className="mt-1 text-sm text-slate-600">{readyCount} listos para {operationName} · {notReadyCount} no listos para {operationName}.</p>{activePreview.blocked.length > 0 && <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-600">{activePreview.blocked.map(row => <li key={`${row.work_day_id}-${row.pre_sale_id}`}>{blockReason(row.reason_code)}</li>)}</ul>}<p className="mt-3 text-sm text-slate-600">{confirming === 'sales' && (stock_deduction_timing === 'picking' ? 'El inventario ya fue descontado durante preparación. ' : 'El inventario se descontará al generar las ventas. ')}Facturación electrónica: {fel_enabled ? 'según configuración existente.' : 'desactivada.'}</p><div className="mt-5 flex justify-end gap-2"><button onClick={() => setConfirming(null)} className="rounded-lg border px-3 py-2 text-sm font-semibold">Cancelar</button><button onClick={() => { submit(route(confirming === 'prepare' ? 'routes.global-operations.prepare' : 'routes.global-operations.generate-sales')); setConfirming(null); }} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white">Confirmar</button></div></section></div>}
+            {confirming && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"><section role="dialog" aria-modal="true" className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl"><h2 className="text-lg font-semibold">{confirming === 'prepare' ? 'Preparar todo' : 'Generar ventas'}</h2><p className="mt-2 text-sm text-slate-600">{activePreview.summary.sellers} vendedores · {activePreview.summary.work_days} jornadas · {activePreview.summary.pre_sales} pedidos.</p><p className="mt-1 text-sm text-slate-600">{readyCount} listos para {operationName} · {notReadyCount} no listos para {operationName}.</p>{activePreview.blocked.length > 0 && <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-600">{activePreview.blocked.map(row => <li key={`${row.work_day_id}-${row.pre_sale_id}`}>{blockReason(row.reason_code)}</li>)}</ul>}<p className="mt-3 text-sm text-slate-600">{confirming === 'sales' && (stock_deduction_timing === 'picking' ? 'El inventario ya fue descontado durante preparación. ' : 'El inventario se descontará al generar las ventas. ')}Facturación electrónica: {fel_enabled ? 'según configuración existente.' : 'desactivada.'}</p><div className="mt-5 flex justify-end gap-2"><button disabled={processing !== null} onClick={() => setConfirming(null)} className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">Cancelar</button><button disabled={processing !== null} onClick={() => submit(confirming)} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-indigo-300">{processing ? 'Procesando...' : 'Confirmar'}</button></div></section></div>}
         </main></AuthenticatedLayout>;
 }
 
 function Metric({ label, value }: { label: string; value: string | number }) { return <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"><div className="text-xs font-semibold uppercase text-slate-500">{label}</div><div className="mt-1 text-xl font-semibold text-slate-950">{value}</div></div>; }
-function ResultPanel({ title, result, links }: { title: string; result: Result; links?: React.ReactNode }) { return <section className="rounded-lg border border-indigo-200 bg-indigo-50 p-5"><h2 className="font-semibold text-indigo-950">{title}</h2><p className="mt-1 text-sm text-indigo-900">Procesadas: {result.processed.length} · Bloqueadas: {result.blocked.length} · Fallidas: {result.failed.length}</p>{links}</section>; }
+function ResultPanel({ title, processedLabel, result, links }: { title: string; processedLabel: string; result: Result; links?: React.ReactNode }) {
+    const processedCount = result.processed.reduce((total, row) => total + (row.total_pre_sales ?? 1), 0);
+    const rows = [...result.blocked, ...result.failed];
+
+    return <section className="rounded-lg border border-indigo-200 bg-indigo-50 p-5"><h2 className="font-semibold text-indigo-950">{title}</h2><p className="mt-1 text-sm text-indigo-900">{processedLabel}: {processedCount} · No procesadas: {result.blocked.length} · Fallidas: {result.failed.length}</p>{rows.length > 0 && <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-indigo-900">{rows.map((row, index) => <li key={`${row.work_day_id ?? 'global'}-${row.seller_id ?? 'seller'}-${index}`}>{resultReason(row)}</li>)}</ul>}{links}</section>;
+}
 function blockReason(reasonCode: string) { return reasonCode === 'pre_sale_already_converted' ? 'Venta ya generada.' : 'No está en la etapa requerida para esta operación.'; }
+function resultReason(row: ResultRow) { return row.message || (row.reason_code ? blockReason(row.reason_code) : 'La operación no pudo completarse.'); }
 function money(value: number) { return Number(value ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
