@@ -46,8 +46,24 @@ class RouteGlobalOperationsService
         $sellerGroups = [];
         $blocked = [];
         $seenPreSaleIds = [];
+        $policyBlocksByWorkDay = [];
+
+        if ($requireUnconverted) {
+            foreach ($workDays as $workDay) {
+                $policyBlocksByWorkDay[$workDay->id] = app(RouteDeliveryBatchService::class)->policyPreflightPreview($workDay);
+                foreach ($policyBlocksByWorkDay[$workDay->id] as $policyBlock) {
+                    $blocked[] = [
+                        'work_day_id' => $workDay->id,
+                        'seller_id' => $workDay->seller_id,
+                        'seller_name' => $workDay->seller?->name,
+                        ...$policyBlock,
+                    ];
+                }
+            }
+        }
 
         foreach ($workDays as $workDay) {
+            $workDayHasPolicyBlocks = ($policyBlocksByWorkDay[$workDay->id] ?? []) !== [];
             foreach ($workDay->preSales as $preSale) {
                 if (isset($seenPreSaleIds[$preSale->id])) {
                     continue;
@@ -81,13 +97,24 @@ class RouteGlobalOperationsService
                 }
 
                 $preparationEligible = in_array($preSale->status, [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING], true);
-                $salesEligible = $preSale->status === PreSale::STATUS_PICKED && $preSale->converted_sale_id === null;
+                $salesEligible = $preSale->status === PreSale::STATUS_PICKED
+                    && $preSale->converted_sale_id === null
+                    && ! $workDayHasPolicyBlocks;
                 $seller[$preparationEligible ? 'preparation_eligible_count' : 'preparation_blocked_count']++;
                 $seller[$salesEligible ? 'sales_eligible_count' : 'sales_blocked_count']++;
 
-                $eligible = in_array($preSale->status, $eligibleStatuses, true) && (! $requireUnconverted || $preSale->converted_sale_id === null);
+                $eligible = in_array($preSale->status, $eligibleStatuses, true)
+                    && (! $requireUnconverted || ($preSale->converted_sale_id === null && ! $workDayHasPolicyBlocks));
                 if (! $eligible) {
-                    $blocked[] = ['work_day_id' => $workDay->id, 'pre_sale_id' => $preSale->id, 'seller_id' => $workDay->seller_id, 'reason_code' => $preSale->converted_sale_id ? 'pre_sale_already_converted' : 'pre_sale_status_ineligible'];
+                    if (! $workDayHasPolicyBlocks) {
+                        $blocked[] = [
+                            'work_day_id' => $workDay->id,
+                            'pre_sale_id' => $preSale->id,
+                            'seller_id' => $workDay->seller_id,
+                            'seller_name' => $workDay->seller?->name,
+                            'reason_code' => $preSale->converted_sale_id ? 'pre_sale_already_converted' : 'pre_sale_status_ineligible',
+                        ];
+                    }
                     unset($seller);
                     continue;
                 }
@@ -160,11 +187,13 @@ class RouteGlobalOperationsService
                     'replayed' => $childResult->replayed,
                 ];
             } catch (ValidationException $exception) {
+                $reasonCode = array_key_first($exception->errors()) ?? 'child_validation_blocked';
                 $result['blocked'][] = [
                     'work_day_id' => $workDay->id,
                     'seller_id' => $workDay->seller_id,
                     'seller_name' => $workDay->seller?->name,
-                    'reason_code' => 'child_validation_blocked',
+                    'pre_sale_id' => null,
+                    'reason_code' => $reasonCode,
                     'message' => collect($exception->errors())->flatten()->first() ?? $exception->getMessage(),
                 ];
             } catch (\Throwable $exception) {

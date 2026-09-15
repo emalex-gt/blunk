@@ -17,9 +17,11 @@ class RoutePreSaleReceiptService
     {
     }
 
-    public function convertToInternalReceipt(PreSale $preSale, array $data, User $user): IdempotencyResult
+    public function convertToInternalReceipt(PreSale $preSale, array $data, User $user, bool $requiresOpenCashSession = true): IdempotencyResult
     {
-        $this->cash->requireOpen((int) $preSale->business_id, (int) $preSale->branch_id);
+        if ($requiresOpenCashSession) {
+            $this->cash->requireOpen((int) $preSale->business_id, (int) $preSale->branch_id);
+        }
         $result = $this->eligibility->persist($preSale);
         $requiresEligibleCustomer = (bool) TenantSetting::query()
             ->where('business_id', $preSale->business_id)

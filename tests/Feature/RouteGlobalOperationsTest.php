@@ -18,6 +18,7 @@ use App\Models\TenantModule;
 use App\Models\User;
 use App\Services\Routes\RouteGlobalOperationsService;
 use App\Services\Routes\RouteGlobalPreparationDocuments;
+use App\Services\Routes\RouteBranchCollectionSettingsService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use App\Models\StockReservation;
@@ -124,6 +125,52 @@ class RouteGlobalOperationsTest extends TestCase
         $this->assertStringContainsString('`${preparationEligible} pedidos pendientes de preparar.`', $markup);
         $this->assertStringContainsString('No hay pedidos pendientes de preparar.', $markup);
         $this->assertStringContainsString('No hay pedidos preparados pendientes de generar ventas.', $markup);
+    }
+
+    public function test_sales_preview_blocks_the_entire_work_day_with_policy_aware_reasons_before_global_execution(): void
+    {
+        [$business, $branch, $actor, $sellerA, $sellerB, $workDays] = $this->preparationExecutionFixture();
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+        $valid = $this->preparablePreSale($business, $branch, $workDays[0], $sellerA, '60.00');
+        $invalid = $this->preparablePreSale($business, $branch, $workDays[0], $sellerA, '40.00');
+        app(RouteGlobalOperationsService::class)->prepareAll($actor, 'global-policy-preview-prepare');
+        $invalid->refresh()->update(['agreed_payment_method' => null]);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+
+        $preview = app(RouteGlobalOperationsService::class)->salesPreview($business->id, $branch->id);
+        $execution = app(RouteGlobalOperationsService::class)->generateSales($actor, 'global-policy-preview-sales');
+
+        $this->assertSame(0, $preview['summary']['sales_eligible_count']);
+        $this->assertSame($workDays[0]->id, $preview['blocked'][0]['work_day_id']);
+        $this->assertSame($invalid->id, $preview['blocked'][0]['pre_sale_id']);
+        $this->assertSame('missing_agreed_payment_method', $preview['blocked'][0]['reason_code']);
+        $this->assertSame([], $execution['processed']);
+        $this->assertDatabaseCount('route_delivery_batches', 0);
+        $this->assertNull($valid->fresh()->converted_sale_id);
+        $this->assertNull($invalid->fresh()->converted_sale_id);
+    }
+
+    public function test_sales_preview_explains_the_temporary_immediate_paid_block_without_marking_the_work_day_eligible(): void
+    {
+        [$business, $branch, $actor, $sellerA, $sellerB, $workDays] = $this->preparationExecutionFixture();
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+        $this->preparablePreSale($business, $branch, $workDays[0], $sellerA, '60.00');
+        app(RouteGlobalOperationsService::class)->prepareAll($actor, 'global-immediate-preview-prepare');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'immediate_paid',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+
+        $preview = app(RouteGlobalOperationsService::class)->salesPreview($business->id, $branch->id);
+
+        $this->assertSame(0, $preview['summary']['sales_eligible_count']);
+        $this->assertSame('immediate_paid_financial_flow_unavailable', $preview['blocked'][0]['reason_code']);
+        $this->assertNull($preview['blocked'][0]['pre_sale_id']);
     }
 
     public function test_prepare_all_executes_real_child_batches_per_eligible_work_day_and_replays_without_duplicate_stock(): void

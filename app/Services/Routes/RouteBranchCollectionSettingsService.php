@@ -40,6 +40,64 @@ class RouteBranchCollectionSettingsService
             ->first();
     }
 
+    /** @return array{collection_workflow_mode:string,allowed_payment_methods:array<int,string>,primary_payment_method:string}|null */
+    public function lockValidatedPolicyForExecution(int $businessId, int $branchId): ?array
+    {
+        $branch = Branch::query()
+            ->whereKey($branchId)
+            ->where('business_id', $businessId)
+            ->where('is_active', true)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $branch) {
+            throw ValidationException::withMessages([
+                'branch_id' => 'La sucursal activa no pertenece al negocio actual.',
+            ]);
+        }
+
+        $setting = RouteBranchCollectionSetting::query()
+            ->where('branch_id', $branch->id)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $setting) {
+            return null;
+        }
+
+        return $this->validatedStoredPolicy($setting);
+    }
+
+    /** @return array{collection_workflow_mode:string,allowed_payment_methods:array<int,string>,primary_payment_method:string}|null */
+    public function validatedStoredPolicy(?RouteBranchCollectionSetting $setting): ?array
+    {
+        if (! $setting) {
+            return null;
+        }
+
+        try {
+            $policy = $this->validatedPolicy([
+                'collection_workflow_mode' => $setting->collection_workflow_mode,
+                'allowed_payment_methods' => $setting->allowed_payment_methods,
+                'primary_payment_method' => $setting->primary_payment_method,
+            ]);
+        } catch (ValidationException) {
+            throw ValidationException::withMessages([
+                'route_collection_policy_invalid' => 'La política de cobro de la sucursal es inválida.',
+            ]);
+        }
+
+        if ($policy['collection_workflow_mode'] !== $setting->collection_workflow_mode
+            || $policy['allowed_payment_methods'] !== $setting->allowed_payment_methods
+            || $policy['primary_payment_method'] !== $setting->primary_payment_method) {
+            throw ValidationException::withMessages([
+                'route_collection_policy_invalid' => 'La política de cobro de la sucursal no está en formato canónico.',
+            ]);
+        }
+
+        return $policy;
+    }
+
     /** @param array<string, mixed> $policy */
     public function save(int $businessId, Branch $branch, array $policy): RouteBranchCollectionSetting
     {

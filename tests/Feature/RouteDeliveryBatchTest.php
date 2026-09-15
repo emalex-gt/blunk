@@ -24,13 +24,16 @@ use App\Models\User;
 use App\Services\Fel\FelException;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Routes\RouteDeliveryBatchService;
+use App\Services\Routes\RouteBranchCollectionSettingsService;
 use App\Services\Routes\RoutePreSaleCollectionService;
 use App\Jobs\RoutePreSaleAutomaticFelJob;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Database\QueryException;
 use Illuminate\Validation\ValidationException;
 use Mockery;
 use Tests\TestCase;
@@ -53,6 +56,237 @@ class RouteDeliveryBatchTest extends TestCase
         $this->assertTrue(Schema::hasTable('route_delivery_batch_pre_sales'));
     }
 
+    public function test_delivery_schema_persists_policy_and_agreed_method_snapshots(): void
+    {
+        $this->assertTrue(Schema::hasColumn('route_delivery_batches', 'collection_workflow_mode_snapshot'));
+        $this->assertTrue(Schema::hasColumn('route_delivery_batches', 'allowed_payment_methods_snapshot'));
+        $this->assertTrue(Schema::hasColumn('route_delivery_batches', 'primary_payment_method_snapshot'));
+        $this->assertTrue(Schema::hasColumn('route_delivery_batch_pre_sales', 'agreed_payment_method_snapshot'));
+    }
+
+    public function test_per_order_delivery_agent_converts_without_cash_and_freezes_policy_snapshots(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'transfer');
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['transfer', 'cash'],
+            'primary_payment_method' => 'transfer',
+        ]);
+
+        $result = app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-per-order-agent-key');
+
+        $batch = \App\Models\RouteDeliveryBatch::query()->findOrFail($result->resultId);
+        $entry = $batch->preSales()->firstOrFail();
+        $sale = $preSale->fresh()->convertedSale;
+        $this->assertSame('per_order_collection', $batch->collection_workflow_mode_snapshot);
+        $this->assertSame(['cash', 'transfer'], $batch->allowed_payment_methods_snapshot);
+        $this->assertSame('transfer', $batch->primary_payment_method_snapshot);
+        $this->assertSame('transfer', $entry->agreed_payment_method_snapshot);
+        $this->assertSame('delivery_agent', $batch->collection_responsibility_snapshot);
+        $this->assertNotNull($batch->operation_settings_snapshotted_at);
+        $this->assertSame('unpaid', $sale->payment_status);
+        $this->assertSame(0.0, (float) $sale->amount_paid);
+        $this->assertNull($sale->payment_method);
+        $this->assertSame(0, $sale->payments()->count());
+        $this->assertDatabaseCount('route_pre_sale_collections', 0);
+        $this->assertDatabaseCount('route_delivery_collections', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertDatabaseCount('customer_account_movements', 0);
+    }
+
+    public function test_policy_snapshot_constraints_accept_legacy_nulls_and_reject_invalid_bundles_and_methods(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
+        $legacyId = $this->insertPolicySnapshotBatch($business, $branch, $user, $preSale);
+        $this->assertNotNull($legacyId);
+
+        foreach ([
+            ['collection_workflow_mode_snapshot' => 'per_order_collection'],
+            ['collection_workflow_mode_snapshot' => 'unknown', 'allowed_payment_methods_snapshot' => json_encode(['cash']), 'primary_payment_method_snapshot' => 'cash'],
+            ['collection_workflow_mode_snapshot' => 'per_order_collection', 'allowed_payment_methods_snapshot' => json_encode('cash'), 'primary_payment_method_snapshot' => 'cash'],
+            ['collection_workflow_mode_snapshot' => 'per_order_collection', 'allowed_payment_methods_snapshot' => json_encode([]), 'primary_payment_method_snapshot' => 'cash'],
+            ['collection_workflow_mode_snapshot' => 'per_order_collection', 'allowed_payment_methods_snapshot' => json_encode(['crypto']), 'primary_payment_method_snapshot' => 'crypto'],
+            ['collection_workflow_mode_snapshot' => 'per_order_collection', 'allowed_payment_methods_snapshot' => json_encode(['cash']), 'primary_payment_method_snapshot' => 'transfer'],
+        ] as $invalid) {
+            try {
+                $this->insertPolicySnapshotBatch($business, $branch, $user, $preSale, $invalid);
+                $this->fail('Expected the policy snapshot constraint to reject an invalid bundle.');
+            } catch (QueryException) {
+                $this->assertTrue(true);
+            }
+        }
+
+        try {
+            DB::table('route_delivery_batch_pre_sales')->insert([
+                'route_delivery_batch_id' => $legacyId,
+                'pre_sale_id' => $preSale->id,
+                'status' => 'delivered',
+                'payment_method' => 'cash',
+                'agreed_payment_method_snapshot' => 'crypto',
+                'fel_dispatch_status' => 'not_requested',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $this->fail('Expected the agreed payment method snapshot constraint to reject an unknown method.');
+        } catch (QueryException) {
+            $this->assertTrue(true);
+        }
+    }
+
+    public function test_policy_snapshots_are_immutable_while_non_snapshot_updates_remain_allowed(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'transfer');
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash', 'transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+        $result = app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-immutable-policy-key');
+        $batch = \App\Models\RouteDeliveryBatch::query()->findOrFail($result->resultId);
+        $entry = $batch->preSales()->firstOrFail();
+
+        $batch->update(['notes' => 'Nota permitida']);
+        $entry->update(['fel_dispatch_status' => 'certified']);
+        $this->assertSame('Nota permitida', $batch->fresh()->notes);
+        $this->assertSame('certified', $entry->fresh()->fel_dispatch_status);
+
+        try {
+            $batch->update(['primary_payment_method_snapshot' => 'cash']);
+            $this->fail('Expected immutable batch snapshots to reject an update.');
+        } catch (QueryException) {
+            $this->assertTrue(true);
+        }
+
+        try {
+            $entry->update(['agreed_payment_method_snapshot' => 'cash']);
+            $this->fail('Expected immutable entry snapshots to reject an update.');
+        } catch (QueryException) {
+            $this->assertTrue(true);
+        }
+    }
+
+    public function test_policy_aware_child_fails_closed_for_unsupported_workflows_and_corrupted_policy(): void
+    {
+        foreach ([
+            ['workflow' => 'immediate_paid', 'responsibility' => 'pre_seller', 'reason' => 'immediate_paid_financial_flow_unavailable'],
+            ['workflow' => 'immediate_paid', 'responsibility' => 'delivery_agent', 'reason' => 'immediate_paid_financial_flow_unavailable'],
+            ['workflow' => 'per_order_collection', 'responsibility' => 'pre_seller', 'reason' => 'pre_seller_post_conversion_collection_unavailable'],
+        ] as $case) {
+            [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
+            TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => $case['responsibility']]);
+            app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+                'collection_workflow_mode' => $case['workflow'],
+                'allowed_payment_methods' => ['cash'],
+                'primary_payment_method' => 'cash',
+            ]);
+
+            try {
+                app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-blocked-policy-'.uniqid());
+                $this->fail('Expected the unsupported policy workflow to block execution.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey($case['reason'], $exception->errors());
+            }
+            $this->assertDatabaseCount('route_delivery_batches', 0);
+        }
+
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        DB::table('route_branch_collection_settings')->where('branch_id', $branch->id)->update(['allowed_payment_methods' => json_encode(['cash', 'cash'])]);
+
+        try {
+            app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-corrupt-policy-key');
+            $this->fail('Expected a corrupt persisted policy to fail closed.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('route_collection_policy_invalid', $exception->errors());
+        }
+        $this->assertDatabaseCount('route_delivery_batches', 0);
+    }
+
+    public function test_policy_aware_child_blocks_missing_or_disallowed_agreed_methods_without_a_partial_batch(): void
+    {
+        foreach ([
+            [null, 'missing_agreed_payment_method'],
+            ['card', 'payment_method_not_allowed'],
+        ] as [$agreedMethod, $reason]) {
+            [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', $agreedMethod);
+            TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+            app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+                'collection_workflow_mode' => 'per_order_collection',
+                'allowed_payment_methods' => ['cash'],
+                'primary_payment_method' => 'cash',
+            ]);
+
+            try {
+                app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-policy-method-'.uniqid());
+                $this->fail('Expected the policy-aware child to reject the agreed method.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey($reason, $exception->errors());
+            }
+            $this->assertDatabaseCount('route_delivery_batches', 0);
+            $this->assertDatabaseCount('sales', 0);
+        }
+    }
+
+    public function test_policy_aware_child_blocks_an_entire_work_day_when_one_pre_sale_is_invalid(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $invalid = $this->additionalPickedPreSale($preSale, $user, null);
+
+        try {
+            app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-policy-atomic-key');
+            $this->fail('Expected one invalid pre-sale to block the entire child work day.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('missing_agreed_payment_method', $exception->errors());
+        }
+
+        $this->assertDatabaseCount('route_delivery_batches', 0);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertSame(PreSale::STATUS_PICKED, $preSale->fresh()->status);
+        $this->assertSame(PreSale::STATUS_PICKED, $invalid->fresh()->status);
+    }
+
+    public function test_policy_aware_delivery_replay_uses_the_original_snapshots_after_the_branch_policy_changes(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+        $settings = app(RouteBranchCollectionSettingsService::class);
+        $settings->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash', 'transfer'],
+            'primary_payment_method' => 'cash',
+        ]);
+
+        $first = app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-policy-replay-key');
+        $batch = \App\Models\RouteDeliveryBatch::query()->findOrFail($first->resultId);
+        $entry = $batch->preSales()->firstOrFail();
+        $settings->save($business->id, $branch, [
+            'collection_workflow_mode' => 'immediate_paid',
+            'allowed_payment_methods' => ['transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+
+        $replay = app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-policy-replay-key');
+
+        $this->assertTrue($replay->replayed);
+        $this->assertSame($batch->id, $replay->resultId);
+        $this->assertSame('per_order_collection', $batch->fresh()->collection_workflow_mode_snapshot);
+        $this->assertSame(['cash', 'transfer'], $batch->fresh()->allowed_payment_methods_snapshot);
+        $this->assertSame('cash', $batch->fresh()->primary_payment_method_snapshot);
+        $this->assertSame('cash', $entry->fresh()->agreed_payment_method_snapshot);
+    }
+
     public function test_deliver_all_snapshots_external_tracking_and_collection_responsibility(): void
     {
         [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'card');
@@ -73,6 +307,10 @@ class RouteDeliveryBatchTest extends TestCase
 
         $this->assertSame('external', $batch->delivery_tracking_snapshot);
         $this->assertSame('delivery_agent', $batch->collection_responsibility_snapshot);
+        $this->assertNull($batch->collection_workflow_mode_snapshot);
+        $this->assertNull($batch->allowed_payment_methods_snapshot);
+        $this->assertNull($batch->primary_payment_method_snapshot);
+        $this->assertNull($batch->preSales()->firstOrFail()->agreed_payment_method_snapshot);
     }
 
     public function test_deliver_all_creates_paid_receipt_payment_and_cash_movement_for_picked_cash_pre_sale(): void
@@ -396,6 +634,80 @@ class RouteDeliveryBatchTest extends TestCase
 
         $this->assertDatabaseHas('electronic_documents', ['id' => $document->id, 'status' => 'failed']);
         $this->assertDatabaseHas('route_delivery_batch_pre_sales', ['pre_sale_id' => $preSale->id, 'fel_dispatch_status' => 'failed']);
+    }
+
+    /** @param array<string, mixed> $overrides */
+    private function insertPolicySnapshotBatch(Business $business, $branch, User $user, PreSale $preSale, array $overrides = []): int
+    {
+        return DB::table('route_delivery_batches')->insertGetId([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'route_work_day_id' => $preSale->route_work_day_id,
+            'route_zone_id' => $preSale->route_zone_id,
+            'delivered_by' => $user->id,
+            'status' => 'processing',
+            'stock_deduction_timing' => 'invoice',
+            'invoicing_mode' => 'manual',
+            'fel_automation_enabled' => false,
+            'collection_workflow_mode_snapshot' => null,
+            'allowed_payment_methods_snapshot' => null,
+            'primary_payment_method_snapshot' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+            ...$overrides,
+        ]);
+    }
+
+    private function additionalPickedPreSale(PreSale $source, User $user, ?string $paymentMethod): PreSale
+    {
+        $product = $source->items()->firstOrFail()->product;
+        $customer = Customer::query()->create([
+            'business_id' => $source->business_id,
+            'name' => 'Cliente adicional '.uniqid(),
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+        ]);
+        $preSale = PreSale::query()->create([
+            'business_id' => $source->business_id,
+            'branch_id' => $source->branch_id,
+            'route_work_day_id' => $source->route_work_day_id,
+            'route_zone_id' => $source->route_zone_id,
+            'customer_id' => $customer->id,
+            'seller_id' => $source->seller_id,
+            'status' => PreSale::STATUS_PICKED,
+            'subtotal' => 20,
+            'discount_total' => 0,
+            'total' => 20,
+            'payment_method' => $paymentMethod,
+            'agreed_payment_method' => $paymentMethod,
+            'picked_at' => now(),
+            'picked_by' => $user->id,
+        ]);
+        $item = PreSaleItem::query()->create([
+            'business_id' => $source->business_id,
+            'pre_sale_id' => $preSale->id,
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'picked_quantity' => 1,
+            'unit_price' => 20,
+            'original_price' => 20,
+            'discount' => 0,
+            'total' => 20,
+        ]);
+        StockReservation::query()->create([
+            'business_id' => $source->business_id,
+            'branch_id' => $source->branch_id,
+            'product_id' => $product->id,
+            'source_type' => 'pre_sale',
+            'source_id' => $preSale->id,
+            'source_item_id' => $item->id,
+            'quantity' => 1,
+            'status' => 'active',
+            'created_by' => $user->id,
+        ]);
+
+        return $preSale;
     }
 
     private function pickedPreSale(string $timing, ?string $paymentMethod): array

@@ -15,6 +15,7 @@ class RouteDeliveryBatch extends Model
         'business_id', 'branch_id', 'route_work_day_id', 'route_zone_id', 'delivered_by', 'delivered_at',
         'status', 'stock_deduction_timing', 'invoicing_mode', 'fel_automation_enabled',
         'delivery_tracking_snapshot', 'collection_responsibility_snapshot', 'operation_settings_snapshotted_at',
+        'collection_workflow_mode_snapshot', 'allowed_payment_methods_snapshot', 'primary_payment_method_snapshot',
         'total_pre_sales', 'total_items', 'total_amount', 'notes',
     ];
 
@@ -22,6 +23,7 @@ class RouteDeliveryBatch extends Model
         'delivered_at' => 'datetime',
         'operation_settings_snapshotted_at' => 'datetime',
         'fel_automation_enabled' => 'boolean',
+        'allowed_payment_methods_snapshot' => 'array',
         'total_amount' => 'decimal:2',
     ];
 
