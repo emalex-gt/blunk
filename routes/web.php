@@ -30,6 +30,7 @@ use App\Http\Controllers\RoutePendingCollectionController;
 use App\Http\Controllers\RoutePreSaleFelController;
 use App\Http\Controllers\RoutePreSaleInvoiceController;
 use App\Http\Controllers\RouteGlobalOperationsController;
+use App\Http\Controllers\RouteBranchCollectionSettingsController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\TenantUserController;
@@ -234,6 +235,10 @@ Route::middleware('auth')->group(function () {
         });
 
         Route::middleware('module:routes')->prefix('routes')->name('routes.')->group(function () {
+            Route::get('/branch-collection-settings', [RouteBranchCollectionSettingsController::class, 'index'])
+                ->middleware('permission:routes.pre_sales.admin_view')->name('branch-collection-settings.index');
+            Route::put('/branch-collection-settings', [RouteBranchCollectionSettingsController::class, 'update'])
+                ->middleware('permission:routes.pre_sales.admin_view')->name('branch-collection-settings.update');
             Route::get('/global-operations', [RouteGlobalOperationsController::class, 'index'])
                 ->middleware('permission:routes.pre_sales.admin_view')->name('global-operations.index');
             Route::post('/global-operations/prepare', [RouteGlobalOperationsController::class, 'prepare'])
