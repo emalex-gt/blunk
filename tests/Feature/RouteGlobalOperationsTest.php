@@ -117,8 +117,12 @@ class RouteGlobalOperationsTest extends TestCase
         $this->assertStringContainsString("const salesEligible = sales_preview.summary.sales_eligible_count;", $markup);
         $this->assertStringContainsString('disabled={preparationEligible === 0}', $markup);
         $this->assertStringContainsString('disabled={salesEligible === 0}', $markup);
-        $this->assertStringContainsString('No hay pedidos listos para preparar.', $markup);
-        $this->assertStringContainsString('No hay pedidos listos para generar ventas.', $markup);
+        $this->assertStringContainsString('value={`${preparation_preview.summary.prepared_count}/${preparation_preview.summary.pre_sales}`}', $markup);
+        $this->assertStringContainsString('value={`${preparation_preview.summary.converted_count}/${preparation_preview.summary.pre_sales}`}', $markup);
+        $this->assertStringContainsString('preparationEligible === 1 ? \'1 pedido pendiente de preparar.\'', $markup);
+        $this->assertStringContainsString('`${preparationEligible} pedidos pendientes de preparar.`', $markup);
+        $this->assertStringContainsString('No hay pedidos pendientes de preparar.', $markup);
+        $this->assertStringContainsString('No hay pedidos preparados pendientes de generar ventas.', $markup);
     }
 
     public function test_prepare_all_executes_real_child_batches_per_eligible_work_day_and_replays_without_duplicate_stock(): void

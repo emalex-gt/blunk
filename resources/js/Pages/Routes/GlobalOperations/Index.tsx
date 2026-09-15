@@ -50,6 +50,9 @@ export default function Index({ preparation_preview, sales_preview, stock_deduct
     const flash = (usePage().props as { flash?: { global_preparation_result?: Result; global_sales_result?: Result } }).flash ?? {};
     const preparationEligible = preparation_preview.summary.preparation_eligible_count;
     const salesEligible = sales_preview.summary.sales_eligible_count;
+    const preparationAvailabilityCopy = preparationEligible === 0
+        ? 'No hay pedidos pendientes de preparar.'
+        : preparationEligible === 1 ? '1 pedido pendiente de preparar.' : `${preparationEligible} pedidos pendientes de preparar.`;
     const batchIds = flash.global_preparation_result?.processed.map(row => row.batch_id) ?? [];
     const submit = (url: string) => router.post(url, { idempotency_key: `global-${crypto.randomUUID()}` }, { preserveScroll: true });
     const documentUrl = (name: 'consolidated' | 'products' | 'receipts') => `${route(`routes.global-operations.documents.${name}`)}?${batchIds.map(id => `batch_ids[]=${id}`).join('&')}`;
@@ -65,8 +68,8 @@ export default function Index({ preparation_preview, sales_preview, stock_deduct
             <header className="flex flex-wrap items-end justify-between gap-4">
                 <div><h1 className="text-2xl font-semibold text-slate-950">Operación global de rutas</h1><p className="mt-1 text-sm text-slate-500">Prepare y genere ventas de toda la sucursal sin entrar jornada por jornada.</p></div>
                 <div className="flex flex-wrap items-start gap-2">
-                    <div><button disabled={preparationEligible === 0} title={preparationEligible === 0 ? 'No hay pedidos listos para preparar.' : undefined} onClick={() => setConfirming('prepare')} className="rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300">PREPARAR TODO</button>{preparationEligible === 0 && <p className="mt-1 text-xs text-slate-500">No hay pedidos listos para preparar.</p>}</div>
-                    <div><button disabled={salesEligible === 0} title={salesEligible === 0 ? 'No hay pedidos listos para generar ventas.' : undefined} onClick={() => setConfirming('sales')} className="rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300">GENERAR VENTAS</button>{salesEligible === 0 && <p className="mt-1 text-xs text-slate-500">No hay pedidos listos para generar ventas.</p>}</div>
+                    <div><button disabled={preparationEligible === 0} title={preparationAvailabilityCopy} onClick={() => setConfirming('prepare')} className="rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300">PREPARAR TODO</button><p className="mt-1 text-xs text-slate-500">{preparationAvailabilityCopy}</p></div>
+                    <div><button disabled={salesEligible === 0} title={salesEligible === 0 ? 'No hay pedidos preparados pendientes de generar ventas.' : undefined} onClick={() => setConfirming('sales')} className="rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300">GENERAR VENTAS</button>{salesEligible === 0 && <p className="mt-1 text-xs text-slate-500">No hay pedidos preparados pendientes de generar ventas.</p>}</div>
                 </div>
             </header>
 
@@ -75,8 +78,8 @@ export default function Index({ preparation_preview, sales_preview, stock_deduct
                 <Metric label="Jornadas" value={preparation_preview.summary.work_days} />
                 <Metric label="Pedidos" value={preparation_preview.summary.pre_sales} />
                 <Metric label="Total" value={`Q ${money(preparation_preview.summary.total)}`} />
-                <Metric label="Preparados" value={preparation_preview.summary.prepared_count} />
-                <Metric label="Ventas" value={preparation_preview.summary.converted_count} />
+                <Metric label="Preparados" value={`${preparation_preview.summary.prepared_count}/${preparation_preview.summary.pre_sales}`} />
+                <Metric label="Ventas" value={`${preparation_preview.summary.converted_count}/${preparation_preview.summary.pre_sales}`} />
             </section>
 
             <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
