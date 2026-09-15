@@ -2036,6 +2036,9 @@ class RoutesPreSalesTest extends TestCase
 
         $this->assertStringContainsString('Jornadas cerradas', $layoutSource);
         $this->assertStringContainsString("route('routes.work-days.closed')", $layoutSource);
+        $this->assertStringContainsString('Operación de rutas', $layoutSource);
+        $this->assertStringContainsString("route('routes.global-operations.index')", $layoutSource);
+        $this->assertStringContainsString("route().current('routes.global-operations.*')", $layoutSource);
         $this->assertStringContainsString('Certificación FEL de preventas', $formSource);
         $this->assertStringContainsString('route_pre_sale_invoicing_mode', $formSource);
         $this->assertStringContainsString('route_pre_sale_stock_deduction_timing', $formSource);
