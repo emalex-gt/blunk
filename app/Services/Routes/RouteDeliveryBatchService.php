@@ -91,6 +91,8 @@ class RouteDeliveryBatchService
                     $workflow = $branchPolicy['collection_workflow_mode'] ?? null;
                     $isImmediatePaid = $policyAware
                         && $workflow === RouteBranchCollectionSettingsService::WORKFLOW_IMMEDIATE_PAID;
+                    $isPerOrderCollection = $policyAware
+                        && $workflow === RouteBranchCollectionSettingsService::WORKFLOW_PER_ORDER_COLLECTION;
                     $policyBlocks = $this->policyPreflightBlocks($branchPolicy, $collectionResponsibility, $preSales);
                     if ($policyBlocks !== []) {
                         $firstBlock = $policyBlocks[0];
@@ -105,7 +107,7 @@ class RouteDeliveryBatchService
                         }
 
                         $agreedMethodSnapshots[$preSale->id] = $preSale->agreed_payment_method;
-                        if (! $isImmediatePaid && $collectionResponsibility === 'pre_seller' && ! RoutePreSaleCollection::query()->where('business_id', $businessId)->where('branch_id', $branchId)->where('pre_sale_id', $preSale->id)->whereIn('status', ['captured', 'linked'])->lockForUpdate()->exists()) {
+                        if (! $policyAware && ! $isImmediatePaid && $collectionResponsibility === 'pre_seller' && ! RoutePreSaleCollection::query()->where('business_id', $businessId)->where('branch_id', $branchId)->where('pre_sale_id', $preSale->id)->whereIn('status', ['captured', 'linked'])->lockForUpdate()->exists()) {
                             throw ValidationException::withMessages(['collection' => 'Debe registrar el cobro antes de generar el comprobante.']);
                         }
 
@@ -116,9 +118,7 @@ class RouteDeliveryBatchService
                         $eligibilityByPreSale[$preSale->id] = $eligibility;
                     }
 
-                    $requiresOpenCashSession = ! $policyAware
-                        || ! ($workflow === RouteBranchCollectionSettingsService::WORKFLOW_PER_ORDER_COLLECTION
-                            && $collectionResponsibility === 'delivery_agent');
+                    $requiresOpenCashSession = ! $policyAware;
                     $cashSession = null;
                     if ($isImmediatePaid) {
                         $cashSession = CashRegister::currentOpenSession($businessId, true, $branchId);
@@ -154,7 +154,7 @@ class RouteDeliveryBatchService
                     $automaticFelSales = [];
 
                     foreach ($preSales as $preSale) {
-                        $collection = ! $isImmediatePaid && $collectionResponsibility === 'pre_seller'
+                        $collection = ! $policyAware && ! $isImmediatePaid && $collectionResponsibility === 'pre_seller'
                             ? RoutePreSaleCollection::query()->where('business_id', $businessId)->where('branch_id', $branchId)->where('pre_sale_id', $preSale->id)->where('status', 'captured')->lockForUpdate()->firstOrFail()
                             : null;
                         if ($collection && round((float) $collection->amount, 2) !== round((float) $preSale->total, 2)) {
@@ -162,9 +162,9 @@ class RouteDeliveryBatchService
                         }
                         $receipt = $this->receipts->convertToInternalReceipt($preSale, [
                             'idempotency_key' => 'route-delivery-'.hash('sha256', "{$batch->id}:{$preSale->id}:{$idempotencyKey}"),
-                            'payment_condition' => $isImmediatePaid ? 'paid' : ($collectionResponsibility === 'delivery_agent' ? 'unpaid' : 'paid'),
+                            'payment_condition' => $isImmediatePaid ? 'paid' : ($isPerOrderCollection || $collectionResponsibility === 'delivery_agent' ? 'unpaid' : 'paid'),
                             'payment_method' => $isImmediatePaid ? $agreedMethodSnapshots[$preSale->id] : $collection?->payment_method,
-                            'skip_payment_posting' => ! $isImmediatePaid && $collectionResponsibility === 'pre_seller',
+                            'skip_payment_posting' => ! $policyAware && ! $isImmediatePaid && $collectionResponsibility === 'pre_seller',
                             'note' => "Entrega de ruta #{$batch->id}",
                         ], $user, $requiresOpenCashSession, $cashSession);
                         $sale = $preSale->refresh()->convertedSale()->withCount('items')->firstOrFail();
@@ -318,15 +318,6 @@ class RouteDeliveryBatchService
                     'message' => 'El método de pago acordado no está permitido para esta sucursal.',
                 ];
             }
-        }
-
-        if ($policy['collection_workflow_mode'] === RouteBranchCollectionSettingsService::WORKFLOW_PER_ORDER_COLLECTION
-            && $collectionResponsibility === 'pre_seller') {
-            $blocks[] = [
-                'pre_sale_id' => null,
-                'reason_code' => 'pre_seller_post_conversion_collection_unavailable',
-                'message' => 'El cobro posterior del preventista aún no está habilitado para generar ventas.',
-            ];
         }
 
         return $blocks;

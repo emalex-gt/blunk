@@ -189,7 +189,7 @@
 
 - [ ] **Step 3: escribir tests RED después de aprobación**
 
-    Probar snapshot inmutable por batch/fila, legacy sin policy, missing_agreed_payment_method, payment_method_not_allowed, cash_session_required para immediate_paid y pre_seller_post_conversion_collection_unavailable.
+    Probar snapshot inmutable por batch/fila, legacy sin policy, missing_agreed_payment_method, payment_method_not_allowed, cash_session_required para immediate_paid y el bloqueo transitorio pre_seller_post_conversion_collection_unavailable (retirado al completar Task 7D).
 
 - [ ] **Step 4: implementar snapshots y preflight mínimos**
 

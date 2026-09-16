@@ -34,7 +34,7 @@ Responsabilidad y workflow no se infieren uno del otro.
 | immediate_paid | pre_seller | Convierte dentro de la transacción child. | Generar ventas registra la única cadena financiera real, deja Sale paid y termina el ciclo. No aplica el guard legado de collection previa ni existe pending collection. |
 | immediate_paid | delivery_agent | Igual que pre_seller. | El workflow termina el cobro al convertir. La responsabilidad queda como política/snapshot, sin cobro posterior ni pending collection. |
 | per_order_collection | delivery_agent | Convierte Sale unpaid sin hechos financieros. | Mantiene el flujo existente: el cobro real es por pedido; 3E-C sólo nace al existir entrega física elegible. |
-| per_order_collection | pre_seller | Sólo se habilita tras el gate de servicio/UI post-conversión. | Puede convertir unpaid únicamente si existe un camino probado para cobrar después contra la Sale convertida. Si falta, el preflight bloquea con pre_seller_post_conversion_collection_unavailable. |
+| per_order_collection | pre_seller | Convierte Sale unpaid sin hechos financieros. | El preventista registra el cobro posterior mediante la trace post-conversión; el método real se valida contra la policy vigente de sucursal. |
 
 Immediate paid usa una sola cadena financiera seleccionada por auditoría para ambos responsables. No se bifurca por pre_seller versus delivery_agent ni se exige una collection legacy previa.
 
@@ -122,7 +122,7 @@ Sólo si esa auditoría demuestra que no existe relación suficiente, se propone
 
 ## UX, preflight y autorización
 
-La configuración es administrativa y branch-scoped. La preventa muestra métodos permitidos, principal y método previsto. Los previews globales muestran missing_agreed_payment_method, payment_method_not_allowed, cash_session_required para immediate_paid, pre_seller_post_conversion_collection_unavailable y guards legados aplicables.
+La configuración es administrativa y branch-scoped. La preventa muestra métodos permitidos, principal y método previsto. Los previews globales muestran missing_agreed_payment_method, payment_method_not_allowed, cash_session_required para immediate_paid y guards legados aplicables. En per_order_collection, ambos responsables generan la Sale unpaid; el responsable histórico define el flujo posterior de cobro.
 
 La confirmación global muestra vendedores, jornadas, ventas, total, modo, stock, FEL y bloqueos. React nunca decide elegibilidad. Backend mantiene permiso administrativo de vista/documentos y permiso de preparación para ejecutar; el scope negocio/sucursal es autoridad.
 

@@ -374,28 +374,8 @@ class RouteDeliveryBatchTest extends TestCase
         }
     }
 
-    public function test_policy_aware_child_fails_closed_for_unsupported_workflows_and_corrupted_policy(): void
+    public function test_policy_aware_child_fails_closed_for_a_corrupted_policy(): void
     {
-        foreach ([
-            ['workflow' => 'per_order_collection', 'responsibility' => 'pre_seller', 'reason' => 'pre_seller_post_conversion_collection_unavailable'],
-        ] as $case) {
-            [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
-            TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => $case['responsibility']]);
-            app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
-                'collection_workflow_mode' => $case['workflow'],
-                'allowed_payment_methods' => ['cash'],
-                'primary_payment_method' => 'cash',
-            ]);
-
-            try {
-                app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-delivery-blocked-policy-'.uniqid());
-                $this->fail('Expected the unsupported policy workflow to block execution.');
-            } catch (ValidationException $exception) {
-                $this->assertArrayHasKey($case['reason'], $exception->errors());
-            }
-            $this->assertDatabaseCount('route_delivery_batches', 0);
-        }
-
         [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
         app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
             'collection_workflow_mode' => 'per_order_collection',
