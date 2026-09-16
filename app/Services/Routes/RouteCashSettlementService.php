@@ -8,6 +8,7 @@ use App\Models\RouteCashSettlementItem;
 use App\Models\RouteCashSettlementVariance;
 use App\Models\RouteDeliveryCollection;
 use App\Models\RoutePreSaleCollection;
+use App\Models\RoutePostConversionCollection;
 use App\Models\User;
 use App\Support\CashRegister;
 use App\Support\IdempotencyResult;
@@ -61,7 +62,7 @@ class RouteCashSettlementService
                         throw ValidationException::withMessages(['items' => 'La liquidación no tiene cobros activos para confirmar.']);
                     }
 
-                    [$preCollections, $deliveryCollections] = $this->lockAndValidateCollections($items, $locked);
+                    [$preCollections, $deliveryCollections, $postConversionCollections] = $this->lockAndValidateCollections($items, $locked);
                     $expected = round((float) $items->sum(fn (RouteCashSettlementItem $item) => (float) $item->amount_snapshot), 2);
                     $difference = round($amount - $expected, 2);
                     if ($amount <= 0) {
@@ -103,6 +104,10 @@ class RouteCashSettlementService
                         'custody_status' => 'posted_to_branch_cash',
                         'cash_posting_state' => 'posted_to_current_session',
                     ]);
+                    RoutePostConversionCollection::query()->whereIn('id', $postConversionCollections->keys())->update([
+                        'custody_status' => 'posted_to_branch_cash',
+                        'cash_posting_state' => 'posted_to_current_session',
+                    ]);
                     $idempotencyId = OperationIdempotencyKey::query()
                         ->where('business_id', $businessId)
                         ->where('branch_id', $branchId)
@@ -132,34 +137,39 @@ class RouteCashSettlementService
         );
     }
 
-    /** @return array{0: \Illuminate\Support\Collection<int, RoutePreSaleCollection>, 1: \Illuminate\Support\Collection<int, RouteDeliveryCollection>} */
+    /** @return array{0: \Illuminate\Support\Collection<int, RoutePreSaleCollection>, 1: \Illuminate\Support\Collection<int, RouteDeliveryCollection>, 2: \Illuminate\Support\Collection<int, RoutePostConversionCollection>} */
     private function lockAndValidateCollections($items, RouteCashSettlement $settlement): array
     {
         $preIds = [];
         $deliveryIds = [];
+        $postIds = [];
         foreach ($items as $item) {
             $hasPre = $item->route_pre_sale_collection_id !== null;
             $hasDelivery = $item->route_delivery_collection_id !== null;
-            if ($hasPre === $hasDelivery) {
+            $hasPost = $item->route_post_conversion_collection_id !== null;
+            if (($hasPre ? 1 : 0) + ($hasDelivery ? 1 : 0) + ($hasPost ? 1 : 0) !== 1) {
                 throw ValidationException::withMessages(['items' => 'Un item de liquidación tiene un origen inválido.']);
             }
             if ($hasPre) {
                 $preIds[] = (int) $item->route_pre_sale_collection_id;
-            } else {
+            } elseif ($hasDelivery) {
                 $deliveryIds[] = (int) $item->route_delivery_collection_id;
+            } else {
+                $postIds[] = (int) $item->route_post_conversion_collection_id;
             }
         }
 
         $pre = RoutePreSaleCollection::query()->whereIn('id', $preIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
         $delivery = RouteDeliveryCollection::query()->captured()->whereIn('id', $deliveryIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
-        if ($pre->count() !== count($preIds) || $delivery->count() !== count($deliveryIds)) {
+        $post = RoutePostConversionCollection::query()->captured()->whereIn('id', $postIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        if ($pre->count() !== count($preIds) || $delivery->count() !== count($deliveryIds) || $post->count() !== count($postIds)) {
             throw ValidationException::withMessages(['items' => 'Uno de los cobros de la liquidación ya no existe.']);
         }
 
         foreach ($items as $item) {
-            $collection = $item->route_pre_sale_collection_id !== null
-                ? $pre->get((int) $item->route_pre_sale_collection_id)
-                : $delivery->get((int) $item->route_delivery_collection_id);
+            $collection = $item->route_pre_sale_collection_id !== null ? $pre->get((int) $item->route_pre_sale_collection_id)
+                : ($item->route_delivery_collection_id !== null ? $delivery->get((int) $item->route_delivery_collection_id)
+                    : $post->get((int) $item->route_post_conversion_collection_id));
             if ((int) $collection->business_id !== (int) $settlement->business_id
                 || (int) $collection->branch_id !== (int) $settlement->branch_id
                 || (int) $collection->collected_by !== (int) $settlement->collector_user_id
@@ -170,7 +180,7 @@ class RouteCashSettlementService
             }
         }
 
-        return [$pre, $delivery];
+        return [$pre, $delivery, $post];
     }
 
     private function assertActorScope(User $actor, int $businessId, int $branchId): void

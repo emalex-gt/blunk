@@ -4,6 +4,7 @@ namespace App\Services\Routes;
 
 use App\Models\RouteDeliveryCollection;
 use App\Models\RoutePreSaleCollection;
+use App\Models\RoutePostConversionCollection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
@@ -17,11 +18,44 @@ class RouteCashSettlementEligibility
     {
         $preSaleCollections = $this->eligiblePreSaleCollections($businessId, $branchId, $collectorId);
         $deliveryCollections = $this->eligibleDeliveryCollections($businessId, $branchId, $collectorId);
+        $postConversionCollections = $this->eligiblePostConversionCollections($businessId, $branchId, $collectorId);
 
         return $preSaleCollections
             ->concat($deliveryCollections)
+            ->concat($postConversionCollections)
             ->sortBy(fn (array $collection) => sprintf('%s|%s|%010d', $collection['collected_at'], $collection['origin'], $collection['collection_id']))
             ->values();
+    }
+
+    /** @return Collection<int, array<string, mixed>> */
+    private function eligiblePostConversionCollections(int $businessId, int $branchId, int $collectorId): Collection
+    {
+        $query = RoutePostConversionCollection::query()->captured()
+            ->leftJoin('sales', 'sales.id', '=', 'route_post_conversion_collections.sale_id')
+            ->leftJoin('customers', 'customers.id', '=', 'sales.customer_id')
+            ->leftJoin('route_delivery_batch_pre_sales', 'route_delivery_batch_pre_sales.id', '=', 'route_post_conversion_collections.route_delivery_batch_pre_sale_id')
+            ->leftJoin('route_delivery_batches', 'route_delivery_batches.id', '=', 'route_delivery_batch_pre_sales.route_delivery_batch_id')
+            ->select([
+                'route_post_conversion_collections.id as collection_id', 'route_post_conversion_collections.business_id', 'route_post_conversion_collections.branch_id',
+                'route_post_conversion_collections.collected_by as collector_user_id', 'route_post_conversion_collections.amount', 'route_post_conversion_collections.payment_method',
+                'route_post_conversion_collections.custody_status', 'route_post_conversion_collections.collected_at', 'route_post_conversion_collections.sale_id', 'route_post_conversion_collections.pre_sale_id',
+                'customers.name as customer_name', 'customers.commercial_name as customer_commercial_name', 'route_delivery_batches.route_work_day_id',
+            ])
+            ->where('route_post_conversion_collections.business_id', $businessId)->where('route_post_conversion_collections.branch_id', $branchId)
+            ->where('route_post_conversion_collections.collected_by', $collectorId)->where('route_post_conversion_collections.payment_method', 'cash')
+            ->where('route_post_conversion_collections.custody_status', 'held_by_collector');
+        $this->excludeActiveSettlementReservations($query, 'route_post_conversion_collection_id');
+
+        return $query->get()->map(fn (RoutePostConversionCollection $collection) => [
+            'origin' => 'route_post_conversion_collection', 'collection_id' => (int) $collection->collection_id,
+            'business_id' => (int) $collection->business_id, 'branch_id' => (int) $collection->branch_id,
+            'collector_user_id' => (int) $collection->collector_user_id, 'amount' => $collection->amount,
+            'payment_method' => $collection->payment_method, 'custody_status' => $collection->custody_status,
+            'collected_at' => $collection->collected_at, 'customer_name' => $collection->customer_commercial_name ?: $collection->customer_name,
+            'sale_id' => $collection->sale_id ? (int) $collection->sale_id : null, 'pre_sale_id' => $collection->pre_sale_id ? (int) $collection->pre_sale_id : null,
+            'route_work_day_id' => $collection->route_work_day_id ? (int) $collection->route_work_day_id : null,
+            'route_delivery_run_id' => null, 'route_delivery_batch_id' => null,
+        ]);
     }
 
     /** @return Collection<int, array<string, mixed>> */

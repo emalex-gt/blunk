@@ -20,6 +20,7 @@ class SalePayment extends Model
         'cash_register_session_id',
         'route_pre_sale_collection_id',
         'route_delivery_collection_id',
+        'route_post_conversion_collection_id',
         'status',
     ];
 
@@ -47,6 +48,11 @@ class SalePayment extends Model
     public function routeDeliveryCollection(): BelongsTo
     {
         return $this->belongsTo(RouteDeliveryCollection::class);
+    }
+
+    public function routePostConversionCollection(): BelongsTo
+    {
+        return $this->belongsTo(RoutePostConversionCollection::class);
     }
 
     public function routeDeliveryCollectionReversal(): \Illuminate\Database\Eloquent\Relations\HasOne

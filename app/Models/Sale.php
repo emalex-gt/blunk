@@ -118,6 +118,11 @@ class Sale extends Model
         return $this->hasOne(RouteDeliveryCollection::class)->captured();
     }
 
+    public function routePostConversionCollections(): HasMany
+    {
+        return $this->hasMany(RoutePostConversionCollection::class);
+    }
+
     public function creditPaymentAllocations(): HasMany
     {
         return $this->hasMany(CustomerCreditPaymentAllocation::class);

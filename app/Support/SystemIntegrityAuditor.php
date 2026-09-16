@@ -304,7 +304,8 @@ class SystemIntegrityAuditor
         $cashPayments = DB::table('sale_payments as sp')
             ->leftJoin('route_pre_sale_collections as pre_collection', 'pre_collection.id', '=', 'sp.route_pre_sale_collection_id')
             ->leftJoin('route_delivery_collections as delivery_collection', 'delivery_collection.id', '=', 'sp.route_delivery_collection_id')
-            ->select('sp.sale_id', DB::raw("COALESCE(SUM(CASE WHEN sp.method = 'cash' THEN sp.amount ELSE 0 END), 0) as cash_paid"), DB::raw("COALESCE(SUM(CASE WHEN sp.method = 'cash' AND (pre_collection.custody_status = 'held_by_collector' OR delivery_collection.custody_status = 'held_by_collector') THEN sp.amount ELSE 0 END), 0) as held_route_cash"))
+            ->leftJoin('route_post_conversion_collections as post_collection', 'post_collection.id', '=', 'sp.route_post_conversion_collection_id')
+            ->select('sp.sale_id', DB::raw("COALESCE(SUM(CASE WHEN sp.method = 'cash' THEN sp.amount ELSE 0 END), 0) as cash_paid"), DB::raw("COALESCE(SUM(CASE WHEN sp.method = 'cash' AND (pre_collection.custody_status = 'held_by_collector' OR delivery_collection.custody_status = 'held_by_collector' OR post_collection.custody_status = 'held_by_collector') THEN sp.amount ELSE 0 END), 0) as held_route_cash"))
             ->where('sp.business_id', $businessId)
             ->where('sp.status', 'captured')
             ->groupBy('sp.sale_id');
@@ -337,7 +338,22 @@ class SystemIntegrityAuditor
             ->whereColumn('cm.reference_id', 'settlement.id')
             ->where('collection.status', 'captured')->where('payment.status', 'captured')
             ->select('payment.sale_id', 'item.amount_snapshot as amount');
-        $routeCashMovements = DB::query()->fromSub($preSaleRouteCash->unionAll($deliveryRouteCash)->unionAll($settledPreSaleRouteCash)->unionAll($settledDeliveryRouteCash), 'route_cash')
+        $postConversionRouteCash = DB::table('cash_movements as cm')
+            ->join('route_post_conversion_collections as collection', 'collection.id', '=', 'cm.reference_id')
+            ->join('sale_payments as payment', 'payment.route_post_conversion_collection_id', '=', 'collection.id')
+            ->where('cm.business_id', $businessId)->where('cm.reference_type', 'route_post_conversion_collection')->where('cm.type', 'sale_cash')
+            ->where('payment.status', 'captured')->where('collection.status', 'captured')
+            ->select('payment.sale_id', 'cm.amount');
+        $settledPostConversionRouteCash = DB::table('route_cash_settlement_items as item')
+            ->join('route_cash_settlements as settlement', 'settlement.id', '=', 'item.route_cash_settlement_id')
+            ->join('cash_movements as cm', 'cm.id', '=', 'settlement.cash_movement_id')
+            ->join('route_post_conversion_collections as collection', 'collection.id', '=', 'item.route_post_conversion_collection_id')
+            ->join('sale_payments as payment', 'payment.route_post_conversion_collection_id', '=', 'item.route_post_conversion_collection_id')
+            ->where('settlement.business_id', $businessId)->where('settlement.status', 'confirmed')->where('item.is_active', true)
+            ->where('cm.type', 'route_cash_settlement')->where('cm.reference_type', 'route_cash_settlement')
+            ->whereColumn('cm.reference_id', 'settlement.id')->where('collection.status', 'captured')->where('payment.status', 'captured')
+            ->select('payment.sale_id', 'item.amount_snapshot as amount');
+        $routeCashMovements = DB::query()->fromSub($preSaleRouteCash->unionAll($deliveryRouteCash)->unionAll($settledPreSaleRouteCash)->unionAll($settledDeliveryRouteCash)->unionAll($postConversionRouteCash)->unionAll($settledPostConversionRouteCash), 'route_cash')
             ->select('sale_id', DB::raw('COALESCE(SUM(amount), 0) as cash_in'))
             ->groupBy('sale_id');
 
@@ -781,7 +797,7 @@ class SystemIntegrityAuditor
             }
         }
 
-        foreach ([['route_pre_sale_collection_id', 'route_pre_sale_collections'], ['route_delivery_collection_id', 'route_delivery_collections']] as [$column, $table]) {
+        foreach ([['route_pre_sale_collection_id', 'route_pre_sale_collections'], ['route_delivery_collection_id', 'route_delivery_collections'], ['route_post_conversion_collection_id', 'route_post_conversion_collections']] as [$column, $table]) {
             foreach (DB::table('route_cash_settlement_items as item')
                 ->join('route_cash_settlements as settlement', 'settlement.id', '=', 'item.route_cash_settlement_id')
                 ->where('settlement.business_id', $businessId)->where('item.is_active', true)->whereNotNull("item.{$column}")
@@ -807,14 +823,15 @@ class SystemIntegrityAuditor
             ->join('route_cash_settlements as settlement', 'settlement.id', '=', 'item.route_cash_settlement_id')
             ->leftJoin('route_pre_sale_collections as pre', 'pre.id', '=', 'item.route_pre_sale_collection_id')
             ->leftJoin('route_delivery_collections as delivery', 'delivery.id', '=', 'item.route_delivery_collection_id')
+            ->leftJoin('route_post_conversion_collections as post', 'post.id', '=', 'item.route_post_conversion_collection_id')
             ->where('settlement.business_id', $businessId)->where('settlement.status', 'confirmed')->where('item.is_active', true)
             ->where(function (Builder $query) {
-                $query->where('pre.custody_status', '!=', 'posted_to_branch_cash')->orWhere('delivery.custody_status', '!=', 'posted_to_branch_cash');
+                $query->where('pre.custody_status', '!=', 'posted_to_branch_cash')->orWhere('delivery.custody_status', '!=', 'posted_to_branch_cash')->orWhere('post.custody_status', '!=', 'posted_to_branch_cash');
             })->select('item.id')->cursor() as $item) {
             $issues[] = $this->issue(['cash_register_id' => null, 'cash_movement_id' => null, 'reference_type' => 'route_cash_settlement_item', 'reference_id' => $item->id, 'amount' => null, 'movement_type' => 'route_cash_settlement'], 'critical', 'confirmed_route_cash_settlement_collection_not_posted', 'Liquidación confirmada conserva un cobro bajo custodia del cobrador.', 'Revisar la transición de custodia en la misma transacción de confirmación.');
         }
 
-        foreach ([['route_pre_sale_collections', 'route_pre_sale_collection_id'], ['route_delivery_collections', 'route_delivery_collection_id']] as [$table, $column]) {
+        foreach ([['route_pre_sale_collections', 'route_pre_sale_collection_id'], ['route_delivery_collections', 'route_delivery_collection_id'], ['route_post_conversion_collections', 'route_post_conversion_collection_id']] as [$table, $column]) {
             foreach (DB::table("{$table} as collection")
                 ->where('collection.business_id', $businessId)
                 ->where('collection.payment_method', 'cash')->where('collection.custody_status', 'posted_to_branch_cash')->whereNull('collection.cash_movement_id')

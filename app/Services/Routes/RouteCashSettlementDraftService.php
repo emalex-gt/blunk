@@ -6,6 +6,7 @@ use App\Models\RouteCashSettlement;
 use App\Models\RouteCashSettlementItem;
 use App\Models\RouteDeliveryCollection;
 use App\Models\RoutePreSaleCollection;
+use App\Models\RoutePostConversionCollection;
 use App\Models\User;
 use App\Support\IdempotencyResult;
 use App\Support\IdempotencyService;
@@ -161,6 +162,7 @@ class RouteCashSettlementDraftService
             $origin = match ($source['origin'] ?? null) {
                 'pre_sale_collection', 'route_pre_sale_collection' => 'pre_sale_collection',
                 'delivery_collection', 'route_delivery_collection' => 'delivery_collection',
+                'post_conversion_collection', 'route_post_conversion_collection' => 'post_conversion_collection',
                 default => throw ValidationException::withMessages(['sources' => 'El origen del cobro no es válido.']),
             };
             $id = (int) ($source['collection_id'] ?? $source['id'] ?? 0);
@@ -180,19 +182,21 @@ class RouteCashSettlementDraftService
         return $normalized;
     }
 
-    /** @return array{pre_sale_collection: Collection<int, RoutePreSaleCollection>, delivery_collection: Collection<int, RouteDeliveryCollection>} */
+    /** @return array{pre_sale_collection: Collection<int, RoutePreSaleCollection>, delivery_collection: Collection<int, RouteDeliveryCollection>, post_conversion_collection: Collection<int, RoutePostConversionCollection>} */
     private function lockEligibleCollections(array $sources, int $businessId, int $branchId, int $collectorId): array
     {
         $preIds = collect($sources)->where('origin', 'pre_sale_collection')->pluck('collection_id')->all();
         $deliveryIds = collect($sources)->where('origin', 'delivery_collection')->pluck('collection_id')->all();
+        $postIds = collect($sources)->where('origin', 'post_conversion_collection')->pluck('collection_id')->all();
         $pre = RoutePreSaleCollection::query()->whereIn('id', $preIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
         $delivery = RouteDeliveryCollection::query()->captured()->whereIn('id', $deliveryIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
-        if ($pre->count() !== count($preIds) || $delivery->count() !== count($deliveryIds)) {
+        $post = RoutePostConversionCollection::query()->captured()->whereIn('id', $postIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        if ($pre->count() !== count($preIds) || $delivery->count() !== count($deliveryIds) || $post->count() !== count($postIds)) {
             throw ValidationException::withMessages(['sources' => 'Uno de los cobros seleccionados ya no existe.']);
         }
 
         foreach ($sources as $source) {
-            $collection = $source['origin'] === 'pre_sale_collection' ? $pre->get($source['collection_id']) : $delivery->get($source['collection_id']);
+            $collection = match ($source['origin']) { 'pre_sale_collection' => $pre->get($source['collection_id']), 'delivery_collection' => $delivery->get($source['collection_id']), default => $post->get($source['collection_id']) };
             if ((int) $collection->business_id !== $businessId || (int) $collection->branch_id !== $branchId || (int) $collection->collected_by !== $collectorId) {
                 throw ValidationException::withMessages(['sources' => 'El cobro no corresponde al cobrador o sucursal de esta liquidación.']);
             }
@@ -201,7 +205,9 @@ class RouteCashSettlementDraftService
             }
             $reserved = RouteCashSettlementItem::query()
                 ->where('is_active', true)
-                ->when($source['origin'] === 'pre_sale_collection', fn ($query) => $query->where('route_pre_sale_collection_id', $collection->id), fn ($query) => $query->where('route_delivery_collection_id', $collection->id))
+                ->when($source['origin'] === 'pre_sale_collection', fn ($query) => $query->where('route_pre_sale_collection_id', $collection->id))
+                ->when($source['origin'] === 'delivery_collection', fn ($query) => $query->where('route_delivery_collection_id', $collection->id))
+                ->when($source['origin'] === 'post_conversion_collection', fn ($query) => $query->where('route_post_conversion_collection_id', $collection->id))
                 ->lockForUpdate()
                 ->exists();
             if ($reserved) {
@@ -209,7 +215,7 @@ class RouteCashSettlementDraftService
             }
         }
 
-        return ['pre_sale_collection' => $pre, 'delivery_collection' => $delivery];
+        return ['pre_sale_collection' => $pre, 'delivery_collection' => $delivery, 'post_conversion_collection' => $post];
     }
 
     private function reserve(RouteCashSettlement $settlement, array $sources, array $collections): void
@@ -220,6 +226,7 @@ class RouteCashSettlementDraftService
                 'route_cash_settlement_id' => $settlement->id,
                 'route_pre_sale_collection_id' => $source['origin'] === 'pre_sale_collection' ? $collection->id : null,
                 'route_delivery_collection_id' => $source['origin'] === 'delivery_collection' ? $collection->id : null,
+                'route_post_conversion_collection_id' => $source['origin'] === 'post_conversion_collection' ? $collection->id : null,
                 'amount_snapshot' => $collection->amount,
                 'is_active' => true,
             ]);
