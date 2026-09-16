@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="es"><head><meta charset="utf-8"><style>
-@page { size: 5.5in 8.5in; margin: 0.35in; }
+@page { size: 8.5in 5.5in; margin: 0.35in; }
 body { font-family: DejaVu Sans, sans-serif; color: #172033; font-size: 9px; }
 .receipt + .receipt { page-break-before: always; }
 .receipt { page-break-inside: auto; }

@@ -71,7 +71,7 @@ class RouteGlobalOperationsController extends Controller
         $document = $documents->forBatches($businessId, $branchId, $this->batchIds($request));
 
         return Pdf::loadView('pdf.route-global-preparation.receipts', compact('document'))
-            ->setPaper([0, 0, 396, 612])
+            ->setPaper([0, 0, 612, 396])
             ->download('preparacion-global-recibos.pdf');
     }
 

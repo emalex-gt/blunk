@@ -368,11 +368,11 @@ class RouteGlobalOperationsTest extends TestCase
         $this->assertStringContainsString('VENDEDOR: Carlos', $consolidated);
         $this->assertStringContainsString('Producto X', $products);
         $this->assertStringContainsString('12.00', $products);
-        $this->assertStringContainsString('@page { size: 5.5in 8.5in;', $receipts);
+        $this->assertStringContainsString('@page { size: 8.5in 5.5in;', $receipts);
         $this->assertStringContainsString('.receipt + .receipt { page-break-before: always;', $receipts);
         $this->assertStringContainsString('Vendedor: Carlos', $receipts);
         $this->assertStringNotContainsString('overflow: hidden', $receipts);
-        $this->assertNotSame('', Pdf::loadHTML($receipts)->setPaper([0, 0, 396, 612])->output());
+        $this->assertNotSame('', Pdf::loadHTML($receipts)->setPaper([0, 0, 612, 396])->output());
     }
 
     public function test_global_documents_sum_products_per_seller_across_work_days_without_merging_sellers(): void
@@ -559,6 +559,82 @@ class RouteGlobalOperationsTest extends TestCase
             ->assertHeader('content-type', 'application/pdf');
         $this->actingAs($actor)->get(route('routes.global-operations.documents.receipts', ['batch_ids' => [$batchId, 999999]]))
             ->assertSessionHasErrors('batch_ids');
+    }
+
+    public function test_global_receipts_pdf_uses_half_letter_landscape_physical_page_dimensions(): void
+    {
+        [$business, $branch, $actor, $sellerA, $sellerB, $workDays] = $this->preparationExecutionFixture();
+        $this->preparablePreSale($business, $branch, $workDays[0], $sellerA, '60.00');
+        $batchId = app(RouteGlobalOperationsService::class)->prepareAll($actor, 'global-receipts-landscape-0001')['processed'][0]['batch_id'];
+
+        $pdf = $this->actingAs($actor)
+            ->get(route('routes.global-operations.documents.receipts', ['batch_ids' => [$batchId]]))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertSame(1, preg_match('/\\/MediaBox\\s*\\[\\s*0(?:\\.0+)?\\s+0(?:\\.0+)?\\s+([0-9.]+)\\s+([0-9.]+)\\s*\\]/', $pdf, $matches));
+        $this->assertEqualsWithDelta(612.0, (float) $matches[1], 0.1);
+        $this->assertEqualsWithDelta(396.0, (float) $matches[2], 0.1);
+    }
+
+    public function test_global_receipts_start_each_short_order_on_a_separate_page(): void
+    {
+        [$business, $branch, $actor, $sellerA, $sellerB, $workDays] = $this->preparationExecutionFixture();
+        $this->preparablePreSale($business, $branch, $workDays[0], $sellerA, '60.00');
+        $this->preparablePreSale($business, $branch, $workDays[1], $sellerA, '40.00');
+        $this->preparablePreSale($business, $branch, $workDays[2], $sellerB, '20.00');
+        $batchIds = array_column(app(RouteGlobalOperationsService::class)->prepareAll($actor, 'global-receipts-pages-0001')['processed'], 'batch_id');
+
+        $pdf = $this->actingAs($actor)
+            ->get(route('routes.global-operations.documents.receipts', ['batch_ids' => $batchIds]))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertSame(3, preg_match_all('/\\/Type\\s*\\/Page(?!s)\\b/', $pdf));
+    }
+
+    public function test_global_receipts_allow_a_long_order_to_flow_before_the_next_order_starts_a_new_page(): void
+    {
+        [$business, $branch, $actor, $sellerA, $sellerB, $workDays] = $this->preparationExecutionFixture();
+        $longOrder = $this->preparablePreSale($business, $branch, $workDays[0], $sellerA, '46.00');
+        $longItem = $longOrder->items()->firstOrFail();
+        $longItem->update(['unit_price' => 1, 'total' => 1]);
+        ProductBranchStock::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('product_id', $longItem->product_id)->update(['stock' => 100]);
+
+        foreach (range(1, 45) as $index) {
+            $item = PreSaleItem::query()->create([
+                'business_id' => $business->id,
+                'pre_sale_id' => $longOrder->id,
+                'product_id' => $longItem->product_id,
+                'quantity' => 1,
+                'unit_price' => 1,
+                'discount' => 0,
+                'total' => 1,
+            ]);
+            StockReservation::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'product_id' => $longItem->product_id,
+                'source_type' => 'pre_sale',
+                'source_id' => $longOrder->id,
+                'source_item_id' => $item->id,
+                'quantity' => 1,
+                'status' => 'active',
+                'created_by' => $sellerA->id,
+            ]);
+        }
+        $this->preparablePreSale($business, $branch, $workDays[1], $sellerA, '20.00');
+
+        $batchIds = array_column(app(RouteGlobalOperationsService::class)->prepareAll($actor, 'global-receipts-long-order-0001')['processed'], 'batch_id');
+        $pdf = $this->actingAs($actor)
+            ->get(route('routes.global-operations.documents.receipts', ['batch_ids' => $batchIds]))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertGreaterThanOrEqual(3, preg_match_all('/\\/Type\\s*\\/Page(?!s)\\b/', $pdf));
+        $this->assertStringContainsString('.receipt + .receipt { page-break-before: always;', view('pdf.route-global-preparation.receipts', [
+            'document' => app(RouteGlobalPreparationDocuments::class)->forBatches($business->id, $branch->id, $batchIds),
+        ])->render());
     }
 
     public function test_global_document_download_http_rejects_foreign_branch_and_business_batch_ids_without_partial_pdf(): void
