@@ -26,7 +26,7 @@ const noSaleReasons = [
     'Otro',
 ];
 
-export default function WorkDay({ workDay, visits, routeCash }: { workDay: { id: number; status: string; zone?: { name: string }; branch?: { name: string; department: string | null; municipality: string | null } }; visits: Visit[]; routeCash: { is_open: boolean } }) {
+export default function WorkDay({ workDay, visits, routeCash, canPostConversionCollect }: { workDay: { id: number; status: string; zone?: { name: string }; branch?: { name: string; department: string | null; municipality: string | null } }; visits: Visit[]; routeCash: { is_open: boolean }; canPostConversionCollect: boolean }) {
     const mapHref = (visit: Visit) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(visit.customer.address || visit.customer.name)}`;
     const branchDepartment = workDay.branch?.department ?? '';
     const branchMunicipality = workDay.branch?.municipality ?? '';
@@ -182,6 +182,7 @@ export default function WorkDay({ workDay, visits, routeCash }: { workDay: { id:
                     <h1 className="text-2xl font-semibold text-slate-950">{workDay.zone?.name}</h1>
                     <p className="text-sm text-slate-500">{workDay.branch?.name} · {workDay.status}</p>
                 </div>
+                {canPostConversionCollect && <Link href={route('routes.mobile.post-conversion-collections.index')} className="block rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-center text-sm font-semibold text-emerald-800">Cobros pendientes</Link>}
                 {workDay.status === 'open' && (
                     <button
                         type="button"

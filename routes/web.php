@@ -18,6 +18,7 @@ use App\Http\Controllers\OperationDraftController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\RouteController;
 use App\Http\Controllers\RoutePreSaleCollectionController;
+use App\Http\Controllers\RoutePostConversionCollectionController;
 use App\Http\Controllers\RoutePreparationBatchController;
 use App\Http\Controllers\RouteDeliveryBatchController;
 use App\Http\Controllers\RouteExternalDeliveryReconciliationController;
@@ -377,6 +378,15 @@ Route::middleware('auth')->group(function () {
             Route::post('/pre-sales/{preSale}/collection', [RoutePreSaleCollectionController::class, 'store'])
                 ->middleware('permission:routes.pre_sales.view')
                 ->name('pre-sales.collection.store');
+            Route::get('/mobile/post-conversion-collections', [RoutePostConversionCollectionController::class, 'index'])
+                ->middleware('permission:routes.post_conversion_collections.collect')
+                ->name('mobile.post-conversion-collections.index');
+            Route::post('/post-conversion-collections', [RoutePostConversionCollectionController::class, 'store'])
+                ->middleware('permission:routes.post_conversion_collections.collect')
+                ->name('post-conversion-collections.store');
+            Route::post('/post-conversion-collections/{collection}/reversals', [RoutePostConversionCollectionController::class, 'reverse'])
+                ->middleware('permission:routes.post_conversion_collections.reverse')
+                ->name('post-conversion-collections.reversals.store');
             Route::post('/pre-sales/{preSale}/fel/certify', [RoutePreSaleFelController::class, 'certify'])
                 ->middleware(['module:fel_gt', 'permission:fel.certify'])
                 ->name('pre-sales.fel.certify');

@@ -31,6 +31,7 @@ use App\Services\Routes\RoutePreSaleFelEligibilityService;
 use App\Services\Routes\RoutePreSaleFelAvailabilityService;
 use App\Services\Routes\RoutePreSalePaymentMethodPolicy;
 use App\Services\Routes\RouteCashOperationGuard;
+use App\Services\Routes\RoutePostConversionCollectionReader;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -750,6 +751,15 @@ class RouteController extends Controller
             'invoiceOptions' => $invoiceOptions,
             'stockDeductionTiming' => $tenantSettings?->route_pre_sale_stock_deduction_timing === 'picking' ? 'picking' : 'invoice',
             'routeCash' => $routeCash,
+            'postConversionCollection' => ($postConversionCollection = app(RoutePostConversionCollectionReader::class)->contextForPreSale($preSale, $actor)) ? [
+                ...$postConversionCollection,
+                'can_collect' => Permissions::userHas($actor, Permissions::ROUTES_POST_CONVERSION_COLLECTIONS_COLLECT),
+                'can_override' => Permissions::userHas($actor, Permissions::ROUTES_COLLECTIONS_OVERRIDE),
+                'can_reverse' => Permissions::userHas($actor, Permissions::ROUTES_POST_CONVERSION_COLLECTIONS_REVERSE),
+                'collectors' => Permissions::userHas($actor, Permissions::ROUTES_COLLECTIONS_OVERRIDE)
+                    ? User::query()->where('business_id', $preSale->business_id)->where('current_branch_id', $preSale->branch_id)->where('is_active', true)->orderBy('name')->get(['id', 'name'])
+                    : [],
+            ] : null,
         ]);
     }
 
@@ -978,6 +988,7 @@ class RouteController extends Controller
                 ->orderByRaw('visit_order IS NULL, visit_order')
                 ->orderBy('id')
                 ->get(),
+            'canPostConversionCollect' => Permissions::userHas($request->user(), Permissions::ROUTES_POST_CONVERSION_COLLECTIONS_COLLECT),
         ]);
     }
 

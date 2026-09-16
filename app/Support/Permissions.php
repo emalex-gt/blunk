@@ -90,6 +90,8 @@ class Permissions
     public const ROUTES_PRE_SALES_PICK = 'routes.pre_sales.pick';
     public const ROUTES_PRE_SALES_INVOICE = 'routes.pre_sales.invoice';
     public const ROUTES_COLLECTIONS_OVERRIDE = 'routes.collections.override';
+    public const ROUTES_POST_CONVERSION_COLLECTIONS_COLLECT = 'routes.post_conversion_collections.collect';
+    public const ROUTES_POST_CONVERSION_COLLECTIONS_REVERSE = 'routes.post_conversion_collections.reverse';
     public const ROUTES_EXTERNAL_DELIVERY_RECONCILE = 'routes.external_delivery.reconcile';
     public const ROUTES_EXTERNAL_DELIVERY_COLLECTION_OVERRIDE = 'routes.external_delivery.collection.override';
     public const ROUTES_EXTERNAL_DELIVERY_RECONCILE_CORRECT = 'routes.external_delivery.reconcile.correct';
@@ -227,6 +229,8 @@ class Permissions
             self::ROUTES_PRE_SALES_PICK => ['name' => 'Preparar preventas de ruta', 'group' => 'Rutas'],
             self::ROUTES_PRE_SALES_INVOICE => ['name' => 'Facturar preventas de ruta', 'group' => 'Rutas'],
             self::ROUTES_COLLECTIONS_OVERRIDE => ['name' => 'Registrar cobros de ruta por override', 'group' => 'Rutas'],
+            self::ROUTES_POST_CONVERSION_COLLECTIONS_COLLECT => ['name' => 'Registrar cobros post-conversión de ruta', 'group' => 'Rutas'],
+            self::ROUTES_POST_CONVERSION_COLLECTIONS_REVERSE => ['name' => 'Revertir cobros post-conversión de ruta', 'group' => 'Rutas'],
             self::ROUTES_EXTERNAL_DELIVERY_RECONCILE => ['name' => 'Conciliar entrega externa', 'group' => 'Rutas'],
             self::ROUTES_EXTERNAL_DELIVERY_COLLECTION_OVERRIDE => ['name' => 'Registrar cobro externo por override', 'group' => 'Rutas'],
             self::ROUTES_EXTERNAL_DELIVERY_RECONCILE_CORRECT => ['name' => 'Corregir conciliación externa', 'group' => 'Rutas'],
@@ -320,6 +324,7 @@ class Permissions
                 self::ROUTES_PRE_SALES_CREATE,
                 self::ROUTES_PRE_SALES_EDIT,
                 self::ROUTES_WORK_DAYS_CLOSE,
+                self::ROUTES_POST_CONVERSION_COLLECTIONS_COLLECT,
             ],
             'delivery_agent' => [
                 self::ROUTES_DELIVERY_RUNS_VIEW,

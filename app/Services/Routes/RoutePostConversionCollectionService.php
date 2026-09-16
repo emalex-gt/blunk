@@ -35,7 +35,13 @@ class RoutePostConversionCollectionService
 
         return app(IdempotencyService::class)->run(
             $businessId, $branchId, $actor->id, 'route_post_conversion_collection_capture', $idempotencyKey,
-            ['entry_id' => $entry->id, 'payment_method' => $data['payment_method'] ?? null, 'reference' => $data['reference'] ?? null],
+            [
+                'entry_id' => $entry->id,
+                'payment_method' => $data['payment_method'] ?? null,
+                'reference' => $data['reference'] ?? null,
+                'collected_by' => $data['collected_by'] ?? $actor->id,
+                'override_reason' => $data['override_reason'] ?? null,
+            ],
             function () use ($entry, $data, $actor, $businessId, $branchId, $idempotencyKey): array {
                 return DB::transaction(function () use ($entry, $data, $actor, $businessId, $branchId, $idempotencyKey): array {
                     abort_unless((int) $actor->business_id === $businessId && (int) $actor->current_branch_id === $branchId && $actor->is_active, 403);
@@ -88,7 +94,8 @@ class RoutePostConversionCollectionService
                         // its movement. Keep the insert valid, then atomically promote custody after posting.
                         'custody_status' => $method !== 'cash' ? 'not_applicable' : 'held_by_collector',
                         'cash_posting_state' => $method !== 'cash' ? 'not_applicable' : 'awaiting_physical_receipt',
-                        'cash_register_session_id' => null, 'operation_idempotency_key_id' => $operationId, 'status' => 'captured',
+                        'cash_register_session_id' => null, 'operation_idempotency_key_id' => $operationId,
+                        'override_reason' => $data['override_reason'] ?? null, 'status' => 'captured',
                     ]);
                     if ($postCash) {
                         $movement = CashRegister::recordMovement($session, 'sale_cash', (float) $amount, 'route_post_conversion_collection', $collection->id, "Cobro posterior de ruta #{$lockedEntry->id}", $actor->id);
