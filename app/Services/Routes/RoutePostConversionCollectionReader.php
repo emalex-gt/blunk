@@ -74,9 +74,14 @@ class RoutePostConversionCollectionReader
             return null;
         }
 
+        $collections = $entry->sale->routePostConversionCollections;
+        if ($entry->sale->payment_status === 'paid' && $collections->isEmpty()) {
+            return null;
+        }
+
         $policy = $this->displayPolicy((int) $preSale->business_id, (int) $preSale->branch_id);
-        $active = $entry->sale->routePostConversionCollections->firstWhere('status', 'captured');
-        $history = $entry->sale->routePostConversionCollections->map(fn (RoutePostConversionCollection $collection) => [
+        $active = $collections->firstWhere('status', 'captured');
+        $history = $collections->map(fn (RoutePostConversionCollection $collection) => [
             'id' => $collection->id,
             'status' => $collection->status,
             'amount' => (float) $collection->amount,

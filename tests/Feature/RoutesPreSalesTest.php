@@ -1290,6 +1290,14 @@ class RoutesPreSalesTest extends TestCase
         $this->assertSame('linked', $collection->fresh()->status);
         $this->assertDatabaseCount('route_post_conversion_collections', 0);
         $this->assertDatabaseCount('customer_account_movements', 0);
+
+        $this->actingAs($operator)->get(route('routes.pre-sales.show', $preSale))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/PreSales/Show')
+                ->where('preSale.converted_sale.payment_status', 'paid')
+                ->where('preSale.collection.payment_method', 'cash')
+                ->where('postConversionCollection', null));
     }
 
     public function test_mobile_order_without_collect_now_keeps_the_post_conversion_pending_collection_path(): void
