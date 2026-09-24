@@ -210,6 +210,9 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 text-right">
+                                            <Link href={route('super-admin.tenants.branches.route-settings.index', [tenant.id, branch.id])} className="mr-3 font-semibold text-indigo-600 hover:text-indigo-700">
+                                                Configuración de rutas
+                                            </Link>
                                             <button type="button" onClick={() => editBranch(branch)} className="font-semibold text-indigo-600 hover:text-indigo-700">
                                                 Editar
                                             </button>

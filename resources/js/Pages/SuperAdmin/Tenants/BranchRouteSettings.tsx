@@ -1,26 +1,25 @@
-import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, useForm } from '@inertiajs/react';
+import SuperAdminLayout from '@/Layouts/SuperAdminLayout';
+import { Link, useForm } from '@inertiajs/react';
 import { useEffect } from 'react';
 
-type PaymentMethod = { value: string; label: string };
+type Tenant = { id: number; name: string };
+type Branch = { id: number; name: string };
 type Policy = {
     collection_workflow_mode: 'immediate_paid' | 'per_order_collection';
     allowed_payment_methods: string[];
     primary_payment_method: string;
 };
+type PaymentMethod = { value: string; label: string };
 
-export default function Index({ branch, policy, payment_methods }: {
-    branch: { id: number; name: string };
+export default function BranchRouteSettings({ tenant, branch, policy, payment_methods }: {
+    tenant: Tenant;
+    branch: Branch;
     policy: Policy | null;
     payment_methods: PaymentMethod[];
 }) {
-    const form = useForm<{
-        collection_workflow_mode: '' | Policy['collection_workflow_mode'];
-        allowed_payment_methods: string[];
-        primary_payment_method: string;
-    }>({
+    const form = useForm({
         collection_workflow_mode: policy?.collection_workflow_mode ?? '',
-        allowed_payment_methods: policy?.allowed_payment_methods ?? [],
+        allowed_payment_methods: policy?.allowed_payment_methods ?? [] as string[],
         primary_payment_method: policy?.primary_payment_method ?? '',
     });
 
@@ -45,12 +44,16 @@ export default function Index({ branch, policy, payment_methods }: {
         && form.data.allowed_payment_methods.length > 0
         && form.data.allowed_payment_methods.includes(form.data.primary_payment_method);
 
-    return <AuthenticatedLayout>
-        <Head title="Configuración de rutas" />
-        <main className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-            <header>
-                <h1 className="text-2xl font-semibold text-slate-950">Configuración de rutas</h1>
-                <p className="mt-1 text-sm text-slate-500">Sucursal: <strong>{branch.name}</strong></p>
+    return <SuperAdminLayout title={`Rutas - ${branch.name}`}>
+        <div className="mx-auto max-w-3xl space-y-6">
+            <header className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h1 className="text-2xl font-semibold text-slate-950">Configuración de rutas</h1>
+                    <p className="mt-1 text-sm text-slate-500">Tenant: <strong>{tenant.name}</strong> · Sucursal: <strong>{branch.name}</strong></p>
+                </div>
+                <Link href={route('super-admin.tenants.branches', tenant.id)} className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">
+                    Volver a sucursales
+                </Link>
             </header>
 
             {!policy && <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -58,7 +61,7 @@ export default function Index({ branch, policy, payment_methods }: {
                 <p className="mt-1">Esta sucursal todavía utiliza el comportamiento anterior de Rutas. Guardar una nueva política activará la configuración de cobros 3G únicamente para esta sucursal. No modifica ventas ni preventas existentes.</p>
             </section>}
 
-            <form onSubmit={event => { event.preventDefault(); form.put(route('routes.branch-collection-settings.update')); }} className="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <form onSubmit={event => { event.preventDefault(); form.put(route('super-admin.tenants.branches.route-settings.update', [tenant.id, branch.id])); }} className="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
                 <fieldset>
                     <legend className="text-base font-semibold text-slate-950">Modo de cobro</legend>
                     <div className="mt-3 space-y-3">
@@ -88,8 +91,8 @@ export default function Index({ branch, policy, payment_methods }: {
 
                 <button type="submit" disabled={!canSave || form.processing} className="rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300">{form.processing ? 'Guardando...' : 'Guardar configuración'}</button>
             </form>
-        </main>
-    </AuthenticatedLayout>;
+        </div>
+    </SuperAdminLayout>;
 }
 
 function WorkflowOption({ value, checked, onChange, title, description }: { value: string; checked: boolean; onChange: () => void; title: string; description: string }) {

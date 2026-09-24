@@ -2021,12 +2021,18 @@ class RoutesPreSalesTest extends TestCase
             'route_pre_sale_invoicing_mode' => 'automatic_all',
             'route_pre_sale_stock_deduction_timing' => 'picking',
             'route_pre_sale_require_fel_eligible_customer' => true,
+            'route_collection_responsibility' => 'delivery_agent',
+            'route_delivery_tracking' => 'in_app',
+            'route_cash_custody_policy' => 'immediate_branch_register',
             'modules' => ['routes'],
         ])->assertSessionHasNoErrors();
 
         $this->assertSame('automatic_all', TenantSetting::query()->where('business_id', $business->id)->value('route_pre_sale_invoicing_mode'));
         $this->assertSame('picking', TenantSetting::query()->where('business_id', $business->id)->value('route_pre_sale_stock_deduction_timing'));
         $this->assertTrue((bool) TenantSetting::query()->where('business_id', $business->id)->value('route_pre_sale_require_fel_eligible_customer'));
+        $this->assertSame('delivery_agent', TenantSetting::query()->where('business_id', $business->id)->value('route_collection_responsibility'));
+        $this->assertSame('in_app', TenantSetting::query()->where('business_id', $business->id)->value('route_delivery_tracking'));
+        $this->assertSame('immediate_branch_register', TenantSetting::query()->where('business_id', $business->id)->value('route_cash_custody_policy'));
     }
 
     public function test_closed_work_days_menu_and_tenant_form_setting_are_exposed(): void
@@ -2044,6 +2050,11 @@ class RoutesPreSalesTest extends TestCase
         $this->assertStringContainsString('route_pre_sale_stock_deduction_timing', $formSource);
         $this->assertStringContainsString('route_pre_sale_require_fel_eligible_customer', $formSource);
         $this->assertStringContainsString('La automatización FEL se implementará en una fase posterior.', $formSource);
+
+        $routesSection = substr($formSource, (int) strpos($formSource, "data.modules.includes('routes')"));
+        $this->assertStringContainsString('route_collection_responsibility', $routesSection);
+        $this->assertStringContainsString('route_delivery_tracking', $routesSection);
+        $this->assertStringContainsString('route_cash_custody_policy', $routesSection);
     }
 
     public function test_pre_sale_detail_shows_products_and_stock_reservation_info(): void

@@ -420,7 +420,28 @@ export default function Form({
                                     description="Permite crear reservas de productos sin facturar ni descontar stock físico."
                                 />
                             </div>
-                            <div className="mt-4 grid gap-4 md:grid-cols-3">
+                            {data.enable_credit_reservations && (
+                                <div className="mt-3">
+                                    <Toggle
+                                        checked={data.reserve_stock_on_credit_reservations}
+                                        onChange={(checked) => setData('reserve_stock_on_credit_reservations', checked)}
+                                        label="Reservar stock en reservas de crédito"
+                                        description="Si está activo, las reservas de crédito apartan inventario y reducen el stock disponible. Si está inactivo, solo se guarda la reserva y el stock se descuenta hasta generar la venta."
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {data.modules.includes('routes') && (
+                        <div className="mt-6 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+                            <div className="mb-4">
+                                <h3 className="text-base font-semibold text-gray-900">Rutas</h3>
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Define la operación, facturación y custodia de cobros para las rutas de este tenant.
+                                </p>
+                            </div>
+                            <div className="grid gap-4 md:grid-cols-3">
                                 <Field label="Quién cobra las ventas de ruta" error={errors.route_collection_responsibility}>
                                     <select className={inputClass} value={data.route_collection_responsibility} onChange={(event) => setData('route_collection_responsibility', event.target.value as 'pre_seller' | 'delivery_agent')}>
                                         <option value="pre_seller">Cobra el prevendedor</option>
@@ -439,27 +460,6 @@ export default function Form({
                                         <option value="immediate_branch_register">Registrar de inmediato en caja</option>
                                     </select>
                                 </Field>
-                            </div>
-                            {data.enable_credit_reservations && (
-                                <div className="mt-3">
-                                    <Toggle
-                                        checked={data.reserve_stock_on_credit_reservations}
-                                        onChange={(checked) => setData('reserve_stock_on_credit_reservations', checked)}
-                                        label="Reservar stock en reservas de crédito"
-                                        description="Si está activo, las reservas de crédito apartan inventario y reducen el stock disponible. Si está inactivo, solo se guarda la reserva y el stock se descuenta hasta generar la venta."
-                                    />
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {data.modules.includes('routes') && (
-                        <div className="mt-6 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
-                            <div className="mb-4">
-                                <h3 className="text-base font-semibold text-gray-900">Rutas y preventas</h3>
-                                <p className="mt-1 text-sm text-gray-500">
-                                    Define cuándo certificar FEL los comprobantes internos generados por preventas de ruta.
-                                </p>
                             </div>
                             <Field label="Certificación FEL de preventas" error={errors.route_pre_sale_invoicing_mode}>
                                 <select

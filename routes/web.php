@@ -31,7 +31,6 @@ use App\Http\Controllers\RoutePendingCollectionController;
 use App\Http\Controllers\RoutePreSaleFelController;
 use App\Http\Controllers\RoutePreSaleInvoiceController;
 use App\Http\Controllers\RouteGlobalOperationsController;
-use App\Http\Controllers\RouteBranchCollectionSettingsController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\TenantUserController;
@@ -42,6 +41,7 @@ use App\Http\Controllers\SuperAdmin\ProductImportController as SuperAdminProduct
 use App\Http\Controllers\SuperAdmin\SecurityController as SuperAdminSecurityController;
 use App\Http\Controllers\SuperAdmin\TenantController as SuperAdminTenantController;
 use App\Http\Controllers\SuperAdmin\TenantBranchController as SuperAdminTenantBranchController;
+use App\Http\Controllers\SuperAdmin\TenantBranchRouteSettingsController as SuperAdminTenantBranchRouteSettingsController;
 use App\Http\Controllers\SuperAdmin\TenantSubscriptionController as SuperAdminTenantSubscriptionController;
 use App\Http\Controllers\SuperAdmin\TenantUserController as SuperAdminTenantUserController;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
@@ -112,6 +112,8 @@ Route::middleware(['auth', 'super.admin'])
         Route::post('/tenants/{business}/branches', [SuperAdminTenantBranchController::class, 'store'])->name('tenants.branches.store');
         Route::put('/tenants/{business}/branches/{branch}', [SuperAdminTenantBranchController::class, 'update'])->name('tenants.branches.update');
         Route::delete('/tenants/{business}/branches/{branch}', [SuperAdminTenantBranchController::class, 'destroy'])->name('tenants.branches.destroy');
+        Route::get('/tenants/{business}/branches/{branch}/route-settings', [SuperAdminTenantBranchRouteSettingsController::class, 'index'])->name('tenants.branches.route-settings.index');
+        Route::put('/tenants/{business}/branches/{branch}/route-settings', [SuperAdminTenantBranchRouteSettingsController::class, 'update'])->name('tenants.branches.route-settings.update');
         Route::get('/tenants/{business}/subscription', [SuperAdminTenantSubscriptionController::class, 'edit'])->name('tenants.subscription');
         Route::put('/tenants/{business}/subscription', [SuperAdminTenantSubscriptionController::class, 'update'])->name('tenants.subscription.update');
         Route::post('/tenants/{business}/subscription/{status}', [SuperAdminTenantSubscriptionController::class, 'setStatus'])->name('tenants.subscription.status');
@@ -236,10 +238,6 @@ Route::middleware('auth')->group(function () {
         });
 
         Route::middleware('module:routes')->prefix('routes')->name('routes.')->group(function () {
-            Route::get('/branch-collection-settings', [RouteBranchCollectionSettingsController::class, 'index'])
-                ->middleware('permission:routes.pre_sales.admin_view')->name('branch-collection-settings.index');
-            Route::put('/branch-collection-settings', [RouteBranchCollectionSettingsController::class, 'update'])
-                ->middleware('permission:routes.pre_sales.admin_view')->name('branch-collection-settings.update');
             Route::get('/global-operations', [RouteGlobalOperationsController::class, 'index'])
                 ->middleware('permission:routes.pre_sales.admin_view')->name('global-operations.index');
             Route::post('/global-operations/prepare', [RouteGlobalOperationsController::class, 'prepare'])

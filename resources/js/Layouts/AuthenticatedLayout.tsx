@@ -100,7 +100,6 @@ export default function Authenticated({
         hasModule('routes') && can('routes.work') ? { label: 'Mis rutas', href: route('routes.mobile.zones'), active: route().current('routes.mobile.*') } : null,
         hasModule('routes') && can('routes.manage') ? { label: 'Rutas', href: route('routes.zones.index'), active: route().current('routes.zones.*') } : null,
         hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Operación de rutas', href: route('routes.global-operations.index'), active: route().current('routes.global-operations.*') } : null,
-        hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Configuración de rutas', href: route('routes.branch-collection-settings.index'), active: route().current('routes.branch-collection-settings.*') } : null,
         hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Jornadas cerradas', href: route('routes.work-days.closed'), active: route().current('routes.work-days.*') } : null,
         hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Preparaciones', href: route('routes.preparation-batches.index'), active: route().current('routes.preparation-batches.*') } : null,
         hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Lotes de comprobantes', href: route('routes.delivery-batches.index'), active: route().current('routes.delivery-batches.*') } : null,
