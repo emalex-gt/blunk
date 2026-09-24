@@ -135,13 +135,36 @@ class RoutePostConversionCollectionHttpTest extends TestCase
                 ->where('canRegisterCollection', false));
     }
 
+    public function test_immediate_paid_converted_pre_sale_detail_exposes_a_sale_without_post_conversion_collection_context(): void
+    {
+        [$business, $branch, $seller, $entry, $sale] = $this->entry('pre_seller', null, null, 'immediate_paid');
+        $admin = $this->user($business, $branch, 'admin');
+
+        $sale->update([
+            'payment_status' => 'paid',
+            'amount_paid' => '123.47',
+            'payment_method' => 'cash',
+        ]);
+
+        $this->as($admin, $business)->get(route('routes.pre-sales.show', $entry->pre_sale_id))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/PreSales/Show')
+                ->where('preSale.converted_sale.id', $sale->id)
+                ->where('preSale.converted_sale.payment_status', 'paid')
+                ->where('preSale.converted_sale.amount_paid', 123.47)
+                ->where('preSale.converted_sale.payment_method', 'cash')
+                ->where('preSale.fel.status', 'not_requested')
+                ->where('postConversionCollection', null));
+    }
+
     private function as(User $user, Business $business)
     {
         return $this->withSession(['active_business_id' => $business->id])->actingAs($user);
     }
 
     /** @return array{Business, \App\Models\Branch, User, RouteDeliveryBatchPreSale, Sale} */
-    private function entry(string $role, ?Business $business = null, ?\App\Models\Branch $branch = null): array
+    private function entry(string $role, ?Business $business = null, ?\App\Models\Branch $branch = null, string $workflow = 'per_order_collection'): array
     {
         if (! $business) {
             $business = Business::query()->create(['name' => 'Post HTTP '.uniqid(), 'slug' => 'post-http-'.uniqid(), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
@@ -156,7 +179,7 @@ class RoutePostConversionCollectionHttpTest extends TestCase
         $preSale = PreSale::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_work_day_id' => $workDay->id, 'route_zone_id' => $zone->id, 'customer_id' => $customer->id, 'seller_id' => $seller->id, 'status' => PreSale::STATUS_CONVERTED, 'subtotal' => 123.47, 'discount_total' => 0, 'total' => 123.47, 'payment_method' => 'cash', 'agreed_payment_method' => 'cash', 'converted_at' => now(), 'converted_by' => $seller->id]);
         $sale = Sale::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'customer_id' => $customer->id, 'total' => 123.47, 'payment_status' => 'unpaid', 'amount_paid' => 0, 'credit_balance' => 0, 'is_credit_sale' => false, 'document_type' => 'receipt', 'created_by' => $seller->id]);
         $preSale->update(['converted_sale_id' => $sale->id]);
-        $batch = RouteDeliveryBatch::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_work_day_id' => $workDay->id, 'route_zone_id' => $zone->id, 'delivered_by' => $seller->id, 'status' => 'completed', 'stock_deduction_timing' => 'invoice', 'invoicing_mode' => 'manual', 'fel_automation_enabled' => false, 'delivery_tracking_snapshot' => 'external', 'collection_responsibility_snapshot' => 'pre_seller', 'collection_workflow_mode_snapshot' => 'per_order_collection', 'allowed_payment_methods_snapshot' => ['cash', 'transfer'], 'primary_payment_method_snapshot' => 'cash', 'operation_settings_snapshotted_at' => now(), 'delivered_at' => now(), 'total_pre_sales' => 1, 'total_items' => 0, 'total_amount' => 123.47]);
+        $batch = RouteDeliveryBatch::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_work_day_id' => $workDay->id, 'route_zone_id' => $zone->id, 'delivered_by' => $seller->id, 'status' => 'completed', 'stock_deduction_timing' => 'invoice', 'invoicing_mode' => 'manual', 'fel_automation_enabled' => false, 'delivery_tracking_snapshot' => 'external', 'collection_responsibility_snapshot' => 'pre_seller', 'collection_workflow_mode_snapshot' => $workflow, 'allowed_payment_methods_snapshot' => $workflow === 'immediate_paid' ? ['cash'] : ['cash', 'transfer'], 'primary_payment_method_snapshot' => 'cash', 'operation_settings_snapshotted_at' => now(), 'delivered_at' => now(), 'total_pre_sales' => 1, 'total_items' => 0, 'total_amount' => 123.47]);
         $entry = RouteDeliveryBatchPreSale::query()->create(['route_delivery_batch_id' => $batch->id, 'pre_sale_id' => $preSale->id, 'sale_id' => $sale->id, 'status' => 'delivered', 'payment_method' => 'cash', 'agreed_payment_method_snapshot' => 'cash', 'fel_dispatch_status' => 'not_requested']);
 
         return [$business, $branch, $seller, $entry, $sale];

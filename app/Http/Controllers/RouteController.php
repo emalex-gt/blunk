@@ -620,7 +620,7 @@ class RouteController extends Controller
             'processingUser:id,name',
             'pickedBy:id,name',
             'convertedBy:id,name',
-            'convertedSale:id,business_id,business_number,document_type,total,certification_status,fel_uuid,electronic_document_id',
+            'convertedSale:id,business_id,business_number,document_type,total,payment_status,amount_paid,payment_method,certification_status,fel_uuid,electronic_document_id',
             'convertedSale.electronicDocument:id,sale_id,status,error_message,uuid,certification_date',
             'customer:id,name,commercial_name,contact_name,doc_number,address,phone',
             'workDay:id,work_date,status,started_at,closed_at',
@@ -670,6 +670,15 @@ class RouteController extends Controller
             'recorded_by' => $activeCollection->recordedBy, 'collected_at' => $activeCollection->collected_at?->toIso8601String(),
             'custody_status' => $activeCollection->custody_status,
         ] : null;
+        $convertedSalePayload = $preSale->convertedSale ? [
+            'id' => $preSale->convertedSale->id,
+            'business_number' => $preSale->convertedSale->business_number,
+            'document_type' => $preSale->convertedSale->document_type,
+            'total' => (float) $preSale->convertedSale->total,
+            'payment_status' => $preSale->convertedSale->payment_status,
+            'amount_paid' => (float) $preSale->convertedSale->amount_paid,
+            'payment_method' => $preSale->convertedSale->payment_method,
+        ] : null;
 
         return Inertia::render('Routes/PreSales/Show', [
             'preSale' => [
@@ -683,7 +692,7 @@ class RouteController extends Controller
                 'picked_by' => $preSale->pickedBy,
                 'converted_at' => $preSale->converted_at?->toIso8601String(),
                 'converted_by' => $preSale->convertedBy,
-                'converted_sale' => $preSale->convertedSale,
+                'converted_sale' => $convertedSalePayload,
                 'fel' => $this->routePreSaleFelState($preSale->convertedSale),
                 'fel_eligibility' => $felEligibility,
                 'fel_availability' => $felAvailability,
