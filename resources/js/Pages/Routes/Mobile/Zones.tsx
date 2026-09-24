@@ -1,10 +1,10 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, useForm, usePage } from '@inertiajs/react';
+import { Head, Link, useForm, usePage } from '@inertiajs/react';
 import { useState } from 'react';
 
 type Zone = { id: number; name: string; description: string | null; active_customers_count: number };
 
-export default function Zones({ zones, branch, routeCash }: { zones: Zone[]; branch: { id: number; name: string }; routeCash: { is_open: boolean } }) {
+export default function Zones({ zones, branch, routeCash, canPostConversionCollect }: { zones: Zone[]; branch: { id: number; name: string }; routeCash: { is_open: boolean }; canPostConversionCollect: boolean }) {
     const form = useForm({});
     const [openingZoneId, setOpeningZoneId] = useState<number | null>(null);
     const errors = usePage().props.errors as Record<string, string | undefined>;
@@ -29,6 +29,11 @@ export default function Zones({ zones, branch, routeCash }: { zones: Zone[]; bra
                     <h1 className="text-2xl font-semibold text-slate-950">Mis rutas</h1>
                     <p className="text-sm text-slate-500">Sucursal: {branch.name}</p>
                 </div>
+                {canPostConversionCollect && (
+                    <Link href={route('routes.mobile.post-conversion-collections.index')} className="block rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-center text-sm font-semibold text-emerald-800">
+                        Cobros pendientes
+                    </Link>
+                )}
                 {!routeCash.is_open && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
                         No hay caja abierta para operar rutas y registrar comprobantes.

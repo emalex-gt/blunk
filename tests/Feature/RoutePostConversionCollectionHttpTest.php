@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Business;
+use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\PreSale;
 use App\Models\RouteDeliveryBatch;
@@ -14,6 +15,7 @@ use App\Models\TenantModule;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Services\Routes\RouteBranchCollectionSettingsService;
+use App\Services\Routes\RoutePostConversionCollectionService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -52,6 +54,94 @@ class RoutePostConversionCollectionHttpTest extends TestCase
                 ->where('payment_policy.allowed_methods', ['cash', 'transfer']));
 
         $this->assertNotSame($entry->id, $otherEntry->id);
+    }
+
+    public function test_general_pending_collections_inbox_keeps_a_closed_work_day_sale_visible_when_another_work_day_is_open(): void
+    {
+        [$business, $branch, $seller, $entry] = $this->entry('pre_seller');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash', 'transfer'],
+            'primary_payment_method' => 'cash',
+        ]);
+
+        $closedWorkDay = $entry->batch->workDay;
+        $this->assertSame('closed', $closedWorkDay->status);
+        $nextZone = RouteZone::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'assigned_user_id' => $seller->id,
+            'name' => 'Zona nueva '.uniqid(),
+            'is_active' => true,
+        ]);
+        RouteWorkDay::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'route_zone_id' => $nextZone->id,
+            'seller_id' => $seller->id,
+            'work_date' => today(),
+            'status' => 'open',
+            'started_at' => now(),
+        ]);
+
+        $this->as($seller, $business)->get(route('routes.mobile.zones'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/Mobile/Zones')
+                ->where('canPostConversionCollect', true));
+
+        $this->as($seller, $business)->get(route('routes.mobile.post-conversion-collections.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('collections', 1)
+                ->where('collections.0.entry_id', $entry->id));
+    }
+
+    public function test_general_pending_collections_access_is_hidden_without_the_collection_permission(): void
+    {
+        [$business, $branch] = $this->entry('pre_seller');
+        $user = $this->user($business, $branch, 'cashier');
+        Permissions::assignDirectPermissions($user, [Permissions::ROUTES_WORK]);
+
+        $this->as($user->fresh(), $business)->get(route('routes.mobile.zones'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/Mobile/Zones')
+                ->where('canPostConversionCollect', false));
+    }
+
+    public function test_general_pending_collections_inbox_excludes_other_sellers_branches_paid_sales_active_collections_and_delivery_agent_entries(): void
+    {
+        [$business, $branch, $seller, $eligible] = $this->entry('pre_seller');
+        [, , , $otherSellerEntry] = $this->entry('pre_seller', $business, $branch);
+        [, , , $paidEntry, $paidSale] = $this->entry('pre_seller', $business, $branch, 'per_order_collection', $seller);
+        [, , , $capturedEntry] = $this->entry('pre_seller', $business, $branch, 'per_order_collection', $seller);
+        [, , , $deliveryAgentEntry] = $this->entry('delivery_agent', $business, $branch, 'per_order_collection', $seller);
+        $otherBranch = Branch::query()->create(['business_id' => $business->id, 'name' => 'Sucursal alterna '.uniqid(), 'code' => 'ALT'.random_int(100, 999), 'is_active' => true]);
+        $otherBranchSeller = $this->user($business, $otherBranch, 'pre_seller');
+
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash', 'transfer'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $paidSale->update(['payment_status' => 'paid', 'amount_paid' => '123.47', 'payment_method' => 'cash']);
+        app(RoutePostConversionCollectionService::class)->collect($capturedEntry, ['payment_method' => 'transfer'], $seller, 'pending-inbox-captured-0001');
+
+        $this->as($seller, $business)->get(route('routes.mobile.post-conversion-collections.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('collections', 1)
+                ->where('collections.0.entry_id', $eligible->id)
+                ->missing('collections.1'));
+
+        $this->as($otherBranchSeller, $business)->get(route('routes.mobile.post-conversion-collections.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->has('collections', 0));
+
+        $this->assertNotSame($eligible->id, $otherSellerEntry->id);
+        $this->assertNotSame($eligible->id, $paidEntry->id);
+        $this->assertNotSame($eligible->id, $deliveryAgentEntry->id);
     }
 
     public function test_seller_collect_endpoint_derives_collector_and_rejects_injected_amount_and_collector(): void
@@ -192,7 +282,7 @@ class RoutePostConversionCollectionHttpTest extends TestCase
     }
 
     /** @return array{Business, \App\Models\Branch, User, RouteDeliveryBatchPreSale, Sale} */
-    private function entry(string $responsibility, ?Business $business = null, ?\App\Models\Branch $branch = null, string $workflow = 'per_order_collection'): array
+    private function entry(string $responsibility, ?Business $business = null, ?\App\Models\Branch $branch = null, string $workflow = 'per_order_collection', ?User $seller = null): array
     {
         if (! $business) {
             $business = Business::query()->create(['name' => 'Post HTTP '.uniqid(), 'slug' => 'post-http-'.uniqid(), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
@@ -200,7 +290,7 @@ class RoutePostConversionCollectionHttpTest extends TestCase
             TenantModule::query()->create(['business_id' => $business->id, 'module' => 'routes', 'is_enabled' => true, 'enabled_at' => now()]);
             $branch = BranchInventory::defaultBranchForBusiness($business);
         }
-        $seller = $this->user($business, $branch, 'pre_seller');
+        $seller ??= $this->user($business, $branch, 'pre_seller');
         $zone = RouteZone::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'assigned_user_id' => $seller->id, 'name' => 'Zona '.uniqid(), 'is_active' => true]);
         $workDay = RouteWorkDay::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_zone_id' => $zone->id, 'seller_id' => $seller->id, 'work_date' => today(), 'status' => 'closed', 'started_at' => now()->subHour(), 'closed_at' => now()]);
         $customer = Customer::query()->create(['business_id' => $business->id, 'name' => 'Cliente '.uniqid(), 'country' => 'GT']);

@@ -930,6 +930,7 @@ class RouteController extends Controller
         return Inertia::render('Routes/Mobile/Zones', [
             'branch' => ['id' => $branch->id, 'name' => $branch->name],
             'routeCash' => app(RouteCashOperationGuard::class)->status(currentBusinessId(), (int) $branch->id),
+            'canPostConversionCollect' => Permissions::userHas($request->user(), Permissions::ROUTES_POST_CONVERSION_COLLECTIONS_COLLECT),
             'zones' => RouteZone::query()
                 ->where('business_id', currentBusinessId())
                 ->where('branch_id', $branch->id)
