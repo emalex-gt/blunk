@@ -20,6 +20,7 @@ class RoutePreparationBatchService
     public function __construct(
         private readonly RoutePreSalePreparationService $preparation,
         private readonly RouteCashOperationGuard $cash,
+        private readonly RoutePreparationDocumentSnapshot $documentSnapshot,
     ) {
     }
 
@@ -115,12 +116,18 @@ class RoutePreparationBatchService
                         $totalAmount += $result['total_amount'];
                     }
 
-                    $batch->update([
-                        'status' => RoutePreparationBatch::STATUS_COMPLETED,
-                        'prepared_at' => now(),
+                    $preparedAt = now();
+                    $batch->fill([
+                        'prepared_at' => $preparedAt,
                         'total_pre_sales' => $preSales->count(),
                         'total_items' => $totalItems,
                         'total_amount' => round($totalAmount, 2),
+                    ]);
+                    $batch->update([
+                        ...$batch->only(['prepared_at', 'total_pre_sales', 'total_items', 'total_amount']),
+                        'document_snapshot' => $this->documentSnapshot->capture($batch, $preparedAt),
+                        'document_snapshot_version' => RoutePreparationDocumentSnapshot::VERSION,
+                        'status' => RoutePreparationBatch::STATUS_COMPLETED,
                     ]);
 
                     return [

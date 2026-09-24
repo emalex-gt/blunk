@@ -11,6 +11,7 @@ use App\Models\Product;
 use App\Models\ProductBranchStock;
 use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
+use App\Models\Sale;
 use App\Models\StockMovement;
 use App\Models\StockReservation;
 use App\Models\TenantSetting;
@@ -45,6 +46,8 @@ class RoutePreparationBatchTest extends TestCase
         $this->assertTrue(Schema::hasColumn('pre_sale_items', 'stock_deducted_quantity'));
         $this->assertTrue(Schema::hasTable('route_preparation_batches'));
         $this->assertTrue(Schema::hasTable('route_preparation_batch_pre_sales'));
+        $this->assertTrue(Schema::hasColumn('route_preparation_batches', 'document_snapshot'));
+        $this->assertTrue(Schema::hasColumn('route_preparation_batches', 'document_snapshot_version'));
 
         $business = Business::query()->create([
             'name' => 'Preparation defaults '.uniqid(),
@@ -147,6 +150,56 @@ class RoutePreparationBatchTest extends TestCase
         $this->assertSame(PreSale::STATUS_PICKED, $second->refresh()->status);
     }
 
+    public function test_preparation_documents_use_the_immutable_batch_snapshot_after_live_data_changes(): void
+    {
+        [$business, , $user, $preSale, $item, $product] = $this->preSale('invoice');
+        $this->actingAs($user);
+        $preSale->customer->update(['name' => 'Cliente histórico', 'phone' => '11111111', 'address' => 'Dirección histórica']);
+        $product->update(['name' => 'Producto histórico', 'code' => 'HIST-CODIGO']);
+
+        $result = app(RoutePreparationBatchService::class)->prepareAll($preSale->workDay, $user, 'route-preparation-document-snapshot-key');
+        $batch = \App\Models\RoutePreparationBatch::query()->findOrFail($result->resultId);
+
+        $this->assertSame(1, $batch->document_snapshot_version);
+        $this->assertSame('Cliente histórico', $batch->document_snapshot['orders'][0]['customer']['name']);
+        $this->assertSame('Producto histórico', $batch->document_snapshot['orders'][0]['lines'][0]['product']['name']);
+        $this->assertSame('20.00', $batch->document_snapshot['orders'][0]['lines'][0]['unit_price']);
+        $this->assertSame('3.0000', $batch->document_snapshot['orders'][0]['lines'][0]['prepared_quantity']);
+
+        $preSale->customer->update(['name' => 'Cliente actualizado', 'phone' => '55555555', 'address' => 'Dirección nueva']);
+        $product->update(['name' => 'Producto actualizado', 'code' => 'NUEVO-CODIGO']);
+        $item->update(['unit_price' => 99, 'discount' => 12, 'picked_quantity' => 1]);
+        $user->update(['name' => 'Vendedor actualizado']);
+        $sale = Sale::query()->create([
+            'business_id' => $business->id, 'branch_id' => $preSale->branch_id, 'customer_id' => $preSale->customer_id,
+            'total' => '60.00', 'payment_status' => 'paid', 'amount_paid' => '60.00', 'credit_balance' => '0.00',
+            'is_credit_sale' => false, 'payment_method' => 'cash', 'document_type' => 'receipt', 'created_by' => $user->id,
+        ]);
+        $preSale->update(['status' => PreSale::STATUS_CONVERTED, 'converted_sale_id' => $sale->id]);
+
+        $html = view('pdf.route-preparation-batches.receipts', [
+            'batch' => $batch,
+            'document' => app(\App\Services\Routes\RoutePreparationDocuments::class)->document($batch),
+        ])->render();
+        $this->assertStringContainsString('Cliente histórico', $html);
+        $this->assertStringNotContainsString('Cliente actualizado', $html);
+        $this->assertStringContainsString('Producto histórico', $html);
+        $this->assertStringNotContainsString('Producto actualizado', $html);
+        $this->assertStringContainsString('20.00', $html);
+
+        $pdf = $this->get(route('routes.preparation-batches.documents.receipts', $batch))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertSame(1, preg_match('/\\/MediaBox\\s*\\[\\s*0(?:\\.0+)?\\s+0(?:\\.0+)?\\s+([0-9.]+)\\s+([0-9.]+)\\s*\\]/', $pdf, $matches));
+        $this->assertEqualsWithDelta(612.0, (float) $matches[1], 0.1);
+        $this->assertEqualsWithDelta(396.0, (float) $matches[2], 0.1);
+
+        $replay = app(RoutePreparationBatchService::class)->prepareAll($preSale->workDay, $user->fresh(), 'route-preparation-document-snapshot-key');
+        $this->assertTrue($replay->replayed);
+        $this->assertSame($batch->document_snapshot, $batch->fresh()->document_snapshot);
+    }
+
     public function test_prepare_all_route_and_work_day_props_are_limited_to_the_active_branch(): void
     {
         [$business, $branch, $user, $preSale] = $this->preSale('invoice');
@@ -176,6 +229,21 @@ class RoutePreparationBatchTest extends TestCase
                 ->assertOk()
                 ->assertHeader('content-type', 'application/pdf');
         }
+    }
+
+    public function test_legacy_batch_documents_are_explicitly_marked_as_reconstructed(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->preSale('invoice');
+        $batch = \App\Models\RoutePreparationBatch::query()->create([
+            'business_id' => $business->id, 'branch_id' => $branch->id, 'route_work_day_id' => $preSale->route_work_day_id,
+            'route_zone_id' => $preSale->route_zone_id, 'prepared_by' => $user->id, 'prepared_at' => now(),
+            'status' => 'completed', 'stock_deduction_timing' => 'invoice', 'invoicing_mode' => 'manual',
+        ]);
+
+        $document = app(\App\Services\Routes\RoutePreparationDocuments::class)->document($batch);
+
+        $this->assertTrue($document['legacy']);
+        $this->assertStringContainsString('Lote anterior al histórico documental', view('pdf.route-preparation-batches.consolidated', compact('batch', 'document'))->render());
     }
 
     public function test_automatic_all_is_snapshotted_without_creating_sales_or_fel_documents(): void

@@ -5,6 +5,7 @@ h1 { font-size: 17px; margin: 0 0 4px; } h2 { font-size: 12px; margin: 18px 0 8p
 table { width: 100%; border-collapse: collapse; margin-bottom: 14px; } th, td { border: 1px solid #dbe3ef; padding: 6px; } th { background: #f1f5f9; text-align: left; }.right { text-align: right; }
 </style></head><body>
 <h1>Resumen global de productos</h1>
+@if ($document['legacy'] ?? false)<p> Lote anterior al histórico documental. Este documento se reconstruye con datos actuales y puede diferir del original.</p>@endif
 @foreach ($document['sellers'] as $group)
 <section><h2>VENDEDOR: {{ $group['seller']['name'] }}</h2>
 <table><thead><tr><th>Código</th><th>Marca</th><th>Producto</th><th class="right">Cantidad</th></tr></thead><tbody>

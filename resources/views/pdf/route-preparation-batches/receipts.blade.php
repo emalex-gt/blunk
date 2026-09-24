@@ -1,35 +1,7 @@
 <!doctype html>
-<html lang="es">
-<head>
-    <meta charset="utf-8">
-    <style>
-        body { font-family: DejaVu Sans, sans-serif; color: #172033; font-size: 10px; }
-        .receipt { page-break-after: always; } .receipt:last-child { page-break-after: auto; }
-        h1 { font-size: 16px; margin: 0 0 4px; } .muted { color: #64748b; }
-        table { width: 100%; border-collapse: collapse; margin-top: 14px; } th { background: #f1f5f9; text-align: left; }
-        th, td { border: 1px solid #dbe3ef; padding: 6px; } .right { text-align: right; } .total { font-weight: bold; }
-    </style>
-</head>
-<body>
-@foreach ($batch->preSales as $entry)
-    @php($preSale = $entry->preSale)
-    @if ($preSale)
-    <section class="receipt">
-        <h1>{{ $batch->business?->name }}</h1>
-        <div class="muted">Recibo de preparación · Lote #{{ $batch->id }} · Preventa #{{ $preSale->id }}</div>
-        <div class="muted">Ruta: {{ $batch->zone?->name }} · Vendedor: {{ $preSale->seller?->name ?: $batch->workDay?->seller?->name }}</div>
-        <p><strong>Cliente:</strong> {{ $preSale->customer?->commercial_name ?: $preSale->customer?->name ?: '-' }}<br><strong>Dirección:</strong> {{ $preSale->customer?->address ?: '-' }}<br><strong>Observación:</strong> {{ $preSale->notes ?: '-' }}</p>
-        <table>
-            <thead><tr><th>Producto</th><th class="right">Preparado</th><th class="right">Precio</th><th class="right">Total</th></tr></thead>
-            <tbody>
-            @foreach ($preSale->items->filter(fn ($item) => (float) ($item->picked_quantity ?? 0) > 0) as $item)
-                <tr><td>{{ $item->product?->name ?: '-' }}</td><td class="right">{{ number_format($item->picked_quantity, 2) }}</td><td class="right">Q {{ number_format($item->unit_price, 2) }}</td><td class="right">Q {{ number_format(($item->unit_price * $item->picked_quantity) - (($item->discount / max($item->quantity, 1)) * $item->picked_quantity), 2) }}</td></tr>
-            @endforeach
-            </tbody>
-            <tfoot><tr class="total"><td colspan="3" class="right">Total</td><td class="right">Q {{ number_format($entry->total_amount, 2) }}</td></tr></tfoot>
-        </table>
-    </section>
-    @endif
-@endforeach
-</body>
-</html>
+<html lang="es"><head><meta charset="utf-8"><style>
+@page { size: 8.5in 5.5in; margin: 0.35in; } body { font-family: DejaVu Sans, sans-serif; color: #172033; font-size: 9px; }.receipt + .receipt { page-break-before: always; }.receipt { page-break-inside: auto; } h1 { font-size: 15px; margin: 0 0 4px; }.muted { color: #64748b; } table { width: 100%; border-collapse: collapse; margin-top: 12px; } th { background: #f1f5f9; text-align: left; } th, td { border: 1px solid #dbe3ef; padding: 5px; } tr { page-break-inside: avoid; }.right { text-align: right; }.total { font-weight: bold; }.warning { color: #92400e; }
+</style></head><body>@php($snapshot = $document['snapshot'])
+@foreach ($snapshot['orders'] ?? [] as $order)<section class="receipt"><h1>Recibo de preparación</h1><div class="muted">Lote #{{ data_get($snapshot, 'batch.id') }} · Preventa #{{ data_get($order, 'pre_sale_id') }}</div><div class="muted">Ruta: {{ data_get($snapshot, 'batch.zone.name') }} · Vendedor: {{ data_get($order, 'seller.name', '-') }}</div>@if ($document['legacy'])<p class="warning">Documento reconstruido con datos actuales; puede diferir del original.</p>@endif
+<p><strong>Cliente:</strong> {{ data_get($order, 'customer.commercial_name') ?: data_get($order, 'customer.name', '-') }}<br><strong>Dirección:</strong> {{ data_get($order, 'customer.address', '-') }}<br><strong>Observación:</strong> {{ data_get($order, 'notes', '-') }}</p><table><thead><tr><th>Producto</th><th class="right">Preparado</th><th class="right">Precio</th><th class="right">Total</th></tr></thead><tbody>@foreach ($order['lines'] ?? [] as $line)<tr><td>{{ data_get($line, 'product.name', '-') }}</td><td class="right">{{ number_format((float) data_get($line, 'prepared_quantity', 0), 2) }}</td><td class="right">Q {{ number_format((float) data_get($line, 'unit_price', 0), 2) }}</td><td class="right">Q {{ number_format((float) data_get($line, 'line_total', 0), 2) }}</td></tr>@endforeach</tbody><tfoot><tr class="total"><td colspan="3" class="right">Total</td><td class="right">Q {{ number_format((float) data_get($order, 'total_amount', 0), 2) }}</td></tr></tfoot></table></section>@endforeach
+</body></html>

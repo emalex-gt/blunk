@@ -421,6 +421,26 @@ class RouteGlobalOperationsTest extends TestCase
         $this->assertSame(4.0, $document['sellers'][1]['products'][0]['quantity']);
     }
 
+    public function test_global_documents_use_the_child_batch_snapshot_after_live_entities_change(): void
+    {
+        [$business, $branch, $actor, $sellerA, , $workDays] = $this->preparationExecutionFixture();
+        $preSale = $this->preparablePreSale($business, $branch, $workDays[0], $sellerA, '60.00');
+        $preSale->customer->update(['name' => 'Cliente global histórico']);
+        $product = $preSale->items()->firstOrFail()->product;
+        $product->update(['name' => 'Producto global histórico']);
+
+        $batchId = app(RouteGlobalOperationsService::class)->prepareAll($actor, 'global-document-snapshot-0001')['processed'][0]['batch_id'];
+        $preSale->customer->update(['name' => 'Cliente global actualizado']);
+        $product->update(['name' => 'Producto global actualizado']);
+        $sellerA->update(['name' => 'Vendedor global actualizado']);
+
+        $document = app(RouteGlobalPreparationDocuments::class)->forBatches($business->id, $branch->id, [$batchId]);
+
+        $this->assertSame('Cliente global histórico', $document['sellers'][0]['orders'][0]['customer']->name);
+        $this->assertSame('Producto global histórico', $document['sellers'][0]['products'][0]['product']->name);
+        $this->assertNotSame('Vendedor global actualizado', $document['sellers'][0]['seller']['name']);
+    }
+
     public function test_generate_sales_reuses_real_child_delivery_batches_without_duplicate_sales_or_picking_stock(): void
     {
         [$business, $branch, $actor, $sellerA, $sellerB, $workDays] = $this->preparationExecutionFixture();

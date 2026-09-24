@@ -7,6 +7,7 @@ th, td { border: 1px solid #dbe3ef; padding: 6px; vertical-align: top; } th { ba
 .right { text-align: right; } .seller { page-break-inside: avoid; }
 </style></head><body>
 <h1>Preparación global de rutas</h1>
+@if ($document['legacy'] ?? false)<p class="muted">Lote anterior al histórico documental. Este documento se reconstruye con datos actuales y puede diferir del original.</p>@endif
 @foreach ($document['sellers'] as $group)
 <section class="seller">
     <h2>VENDEDOR: {{ $group['seller']['name'] }}</h2>

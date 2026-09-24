@@ -3,62 +3,41 @@
 namespace App\Services\Routes;
 
 use App\Models\RoutePreparationBatch;
-use Illuminate\Support\Collection;
 
 class RoutePreparationDocuments
 {
-    public function batch(RoutePreparationBatch $batch): RoutePreparationBatch
+    public function __construct(private readonly RoutePreparationDocumentSnapshot $snapshots)
     {
-        return $batch->load([
-            'business:id,name,phone,email',
-            'branch:id,name,address,phone',
-            'zone:id,name',
-            'workDay:id,work_date,seller_id',
-            'workDay.seller:id,name',
-            'preparedBy:id,name',
-            'preSales.preSale.customer:id,name,commercial_name,contact_name,phone,address',
-            'preSales.preSale.seller:id,name',
-            'preSales.preSale.items.product:id,name,code,brand_id',
-            'preSales.preSale.items.product.brand:id,name',
-        ]);
     }
 
-    public function customers(RoutePreparationBatch $batch): Collection
+    /** @return array{snapshot:array<string,mixed>,legacy:bool,products:array<int,array<string,mixed>>} */
+    public function document(RoutePreparationBatch $batch): array
     {
-        return $batch->preSales
-            ->map(function ($entry) {
-                $preSale = $entry->preSale;
+        $snapshot = $batch->document_snapshot;
+        $legacy = ! is_array($snapshot) || ($snapshot['version'] ?? null) !== RoutePreparationDocumentSnapshot::VERSION;
 
-                return [
-                    'pre_sale_id' => $preSale?->id,
-                    'customer' => $preSale?->customer,
-                    'total' => (float) ($entry->total_amount ?? $preSale?->total ?? 0),
-                ];
-            })
-            ->sortBy(fn (array $row) => mb_strtolower((string) ($row['customer']?->commercial_name ?: $row['customer']?->name ?: '')))
-            ->values();
+        if ($legacy) {
+            $snapshot = $this->snapshots->capture($batch, $batch->prepared_at ?? $batch->created_at ?? now());
+        }
+
+        return ['snapshot' => $snapshot, 'legacy' => $legacy, 'products' => $this->products($snapshot['orders'] ?? [])];
     }
 
-    public function products(RoutePreparationBatch $batch): Collection
+    /** @param array<int,array<string,mixed>> $orders
+     *  @return array<int,array<string,mixed>> */
+    private function products(array $orders): array
     {
-        return $batch->preSales
-            ->flatMap(fn ($entry) => $entry->preSale?->items ?? collect())
-            ->filter(fn ($item) => (float) ($item->picked_quantity ?? 0) > 0)
-            ->groupBy('product_id')
-            ->map(function (Collection $items) {
-                $first = $items->first();
-                $product = $first->product;
+        $products = [];
+        foreach ($orders as $order) {
+            foreach ($order['lines'] ?? [] as $line) {
+                $product = $line['product'] ?? [];
+                $key = (string) ($product['id'] ?? '').'|'.(string) ($product['code'] ?? '').'|'.(string) ($product['name'] ?? '');
+                $products[$key] ??= ['product' => $product, 'brand' => $product['brand'] ?? null, 'quantity' => '0.0000'];
+                $products[$key]['quantity'] = bcadd($products[$key]['quantity'], (string) ($line['prepared_quantity'] ?? '0'), 4);
+            }
+        }
+        usort($products, fn (array $a, array $b) => [mb_strtolower((string) $a['brand']), mb_strtolower((string) ($a['product']['name'] ?? ''))] <=> [mb_strtolower((string) $b['brand']), mb_strtolower((string) ($b['product']['name'] ?? ''))]);
 
-                return [
-                    'product' => $product,
-                    'brand' => $product?->brand?->name,
-                    'quantity' => round((float) $items->sum(fn ($item) => (float) $item->picked_quantity), 4),
-                ];
-            })
-            ->sortBy([
-                ['brand', 'asc'],
-                [fn (array $row) => mb_strtolower((string) ($row['product']?->name ?? '')), 'asc'],
-            ])
-            ->values();
+        return $products;
     }
 }

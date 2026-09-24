@@ -8,6 +8,7 @@ h1 { font-size: 15px; margin: 0 0 4px; } .muted { color: #64748b; }
 table { width: 100%; border-collapse: collapse; margin-top: 12px; } th { background: #f1f5f9; text-align: left; }
 th, td { border: 1px solid #dbe3ef; padding: 5px; } tr { page-break-inside: avoid; } .right { text-align: right; } .total { font-weight: bold; }
 </style></head><body>
+@if ($document['legacy'] ?? false)<p class="muted">Lote anterior al histórico documental. Este documento se reconstruye con datos actuales y puede diferir del original.</p>@endif
 @foreach ($document['sellers'] as $group)
 @foreach ($group['orders'] as $order)
 <section class="receipt">
@@ -17,7 +18,7 @@ th, td { border: 1px solid #dbe3ef; padding: 5px; } tr { page-break-inside: avoi
     <p><strong>Cliente:</strong> {{ $order['customer']->commercial_name ?? $order['customer']->name ?? '-' }}<br><strong>Dirección:</strong> {{ $order['customer']->address ?? '-' }}</p>
     <table><thead><tr><th>Producto</th><th class="right">Preparado</th><th class="right">Precio</th><th class="right">Total</th></tr></thead><tbody>
     @foreach ($order['items'] ?? [] as $item)
-        <tr><td>{{ $item->product->name ?? '-' }}</td><td class="right">{{ number_format($item->picked_quantity, 2) }}</td><td class="right">Q {{ number_format($item->unit_price, 2) }}</td><td class="right">Q {{ number_format(($item->unit_price * $item->picked_quantity) - (($item->discount / max($item->quantity, 1)) * $item->picked_quantity), 2) }}</td></tr>
+        <tr><td>{{ $item->product->name ?? '-' }}</td><td class="right">{{ number_format($item->picked_quantity, 2) }}</td><td class="right">Q {{ number_format($item->unit_price, 2) }}</td><td class="right">Q {{ number_format($item->line_total ?? (($item->unit_price * $item->picked_quantity) - (($item->discount / max($item->quantity, 1)) * $item->picked_quantity)), 2) }}</td></tr>
     @endforeach
     </tbody><tfoot><tr class="total"><td colspan="3" class="right">Total</td><td class="right">Q {{ number_format($order['total'], 2) }}</td></tr></tfoot></table>
 </section>

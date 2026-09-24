@@ -26,12 +26,16 @@ class RoutePreparationBatch extends Model
         'total_items',
         'total_amount',
         'documents_generated_at',
+        'document_snapshot',
+        'document_snapshot_version',
         'notes',
     ];
 
     protected $casts = [
         'prepared_at' => 'datetime',
         'documents_generated_at' => 'datetime',
+        'document_snapshot' => 'array',
+        'document_snapshot_version' => 'integer',
         'total_amount' => 'decimal:2',
     ];
 

@@ -82,35 +82,33 @@ class RoutePreparationBatchController extends Controller
     public function consolidated(Request $request, RoutePreparationBatch $batch, RoutePreparationDocuments $documents)
     {
         $this->authorizeBatch($request, $batch);
-        $batch = $documents->batch($batch);
         $batch->update(['documents_generated_at' => now()]);
 
         return Pdf::loadView('pdf.route-preparation-batches.consolidated', [
             'batch' => $batch,
-            'customers' => $documents->customers($batch),
+            'document' => $documents->document($batch),
         ])->setPaper('letter')->download("preparacion-lote-{$batch->id}-consolidado.pdf");
     }
 
     public function receipts(Request $request, RoutePreparationBatch $batch, RoutePreparationDocuments $documents)
     {
         $this->authorizeBatch($request, $batch);
-        $batch = $documents->batch($batch);
         $batch->update(['documents_generated_at' => now()]);
 
         return Pdf::loadView('pdf.route-preparation-batches.receipts', [
             'batch' => $batch,
-        ])->setPaper('letter')->download("preparacion-lote-{$batch->id}-recibos.pdf");
+            'document' => $documents->document($batch),
+        ])->setPaper([0, 0, 612, 396])->download("preparacion-lote-{$batch->id}-recibos.pdf");
     }
 
     public function products(Request $request, RoutePreparationBatch $batch, RoutePreparationDocuments $documents)
     {
         $this->authorizeBatch($request, $batch);
-        $batch = $documents->batch($batch);
         $batch->update(['documents_generated_at' => now()]);
 
         return Pdf::loadView('pdf.route-preparation-batches.products', [
             'batch' => $batch,
-            'products' => $documents->products($batch),
+            'document' => $documents->document($batch),
         ])->setPaper('letter')->download("preparacion-lote-{$batch->id}-productos.pdf");
     }
 
@@ -140,6 +138,7 @@ class RoutePreparationBatchController extends Controller
             'total_items' => $batch->total_items,
             'total_amount' => (float) $batch->total_amount,
             'documents_generated_at' => $batch->documents_generated_at?->toIso8601String(),
+            'has_document_snapshot' => is_array($batch->document_snapshot) && $batch->document_snapshot_version === 1,
             'branch' => $batch->branch,
             'zone' => $batch->zone,
             'prepared_by' => $batch->preparedBy,
