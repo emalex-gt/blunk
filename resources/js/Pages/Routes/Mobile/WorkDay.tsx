@@ -49,6 +49,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
     const [closeKey, setCloseKey] = useState(() => makeOperationKey('route-work-day-close'));
     const closeSubmitLockedRef = useRef(false);
     const closeForm = useForm({ idempotency_key: closeKey });
+    const closeErrors = closeForm.errors as Record<string, string>;
     const [noSaleVisit, setNoSaleVisit] = useState<Visit | null>(null);
     const [noSaleKey, setNoSaleKey] = useState(() => makeOperationKey('route-no-sale'));
     const noSaleSubmitLockedRef = useRef(false);
@@ -352,6 +353,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                 </div>
                 <div className="fixed inset-x-0 bottom-0 border-t border-slate-200 bg-white p-4">
                     <div className="mx-auto max-w-5xl">
+                        {closeErrors.work_day && <p className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{closeErrors.work_day}</p>}
                         <button
                             type="button"
                             disabled={closeForm.processing}
@@ -365,9 +367,9 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
             </div>
             <ConfirmDialog
                 open={showCloseConfirm}
-                title="¿Finalizar la ruta?"
-                message="Al finalizar la ruta, las preventas quedarán enviadas y ya no se podrán editar. ¿Deseas continuar?"
-                confirmLabel="Sí, finalizar ruta"
+                title="¿Cerrar la jornada?"
+                message="Antes de cerrar, registra una preventa o marca sin venta cada visita. Las preventas quedarán enviadas y ya no se podrán editar."
+                confirmLabel="Sí, cerrar jornada"
                 processing={closeForm.processing}
                 onCancel={() => setShowCloseConfirm(false)}
                 onConfirm={closeWorkDay}

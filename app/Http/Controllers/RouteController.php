@@ -7,6 +7,7 @@ use App\Models\Business;
 use App\Models\Customer;
 use App\Models\PreSale;
 use App\Models\Product;
+use App\Models\RouteDeliveryBatchPreSale;
 use App\Models\RouteVisit;
 use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
@@ -653,8 +654,30 @@ class RouteController extends Controller
         $felEligibility = app(RoutePreSaleFelEligibilityService::class)->evaluate($preSale);
         $felAvailability = app(RoutePreSaleFelAvailabilityService::class)->evaluate($business, $preSale->branch);
         $routeCash = app(RouteCashOperationGuard::class)->status((int) $preSale->business_id, (int) $preSale->branch_id);
-        $collectionResponsibility = $tenantSettings?->route_collection_responsibility === 'delivery_agent' ? 'delivery_agent' : 'pre_seller';
+        $liveCollectionResponsibility = $tenantSettings?->route_collection_responsibility === 'delivery_agent' ? 'delivery_agent' : 'pre_seller';
+        $historicalBatchEntry = $preSale->converted_sale_id
+            ? RouteDeliveryBatchPreSale::query()
+                ->where('pre_sale_id', $preSale->id)
+                ->where('sale_id', $preSale->converted_sale_id)
+                ->whereHas('batch', fn ($query) => $query
+                    ->where('business_id', $preSale->business_id)
+                    ->where('branch_id', $preSale->branch_id))
+                ->with('batch:id,business_id,branch_id,collection_workflow_mode_snapshot,collection_responsibility_snapshot')
+                ->first()
+            : null;
+        $historicalWorkflow = $historicalBatchEntry?->batch?->collection_workflow_mode_snapshot;
+        $collectionResponsibility = $historicalBatchEntry?->batch?->collection_responsibility_snapshot ?? $liveCollectionResponsibility;
+        $collectionMessage = match (true) {
+            $historicalWorkflow === 'per_order_collection' && $collectionResponsibility === 'pre_seller' => 'Pendiente de cobro por el prevendedor.',
+            $historicalWorkflow === 'per_order_collection' && $collectionResponsibility === 'delivery_agent' => 'El cobro se registrará durante la entrega.',
+            $historicalWorkflow === 'immediate_paid' => null,
+            $collectionResponsibility === 'delivery_agent' => 'El cobro se registrará durante la entrega.',
+            default => null,
+        };
         $activeCollection = $preSale->collections->first();
+        if ($activeCollection) {
+            $collectionMessage = null;
+        }
         $actor = request()->user();
         $canOverrideCollection = Permissions::userHas($actor, Permissions::ROUTES_COLLECTIONS_OVERRIDE);
         $requiresCollectionOverride = (int) $preSale->seller_id !== (int) $actor->id;
@@ -703,6 +726,7 @@ class RouteController extends Controller
                 'payment_method' => $preSale->payment_method,
                 'agreed_payment_method' => $preSale->agreed_payment_method,
                 'collection_responsibility' => $collectionResponsibility,
+                'collection_message' => $collectionMessage,
                 'collection_status' => $collectionStatus,
                 'collection' => $collectionPayload,
                 'subtotal' => (float) $preSale->subtotal,
@@ -753,7 +777,7 @@ class RouteController extends Controller
             'collectionStatus' => $collectionStatus,
             'activeCollection' => $collectionPayload,
             'custodyStatus' => $collectionPayload['custody_status'] ?? null,
-            'deliveryAgentCollectionMessage' => $collectionResponsibility === 'delivery_agent' ? 'El cobro se registrará durante la entrega.' : null,
+            'deliveryAgentCollectionMessage' => $collectionMessage,
             'collectionCollectors' => $canOverrideCollection
                 ? User::query()->where('business_id', $preSale->business_id)->where('is_active', true)->orderBy('name')->get(['id', 'name'])
                 : [],
@@ -1702,6 +1726,18 @@ class RouteController extends Controller
                         ->where('route_work_day_id', $lockedWorkDay->id)
                         ->whereHas('preSale', fn ($query) => $query->whereIn('status', ['draft', 'submitted']))
                         ->update(['status' => 'with_pre_sale', 'finished_at' => now()]);
+
+                    $hasUnresolvedVisits = RouteVisit::query()
+                        ->where('business_id', currentBusinessId())
+                        ->where('route_work_day_id', $lockedWorkDay->id)
+                        ->whereNotIn('status', ['with_pre_sale', 'without_sale'])
+                        ->exists();
+
+                    if ($hasUnresolvedVisits) {
+                        throw ValidationException::withMessages([
+                            'work_day' => 'Debes registrar una preventa o marcar sin venta cada visita antes de cerrar la jornada.',
+                        ]);
+                    }
 
                     $lockedWorkDay->update([
                         'status' => 'closed',

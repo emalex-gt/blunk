@@ -468,6 +468,15 @@ class RoutesPreSalesTest extends TestCase
 
         $this->assertSame(1, RouteWorkDay::query()->where('route_zone_id', $zone->id)->count());
 
+        $visit = RouteVisit::query()->where('route_work_day_id', $firstWorkDay->id)->sole();
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.without-sale', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
+                'no_sale_reason' => 'Cliente surtido',
+                'no_sale_note' => 'No necesitaba producto hoy.',
+            ])
+            ->assertSessionHasNoErrors();
+
         $this->actingAs($seller)
             ->post(route('routes.mobile.work-days.close', $firstWorkDay), ['idempotency_key' => 'test-route-close-'.str_replace('.', '-', uniqid('', true))])
             ->assertRedirect(route('routes.mobile.zones'));
@@ -1982,6 +1991,86 @@ class RoutesPreSalesTest extends TestCase
             ->assertRedirect();
 
         $this->assertNotNull($visit->workDay->refresh()->completed_at);
+    }
+
+    public function test_closing_a_work_day_with_pending_visits_is_rejected_without_freezing_the_unresolved_visits(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
+            'payment_method' => 'cash',
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ])->assertSessionHasNoErrors();
+
+        $workDay = $visit->workDay->refresh();
+        foreach (['Pendiente uno', 'Pendiente dos'] as $customerName) {
+            $customer = $this->customer($business, $customerName);
+            RouteVisit::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'route_work_day_id' => $workDay->id,
+                'route_zone_id' => $workDay->route_zone_id,
+                'customer_id' => $customer->id,
+                'seller_id' => $seller->id,
+                'status' => 'pending',
+            ]);
+        }
+
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $workDay), [
+            'idempotency_key' => 'test-route-close-'.str_replace('.', '-', uniqid('', true)),
+        ])->assertSessionHasErrors('work_day');
+
+        $this->assertSame('open', $workDay->refresh()->status);
+        $this->assertNull($workDay->closed_at);
+        $this->assertSame(2, RouteVisit::query()->where('route_work_day_id', $workDay->id)->where('status', 'pending')->count());
+    }
+
+    public function test_closing_a_work_day_with_all_visit_outcomes_leaves_it_closed_until_its_pre_sale_is_final(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
+            'payment_method' => 'cash',
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ])->assertSessionHasNoErrors();
+
+        $workDay = $visit->workDay->refresh();
+        foreach (['Sin venta uno', 'Sin venta dos'] as $customerName) {
+            $customer = $this->customer($business, $customerName);
+            RouteVisit::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'route_work_day_id' => $workDay->id,
+                'route_zone_id' => $workDay->route_zone_id,
+                'customer_id' => $customer->id,
+                'seller_id' => $seller->id,
+                'status' => 'without_sale',
+                'no_sale_reason' => 'Cliente surtido',
+                'no_sale_note' => 'No necesitaba producto hoy.',
+                'finished_at' => now(),
+            ]);
+        }
+
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $workDay), [
+            'idempotency_key' => 'test-route-close-'.str_replace('.', '-', uniqid('', true)),
+        ])->assertRedirect(route('routes.mobile.zones'));
+
+        $preSale = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail();
+        $this->assertSame('closed', $workDay->refresh()->status);
+        $this->assertNull($workDay->completed_at);
+        $this->assertSame('submitted', $preSale->status);
+        $this->assertSame(3, RouteVisit::query()->where('route_work_day_id', $workDay->id)->whereIn('status', ['with_pre_sale', 'without_sale'])->count());
+
+        $preSale->update(['status' => PreSale::STATUS_CONVERTED]);
+        app(RouteWorkDayCompletion::class)->refresh($workDay->refresh(), $seller);
+
+        $this->assertNotNull($workDay->refresh()->completed_at);
     }
 
     public function test_route_pre_sale_invoicing_mode_setting_defaults_and_rejects_invalid_values(): void

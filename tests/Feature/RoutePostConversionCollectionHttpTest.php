@@ -135,6 +135,33 @@ class RoutePostConversionCollectionHttpTest extends TestCase
                 ->where('canRegisterCollection', false));
     }
 
+    public function test_converted_pre_sale_collection_copy_uses_the_historical_pre_seller_snapshot(): void
+    {
+        [$business, $branch, , $entry] = $this->entry('pre_seller');
+        $admin = $this->user($business, $branch, 'admin');
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+
+        $this->as($admin, $business)->get(route('routes.pre-sales.show', $entry->pre_sale_id))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('preSale.collection_responsibility', 'pre_seller')
+                ->where('preSale.collection_message', 'Pendiente de cobro por el prevendedor.'));
+
+        $this->assertStringContainsString('preSale.collection_message', file_get_contents(resource_path('js/Pages/Routes/PreSales/Show.tsx')));
+    }
+
+    public function test_converted_pre_sale_collection_copy_uses_the_historical_delivery_agent_snapshot(): void
+    {
+        [$business, $branch, , $entry] = $this->entry('delivery_agent');
+        $admin = $this->user($business, $branch, 'admin');
+
+        $this->as($admin, $business)->get(route('routes.pre-sales.show', $entry->pre_sale_id))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('preSale.collection_responsibility', 'delivery_agent')
+                ->where('preSale.collection_message', 'El cobro se registrará durante la entrega.'));
+    }
+
     public function test_immediate_paid_converted_pre_sale_detail_exposes_a_sale_without_post_conversion_collection_context(): void
     {
         [$business, $branch, $seller, $entry, $sale] = $this->entry('pre_seller', null, null, 'immediate_paid');
@@ -154,6 +181,7 @@ class RoutePostConversionCollectionHttpTest extends TestCase
                 ->where('preSale.converted_sale.payment_status', 'paid')
                 ->where('preSale.converted_sale.amount_paid', 123.47)
                 ->where('preSale.converted_sale.payment_method', 'cash')
+                ->where('preSale.collection_message', null)
                 ->where('preSale.fel.status', 'not_requested')
                 ->where('postConversionCollection', null));
     }
@@ -164,7 +192,7 @@ class RoutePostConversionCollectionHttpTest extends TestCase
     }
 
     /** @return array{Business, \App\Models\Branch, User, RouteDeliveryBatchPreSale, Sale} */
-    private function entry(string $role, ?Business $business = null, ?\App\Models\Branch $branch = null, string $workflow = 'per_order_collection'): array
+    private function entry(string $responsibility, ?Business $business = null, ?\App\Models\Branch $branch = null, string $workflow = 'per_order_collection'): array
     {
         if (! $business) {
             $business = Business::query()->create(['name' => 'Post HTTP '.uniqid(), 'slug' => 'post-http-'.uniqid(), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
@@ -172,14 +200,14 @@ class RoutePostConversionCollectionHttpTest extends TestCase
             TenantModule::query()->create(['business_id' => $business->id, 'module' => 'routes', 'is_enabled' => true, 'enabled_at' => now()]);
             $branch = BranchInventory::defaultBranchForBusiness($business);
         }
-        $seller = $this->user($business, $branch, $role);
+        $seller = $this->user($business, $branch, 'pre_seller');
         $zone = RouteZone::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'assigned_user_id' => $seller->id, 'name' => 'Zona '.uniqid(), 'is_active' => true]);
         $workDay = RouteWorkDay::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_zone_id' => $zone->id, 'seller_id' => $seller->id, 'work_date' => today(), 'status' => 'closed', 'started_at' => now()->subHour(), 'closed_at' => now()]);
         $customer = Customer::query()->create(['business_id' => $business->id, 'name' => 'Cliente '.uniqid(), 'country' => 'GT']);
         $preSale = PreSale::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_work_day_id' => $workDay->id, 'route_zone_id' => $zone->id, 'customer_id' => $customer->id, 'seller_id' => $seller->id, 'status' => PreSale::STATUS_CONVERTED, 'subtotal' => 123.47, 'discount_total' => 0, 'total' => 123.47, 'payment_method' => 'cash', 'agreed_payment_method' => 'cash', 'converted_at' => now(), 'converted_by' => $seller->id]);
         $sale = Sale::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'customer_id' => $customer->id, 'total' => 123.47, 'payment_status' => 'unpaid', 'amount_paid' => 0, 'credit_balance' => 0, 'is_credit_sale' => false, 'document_type' => 'receipt', 'created_by' => $seller->id]);
         $preSale->update(['converted_sale_id' => $sale->id]);
-        $batch = RouteDeliveryBatch::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_work_day_id' => $workDay->id, 'route_zone_id' => $zone->id, 'delivered_by' => $seller->id, 'status' => 'completed', 'stock_deduction_timing' => 'invoice', 'invoicing_mode' => 'manual', 'fel_automation_enabled' => false, 'delivery_tracking_snapshot' => 'external', 'collection_responsibility_snapshot' => 'pre_seller', 'collection_workflow_mode_snapshot' => $workflow, 'allowed_payment_methods_snapshot' => $workflow === 'immediate_paid' ? ['cash'] : ['cash', 'transfer'], 'primary_payment_method_snapshot' => 'cash', 'operation_settings_snapshotted_at' => now(), 'delivered_at' => now(), 'total_pre_sales' => 1, 'total_items' => 0, 'total_amount' => 123.47]);
+        $batch = RouteDeliveryBatch::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_work_day_id' => $workDay->id, 'route_zone_id' => $zone->id, 'delivered_by' => $seller->id, 'status' => 'completed', 'stock_deduction_timing' => 'invoice', 'invoicing_mode' => 'manual', 'fel_automation_enabled' => false, 'delivery_tracking_snapshot' => 'external', 'collection_responsibility_snapshot' => $responsibility, 'collection_workflow_mode_snapshot' => $workflow, 'allowed_payment_methods_snapshot' => $workflow === 'immediate_paid' ? ['cash'] : ['cash', 'transfer'], 'primary_payment_method_snapshot' => 'cash', 'operation_settings_snapshotted_at' => now(), 'delivered_at' => now(), 'total_pre_sales' => 1, 'total_items' => 0, 'total_amount' => 123.47]);
         $entry = RouteDeliveryBatchPreSale::query()->create(['route_delivery_batch_id' => $batch->id, 'pre_sale_id' => $preSale->id, 'sale_id' => $sale->id, 'status' => 'delivered', 'payment_method' => 'cash', 'agreed_payment_method_snapshot' => 'cash', 'fel_dispatch_status' => 'not_requested']);
 
         return [$business, $branch, $seller, $entry, $sale];

@@ -43,13 +43,13 @@ class RouteWorkDayCompletion
             return false;
         }
 
-        $hasPendingVisits = RouteVisit::query()
+        $hasUnresolvedVisits = RouteVisit::query()
             ->where('business_id', $workDay->business_id)
             ->where('route_work_day_id', $workDay->id)
-            ->where('status', 'pending')
+            ->whereNotIn('status', ['with_pre_sale', 'without_sale'])
             ->exists();
 
-        if ($hasPendingVisits) {
+        if ($hasUnresolvedVisits) {
             return false;
         }
 
