@@ -11,6 +11,7 @@ use App\Models\RoutePreSaleCollection;
 use App\Models\TenantSetting;
 use App\Models\TenantModule;
 use App\Models\User;
+use App\Services\Routes\RouteBranchCollectionSettingsService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -130,6 +131,31 @@ class RoutePreSaleCollectionHttpTest extends TestCase
         $this->actingAs($seller)->post(route('routes.pre-sales.collection.store', $preSale), $this->payload($preSale, 'collection-delivery-agent'))
             ->assertSessionHasErrors('collection');
 
+        $this->assertDatabaseCount('route_pre_sale_collections', 0);
+    }
+
+    public function test_direct_pre_sale_collection_cannot_bypass_immediate_paid_or_live_branch_methods(): void
+    {
+        [$business, $branch, $seller, $preSale] = $this->preSale();
+        $this->openCashRegister($business, $branch, $seller);
+        $settings = app(RouteBranchCollectionSettingsService::class);
+        $settings->save($business->id, $branch, [
+            'collection_workflow_mode' => 'immediate_paid',
+            'allowed_payment_methods' => ['transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+
+        $this->actingAs($seller)->post(route('routes.pre-sales.collection.store', $preSale), $this->payload($preSale, 'direct-immediate-block-0001'))
+            ->assertSessionHasErrors('collection');
+        $this->assertDatabaseCount('route_pre_sale_collections', 0);
+
+        $settings->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $this->actingAs($seller)->post(route('routes.pre-sales.collection.store', $preSale), $this->payload($preSale, 'direct-method-block-0001'))
+            ->assertSessionHasErrors('payment_method');
         $this->assertDatabaseCount('route_pre_sale_collections', 0);
     }
 

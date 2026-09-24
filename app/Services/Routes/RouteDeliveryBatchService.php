@@ -99,6 +99,7 @@ class RouteDeliveryBatchService
                         throw ValidationException::withMessages([$firstBlock['reason_code'] => $firstBlock['message']]);
                     }
                     $agreedMethodSnapshots = [];
+                    $collectionsByPreSale = [];
 
                     $eligibilityByPreSale = [];
                     foreach ($preSales as $preSale) {
@@ -107,7 +108,15 @@ class RouteDeliveryBatchService
                         }
 
                         $agreedMethodSnapshots[$preSale->id] = $preSale->agreed_payment_method;
-                        if (! $policyAware && ! $isImmediatePaid && $collectionResponsibility === 'pre_seller' && ! RoutePreSaleCollection::query()->where('business_id', $businessId)->where('branch_id', $branchId)->where('pre_sale_id', $preSale->id)->whereIn('status', ['captured', 'linked'])->lockForUpdate()->exists()) {
+                        $collections = RoutePreSaleCollection::query()
+                            ->where('business_id', $businessId)->where('branch_id', $branchId)->where('pre_sale_id', $preSale->id)
+                            ->whereIn('status', ['captured', 'linked'])->orderBy('id')->lockForUpdate()->get();
+                        if ($collections->count() > 1 || ($collections->isNotEmpty() && $collections->first()->status !== 'captured')) {
+                            throw ValidationException::withMessages(['collection' => 'La preventa tiene un cobro previo inconsistente.']);
+                        }
+                        $collection = $collections->first();
+                        $collectionsByPreSale[$preSale->id] = $collection;
+                        if (! $policyAware && $collectionResponsibility === 'pre_seller' && ! $collection) {
                             throw ValidationException::withMessages(['collection' => 'Debe registrar el cobro antes de generar el comprobante.']);
                         }
 
@@ -120,7 +129,7 @@ class RouteDeliveryBatchService
 
                     $requiresOpenCashSession = ! $policyAware;
                     $cashSession = null;
-                    if ($isImmediatePaid) {
+                    if ($isImmediatePaid && $preSales->contains(fn (PreSale $preSale) => $collectionsByPreSale[$preSale->id] === null)) {
                         $cashSession = CashRegister::currentOpenSession($businessId, true, $branchId);
                         if (! $cashSession) {
                             throw ValidationException::withMessages([
@@ -154,21 +163,22 @@ class RouteDeliveryBatchService
                     $automaticFelSales = [];
 
                     foreach ($preSales as $preSale) {
-                        $collection = ! $policyAware && ! $isImmediatePaid && $collectionResponsibility === 'pre_seller'
-                            ? RoutePreSaleCollection::query()->where('business_id', $businessId)->where('branch_id', $branchId)->where('pre_sale_id', $preSale->id)->where('status', 'captured')->lockForUpdate()->firstOrFail()
-                            : null;
-                        if ($collection && round((float) $collection->amount, 2) !== round((float) $preSale->total, 2)) {
+                        $collection = $collectionsByPreSale[$preSale->id];
+                        if ($collection && bccomp((string) $collection->amount, (string) $preSale->total, 2) !== 0) {
                             throw ValidationException::withMessages(['collection' => 'El cobro debe coincidir con el total final de la preventa.']);
                         }
                         $receipt = $this->receipts->convertToInternalReceipt($preSale, [
                             'idempotency_key' => 'route-delivery-'.hash('sha256', "{$batch->id}:{$preSale->id}:{$idempotencyKey}"),
-                            'payment_condition' => $isImmediatePaid ? 'paid' : ($isPerOrderCollection || $collectionResponsibility === 'delivery_agent' ? 'unpaid' : 'paid'),
-                            'payment_method' => $isImmediatePaid ? $agreedMethodSnapshots[$preSale->id] : $collection?->payment_method,
-                            'skip_payment_posting' => ! $policyAware && ! $isImmediatePaid && $collectionResponsibility === 'pre_seller',
+                            'payment_condition' => ($collection || $isImmediatePaid) ? 'paid' : ($isPerOrderCollection || $collectionResponsibility === 'delivery_agent' ? 'unpaid' : 'paid'),
+                            'payment_method' => $collection?->payment_method ?? ($isImmediatePaid ? $agreedMethodSnapshots[$preSale->id] : null),
+                            'skip_payment_posting' => $collection !== null,
                             'note' => "Entrega de ruta #{$batch->id}",
                         ], $user, $requiresOpenCashSession, $cashSession);
                         $sale = $preSale->refresh()->convertedSale()->withCount('items')->firstOrFail();
                         if ($collection) {
+                            if ($policyAware && bccomp((string) $collection->amount, (string) $sale->total, 2) !== 0) {
+                                throw ValidationException::withMessages(['collection' => 'El cobro previo no coincide con el total final de la venta preparada.']);
+                            }
                             $sale->payments()->firstOrCreate(
                                 ['route_pre_sale_collection_id' => $collection->id],
                                 ['business_id' => $businessId, 'method' => $collection->payment_method, 'amount' => $sale->total, 'reference' => $collection->reference, 'collected_by' => $collection->collected_by, 'collected_at' => $collection->collected_at, 'cash_register_session_id' => $collection->cash_register_session_id],
@@ -203,7 +213,7 @@ class RouteDeliveryBatchService
                             'pre_sale_id' => $preSale->id,
                             'sale_id' => $sale->id,
                             'status' => 'delivered',
-                            'payment_method' => $isImmediatePaid ? $agreedMethodSnapshots[$preSale->id] : ($collection?->payment_method ?? $preSale->agreed_payment_method),
+                            'payment_method' => $collection?->payment_method ?? ($isImmediatePaid ? $agreedMethodSnapshots[$preSale->id] : $preSale->agreed_payment_method),
                             'agreed_payment_method_snapshot' => $policyAware ? $agreedMethodSnapshots[$preSale->id] : null,
                             'fel_dispatch_status' => $eligibleForAutomaticFel ? 'queued' : 'not_requested',
                             'error_message' => $automaticFelReason,
@@ -280,6 +290,9 @@ class RouteDeliveryBatchService
 
         if ($policy !== null
             && $policy['collection_workflow_mode'] === RouteBranchCollectionSettingsService::WORKFLOW_IMMEDIATE_PAID
+            && $preSales->contains(fn (PreSale $preSale) => ! RoutePreSaleCollection::query()
+                ->where('business_id', $businessId)->where('branch_id', $branchId)
+                ->where('pre_sale_id', $preSale->id)->where('status', 'captured')->exists())
             && ! CashRegister::currentOpenSession($businessId, false, $branchId)) {
             return [[
                 'pre_sale_id' => null,
@@ -302,6 +315,26 @@ class RouteDeliveryBatchService
 
         $blocks = [];
         foreach ($preSales as $preSale) {
+            $priorCollections = RoutePreSaleCollection::query()
+                ->where('business_id', $preSale->business_id)->where('branch_id', $preSale->branch_id)
+                ->where('pre_sale_id', $preSale->id)->whereIn('status', ['captured', 'linked'])->get();
+            if ($priorCollections->count() > 1 || ($priorCollections->isNotEmpty() && $priorCollections->first()->status !== 'captured')) {
+                $blocks[] = [
+                    'pre_sale_id' => $preSale->id,
+                    'reason_code' => 'pre_sale_collection_invalid',
+                    'message' => 'La preventa tiene un cobro previo inconsistente.',
+                ];
+                continue;
+            }
+            $priorCollection = $priorCollections->first();
+            if ($priorCollection && bccomp((string) $priorCollection->amount, (string) $preSale->total, 2) !== 0) {
+                $blocks[] = [
+                    'pre_sale_id' => $preSale->id,
+                    'reason_code' => 'collection_amount_mismatch',
+                    'message' => 'El cobro previo no coincide con el total final de la preventa.',
+                ];
+                continue;
+            }
             if (! filled($preSale->agreed_payment_method)) {
                 $blocks[] = [
                     'pre_sale_id' => $preSale->id,
@@ -311,7 +344,7 @@ class RouteDeliveryBatchService
                 continue;
             }
 
-            if (! in_array($preSale->agreed_payment_method, $policy['allowed_payment_methods'], true)) {
+            if (! $priorCollection && ! in_array($preSale->agreed_payment_method, $policy['allowed_payment_methods'], true)) {
                 $blocks[] = [
                     'pre_sale_id' => $preSale->id,
                     'reason_code' => 'payment_method_not_allowed',

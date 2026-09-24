@@ -8,6 +8,7 @@ use App\Models\Customer;
 use App\Models\PreSale;
 use App\Models\Product;
 use App\Models\RouteDeliveryBatchPreSale;
+use App\Models\RoutePreSaleCollection;
 use App\Models\RouteVisit;
 use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
@@ -33,6 +34,8 @@ use App\Services\Routes\RoutePreSaleFelAvailabilityService;
 use App\Services\Routes\RoutePreSalePaymentMethodPolicy;
 use App\Services\Routes\RouteCashOperationGuard;
 use App\Services\Routes\RoutePostConversionCollectionReader;
+use App\Services\Routes\RouteBranchCollectionSettingsService;
+use App\Services\Routes\RoutePreSaleCollectionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -675,7 +678,7 @@ class RouteController extends Controller
             default => null,
         };
         $activeCollection = $preSale->collections->first();
-        if ($activeCollection) {
+        if ($activeCollection || $preSale->convertedSale?->payment_status === 'paid') {
             $collectionMessage = null;
         }
         $actor = request()->user();
@@ -1070,6 +1073,11 @@ class RouteController extends Controller
             $visit->update(['status' => 'in_progress', 'started_at' => now()]);
         }
 
+        $branchCollectionSetting = app(RouteBranchCollectionSettingsService::class)->forBranch((int) $visit->business_id, (int) $visit->branch_id);
+        $canCollectNow = $branchCollectionSetting?->collection_workflow_mode === RouteBranchCollectionSettingsService::WORKFLOW_PER_ORDER_COLLECTION
+            && TenantSetting::query()->where('business_id', $visit->business_id)->value('route_collection_responsibility') !== 'delivery_agent'
+            && Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_VIEW);
+
         return Inertia::render('Routes/Mobile/Visit', [
             'visit' => $visit->load(['customer:id,name,commercial_name,contact_name,doc_number,address,department,municipality,phone', 'workDay:id,status,work_date', 'zone:id,name']),
             'preSale' => PreSale::query()
@@ -1084,6 +1092,7 @@ class RouteController extends Controller
             'allowManualPrice' => $this->preSaleManualPriceEnabled(currentBusinessId()),
             'routeCash' => app(RouteCashOperationGuard::class)->status((int) $visit->business_id, (int) $visit->branch_id),
             'payment_policy' => $paymentMethodPolicy->forBranch((int) $visit->business_id, (int) $visit->branch_id),
+            'canCollectNow' => $canCollectNow,
         ]);
     }
 
@@ -1145,13 +1154,13 @@ class RouteController extends Controller
     public function savePreSale(Request $request, RouteVisit $visit, StockReservationService $reservations, RoutePreSalePaymentMethodPolicy $paymentMethodPolicy): RedirectResponse
     {
         $this->authorizeSellerVisit($request, $visit);
-        $this->assertVisitEditable($visit);
-        app(RouteCashOperationGuard::class)->requireOpen(currentBusinessId(), (int) $visit->branch_id);
 
         $data = $request->validate([
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'notes' => ['nullable', 'string'],
             'payment_method' => ['nullable', 'in:cash,card,transfer,check'],
+            'collect_now' => ['sometimes', 'boolean'],
+            'collection_payment_method' => ['nullable', 'in:cash,card,transfer,check'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'integer'],
             'items.*.quantity' => ['required', 'numeric', 'gt:0'],
@@ -1177,6 +1186,8 @@ class RouteController extends Controller
                 'data' => $data,
             ],
             function () use ($request, $visit, $data, $reservations, $paymentMethodPolicy) {
+                $this->assertVisitEditable($visit);
+                app(RouteCashOperationGuard::class)->requireOpen(currentBusinessId(), (int) $visit->branch_id);
                 $preSaleId = DB::transaction(function () use ($request, $visit, $data, $reservations, $paymentMethodPolicy) {
             $workDay = RouteWorkDay::query()
                 ->where('business_id', currentBusinessId())
@@ -1188,6 +1199,26 @@ class RouteController extends Controller
                 throw ValidationException::withMessages([
                     'pre_sale' => 'La jornada está cerrada. La preventa ya no se puede editar.',
                 ]);
+            }
+
+            if (PreSale::query()->where('business_id', currentBusinessId())
+                ->where('route_visit_id', $visit->id)
+                ->whereIn('status', [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING, PreSale::STATUS_PICKED, PreSale::STATUS_CONVERTED])
+                ->exists()) {
+                throw ValidationException::withMessages(['pre_sale' => 'La preventa ya fue enviada y no se puede editar.']);
+            }
+
+            $collectNow = (bool) ($data['collect_now'] ?? false);
+            if ($collectNow) {
+                abort_unless(Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_VIEW), 403);
+                $policy = app(RouteBranchCollectionSettingsService::class)->lockValidatedPolicyForExecution((int) currentBusinessId(), (int) $visit->branch_id);
+                $responsibility = TenantSetting::query()->where('business_id', currentBusinessId())->value('route_collection_responsibility');
+                if ($policy === null || $policy['collection_workflow_mode'] !== RouteBranchCollectionSettingsService::WORKFLOW_PER_ORDER_COLLECTION || $responsibility === 'delivery_agent') {
+                    throw ValidationException::withMessages(['collect_now' => 'No está permitido registrar el cobro ahora para esta preventa.']);
+                }
+                if (! in_array($data['collection_payment_method'] ?? null, $policy['allowed_payment_methods'], true)) {
+                    throw ValidationException::withMessages(['collection_payment_method' => 'El método recibido no está permitido para esta sucursal.']);
+                }
             }
 
             $visit = RouteVisit::query()
@@ -1317,7 +1348,17 @@ class RouteController extends Controller
                 'subtotal' => round($subtotal, 2),
                 'discount_total' => round($discountTotal, 2),
                 'total' => round(max(0, $subtotal - $discountTotal), 2),
+                'status' => $collectNow ? PreSale::STATUS_SUBMITTED : PreSale::STATUS_DRAFT,
+                'submitted_at' => $collectNow ? now() : null,
             ]);
+
+            if ($collectNow) {
+                app(RoutePreSaleCollectionService::class)->capture($preSale, [
+                    'amount' => $preSale->total,
+                    'payment_method' => $data['collection_payment_method'],
+                    'idempotency_key' => 'route-pre-sale-collect-now-'.hash('sha256', (string) $data['idempotency_key']),
+                ], $request->user());
+            }
 
             $visit->update([
                 'status' => 'with_pre_sale',
@@ -1337,7 +1378,9 @@ class RouteController extends Controller
             'pre_sale',
         );
 
-        return back()->with('success', 'Preventa guardada y stock reservado.');
+        return back()->with('success', ! empty($data['collect_now'])
+            ? 'Preventa enviada y cobro registrado.'
+            : 'Preventa guardada y stock reservado.');
     }
 
     public function updateVisitCustomer(Request $request, RouteVisit $visit): RedirectResponse
@@ -1402,6 +1445,10 @@ class RouteController extends Controller
                 throw ValidationException::withMessages([
                     'pre_sale' => 'Esta preventa ya no está disponible para cancelar.',
                 ]);
+            }
+
+            if (RoutePreSaleCollection::query()->where('pre_sale_id', $lockedPreSale->id)->whereIn('status', ['captured', 'linked'])->lockForUpdate()->exists()) {
+                throw ValidationException::withMessages(['pre_sale' => 'Esta preventa ya tiene un cobro registrado y no puede cancelarse.']);
             }
 
             $reservations->releasePreSaleReservations($lockedPreSale);
@@ -1477,6 +1524,10 @@ class RouteController extends Controller
                 throw ValidationException::withMessages([
                     'pre_sale' => 'Solo se pueden cancelar preventas enviadas o en preparación.',
                 ]);
+            }
+
+            if (RoutePreSaleCollection::query()->where('pre_sale_id', $lockedPreSale->id)->whereIn('status', ['captured', 'linked'])->lockForUpdate()->exists()) {
+                throw ValidationException::withMessages(['pre_sale' => 'Esta preventa ya tiene un cobro registrado y no puede cancelarse.']);
             }
 
             $reservations->releasePreSaleReservations($lockedPreSale);
@@ -1570,13 +1621,11 @@ class RouteController extends Controller
 
         $data = $request->validate([
             'no_sale_reason' => ['required', 'string', 'in:Tienda cerrada,Cliente surtido,No quiso comprar,Sin presupuesto,Encargado ausente,Pedido para otro día,No encontrado,Otro'],
-            'no_sale_note' => ['required', 'string', 'min:3', 'max:1000'],
+            'no_sale_note' => ['nullable', 'string', 'max:1000'],
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
         ], [
             'no_sale_reason.required' => 'Selecciona un motivo.',
             'no_sale_reason.in' => 'Selecciona un motivo válido.',
-            'no_sale_note.required' => 'Ingresa una observación.',
-            'no_sale_note.min' => 'La observación debe tener al menos 3 caracteres.',
         ]);
 
         $submittedExists = PreSale::query()
@@ -1605,7 +1654,7 @@ class RouteController extends Controller
                 'operation_type' => 'route_visit_without_sale',
                 'visit_id' => $visit->id,
                 'no_sale_reason' => $data['no_sale_reason'],
-                'no_sale_note' => $data['no_sale_note'],
+                'no_sale_note' => $data['no_sale_note'] ?? null,
             ],
             function () use ($visit, $data, $reservations) {
                 DB::transaction(function () use ($visit, $data, $reservations) {
@@ -1665,7 +1714,7 @@ class RouteController extends Controller
             $visit->update([
                 'status' => 'without_sale',
                 'no_sale_reason' => $data['no_sale_reason'],
-                'no_sale_note' => $data['no_sale_note'],
+                'no_sale_note' => $data['no_sale_note'] ?? null,
                 'finished_at' => now(),
             ]);
                 });

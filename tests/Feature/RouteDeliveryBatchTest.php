@@ -14,6 +14,7 @@ use App\Models\Product;
 use App\Models\ProductBranchStock;
 use App\Models\RouteWorkDay;
 use App\Models\RouteDeliveryBatchPreSale;
+use App\Models\RoutePreSaleCollection;
 use App\Models\RouteZone;
 use App\Models\Sale;
 use App\Models\SalePayment;
@@ -29,6 +30,7 @@ use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Routes\RouteDeliveryBatchService;
 use App\Services\Routes\RouteBranchCollectionSettingsService;
 use App\Services\Routes\RoutePreSaleCollectionService;
+use App\Services\Routes\RoutePreSaleReceiptService;
 use App\Jobs\RoutePreSaleAutomaticFelJob;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
@@ -96,6 +98,246 @@ class RouteDeliveryBatchTest extends TestCase
         $this->assertDatabaseCount('route_delivery_collections', 0);
         $this->assertDatabaseCount('cash_movements', 0);
         $this->assertDatabaseCount('customer_account_movements', 0);
+    }
+
+    public function test_per_order_pre_seller_materializes_a_prior_cash_collection_once_without_posting_cash_again(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'transfer');
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'route_collection_responsibility' => 'pre_seller',
+            'route_cash_custody_policy' => 'immediate_branch_register',
+        ]);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash', 'transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+        $this->openEmptyCashRegister($business, $branch, $user);
+        $captured = app(RoutePreSaleCollectionService::class)->capture($preSale, [
+            'amount' => $preSale->total,
+            'payment_method' => 'cash',
+            'idempotency_key' => 'prior-cash-collection-0001',
+        ], $user);
+        $collection = RoutePreSaleCollection::query()->findOrFail($captured->resultId);
+        $this->assertSame(1, CashMovement::query()->count());
+
+        $first = app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'prior-cash-delivery-0001');
+        $replay = app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'prior-cash-delivery-0001');
+        $sale = $preSale->fresh()->convertedSale;
+        $payment = $sale->payments()->sole();
+
+        $this->assertTrue($replay->replayed);
+        $this->assertSame($first->resultId, $replay->resultId);
+        $this->assertSame('paid', $sale->payment_status);
+        $this->assertSame('60.00', $sale->amount_paid);
+        $this->assertSame('cash', $sale->payment_method);
+        $this->assertSame('cash', $payment->method);
+        $this->assertSame($collection->id, (int) $payment->route_pre_sale_collection_id);
+        $this->assertSame('linked', $collection->fresh()->status);
+        $this->assertSame(1, CashMovement::query()->count());
+        $this->assertDatabaseCount('route_post_conversion_collections', 0);
+        $this->assertDatabaseCount('customer_account_movements', 0);
+    }
+
+    public function test_a_previously_captured_collection_survives_a_live_method_and_responsibility_change(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'transfer');
+        $settings = app(RouteBranchCollectionSettingsService::class);
+        $settings->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash', 'transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+        $this->openEmptyCashRegister($business, $branch, $user);
+        app(RoutePreSaleCollectionService::class)->capture($preSale, [
+            'amount' => $preSale->total, 'payment_method' => 'cash', 'idempotency_key' => 'historic-capture-0001',
+        ], $user);
+
+        $settings->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+
+        app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'historic-capture-delivery-0001');
+
+        $sale = $preSale->fresh()->convertedSale;
+        $this->assertSame('paid', $sale->payment_status);
+        $this->assertSame('cash', $sale->payment_method);
+        $this->assertSame(1, $sale->payments()->count());
+        $this->assertSame(0, CashMovement::query()->count());
+    }
+
+    public function test_a_prior_collection_can_convert_after_workflow_switch_without_a_new_cash_session(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'transfer');
+        $settings = app(RouteBranchCollectionSettingsService::class);
+        $settings->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash', 'transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+        $session = $this->openEmptyCashRegister($business, $branch, $user);
+        app(RoutePreSaleCollectionService::class)->capture($preSale, [
+            'amount' => $preSale->total, 'payment_method' => 'transfer', 'idempotency_key' => 'workflow-switch-capture-0001',
+        ], $user);
+        $session->update(['status' => 'closed', 'closed_at' => now()]);
+        $settings->save($business->id, $branch, [
+            'collection_workflow_mode' => 'immediate_paid',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+
+        $this->assertSame([], app(RouteDeliveryBatchService::class)->policyPreflightPreview($preSale->workDay));
+        app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'workflow-switch-delivery-0001');
+
+        $sale = $preSale->fresh()->convertedSale;
+        $this->assertSame('paid', $sale->payment_status);
+        $this->assertSame('transfer', $sale->payments()->sole()->method);
+        $this->assertDatabaseCount('cash_movements', 0);
+    }
+
+    public function test_per_order_pre_seller_without_prior_collection_still_creates_an_unpaid_sale(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'transfer');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+
+        app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'without-prior-collection-0001');
+
+        $sale = $preSale->fresh()->convertedSale;
+        $this->assertSame('unpaid', $sale->payment_status);
+        $this->assertSame('0.00', $sale->amount_paid);
+        $this->assertSame(0, $sale->payments()->count());
+        $this->assertDatabaseCount('route_pre_sale_collections', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+    }
+
+    public function test_held_prior_cash_collection_marks_sale_paid_without_posting_branch_cash(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'transfer');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash', 'transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+        $this->openEmptyCashRegister($business, $branch, $user);
+        $collectionId = app(RoutePreSaleCollectionService::class)->capture($preSale, [
+            'amount' => $preSale->total, 'payment_method' => 'cash', 'idempotency_key' => 'held-cash-prior-0001',
+        ], $user)->resultId;
+        $this->assertSame(0, CashMovement::query()->count());
+
+        app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'held-cash-delivery-0001');
+
+        $sale = $preSale->fresh()->convertedSale;
+        $this->assertSame('paid', $sale->payment_status);
+        $this->assertSame('60.00', $sale->amount_paid);
+        $this->assertSame($collectionId, (int) $sale->payments()->sole()->route_pre_sale_collection_id);
+        $this->assertSame('held_by_collector', RoutePreSaleCollection::query()->findOrFail($collectionId)->custody_status);
+        $this->assertSame(0, CashMovement::query()->count());
+    }
+
+    public function test_prior_collection_with_a_non_cash_method_creates_no_cash_movement(): void
+    {
+        foreach (['card', 'transfer'] as $method) {
+            [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
+            app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+                'collection_workflow_mode' => 'per_order_collection',
+                'allowed_payment_methods' => ['cash', 'card', 'transfer'],
+                'primary_payment_method' => 'cash',
+            ]);
+            $this->openEmptyCashRegister($business, $branch, $user);
+            app(RoutePreSaleCollectionService::class)->capture($preSale, [
+                'amount' => $preSale->total, 'payment_method' => $method, 'idempotency_key' => 'noncash-prior-'.$method,
+            ], $user);
+
+            app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'noncash-delivery-'.$method);
+
+            $sale = $preSale->fresh()->convertedSale;
+            $this->assertSame('paid', $sale->payment_status);
+            $this->assertSame($method, $sale->payments()->sole()->method);
+            $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->count());
+        }
+    }
+
+    public function test_a_prior_collection_with_a_changed_final_sale_total_rolls_back_conversion(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $this->openEmptyCashRegister($business, $branch, $user);
+        $collectionId = app(RoutePreSaleCollectionService::class)->capture($preSale, [
+            'amount' => $preSale->total, 'payment_method' => 'cash', 'idempotency_key' => 'partial-picking-prior-0001',
+        ], $user)->resultId;
+        $preSale->items()->sole()->update(['picked_quantity' => 2]);
+        StockReservation::query()->where('source_id', $preSale->id)->where('source_type', 'pre_sale')->update(['quantity' => 2]);
+
+        try {
+            app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'partial-picking-delivery-0001');
+            $this->fail('A paid pre-sale cannot become a smaller paid Sale.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('collection', $exception->errors(), json_encode($exception->errors()));
+        }
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('sale_payments', 0);
+        $this->assertDatabaseCount('route_delivery_batches', 0);
+        $this->assertSame('captured', RoutePreSaleCollection::query()->findOrFail($collectionId)->status);
+    }
+
+    public function test_policy_preview_blocks_a_prior_collection_that_no_longer_matches_the_pre_sale_total(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $this->openEmptyCashRegister($business, $branch, $user);
+        $collectionId = app(RoutePreSaleCollectionService::class)->capture($preSale, [
+            'amount' => $preSale->total, 'payment_method' => 'cash', 'idempotency_key' => 'preview-mismatch-capture-0001',
+        ], $user)->resultId;
+        RoutePreSaleCollection::query()->whereKey($collectionId)->update(['amount' => '59.00']);
+
+        $blocks = app(RouteDeliveryBatchService::class)->policyPreflightPreview($preSale->workDay);
+        $this->assertSame('collection_amount_mismatch', $blocks[0]['reason_code'] ?? null);
+        $this->assertSame($preSale->id, $blocks[0]['pre_sale_id'] ?? null);
+    }
+
+    public function test_direct_receipt_conversion_cannot_post_a_second_payment_for_an_already_collected_pre_sale(): void
+    {
+        [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'cash');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $this->openEmptyCashRegister($business, $branch, $user);
+        app(RoutePreSaleCollectionService::class)->capture($preSale, [
+            'amount' => $preSale->total, 'payment_method' => 'cash', 'idempotency_key' => 'direct-double-prior-0001',
+        ], $user);
+
+        try {
+            app(RoutePreSaleReceiptService::class)->convertToInternalReceipt($preSale, [
+                'idempotency_key' => 'direct-double-receipt-0001',
+                'payment_condition' => 'paid',
+                'payment_method' => 'cash',
+            ], $user);
+            $this->fail('Direct conversion must not post a second financial effect.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('collection', $exception->errors());
+        }
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('sale_payments', 0);
+        $this->assertSame(1, RoutePreSaleCollection::query()->count());
     }
 
     public function test_immediate_paid_converts_a_pre_seller_cash_pre_sale_without_a_legacy_collection(): void

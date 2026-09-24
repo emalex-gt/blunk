@@ -8,6 +8,7 @@ use App\Models\ElectronicDocument;
 use App\Models\FelReconciliationRequest;
 use App\Models\PreSale;
 use App\Models\PreSaleItem;
+use App\Models\RoutePreSaleCollection;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\StockMovement;
@@ -100,6 +101,17 @@ class RoutePreSaleInvoiceService
                             || $lockedPreSale->converted_at !== null) {
                             throw ValidationException::withMessages([
                                 'pre_sale' => 'Esta preventa ya fue facturada o no está disponible para facturar.',
+                            ]);
+                        }
+
+                        if (! $skipPaymentPosting && RoutePreSaleCollection::query()
+                            ->where('business_id', $lockedPreSale->business_id)
+                            ->where('branch_id', $lockedPreSale->branch_id)
+                            ->where('pre_sale_id', $lockedPreSale->id)
+                            ->whereIn('status', ['captured', 'linked'])
+                            ->lockForUpdate()->exists()) {
+                            throw ValidationException::withMessages([
+                                'collection' => 'Esta preventa ya tiene un cobro previo. Genera la venta desde el lote de rutas para vincularlo sin duplicarlo.',
                             ]);
                         }
 

@@ -53,6 +53,7 @@ export default function Visit({
     allowManualPrice,
     routeCash,
     payment_policy,
+    canCollectNow,
 }: {
     visit: {
         id: number;
@@ -80,6 +81,7 @@ export default function Visit({
     allowManualPrice: boolean;
     routeCash: { is_open: boolean };
     payment_policy: { active: boolean; allowed_methods: ('cash' | 'card' | 'transfer' | 'check')[]; primary_method: 'cash' | 'card' | 'transfer' | 'check' | null };
+    canCollectNow: boolean;
 }) {
     const initialItems = (preSale?.items ?? []).map((item) => ({
         product_id: item.product_id,
@@ -108,10 +110,12 @@ export default function Visit({
     const allowedPaymentOptions = payment_policy.active
         ? paymentOptions.filter(([value]) => payment_policy.allowed_methods.includes(value))
         : paymentOptions;
-    const form = useForm<{ idempotency_key: string; notes: string; payment_method: 'cash' | 'card' | 'transfer' | 'check' | ''; items: Item[] }>({
+    const form = useForm<{ idempotency_key: string; notes: string; payment_method: 'cash' | 'card' | 'transfer' | 'check' | ''; collect_now: boolean; collection_payment_method: 'cash' | 'card' | 'transfer' | 'check' | ''; items: Item[] }>({
         idempotency_key: preSaleKey,
         notes: preSale?.notes ?? '',
         payment_method: initialPaymentMethod,
+        collect_now: false,
+        collection_payment_method: '',
         items: initialItems,
     });
     const customerDisplayName = visit.customer.commercial_name || visit.customer.name || 'cliente';
@@ -244,16 +248,18 @@ export default function Visit({
     };
 
     const requestSavePreSale = () => {
-        const saveMessage = visitIsWithoutSale
+        const saveMessage = form.data.collect_now
+            ? 'Al registrar el cobro, esta preventa quedará enviada y no podrá editarse normalmente. ¿Confirmas el pedido y el cobro?'
+            : visitIsWithoutSale
             ? 'Esta visita está marcada como sin venta. Al guardar la preventa, se quitará ese estado. ¿Deseas continuar?'
             : `¿Guardar la preventa de ${customerDisplayName}?`;
 
         setConfirmation({
             kind: 'save',
-            title: 'Guardar preventa',
+            title: form.data.collect_now ? 'Confirmar pedido y cobrar' : 'Guardar preventa',
             message: saveMessage,
             details: `${form.data.items.length} producto${form.data.items.length === 1 ? '' : 's'} · Total Q ${total.toFixed(2)}`,
-            confirmLabel: 'Sí, guardar',
+            confirmLabel: form.data.collect_now ? 'Sí, confirmar y cobrar' : 'Sí, guardar',
         });
     };
 
@@ -433,6 +439,39 @@ export default function Visit({
                         {existingMethodIsInvalid && <p className="mt-1 text-xs font-semibold text-amber-700">El método acordado actualmente ya no está disponible para esta sucursal. Selecciona una forma de pago válida.</p>}
                         {form.errors.payment_method && <p className="mt-1 text-xs font-semibold text-red-600">{form.errors.payment_method}</p>}
                     </label>
+                    {canCollectNow && canModifyPreSale && (
+                        <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50 p-3">
+                            <label className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                                <input
+                                    type="checkbox"
+                                    checked={form.data.collect_now}
+                                    onChange={(event) => {
+                                        form.setData({
+                                            ...form.data,
+                                            collect_now: event.target.checked,
+                                            collection_payment_method: event.target.checked
+                                                ? (payment_policy.allowed_methods.includes(form.data.payment_method as 'cash' | 'card' | 'transfer' | 'check')
+                                                    ? form.data.payment_method
+                                                    : payment_policy.primary_method ?? '')
+                                                : '',
+                                        });
+                                    }}
+                                />
+                                Registrar cobro ahora
+                            </label>
+                            {form.data.collect_now && (
+                                <label className="mt-3 block text-sm font-medium text-slate-700">
+                                    Método recibido
+                                    <select value={form.data.collection_payment_method} onChange={(event) => form.setData('collection_payment_method', event.target.value as 'cash' | 'card' | 'transfer' | 'check' | '')} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm">
+                                        {allowedPaymentOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+                                    </select>
+                                    {form.errors.collection_payment_method && <p className="mt-1 text-xs font-semibold text-red-600">{form.errors.collection_payment_method}</p>}
+                                    <p className="mt-2 text-xs text-slate-600">Se cobrará el total al confirmar; la preventa quedará enviada.</p>
+                                </label>
+                            )}
+                        </div>
+                    )}
+                    {form.errors.collect_now && <p className="mt-2 text-xs font-semibold text-red-600">{form.errors.collect_now}</p>}
                     {form.data.items.length === 0 && <p className="mt-2 text-sm text-slate-500">Agrega productos para guardar la preventa.</p>}
                     <div className="mt-3 space-y-3">
                         {form.data.items.map((item, index) => (
@@ -498,7 +537,7 @@ export default function Visit({
                             onClick={requestSavePreSale}
                             className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
                         >
-                            Guardar preventa
+                            {form.data.collect_now ? 'Confirmar pedido y cobrar' : 'Guardar preventa'}
                         </button>
                     </div>
                 </div>

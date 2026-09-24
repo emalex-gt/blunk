@@ -22,6 +22,7 @@ use App\Models\ProductBranch;
 use App\Models\ProductBranchStock;
 use App\Models\ProductPrice;
 use App\Models\RouteVisit;
+use App\Models\RoutePreSaleCollection;
 use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
 use App\Models\RouteZoneCustomer;
@@ -35,6 +36,10 @@ use App\Support\BranchInventory;
 use App\Support\Permissions;
 use App\Support\RouteWorkDayCompletion;
 use App\Support\StockAvailability;
+use App\Services\Routes\RouteBranchCollectionSettingsService;
+use App\Services\Routes\RoutePreparationBatchService;
+use App\Services\Routes\RouteDeliveryBatchService;
+use App\Services\Routes\RoutePostConversionCollectionReader;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -1010,7 +1015,7 @@ class RoutesPreSalesTest extends TestCase
         ])->assertSessionHasErrors('pre_sale');
     }
 
-    public function test_without_sale_requires_reason_and_note_and_has_no_financial_or_stock_side_effects(): void
+    public function test_without_sale_requires_reason_and_has_no_financial_or_stock_side_effects(): void
     {
         [$business, , $branch] = $this->tenant(role: 'owner');
         $seller = $this->user($business, $branch, 'pre_seller');
@@ -1019,7 +1024,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.without-sale', $visit), ['idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true))])
-            ->assertSessionHasErrors(['no_sale_reason', 'no_sale_note']);
+            ->assertSessionHasErrors(['no_sale_reason']);
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.visits.without-sale', $visit), [
@@ -1045,6 +1050,280 @@ class RoutesPreSalesTest extends TestCase
             ->where('branch_id', $branch->id)
             ->where('product_id', $product->id)
             ->value('stock'));
+    }
+
+    public function test_without_sale_accepts_an_empty_observation_and_remains_resolved_for_work_day_close(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.without-sale', $visit), [
+            'idempotency_key' => 'without-sale-no-note-0001',
+            'no_sale_reason' => 'Tienda cerrada',
+            'no_sale_note' => '',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame('without_sale', $visit->fresh()->status);
+        $this->assertNull($visit->fresh()->no_sale_note);
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay), [
+            'idempotency_key' => 'without-sale-close-0001',
+        ])->assertSessionHasNoErrors();
+        $this->assertSame('closed', $visit->workDay->fresh()->status);
+        $this->assertNotNull($visit->workDay->fresh()->completed_at);
+    }
+
+    public function test_collect_now_submits_only_the_current_pre_sale_and_blocks_cancellation_of_received_money(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch, salePrice: 123.47);
+        $visit = $this->startedVisit($business, $branch, $seller);
+        $otherDraft = PreSale::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'route_work_day_id' => $visit->route_work_day_id,
+            'route_zone_id' => $visit->route_zone_id,
+            'customer_id' => $this->customer($business, 'Otro cliente')->id,
+            'seller_id' => $seller->id,
+            'status' => PreSale::STATUS_DRAFT,
+        ]);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash', 'transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+        $payload = [
+            'idempotency_key' => 'collect-now-save-0001',
+            'payment_method' => 'transfer',
+            'collect_now' => true,
+            'collection_payment_method' => 'cash',
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ];
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), $payload)
+            ->assertSessionHasNoErrors();
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), $payload)
+            ->assertSessionHasNoErrors();
+
+        $preSale = PreSale::query()->where('route_visit_id', $visit->id)->sole();
+        $collection = RoutePreSaleCollection::query()->where('pre_sale_id', $preSale->id)->sole();
+        $this->assertSame('submitted', $preSale->status);
+        $this->assertSame('open', $visit->workDay->fresh()->status);
+        $this->assertSame('transfer', $preSale->agreed_payment_method);
+        $this->assertSame('cash', $collection->payment_method);
+        $this->assertSame('123.47', $collection->amount);
+        $this->assertSame(PreSale::STATUS_DRAFT, $otherDraft->fresh()->status);
+        $this->assertSame(1, RoutePreSaleCollection::query()->count());
+        $this->assertSame(0, CashMovement::query()->count());
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            ...$payload,
+            'idempotency_key' => 'collect-now-save-new-key-0001',
+        ])->assertSessionHasErrors('pre_sale');
+        $this->assertSame(1, RoutePreSaleCollection::query()->count());
+
+        $admin = $this->user($business, $branch, 'owner');
+        $this->actingAs($admin)->post(route('routes.pre-sales.cancel', $preSale), [
+            'idempotency_key' => 'cancel-collected-0001',
+            'cancellation_reason' => 'Cliente canceló',
+            'cancellation_note' => 'El cliente solicitó cancelar el pedido.',
+        ])->assertSessionHasErrors('pre_sale');
+        $this->assertSame('submitted', $preSale->fresh()->status);
+        $this->assertSame('captured', $collection->fresh()->status);
+    }
+
+    public function test_collect_now_rejects_a_real_method_outside_the_live_branch_policy_without_saving_the_order(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch);
+        $visit = $this->startedVisit($business, $branch, $seller);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'idempotency_key' => 'collect-now-disallowed-0001',
+            'payment_method' => 'transfer',
+            'collect_now' => true,
+            'collection_payment_method' => 'cash',
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ])->assertSessionHasErrors('collection_payment_method');
+
+        $this->assertDatabaseCount('pre_sales', 0);
+        $this->assertDatabaseCount('route_pre_sale_collections', 0);
+    }
+
+    public function test_collect_now_is_rejected_for_immediate_paid_and_delivery_agent(): void
+    {
+        foreach (['immediate_paid', 'delivery_agent'] as $unsupported) {
+            [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+            $product = $this->product($business, $branch);
+            $visit = $this->startedVisit($business, $branch, $seller);
+            app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+                'collection_workflow_mode' => $unsupported === 'immediate_paid' ? 'immediate_paid' : 'per_order_collection',
+                'allowed_payment_methods' => ['cash'],
+                'primary_payment_method' => 'cash',
+            ]);
+            if ($unsupported === 'delivery_agent') {
+                TenantSetting::query()->where('business_id', $business->id)->update(['route_collection_responsibility' => 'delivery_agent']);
+            }
+
+            $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'collect-now-unsupported-'.$unsupported,
+                'payment_method' => 'cash',
+                'collect_now' => true,
+                'collection_payment_method' => 'cash',
+                'items' => [['product_id' => $product->id, 'quantity' => 1]],
+            ])->assertSessionHasErrors('collect_now');
+            $this->assertSame(0, RoutePreSaleCollection::query()->where('business_id', $business->id)->count());
+        }
+    }
+
+    public function test_mobile_visit_exposes_collect_now_only_for_authorized_per_order_pre_seller(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $visit = $this->startedVisit($business, $branch, $seller);
+        $settings = app(RouteBranchCollectionSettingsService::class);
+        $settings->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash', 'transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+
+        $this->actingAs($seller)->get(route('routes.mobile.visits.show', $visit))
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('canCollectNow', true)
+                ->where('payment_policy.allowed_methods', ['cash', 'transfer']));
+
+        $settings->save($business->id, $branch, [
+            'collection_workflow_mode' => 'immediate_paid',
+            'allowed_payment_methods' => ['cash', 'transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+        $this->actingAs($seller)->get(route('routes.mobile.visits.show', $visit))
+            ->assertInertia(fn (Assert $page) => $page->where('canCollectNow', false));
+    }
+
+    public function test_collect_now_capture_failure_rolls_back_the_order_and_same_key_can_retry(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch);
+        $visit = $this->startedVisit($business, $branch, $seller);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+        $payload = [
+            'idempotency_key' => 'collect-now-failure-0001',
+            'payment_method' => 'transfer',
+            'collect_now' => true,
+            'collection_payment_method' => 'transfer',
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ];
+        RoutePreSaleCollection::creating(function (): void {
+            throw new \RuntimeException('Intentional capture failure.');
+        });
+
+        try {
+            $this->withoutExceptionHandling()->actingAs($seller)
+                ->post(route('routes.mobile.visits.pre-sale.store', $visit), $payload);
+            $this->fail('The failed collection should roll back the whole confirmation.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('Intentional capture failure.', $exception->getMessage());
+        } finally {
+            RoutePreSaleCollection::flushEventListeners();
+        }
+
+        $this->assertSame(0, PreSale::query()->where('route_visit_id', $visit->id)->count());
+        $this->assertSame(0, RoutePreSaleCollection::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, StockReservation::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->count());
+
+        $this->withExceptionHandling()->actingAs($seller)
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), $payload)
+            ->assertSessionHasNoErrors();
+        $this->assertSame('submitted', PreSale::query()->where('route_visit_id', $visit->id)->sole()->status);
+        $this->assertSame(1, RoutePreSaleCollection::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_mobile_collect_now_then_prepare_and_generate_sale_links_one_real_payment(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $operator = $this->user($business, $branch, 'owner');
+        $product = $this->product($business, $branch, salePrice: 123.47);
+        $visit = $this->startedVisit($business, $branch, $seller);
+        TenantSetting::query()->where('business_id', $business->id)->update(['route_cash_custody_policy' => 'immediate_branch_register']);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash', 'transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'idempotency_key' => 'collect-now-e2e-save-0001',
+            'payment_method' => 'transfer',
+            'collect_now' => true,
+            'collection_payment_method' => 'cash',
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ])->assertSessionHasNoErrors();
+
+        $preSale = PreSale::query()->where('route_visit_id', $visit->id)->sole();
+        $collection = RoutePreSaleCollection::query()->where('pre_sale_id', $preSale->id)->sole();
+        $this->assertSame('123.47', $collection->amount);
+        $this->assertSame(1, CashMovement::query()->where('business_id', $business->id)->count());
+
+        app(RoutePreparationBatchService::class)->prepareAll($visit->workDay, $operator, 'collect-now-e2e-prepare-0001');
+        app(RouteDeliveryBatchService::class)->deliverAll($visit->workDay, $operator, 'collect-now-e2e-deliver-0001');
+
+        $sale = $preSale->fresh()->convertedSale;
+        $payment = $sale->payments()->sole();
+        $this->assertSame('paid', $sale->payment_status);
+        $this->assertSame('123.47', $sale->amount_paid);
+        $this->assertSame('0.00', $sale->credit_balance);
+        $this->assertFalse((bool) $sale->is_credit_sale);
+        $this->assertSame('cash', $payment->method);
+        $this->assertSame('123.47', $payment->amount);
+        $this->assertSame($collection->id, (int) $payment->route_pre_sale_collection_id);
+        $this->assertSame(1, CashMovement::query()->where('business_id', $business->id)->count());
+        $this->assertSame('linked', $collection->fresh()->status);
+        $this->assertDatabaseCount('route_post_conversion_collections', 0);
+        $this->assertDatabaseCount('customer_account_movements', 0);
+    }
+
+    public function test_mobile_order_without_collect_now_keeps_the_post_conversion_pending_collection_path(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $operator = $this->user($business, $branch, 'owner');
+        $product = $this->product($business, $branch, salePrice: 20);
+        $visit = $this->startedVisit($business, $branch, $seller);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['transfer'],
+            'primary_payment_method' => 'transfer',
+        ]);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'idempotency_key' => 'without-collect-e2e-save-0001',
+            'payment_method' => 'transfer',
+            'collect_now' => false,
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ])->assertSessionHasNoErrors();
+        $preSale = PreSale::query()->where('route_visit_id', $visit->id)->sole();
+        $this->assertSame('draft', $preSale->status);
+        $this->assertDatabaseCount('route_pre_sale_collections', 0);
+
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay), [
+            'idempotency_key' => 'without-collect-e2e-close-0001',
+        ])->assertSessionHasNoErrors();
+        app(RoutePreparationBatchService::class)->prepareAll($visit->workDay, $operator, 'without-collect-e2e-prepare-0001');
+        app(RouteDeliveryBatchService::class)->deliverAll($visit->workDay, $operator, 'without-collect-e2e-deliver-0001');
+
+        $sale = $preSale->fresh()->convertedSale;
+        $this->assertSame('unpaid', $sale->payment_status);
+        $this->assertSame(0, $sale->payments()->count());
+        $this->assertSame($preSale->id, app(RoutePostConversionCollectionReader::class)->pendingForSeller($seller)->sole()['pre_sale_id']);
     }
 
     public function test_without_sale_visit_can_become_draft_pre_sale_while_work_day_is_open(): void
@@ -1343,9 +1622,9 @@ class RoutesPreSalesTest extends TestCase
         $this->assertStringContainsString('preserveState: false', $visitSource);
         $this->assertStringNotContainsString('window.history.back()', $visitSource);
         $this->assertStringContainsString("route('routes.mobile.work-days.show', visit.route_work_day_id)", $visitSource);
-        $this->assertStringContainsString('¿Finalizar la ruta?', $workDaySource);
-        $this->assertStringContainsString('Al finalizar la ruta, las preventas quedarán enviadas y ya no se podrán editar. ¿Deseas continuar?', $workDaySource);
-        $this->assertStringContainsString('Sí, finalizar ruta', $workDaySource);
+        $this->assertStringContainsString('¿Cerrar la jornada?', $workDaySource);
+        $this->assertStringContainsString('Antes de cerrar, registra una preventa o marca sin venta cada visita. Las preventas quedarán enviadas y ya no se podrán editar.', $workDaySource);
+        $this->assertStringContainsString('Sí, cerrar jornada', $workDaySource);
         $this->assertStringContainsString('Motivo', $workDaySource);
         $this->assertStringContainsString('Observación', $workDaySource);
         $this->assertStringContainsString('Este cliente ya tiene productos agregados. Si marcas la visita como sin venta, se eliminará la preventa actual y se liberará el stock reservado. ¿Deseas continuar?', $workDaySource);

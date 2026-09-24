@@ -249,17 +249,20 @@ export default function Show({ preSale, canInvoice, canCertifyFel, canRegisterCo
                                 {felForm.processing ? 'Certificando FEL...' : 'Certificar FEL'}
                             </button>
                         )}
-                        {['submitted', 'processing'].includes(preSale.status) && (
+                        {['submitted', 'processing'].includes(preSale.status) && !preSale.collection && (
                             <button onClick={() => setCancelOpen(true)} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">
                                 Cancelar preventa
                             </button>
+                        )}
+                        {['submitted', 'processing'].includes(preSale.status) && preSale.collection && (
+                            <p className="text-sm font-semibold text-amber-800">Esta preventa ya tiene un cobro registrado y no puede cancelarse.</p>
                         )}
                     </div>
                 </div>
                 <section className="rounded-lg border border-slate-200 bg-white p-4">
                     <h2 className="text-sm font-semibold text-slate-900">Cobro</h2>
                     <p className="mt-1 text-sm text-slate-600">Método de pago acordado: {paymentMethodLabel(preSale.agreed_payment_method)}</p>
-                    {preSale.collection_message ? <p className="mt-2 text-sm font-semibold text-amber-800">{preSale.collection_message}</p> : preSale.collection ? <div className="mt-2 grid gap-1 text-sm text-slate-700"><div><span className="font-semibold">Cobro registrado</span>: {paymentMethodLabel(preSale.collection.payment_method as PreSale['payment_method'])} · Q {preSale.collection.amount.toFixed(2)}</div><div>Cobrador: {preSale.collection.collected_by?.name ?? '-'} · Fecha/hora: {preSale.collection.collected_at ? new Date(preSale.collection.collected_at).toLocaleString() : '-'}</div>{preSale.collection.recorded_by && preSale.collection.recorded_by.id !== preSale.collection.collected_by?.id && <div>Registrado por: {preSale.collection.recorded_by.name}</div>}<div>Custodia: {custodyLabel(preSale.collection.custody_status)}</div>{preSale.collection.reference && <div>Referencia: {preSale.collection.reference}</div>}</div> : <div className="mt-2 flex items-center gap-3"><span className="text-sm font-semibold text-amber-800">Cobro pendiente</span>{canRegisterCollection && <button type="button" onClick={() => setCollectionOpen(true)} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Registrar cobro</button>}{canOverrideCollection && <span className="text-xs text-slate-500">Override administrativo disponible</span>}</div>}
+                    {preSale.collection ? <div className="mt-2 grid gap-1 text-sm text-slate-700"><div><span className="font-semibold">Cobro registrado</span>: {paymentMethodLabel(preSale.collection.payment_method as PreSale['payment_method'])} · Q {preSale.collection.amount.toFixed(2)}</div><div>Cobrador: {preSale.collection.collected_by?.name ?? '-'} · Fecha/hora: {preSale.collection.collected_at ? new Date(preSale.collection.collected_at).toLocaleString() : '-'}</div>{preSale.collection.recorded_by && preSale.collection.recorded_by.id !== preSale.collection.collected_by?.id && <div>Registrado por: {preSale.collection.recorded_by.name}</div>}<div>Custodia: {custodyLabel(preSale.collection.custody_status)}</div>{preSale.collection.reference && <div>Referencia: {preSale.collection.reference}</div>}</div> : preSale.collection_message ? <p className="mt-2 text-sm font-semibold text-amber-800">{preSale.collection_message}</p> : preSale.converted_sale?.payment_status === 'paid' ? null : <div className="mt-2 flex items-center gap-3"><span className="text-sm font-semibold text-amber-800">Cobro pendiente</span>{canRegisterCollection && <button type="button" onClick={() => setCollectionOpen(true)} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Registrar cobro</button>}{canOverrideCollection && <span className="text-xs text-slate-500">Override administrativo disponible</span>}</div>}
                 </section>
                 {postConversionCollection && <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
                     <h2 className="text-sm font-semibold text-emerald-950">Cobro post-conversión</h2>

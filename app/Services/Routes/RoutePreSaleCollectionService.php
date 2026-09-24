@@ -39,12 +39,16 @@ class RoutePreSaleCollectionService
             function () use ($preSale, $data, $actor, $businessId, $branchId, $key) {
                 return DB::transaction(function () use ($preSale, $data, $actor, $businessId, $branchId, $key) {
                     abort_unless((int) BranchInventory::activeBranch($businessId)->id === $branchId, 403);
+                    $branchPolicy = app(RouteBranchCollectionSettingsService::class)->lockValidatedPolicyForExecution($businessId, $branchId);
                     $locked = PreSale::query()->where('business_id', $businessId)->where('branch_id', $branchId)->whereKey($preSale->id)->lockForUpdate()->firstOrFail();
                     if (! in_array($locked->status, [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING, PreSale::STATUS_PICKED], true)) {
                         throw ValidationException::withMessages(['pre_sale' => 'La preventa no permite registrar un cobro.']);
                     }
                     if (TenantSetting::query()->where('business_id', $businessId)->value('route_collection_responsibility') === 'delivery_agent') {
                         throw ValidationException::withMessages(['collection' => 'El cobro se registrará durante la entrega.']);
+                    }
+                    if ($branchPolicy !== null && $branchPolicy['collection_workflow_mode'] !== RouteBranchCollectionSettingsService::WORKFLOW_PER_ORDER_COLLECTION) {
+                        throw ValidationException::withMessages(['collection' => 'El cobro previo no está disponible para esta política de sucursal.']);
                     }
 
                     $isOverride = (int) $locked->seller_id !== (int) $actor->id;
@@ -65,6 +69,9 @@ class RoutePreSaleCollectionService
                     $method = (string) ($data['payment_method'] ?? '');
                     if (! in_array($method, self::METHODS, true)) {
                         throw ValidationException::withMessages(['payment_method' => 'La forma de pago no es válida.']);
+                    }
+                    if ($branchPolicy !== null && ! in_array($method, $branchPolicy['allowed_payment_methods'], true)) {
+                        throw ValidationException::withMessages(['payment_method' => 'La forma de pago no está permitida para esta sucursal.']);
                     }
                     if (RoutePreSaleCollection::query()->where('business_id', $businessId)->where('branch_id', $branchId)->where('pre_sale_id', $locked->id)->whereIn('status', ['captured', 'linked'])->lockForUpdate()->exists()) {
                         throw ValidationException::withMessages(['collection' => 'La preventa ya tiene un cobro activo.']);

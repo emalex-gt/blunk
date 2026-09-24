@@ -410,7 +410,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                 {noSaleForm.errors.no_sale_reason && <span className="mt-1 block text-xs font-semibold text-red-600">{noSaleForm.errors.no_sale_reason}</span>}
                             </label>
                             <label className="block text-sm font-medium text-slate-700">
-                                Observación
+                                Observación (opcional)
                                 <textarea
                                     value={noSaleForm.data.no_sale_note}
                                     onChange={(event) => noSaleForm.setData('no_sale_note', event.target.value)}
