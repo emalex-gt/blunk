@@ -56,7 +56,7 @@ class RouteDeliveryBatchController extends Controller
                 ? User::query()->where('business_id', $batch->business_id)->where('current_branch_id', $batch->branch_id)->where('is_active', true)->orderBy('name')->get(['id', 'name'])
                 : [],
             'current_user_id' => request()->user()->id,
-            'batch' => [...$this->payload($batch), 'pre_sales' => $batch->preSales->map(function ($entry) use ($eligibility) {
+            'batch' => [...$this->payload($batch), 'pre_sales' => $batch->preSales->map(function ($entry) use ($eligibility, $batch) {
                 $context = $eligibility->forEntry($entry);
                 $collectionResponsibility = $context['responsibility'] ?? 'review_required';
                 $preSaleCollection = $entry->preSale?->collections->first();
@@ -64,6 +64,11 @@ class RouteDeliveryBatchController extends Controller
 
                 return [
                 'id' => $entry->id, 'status' => $entry->status, 'payment_method' => $entry->payment_method,
+                'agreed_payment_method_snapshot' => $entry->agreed_payment_method_snapshot,
+                'payment_policy' => [
+                    'allowed_methods' => $batch->allowed_payment_methods_snapshot ?? ['cash', 'card', 'transfer', 'check'],
+                    'primary_method' => $batch->primary_payment_method_snapshot ?? 'cash',
+                ],
                 'fel_dispatch_status' => $entry->fel_dispatch_status, 'error_message' => $entry->error_message,
                 'pre_sale' => $entry->preSale, 'sale' => $entry->sale,
                 'collection_responsibility' => $collectionResponsibility,

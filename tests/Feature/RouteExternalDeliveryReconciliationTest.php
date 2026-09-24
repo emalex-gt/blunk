@@ -8,6 +8,7 @@ use App\Models\PreSale;
 use App\Models\PreSaleItem;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
+use App\Models\RouteDeliveryBatch;
 use App\Models\RouteDeliveryBatchPreSale;
 use App\Models\RouteExternalDeliveryReconciliation;
 use App\Models\RouteExternalDeliveryReconciliationItem;
@@ -28,6 +29,7 @@ use App\Support\BranchInventory;
 use App\Support\Permissions;
 use App\Support\SystemIntegrityAuditor;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 use Illuminate\Validation\ValidationException;
 
@@ -286,6 +288,82 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         $this->assertSame('review_required', $eligibility['reason']);
     }
 
+    public function test_external_reconciliation_prefers_the_historical_agreed_method_and_posts_the_user_selected_method(): void
+    {
+        [$business, $sourceEntry] = $this->deliveryAgentEntry();
+        RouteDeliveryBatchPreSale::query()->whereKey($sourceEntry->id)->delete();
+        RouteDeliveryBatch::query()->whereKey($sourceEntry->route_delivery_batch_id)->delete();
+        $batch = RouteDeliveryBatch::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $sourceEntry->batch->branch_id,
+            'route_work_day_id' => $sourceEntry->batch->route_work_day_id,
+            'route_zone_id' => $sourceEntry->batch->route_zone_id,
+            'delivered_by' => $sourceEntry->batch->delivered_by,
+            'status' => 'completed',
+            'stock_deduction_timing' => 'invoice',
+            'invoicing_mode' => 'manual',
+            'fel_automation_enabled' => false,
+            'delivery_tracking_snapshot' => 'external',
+            'collection_responsibility_snapshot' => 'delivery_agent',
+            'collection_workflow_mode_snapshot' => 'per_order_collection',
+            'allowed_payment_methods_snapshot' => ['cash', 'transfer'],
+            'primary_payment_method_snapshot' => 'cash',
+            'operation_settings_snapshotted_at' => now(),
+            'delivered_at' => now(),
+            'total_pre_sales' => 1,
+            'total_items' => 1,
+            'total_amount' => 60,
+        ]);
+        $entry = RouteDeliveryBatchPreSale::query()->create([
+            'route_delivery_batch_id' => $batch->id,
+            'pre_sale_id' => $sourceEntry->pre_sale_id,
+            'sale_id' => $sourceEntry->sale_id,
+            'status' => 'delivered',
+            'payment_method' => 'transfer',
+            'agreed_payment_method_snapshot' => 'transfer',
+            'fel_dispatch_status' => 'not_requested',
+        ]);
+        $actor = User::query()->findOrFail($entry->batch->delivered_by);
+
+        $this->as($actor, $business)->get(route('routes.delivery-batches.show', $entry->batch))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/DeliveryBatches/Show')
+                ->where('batch.pre_sales.0.agreed_payment_method_snapshot', 'transfer')
+                ->where('batch.pre_sales.0.payment_policy.allowed_methods', ['cash', 'transfer'])
+                ->where('batch.pre_sales.0.payment_policy.primary_method', 'cash'));
+
+        // There is no React test runner in this project; pin the select-to-request contract.
+        $source = file_get_contents(resource_path('js/Pages/Routes/DeliveryBatches/Show.tsx'));
+        $this->assertStringContainsString("['customer_absent', 'Cliente ausente']", $source);
+        $this->assertStringContainsString("['customer_rejected', 'Cliente rechazó la entrega']", $source);
+        $this->assertStringContainsString("['address_issue', 'Problema con la dirección']", $source);
+        $this->assertStringContainsString("['business_closed', 'Negocio cerrado']", $source);
+        $this->assertStringContainsString("['damaged_goods', 'Mercancía dañada']", $source);
+        $this->assertStringContainsString("['other', 'Otro']", $source);
+        $this->assertStringContainsString('allowed.includes(entry.agreed_payment_method_snapshot as Method)', $source);
+        $this->assertStringContainsString('allowed.includes(entry.payment_policy.primary_method as Method)', $source);
+        $this->assertStringContainsString("allowed[0] ?? 'cash'", $source);
+        $this->assertStringContainsString('value={method}', $source);
+        $this->assertStringContainsString('onChange={(event) => setMethod(event.target.value as Method)}', $source);
+        $this->assertStringContainsString('payment_method: method', $source);
+        $this->assertStringContainsString('method === \'cash\'', $source);
+        $this->assertStringContainsString('Confirmo que este efectivo está siendo recibido físicamente ahora en la caja abierta actual.', $source);
+
+        $this->as($actor, $business)->post(route('routes.delivery-batches.external-reconciliation.store', [$entry->batch, $entry]), [
+            'idempotency_key' => 'external-ui-selected-cash-0001',
+            'delivery_status' => 'delivered',
+            'collected' => true,
+            'amount' => 60,
+            'payment_method' => 'cash',
+            'collected_by' => $actor->id,
+            'collected_at' => now()->toDateTimeString(),
+        ])->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('route_delivery_collections', ['sale_id' => $entry->sale_id, 'payment_method' => 'cash']);
+        $this->assertDatabaseHas('sale_payments', ['sale_id' => $entry->sale_id, 'method' => 'cash']);
+    }
+
     public function test_collection_rejects_an_actor_from_another_tenant(): void
     {
         [$business, $item] = $this->deliveryAgentReconciliationItem();
@@ -377,5 +455,10 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         $item = RouteExternalDeliveryReconciliationItem::query()->create(['business_id' => $business->id, 'branch_id' => $entry->batch->branch_id, 'route_external_delivery_reconciliation_id' => $reconciliation->id, 'route_delivery_batch_pre_sale_id' => $entry->id, 'pre_sale_id' => $entry->pre_sale_id, 'sale_id' => $entry->sale_id, 'delivery_tracking_snapshot' => 'external', 'collection_responsibility_snapshot' => 'delivery_agent', 'delivery_status' => 'delivered', 'reconciled_by' => $actor->id, 'reconciled_at' => now()]);
 
         return [$business, $item, $actor];
+    }
+
+    private function as(User $user, Business $business)
+    {
+        return $this->withSession(['active_business_id' => $business->id])->actingAs($user);
     }
 }
