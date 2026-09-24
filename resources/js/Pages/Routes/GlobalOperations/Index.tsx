@@ -101,13 +101,15 @@ export default function Index({ preparation_preview, sales_preview, stock_deduct
                 <Metric label="Jornadas" value={preparation_preview.summary.work_days} />
                 <Metric label="Pedidos" value={preparation_preview.summary.pre_sales} />
                 <Metric label="Total" value={`Q ${money(preparation_preview.summary.total)}`} />
-                <Metric label="Preparados" value={`${preparation_preview.summary.prepared_count}/${preparation_preview.summary.pre_sales}`} />
-                <Metric label="Ventas" value={`${preparation_preview.summary.converted_count}/${preparation_preview.summary.pre_sales}`} />
+                <Metric label="Pendientes de preparar" value={preparation_preview.summary.preparation_eligible_count} />
+                <Metric label="Preparados para generar" value={preparation_preview.summary.prepared_count} />
             </section>
 
             <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
                 <h2 className="font-semibold text-slate-950">Por vendedor</h2>
-                <div className="mt-4 grid gap-3 md:grid-cols-2">{preparation_preview.sellers.map(group => <article key={group.seller.id} className="rounded-lg border border-slate-200 p-4"><h3 className="font-semibold">{group.seller.name ?? `Vendedor #${group.seller.id}`}</h3><p className="mt-2 text-sm text-slate-600">{group.total_pre_sales} pedidos · Q {money(group.total_amount)}</p><p className="text-sm text-slate-600">Preparados {group.prepared_count}/{group.total_pre_sales}</p><p className="text-sm text-slate-600">Ventas {group.converted_count}/{group.total_pre_sales}</p></article>)}</div>
+                {preparation_preview.summary.pre_sales === 0
+                    ? <p className="mt-3 text-sm text-slate-500">No hay pedidos pendientes de preparar o generar.</p>
+                    : <div className="mt-4 grid gap-3 md:grid-cols-2">{preparation_preview.sellers.map(group => <article key={group.seller.id} className="rounded-lg border border-slate-200 p-4"><h3 className="font-semibold">{group.seller.name ?? `Vendedor #${group.seller.id}`}</h3><p className="mt-2 text-sm text-slate-600">{group.total_pre_sales} pedidos · Q {money(group.total_amount)}</p><p className="text-sm text-slate-600">Pendientes de preparar: {group.preparation_eligible_count}</p><p className="text-sm text-slate-600">Preparados para generar: {group.prepared_count}</p></article>)}</div>}
             </section>
 
             <section className="rounded-lg border border-slate-200 bg-white p-5 text-sm shadow-sm"><p><strong>Inventario:</strong> {stock_deduction_timing === 'picking' ? 'El inventario ya fue descontado durante preparación.' : 'Se descontará al generar las ventas.'}</p><p className="mt-1"><strong>Facturación electrónica:</strong> {fel_enabled ? 'según la configuración existente.' : 'desactivada.'}</p></section>

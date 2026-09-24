@@ -50,6 +50,9 @@ class RouteGlobalOperationsService
 
         if ($requireUnconverted) {
             foreach ($workDays as $workDay) {
+                if (! $workDay->preSales->contains(fn (PreSale $preSale) => $this->isSalesCandidate($preSale))) {
+                    continue;
+                }
                 $policyBlocksByWorkDay[$workDay->id] = app(RouteDeliveryBatchService::class)->policyPreflightPreview($workDay);
                 foreach ($policyBlocksByWorkDay[$workDay->id] as $policyBlock) {
                     $blocked[] = [
@@ -65,6 +68,9 @@ class RouteGlobalOperationsService
         foreach ($workDays as $workDay) {
             $workDayHasPolicyBlocks = ($policyBlocksByWorkDay[$workDay->id] ?? []) !== [];
             foreach ($workDay->preSales as $preSale) {
+                if (! $this->requiresOperationalAction($preSale)) {
+                    continue;
+                }
                 if (isset($seenPreSaleIds[$preSale->id])) {
                     continue;
                 }
@@ -73,6 +79,7 @@ class RouteGlobalOperationsService
                 $sellerGroups[$workDay->seller_id] ??= [
                     'seller' => ['id' => $workDay->seller_id, 'name' => $workDay->seller?->name],
                     'work_day_ids' => [],
+                    'operation_work_day_ids' => [],
                     'pre_sales' => [],
                     'total' => 0.0,
                     'total_pre_sales' => 0,
@@ -87,26 +94,24 @@ class RouteGlobalOperationsService
                 $seller = &$sellerGroups[$workDay->seller_id];
                 $seller['total_pre_sales']++;
                 $seller['total_amount'] += (float) $preSale->total;
+                $seller['work_day_ids'][] = $workDay->id;
 
-                $prepared = in_array($preSale->status, [PreSale::STATUS_PICKED, PreSale::STATUS_CONVERTED], true) || $preSale->converted_sale_id !== null;
-                if ($prepared) {
+                $preparationCandidate = $this->isPreparationCandidate($preSale);
+                $salesCandidate = $this->isSalesCandidate($preSale);
+                if ($salesCandidate) {
                     $seller['prepared_count']++;
                 }
-                if ($preSale->converted_sale_id !== null) {
-                    $seller['converted_count']++;
+                if ($preparationCandidate) {
+                    $seller['preparation_eligible_count']++;
+                }
+                if ($salesCandidate) {
+                    $seller[$workDayHasPolicyBlocks ? 'sales_blocked_count' : 'sales_eligible_count']++;
                 }
 
-                $preparationEligible = in_array($preSale->status, [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING], true);
-                $salesEligible = $preSale->status === PreSale::STATUS_PICKED
-                    && $preSale->converted_sale_id === null
-                    && ! $workDayHasPolicyBlocks;
-                $seller[$preparationEligible ? 'preparation_eligible_count' : 'preparation_blocked_count']++;
-                $seller[$salesEligible ? 'sales_eligible_count' : 'sales_blocked_count']++;
-
-                $eligible = in_array($preSale->status, $eligibleStatuses, true)
-                    && (! $requireUnconverted || ($preSale->converted_sale_id === null && ! $workDayHasPolicyBlocks));
+                $eligible = $this->matchesRequestedOperation($preSale, $eligibleStatuses)
+                    && (! $requireUnconverted || ! $workDayHasPolicyBlocks);
                 if (! $eligible) {
-                    if (! $workDayHasPolicyBlocks) {
+                    if (! $workDayHasPolicyBlocks && $this->matchesRequestedOperation($preSale, $eligibleStatuses)) {
                         $blocked[] = [
                             'work_day_id' => $workDay->id,
                             'pre_sale_id' => $preSale->id,
@@ -118,7 +123,7 @@ class RouteGlobalOperationsService
                     unset($seller);
                     continue;
                 }
-                $seller['work_day_ids'][] = $workDay->id;
+                $seller['operation_work_day_ids'][] = $workDay->id;
                 $seller['pre_sales'][] = ['id' => $preSale->id, 'work_day_id' => $workDay->id, 'total' => (float) $preSale->total];
                 $seller['total'] += (float) $preSale->total;
                 unset($seller);
@@ -126,6 +131,7 @@ class RouteGlobalOperationsService
         }
         foreach ($sellerGroups as &$seller) {
             $seller['work_day_ids'] = array_values(array_unique($seller['work_day_ids']));
+            $seller['operation_work_day_ids'] = array_values(array_unique($seller['operation_work_day_ids']));
             $seller['total'] = round($seller['total'], 2);
             $seller['total_amount'] = round($seller['total_amount'], 2);
         }
@@ -133,7 +139,7 @@ class RouteGlobalOperationsService
         $sellers = array_values($sellerGroups);
         return ['summary' => [
             'sellers' => count($sellers),
-            'work_days' => $workDays->count(),
+            'work_days' => count(array_unique(array_merge(...array_map(fn (array $seller) => $seller['work_day_ids'], $sellers)))) ,
             'pre_sales' => count($seenPreSaleIds),
             'total' => round(array_sum(array_map(fn ($group) => $group['total_amount'], $sellers)), 2),
             'prepared_count' => array_sum(array_column($sellers, 'prepared_count')),
@@ -153,7 +159,7 @@ class RouteGlobalOperationsService
         $businessId = (int) $actor->business_id;
         $branchId = (int) $actor->current_branch_id;
         $preview = $this->preview($businessId, $branchId, $statuses, $requireUnconverted);
-        $eligibleWorkDayIds = collect($preview['sellers'])->flatMap(fn (array $seller) => $seller['work_day_ids'])->unique()->flip();
+        $eligibleWorkDayIds = collect($preview['sellers'])->flatMap(fn (array $seller) => $seller['operation_work_day_ids'])->unique()->flip();
         $workDays = RouteWorkDay::query()->where('business_id', $businessId)->where('branch_id', $branchId)->with('seller:id,name')->orderBy('seller_id')->orderBy('id')->get();
         $result = ['processed' => [], 'blocked' => $preview['blocked'], 'failed' => []];
         foreach ($workDays as $workDay) {
@@ -208,5 +214,26 @@ class RouteGlobalOperationsService
         $model = $operation === 'prepare' ? RoutePreparationBatch::class : RouteDeliveryBatch::class;
 
         return (int) $model::query()->whereKey($batchId)->value('total_pre_sales');
+    }
+
+    private function requiresOperationalAction(PreSale $preSale): bool
+    {
+        return $this->isPreparationCandidate($preSale) || $this->isSalesCandidate($preSale);
+    }
+
+    private function isPreparationCandidate(PreSale $preSale): bool
+    {
+        return $preSale->converted_sale_id === null
+            && in_array($preSale->status, [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING], true);
+    }
+
+    private function isSalesCandidate(PreSale $preSale): bool
+    {
+        return $preSale->converted_sale_id === null && $preSale->status === PreSale::STATUS_PICKED;
+    }
+
+    private function matchesRequestedOperation(PreSale $preSale, array $eligibleStatuses): bool
+    {
+        return $this->requiresOperationalAction($preSale) && in_array($preSale->status, $eligibleStatuses, true);
     }
 }
