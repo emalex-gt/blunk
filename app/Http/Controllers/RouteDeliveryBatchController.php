@@ -98,7 +98,7 @@ class RouteDeliveryBatchController extends Controller
         $result = $deliveries->deliverAll($workDay, $request->user(), $data['idempotency_key']);
 
         return redirect()->route('routes.work-days.show', $workDay)
-            ->with('success', $result->replayed ? 'La entrega masiva ya había sido completada.' : 'Las preventas preparadas fueron entregadas y registradas.');
+            ->with('success', $result->replayed ? 'La generación masiva de ventas ya había sido completada.' : 'Las preventas preparadas fueron convertidas en ventas.');
     }
 
     private function authorizeBatch(RouteDeliveryBatch $batch): void

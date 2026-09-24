@@ -132,12 +132,12 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
 
     return (
         <AuthenticatedLayout>
-            <Head title="Preventas enviadas" />
+            <Head title="Preventas" />
             <div className="mx-auto max-w-[1800px] space-y-5 px-4 py-6 sm:px-6">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                        <h1 className="text-2xl font-semibold text-slate-950">Preventas enviadas</h1>
-                        <p className="text-sm text-slate-500">Cola administrativa para revisar pedidos enviados desde rutas.</p>
+                        <h1 className="text-2xl font-semibold text-slate-950">Preventas</h1>
+                        <p className="text-sm text-slate-500">Detalle, excepciones e histórico de las preventas de ruta.</p>
                     </div>
                 </div>
 

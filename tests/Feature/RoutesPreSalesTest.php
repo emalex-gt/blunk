@@ -2045,6 +2045,16 @@ class RoutesPreSalesTest extends TestCase
         $this->assertStringContainsString('Operación de rutas', $layoutSource);
         $this->assertStringContainsString("route('routes.global-operations.index')", $layoutSource);
         $this->assertStringContainsString("route().current('routes.global-operations.*')", $layoutSource);
+        $this->assertStringContainsString("{ label: 'Preventas', href: route('routes.pre-sales.index')", $layoutSource);
+        $this->assertStringContainsString("{ label: 'Lotes de ventas de ruta', href: route('routes.delivery-batches.index')", $layoutSource);
+        $this->assertLessThan(
+            strpos($layoutSource, "{ label: 'Jornadas cerradas'"),
+            strpos($layoutSource, "{ label: 'Preventas'"),
+        );
+        $this->assertLessThan(
+            strpos($layoutSource, "{ label: 'Lotes de ventas de ruta'"),
+            strpos($layoutSource, "{ label: 'Preparaciones'"),
+        );
         $this->assertStringContainsString('Certificación FEL de preventas', $formSource);
         $this->assertStringContainsString('route_pre_sale_invoicing_mode', $formSource);
         $this->assertStringContainsString('route_pre_sale_stock_deduction_timing', $formSource);

@@ -178,10 +178,10 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                             Preparaciones
                         </Link>
                         <Link href={route('routes.delivery-batches.index')} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                            Lotes de comprobantes
+                            Lotes de ventas de ruta
                         </Link>
                         <Link href={route('routes.pre-sales.index')} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                            Cola de preventas
+                            Preventas
                         </Link>
                     </div>
                 </div>
