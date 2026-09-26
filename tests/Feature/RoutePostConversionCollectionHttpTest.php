@@ -4,10 +4,16 @@ namespace Tests\Feature;
 
 use App\Models\Business;
 use App\Models\Branch;
+use App\Models\CashRegisterSession;
 use App\Models\Customer;
 use App\Models\PreSale;
+use App\Models\RouteCashSettlement;
+use App\Models\RouteDeliveryCollection;
 use App\Models\RouteDeliveryBatch;
 use App\Models\RouteDeliveryBatchPreSale;
+use App\Models\RouteDeliveryRun;
+use App\Models\RouteDeliveryStop;
+use App\Models\RoutePostConversionCollection;
 use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
 use App\Models\Sale;
@@ -369,6 +375,270 @@ class RoutePostConversionCollectionHttpTest extends TestCase
                 ->where('postConversionCollection', null));
     }
 
+    public function test_cash_settlement_http_preserves_post_conversion_source_when_a_delivery_collection_has_the_same_id(): void
+    {
+        [$business, $branch, $seller, $entry] = $this->entry('pre_seller');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $result = app(RoutePostConversionCollectionService::class)->collect(
+            $entry,
+            ['payment_method' => 'cash'],
+            $seller,
+            'post-settlement-http-collision-0001',
+        );
+        $postCollection = RoutePostConversionCollection::query()->findOrFail($result->resultId);
+        $deliveryCollection = $this->deliveryCollectionForEntry($entry, $seller, $postCollection->id);
+        $owner = $this->user($business, $branch, 'owner');
+
+        $this->assertSame($postCollection->id, $deliveryCollection->id, 'The regression fixture requires colliding numeric IDs.');
+
+        $index = $this->as($owner, $business)->get(route('routes.cash-settlements.index', ['collector_id' => $seller->id]));
+        $index->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->component('Routes/CashSettlements/Index')
+            ->where('eligible_collections', fn ($collections) => collect($collections)->contains(fn ($collection) =>
+                $collection['origin'] === 'post_conversion_collection'
+                && $collection['collection_id'] === $postCollection->id
+                && $collection['sale_id'] === $postCollection->sale_id
+                && $collection['pre_sale_id'] === $postCollection->pre_sale_id
+                && $collection['payment_method'] === 'cash'
+                && $collection['custody_status'] === 'held_by_collector'
+            )));
+
+        $this->as($owner, $business)->from(route('routes.cash-settlements.index'))->post(route('routes.cash-settlements.store'), [
+            'idempotency_key' => 'post-settlement-http-duplicate-source-0001',
+            'collector_user_id' => $seller->id,
+            'items' => [
+                ['origin' => 'post_conversion_collection', 'collection_id' => $postCollection->id],
+                ['origin' => 'post_conversion_collection', 'collection_id' => $postCollection->id],
+            ],
+        ])->assertRedirect(route('routes.cash-settlements.index'))->assertSessionHasErrors('sources');
+        $this->assertDatabaseCount('route_cash_settlements', 0);
+
+        $response = $this->as($owner, $business)->post(route('routes.cash-settlements.store'), [
+            'idempotency_key' => 'post-settlement-http-draft-0001',
+            'collector_user_id' => $seller->id,
+            'items' => [['origin' => 'post_conversion_collection', 'collection_id' => $postCollection->id]],
+        ]);
+
+        $settlement = RouteCashSettlement::query()->sole();
+        $response->assertRedirect(route('routes.cash-settlements.show', $settlement));
+        $this->assertDatabaseHas('route_cash_settlement_items', [
+            'route_cash_settlement_id' => $settlement->id,
+            'route_pre_sale_collection_id' => null,
+            'route_delivery_collection_id' => null,
+            'route_post_conversion_collection_id' => $postCollection->id,
+            'is_active' => true,
+        ]);
+        $this->assertDatabaseMissing('route_cash_settlement_items', [
+            'route_cash_settlement_id' => $settlement->id,
+            'route_delivery_collection_id' => $deliveryCollection->id,
+        ]);
+
+        $this->as($owner, $business)->get(route('routes.cash-settlements.show', $settlement))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/CashSettlements/Show')
+                ->where('settlement.items.0.origin', 'post_conversion_collection')
+                ->where('settlement.items.0.collection_id', $postCollection->id)
+                ->where('settlement.items.0.sale_id', $postCollection->sale_id)
+                ->where('settlement.items.0.pre_sale_id', $postCollection->pre_sale_id)
+                ->where('settlement.items.0.route_delivery_batch_id', $entry->route_delivery_batch_id)
+                ->where('settlement.items.0.collector.id', $seller->id)
+                ->where('settlement.items.0.payment_method', 'cash')
+                ->where('settlement.items.0.custody_status', 'held_by_collector'));
+
+        $this->as($owner, $business)->post(route('routes.cash-settlements.cancel', $settlement), [
+            'idempotency_key' => 'post-settlement-http-collision-cancel-0001',
+            'cancellation_reason' => 'Probar selección compuesta.',
+        ])->assertRedirect(route('routes.cash-settlements.index'));
+
+        $this->as($owner, $business)->from(route('routes.cash-settlements.index'))->post(route('routes.cash-settlements.store'), [
+            'idempotency_key' => 'post-settlement-http-collision-pair-0001',
+            'collector_user_id' => $seller->id,
+            'items' => [
+                ['origin' => 'post_conversion_collection', 'collection_id' => $postCollection->id],
+                ['origin' => 'delivery_collection', 'collection_id' => $deliveryCollection->id],
+            ],
+        ])->assertRedirect()->assertSessionDoesntHaveErrors();
+
+        $combined = RouteCashSettlement::query()->latest('id')->firstOrFail();
+        $this->assertDatabaseHas('route_cash_settlement_items', [
+            'route_cash_settlement_id' => $combined->id,
+            'route_post_conversion_collection_id' => $postCollection->id,
+            'route_delivery_collection_id' => null,
+            'is_active' => true,
+        ]);
+        $this->assertDatabaseHas('route_cash_settlement_items', [
+            'route_cash_settlement_id' => $combined->id,
+            'route_post_conversion_collection_id' => null,
+            'route_delivery_collection_id' => $deliveryCollection->id,
+            'is_active' => true,
+        ]);
+    }
+
+    public function test_post_conversion_cash_settlement_completes_once_through_http(): void
+    {
+        [$business, $branch, $seller, $entry] = $this->entry('pre_seller');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $result = app(RoutePostConversionCollectionService::class)->collect($entry, ['payment_method' => 'cash'], $seller, 'post-settlement-http-confirm-source-0001');
+        $collection = RoutePostConversionCollection::query()->findOrFail($result->resultId);
+        $owner = $this->user($business, $branch, 'owner');
+
+        $this->as($owner, $business)->post(route('routes.cash-settlements.store'), [
+            'idempotency_key' => 'post-settlement-http-confirm-draft-0001',
+            'collector_user_id' => $seller->id,
+            'items' => [['origin' => 'post_conversion_collection', 'collection_id' => $collection->id]],
+        ])->assertRedirect();
+        $settlement = RouteCashSettlement::query()->sole();
+        CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'opened_by' => $owner->id,
+            'status' => 'open',
+            'opening_amount' => 0,
+            'expected_cash' => 0,
+            'opened_at' => now(),
+        ]);
+
+        $this->as($owner, $business)->post(route('routes.cash-settlements.confirm', $settlement), [
+            'idempotency_key' => 'post-settlement-http-confirm-0001',
+            'received_by' => $owner->id,
+            'received_amount' => '123.47',
+        ])->assertRedirect(route('routes.cash-settlements.show', $settlement));
+
+        $this->assertSame('confirmed', $settlement->fresh()->status);
+        $this->assertSame('posted_to_branch_cash', $collection->fresh()->custody_status);
+        $this->assertDatabaseCount('cash_movements', 1);
+
+        $this->as($owner, $business)->from(route('routes.cash-settlements.show', $settlement))->post(route('routes.cash-settlements.confirm', $settlement), [
+            'idempotency_key' => 'post-settlement-http-confirm-again-0001',
+            'received_by' => $owner->id,
+            'received_amount' => '123.47',
+        ])->assertRedirect(route('routes.cash-settlements.show', $settlement))->assertSessionHasErrors('settlement');
+        $this->assertDatabaseCount('cash_movements', 1);
+    }
+
+    public function test_post_conversion_source_can_be_added_to_an_existing_draft_through_http(): void
+    {
+        [$business, $branch, $seller, $entry] = $this->entry('pre_seller');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $result = app(RoutePostConversionCollectionService::class)->collect($entry, ['payment_method' => 'cash'], $seller, 'post-settlement-http-add-source-0001');
+        $owner = $this->user($business, $branch, 'owner');
+        $settlement = RouteCashSettlement::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'collector_user_id' => $seller->id,
+            'recorded_by' => $owner->id,
+            'expected_amount' => 0,
+            'status' => 'draft',
+        ]);
+
+        $this->as($owner, $business)->post(route('routes.cash-settlements.items.store', $settlement), [
+            'idempotency_key' => 'post-settlement-http-add-draft-0001',
+            'items' => [['origin' => 'post_conversion_collection', 'collection_id' => $result->resultId]],
+        ])->assertRedirect();
+
+        $this->assertDatabaseHas('route_cash_settlement_items', [
+            'route_cash_settlement_id' => $settlement->id,
+            'route_post_conversion_collection_id' => $result->resultId,
+            'is_active' => true,
+        ]);
+        $this->assertSame('123.47', $settlement->fresh()->expected_amount);
+    }
+
+    public function test_cash_settlement_http_rejects_unknown_and_out_of_scope_post_conversion_sources(): void
+    {
+        [$business, $branch, $seller] = $this->entry('pre_seller');
+        $owner = $this->user($business, $branch, 'owner');
+
+        $this->as($owner, $business)->from(route('routes.cash-settlements.index'))->post(route('routes.cash-settlements.store'), [
+            'idempotency_key' => 'post-settlement-http-unknown-0001',
+            'collector_user_id' => $seller->id,
+            'items' => [['origin' => 'future_collection', 'collection_id' => 1]],
+        ])->assertRedirect(route('routes.cash-settlements.index'))->assertSessionHasErrors('items.0.origin');
+
+        [$foreignBusiness, , , $foreignEntry] = $this->entry('pre_seller');
+        app(RouteBranchCollectionSettingsService::class)->save($foreignBusiness->id, $foreignEntry->batch->branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $foreignSeller = $foreignEntry->preSale->seller;
+        $foreignResult = app(RoutePostConversionCollectionService::class)->collect($foreignEntry, ['payment_method' => 'cash'], $foreignSeller, 'post-settlement-http-foreign-source-0001');
+
+        $this->as($owner, $business)->from(route('routes.cash-settlements.index'))->post(route('routes.cash-settlements.store'), [
+            'idempotency_key' => 'post-settlement-http-foreign-draft-0001',
+            'collector_user_id' => $seller->id,
+            'items' => [['origin' => 'post_conversion_collection', 'collection_id' => $foreignResult->resultId]],
+        ])->assertRedirect(route('routes.cash-settlements.index'))->assertSessionHasErrors('sources');
+        $this->assertDatabaseCount('route_cash_settlements', 0);
+    }
+
+    public function test_post_conversion_cash_settlement_rejects_collector_and_branch_mismatches(): void
+    {
+        [$business, $branch, $seller] = $this->entry('pre_seller');
+        $owner = $this->user($business, $branch, 'owner');
+        $otherSeller = $this->user($business, $branch, 'pre_seller');
+        [, , , $otherCollectorEntry] = $this->entry('pre_seller', $business, $branch, 'per_order_collection', $otherSeller);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $otherCollectorResult = app(RoutePostConversionCollectionService::class)->collect(
+            $otherCollectorEntry,
+            ['payment_method' => 'cash'],
+            $otherSeller,
+            'post-settlement-http-other-collector-0001',
+        );
+
+        $this->as($owner, $business)->from(route('routes.cash-settlements.index'))->post(route('routes.cash-settlements.store'), [
+            'idempotency_key' => 'post-settlement-http-other-collector-draft-0001',
+            'collector_user_id' => $seller->id,
+            'items' => [['origin' => 'post_conversion_collection', 'collection_id' => $otherCollectorResult->resultId]],
+        ])->assertRedirect(route('routes.cash-settlements.index'))->assertSessionHasErrors('sources');
+
+        $otherBranch = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal '.uniqid(),
+            'code' => 'SETTLE-'.uniqid(),
+            'is_active' => true,
+        ]);
+        $branchSeller = $this->user($business, $otherBranch, 'pre_seller');
+        [, , , $otherBranchEntry] = $this->entry('pre_seller', $business, $otherBranch, 'per_order_collection', $branchSeller);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $otherBranch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $this->actingAs($branchSeller);
+        $otherBranchResult = app(RoutePostConversionCollectionService::class)->collect(
+            $otherBranchEntry,
+            ['payment_method' => 'cash'],
+            $branchSeller,
+            'post-settlement-http-other-branch-0001',
+        );
+
+        $this->as($owner, $business)->from(route('routes.cash-settlements.index'))->post(route('routes.cash-settlements.store'), [
+            'idempotency_key' => 'post-settlement-http-other-branch-draft-0001',
+            'collector_user_id' => $seller->id,
+            'items' => [['origin' => 'post_conversion_collection', 'collection_id' => $otherBranchResult->resultId]],
+        ])->assertRedirect(route('routes.cash-settlements.index'))->assertSessionHasErrors('sources');
+
+        $this->assertDatabaseCount('route_cash_settlements', 0);
+    }
+
     private function as(User $user, Business $business)
     {
         return $this->withSession(['active_business_id' => $business->id])->actingAs($user);
@@ -402,5 +672,58 @@ class RoutePostConversionCollectionHttpTest extends TestCase
         Permissions::assignRole($user, $role);
 
         return $user->fresh();
+    }
+
+    private function deliveryCollectionForEntry(RouteDeliveryBatchPreSale $entry, User $collector, int $collectionId): RouteDeliveryCollection
+    {
+        $batch = $entry->batch;
+        $run = RouteDeliveryRun::query()->create([
+            'business_id' => $batch->business_id,
+            'branch_id' => $batch->branch_id,
+            'delivery_user_id' => $collector->id,
+            'created_by' => $collector->id,
+            'status' => 'draft',
+            'delivery_tracking_snapshot' => 'in_app',
+            'collection_responsibility_snapshot' => 'delivery_agent',
+        ]);
+        $stop = RouteDeliveryStop::query()->create([
+            'business_id' => $batch->business_id,
+            'branch_id' => $batch->branch_id,
+            'route_delivery_run_id' => $run->id,
+            'route_delivery_batch_id' => $batch->id,
+            'route_delivery_batch_pre_sale_id' => $entry->id,
+            'pre_sale_id' => $entry->pre_sale_id,
+            'sale_id' => $entry->sale_id,
+            'customer_id' => $entry->preSale->customer_id,
+            'position' => 1,
+            'delivery_tracking_snapshot' => 'in_app',
+            'collection_responsibility_snapshot' => 'delivery_agent',
+            'status' => 'pending',
+            'assigned_by' => $collector->id,
+            'assigned_at' => now(),
+        ]);
+
+        $collection = new RouteDeliveryCollection;
+        $collection->id = $collectionId;
+        $collection->fill([
+            'business_id' => $batch->business_id,
+            'branch_id' => $batch->branch_id,
+            'sale_id' => $entry->sale_id,
+            'pre_sale_id' => $entry->pre_sale_id,
+            'route_delivery_stop_id' => $stop->id,
+            'delivery_origin' => 'in_app_stop',
+            'collected_by' => $collector->id,
+            'recorded_by' => $collector->id,
+            'amount' => '123.47',
+            'payment_method' => 'cash',
+            'collected_at' => now(),
+            'cash_custody_policy_snapshot' => 'collector_custody_until_settlement',
+            'custody_status' => 'held_by_collector',
+            'cash_posting_state' => 'awaiting_physical_receipt',
+            'status' => 'captured',
+        ]);
+        $collection->save();
+
+        return $collection;
     }
 }

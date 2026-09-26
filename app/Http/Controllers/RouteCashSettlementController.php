@@ -18,6 +18,12 @@ use Inertia\Response;
 
 class RouteCashSettlementController extends Controller
 {
+    private const SETTLEMENT_ORIGINS = [
+        'pre_sale_collection',
+        'delivery_collection',
+        'post_conversion_collection',
+    ];
+
     public function index(Request $request, RouteCashSettlementEligibility $eligibility): Response
     {
         $this->requireAnyPermission($request, [
@@ -75,7 +81,14 @@ class RouteCashSettlementController extends Controller
             'collector:id,name',
             'items' => fn ($query) => $query->with([
                 'preSaleCollection.preSale.customer:id,name',
+                'preSaleCollection.collectedBy:id,name',
                 'deliveryCollection.sale.customer:id,name',
+                'deliveryCollection.collectedBy:id,name',
+                'deliveryCollection.stop:id,route_delivery_run_id,route_delivery_batch_id',
+                'postConversionCollection.sale.customer:id,name',
+                'postConversionCollection.collectedBy:id,name',
+                'postConversionCollection.entry:id,route_delivery_batch_id',
+                'postConversionCollection.entry.batch:id,route_work_day_id',
             ])->orderBy('id'),
         ]);
         $settlementUserNames = User::query()
@@ -128,8 +141,8 @@ class RouteCashSettlementController extends Controller
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'collector_user_id' => ['required', 'integer', Rule::exists('users', 'id')],
             'items' => ['required', 'array', 'min:1'],
-            'items.*.origin' => ['required', Rule::in(['pre_sale_collection', 'delivery_collection'])],
-            'items.*.collection_id' => ['required', 'integer', 'distinct'],
+            'items.*.origin' => ['required', Rule::in(self::SETTLEMENT_ORIGINS)],
+            'items.*.collection_id' => ['required', 'integer'],
         ]);
         $this->collector((int) $data['collector_user_id'], $request->user());
         $result = $drafts->create($request->user(), (int) $data['collector_user_id'], $data['items'], $data['idempotency_key']);
@@ -144,8 +157,8 @@ class RouteCashSettlementController extends Controller
         $data = $request->validate([
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'items' => ['required', 'array', 'min:1'],
-            'items.*.origin' => ['required', Rule::in(['pre_sale_collection', 'delivery_collection'])],
-            'items.*.collection_id' => ['required', 'integer', 'distinct'],
+            'items.*.origin' => ['required', Rule::in(self::SETTLEMENT_ORIGINS)],
+            'items.*.collection_id' => ['required', 'integer'],
         ]);
         $drafts->add($settlement, $request->user(), $data['items'], $data['idempotency_key']);
 
@@ -259,16 +272,60 @@ class RouteCashSettlementController extends Controller
     {
         $preSale = $item->preSaleCollection;
         $delivery = $item->deliveryCollection;
-        $customer = $preSale?->preSale?->customer ?? $delivery?->sale?->customer;
+        $postConversion = $item->postConversionCollection;
+        $sourceCount = collect([$preSale, $delivery, $postConversion])->filter()->count();
+
+        if ($sourceCount !== 1) {
+            throw new \LogicException("Settlement item #{$item->id} must have exactly one financial source.");
+        }
+
+        if ($preSale) {
+            $origin = 'pre_sale_collection';
+            $source = $preSale;
+            $customer = $preSale->preSale?->customer;
+            $preSaleId = $preSale->pre_sale_id;
+            $saleId = $preSale->preSale?->converted_sale_id;
+            $workDayId = $preSale->route_work_day_id ?? $preSale->preSale?->route_work_day_id;
+            $deliveryRunId = null;
+            $deliveryBatchId = null;
+        } elseif ($delivery) {
+            $origin = 'delivery_collection';
+            $source = $delivery;
+            $customer = $delivery->sale?->customer;
+            $preSaleId = $delivery->pre_sale_id;
+            $saleId = $delivery->sale_id;
+            $workDayId = null;
+            $deliveryRunId = $delivery->stop?->route_delivery_run_id;
+            $deliveryBatchId = $delivery->stop?->route_delivery_batch_id;
+        } else {
+            $origin = 'post_conversion_collection';
+            $source = $postConversion;
+            $customer = $postConversion->sale?->customer;
+            $preSaleId = $postConversion->pre_sale_id;
+            $saleId = $postConversion->sale_id;
+            $workDayId = $postConversion->entry?->batch?->route_work_day_id;
+            $deliveryRunId = null;
+            $deliveryBatchId = $postConversion->entry?->route_delivery_batch_id;
+        }
 
         return [
             'id' => $item->id,
-            'origin' => $preSale ? 'pre_sale_collection' : 'delivery_collection',
-            'collection_id' => $preSale?->id ?? $delivery?->id,
+            'origin' => $origin,
+            'collection_id' => $source->id,
             'amount' => (float) $item->amount_snapshot,
             'is_active' => $item->is_active,
             'customer_name' => $customer?->name,
-            'collected_at' => ($preSale?->collected_at ?? $delivery?->collected_at)?->toIso8601String(),
+            'collector' => $source->collectedBy ? ['id' => $source->collectedBy->id, 'name' => $source->collectedBy->name] : null,
+            'payment_method' => $source->payment_method,
+            'custody_status' => $source->custody_status,
+            'source_status' => $source->status,
+            'reference' => $source->reference,
+            'collected_at' => $source->collected_at?->toIso8601String(),
+            'pre_sale_id' => $preSaleId ? (int) $preSaleId : null,
+            'sale_id' => $saleId ? (int) $saleId : null,
+            'route_work_day_id' => $workDayId ? (int) $workDayId : null,
+            'route_delivery_run_id' => $deliveryRunId ? (int) $deliveryRunId : null,
+            'route_delivery_batch_id' => $deliveryBatchId ? (int) $deliveryBatchId : null,
         ];
     }
 
@@ -286,7 +343,12 @@ class RouteCashSettlementController extends Controller
         return $collections->map(function (array $collection) {
             return [
                 ...$collection,
-                'origin' => $collection['origin'] === 'route_pre_sale_collection' ? 'pre_sale_collection' : 'delivery_collection',
+                'origin' => match ($collection['origin'] ?? null) {
+                    'route_pre_sale_collection' => 'pre_sale_collection',
+                    'route_delivery_collection' => 'delivery_collection',
+                    'route_post_conversion_collection' => 'post_conversion_collection',
+                    default => throw new \LogicException('Unsupported route cash settlement source.'),
+                },
                 'amount' => (float) $collection['amount'],
                 'collected_at' => $collection['collected_at']?->toIso8601String(),
             ];

@@ -196,7 +196,12 @@ class RouteCashSettlementDraftService
         }
 
         foreach ($sources as $source) {
-            $collection = match ($source['origin']) { 'pre_sale_collection' => $pre->get($source['collection_id']), 'delivery_collection' => $delivery->get($source['collection_id']), default => $post->get($source['collection_id']) };
+            $collection = match ($source['origin']) {
+                'pre_sale_collection' => $pre->get($source['collection_id']),
+                'delivery_collection' => $delivery->get($source['collection_id']),
+                'post_conversion_collection' => $post->get($source['collection_id']),
+                default => throw new \LogicException('Unsupported normalized settlement source.'),
+            };
             if ((int) $collection->business_id !== $businessId || (int) $collection->branch_id !== $branchId || (int) $collection->collected_by !== $collectorId) {
                 throw ValidationException::withMessages(['sources' => 'El cobro no corresponde al cobrador o sucursal de esta liquidación.']);
             }
