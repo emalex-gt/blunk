@@ -12,4 +12,5 @@ class RouteDeliveryStop extends Model
     public function entry() { return $this->belongsTo(RouteDeliveryBatchPreSale::class, 'route_delivery_batch_pre_sale_id'); }
     public function sale() { return $this->belongsTo(Sale::class); }
     public function deliveryCollection() { return $this->hasOne(RouteDeliveryCollection::class); }
+    public function operationReturn() { return $this->hasOne(RouteOperationReturn::class)->where('status', 'completed'); }
 }

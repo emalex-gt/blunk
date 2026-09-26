@@ -37,7 +37,7 @@ class RouteDeliveryRunService
 
     public function progress(RouteDeliveryRun $run): array
     {
-        $rows = $run->stops()->join('sales', 'sales.id', '=', 'route_delivery_stops.sale_id')->selectRaw("COUNT(*) FILTER (WHERE route_delivery_stops.status = 'pending') AS pending, COUNT(*) FILTER (WHERE route_delivery_stops.status = 'delivered') AS delivered, COUNT(*) FILTER (WHERE route_delivery_stops.status = 'not_delivered') AS not_delivered, COALESCE(SUM(sales.total) FILTER (WHERE route_delivery_stops.status = 'delivered' AND sales.payment_status = 'unpaid'), 0) AS unpaid_delivered_amount, COUNT(*) FILTER (WHERE route_delivery_stops.status = 'delivered' AND sales.payment_status = 'unpaid') AS unpaid_delivered_count")->first();
+        $rows = $run->stops()->join('sales', 'sales.id', '=', 'route_delivery_stops.sale_id')->selectRaw("COUNT(*) FILTER (WHERE route_delivery_stops.status = 'pending') AS pending, COUNT(*) FILTER (WHERE route_delivery_stops.status = 'delivered') AS delivered, COUNT(*) FILTER (WHERE route_delivery_stops.status = 'not_delivered') AS not_delivered, COALESCE(SUM(sales.total) FILTER (WHERE route_delivery_stops.status = 'delivered' AND sales.status = 'completed' AND sales.payment_status = 'unpaid'), 0) AS unpaid_delivered_amount, COUNT(*) FILTER (WHERE route_delivery_stops.status = 'delivered' AND sales.status = 'completed' AND sales.payment_status = 'unpaid') AS unpaid_delivered_count")->first();
         return ['assigned' => $run->stops()->count(), 'pending' => (int) $rows->pending, 'delivered' => (int) $rows->delivered, 'not_delivered' => (int) $rows->not_delivered, 'unpaid_delivered_count' => (int) $rows->unpaid_delivered_count, 'unpaid_delivered_amount' => (float) $rows->unpaid_delivered_amount];
     }
 

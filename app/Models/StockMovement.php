@@ -18,6 +18,7 @@ class StockMovement extends Model
         'note',
         'created_by',
         'user_id',
+        'route_operation_return_id',
     ];
 
     protected $casts = [

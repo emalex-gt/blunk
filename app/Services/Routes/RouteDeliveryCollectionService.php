@@ -51,6 +51,9 @@ class RouteDeliveryCollectionService
             }
 
             $sale = Sale::query()->where('business_id', $businessId)->where('branch_id', $branchId)->whereKey($lockedItem->sale_id)->lockForUpdate()->firstOrFail();
+            if ($sale->status !== 'completed') {
+                throw ValidationException::withMessages(['sale' => 'Una venta anulada o devuelta no puede cobrarse.']);
+            }
             if ($sale->payment_status !== 'unpaid' || (float) $sale->amount_paid !== 0.0 || $sale->capturedPayments()->lockForUpdate()->exists()) {
                 throw ValidationException::withMessages(['sale' => 'La venta ya tiene un pago registrado.']);
             }

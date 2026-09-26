@@ -387,6 +387,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function StatusBadge({ status }: { status: string }) {
     const styles: Record<string, string> = {
         operation_cancelled: 'bg-red-50 text-red-700',
+        operation_returned: 'bg-red-50 text-red-700',
         submitted: 'bg-sky-50 text-sky-700',
         processing: 'bg-amber-50 text-amber-700',
         picked: 'bg-emerald-50 text-emerald-700',
@@ -396,6 +397,7 @@ function StatusBadge({ status }: { status: string }) {
 
     const labels: Record<string, string> = {
         operation_cancelled: 'Operación anulada',
+        operation_returned: 'Operación devuelta',
         submitted: 'Enviada',
         processing: 'En preparación',
         picked: 'Listo para facturar',

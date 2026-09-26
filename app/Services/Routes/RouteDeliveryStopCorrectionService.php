@@ -4,7 +4,6 @@ namespace App\Services\Routes;
 
 use App\Models\RouteDeliveryStop;
 use App\Models\RouteDeliveryStopRevision;
-use App\Models\RouteDeliveryCollection;
 use App\Models\User;
 use App\Support\Permissions;
 use Illuminate\Support\Facades\DB;
@@ -35,7 +34,7 @@ class RouteDeliveryStopCorrectionService
             $outcome = DeliveryOutcomeRules::normalize((string) ($data['delivery_status'] ?? ''), $data['not_delivered_reason_code'] ?? $data['not_delivered_reason'] ?? null, $data['delivery_notes'] ?? $data['notes'] ?? null);
             $previous = ['delivery_status' => $locked->status, 'not_delivered_reason_code' => $locked->not_delivered_reason_code, 'delivery_notes' => $locked->delivery_notes];
             $next = ['status' => $outcome['delivery_status'], 'not_delivered_reason_code' => $outcome['not_delivered_reason_code'], 'delivery_notes' => $outcome['delivery_notes']];
-            if ($locked->status === 'delivered' && $next['status'] === 'not_delivered' && RouteDeliveryCollection::query()->where('route_delivery_stop_id', $locked->id)->lockForUpdate()->exists()) {
+            if ($locked->status === 'delivered' && $next['status'] === 'not_delivered') {
                 throw ValidationException::withMessages(['correction' => 'La corrección requiere una reversión financiera o logística que aún no existe.']);
             }
             $version = (int) RouteDeliveryStopRevision::query()->where('route_delivery_stop_id', $locked->id)->max('version') + 1;

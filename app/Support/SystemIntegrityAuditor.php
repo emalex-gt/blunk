@@ -285,6 +285,50 @@ class SystemIntegrityAuditor
             }
         }
 
+        foreach (DB::table('route_operation_returns as operation_return')
+            ->join('sales as sale', 'sale.id', '=', 'operation_return.sale_id')
+            ->where('operation_return.business_id', $businessId)
+            ->where('operation_return.status', 'completed')
+            ->when($branchId, fn (Builder $query) => $query->where('operation_return.branch_id', $branchId))
+            ->select('operation_return.id', 'operation_return.business_id', 'operation_return.branch_id', 'operation_return.sale_id', 'sale.business_number', 'sale.status as sale_status', 'sale.business_id as sale_business_id', 'sale.branch_id as sale_branch_id')
+            ->cursor() as $operationReturn) {
+            $expected = DB::table('sale_items')->where('sale_id', $operationReturn->sale_id)
+                ->select('product_id', DB::raw('COUNT(*) as line_count'), DB::raw('SUM(quantity) as quantity'))
+                ->groupBy('product_id')->get()->keyBy('product_id');
+            $actual = DB::table('stock_movements')->where('route_operation_return_id', $operationReturn->id)
+                ->select('product_id', 'business_id', 'branch_id', 'type', 'note', DB::raw('COUNT(*) as movement_count'), DB::raw('SUM(quantity) as quantity'))
+                ->groupBy('product_id', 'business_id', 'branch_id', 'type', 'note')->get();
+            $validNote = stockMovementNote('sale_cancel', $operationReturn->business_number ?: $operationReturn->sale_id);
+            $valid = $operationReturn->sale_status === 'cancelled'
+                && (int) $operationReturn->sale_business_id === (int) $operationReturn->business_id
+                && (int) $operationReturn->sale_branch_id === (int) $operationReturn->branch_id
+                && $expected->isNotEmpty();
+            foreach ($actual as $movement) {
+                if ((int) $movement->business_id !== (int) $operationReturn->business_id
+                    || (int) $movement->branch_id !== (int) $operationReturn->branch_id
+                    || $movement->type !== 'sale_cancel' || $movement->note !== $validNote) {
+                    $valid = false;
+                }
+            }
+            foreach ($expected as $productId => $item) {
+                $matches = $actual->where('product_id', $productId);
+                if ((int) $matches->sum('movement_count') !== (int) $item->line_count
+                    || abs((float) $matches->sum('quantity') - (float) $item->quantity) > 0.0001) {
+                    $valid = false;
+                }
+            }
+            if ($actual->pluck('product_id')->diff($expected->keys())->isNotEmpty()) {
+                $valid = false;
+            }
+            if (! $valid) {
+                $stockIssues[] = $this->issue([
+                    'business_id' => $businessId, 'branch_id' => $operationReturn->branch_id,
+                    'product_id' => null, 'product_name' => null, 'barcode' => null,
+                    'current_stock' => null, 'calculated_stock' => null, 'difference' => null,
+                ], 'critical', 'route_operation_return_stock_mismatch', "Devolución de ruta #{$operationReturn->id} no conserva exactamente la restauración causal de la venta #{$operationReturn->sale_id}.", 'Revisar la venta, la devolución y los movimientos causales sin alterar historia automáticamente.');
+            }
+        }
+
         return [$stockIssues, $negativeStock, $this->auditCreditReservations($context)];
     }
 

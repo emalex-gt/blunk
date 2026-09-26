@@ -319,7 +319,8 @@ class RoutePendingCollectionCaseService
 
     private function isEligibleSale(Sale $sale): bool
     {
-        return $sale->payment_status === 'unpaid'
+        return $sale->status === 'completed'
+            && $sale->payment_status === 'unpaid'
             && (float) $sale->amount_paid === 0.0
             && ! $sale->is_credit_sale
             && (float) $sale->credit_balance === 0.0

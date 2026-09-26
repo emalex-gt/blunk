@@ -24,6 +24,7 @@ use App\Http\Controllers\RouteDeliveryBatchController;
 use App\Http\Controllers\RouteExternalDeliveryReconciliationController;
 use App\Http\Controllers\RouteDeliveryRunController;
 use App\Http\Controllers\RouteDeliveryStopController;
+use App\Http\Controllers\RouteOperationReturnController;
 use App\Http\Controllers\RouteDeliveryCollectionReversalController;
 use App\Http\Controllers\RouteCashSettlementController;
 use App\Http\Controllers\RouteCashSettlementVarianceController;
@@ -302,6 +303,9 @@ Route::middleware('auth')->group(function () {
             Route::post('/external-delivery-reconciliation-items/{item}/correct', [RouteExternalDeliveryReconciliationController::class, 'correct'])
                 ->middleware('permission:routes.external_delivery.reconcile.correct')
                 ->name('external-delivery-reconciliation-items.correct');
+            Route::post('/external-delivery-reconciliation-items/{item}/return', [RouteOperationReturnController::class, 'external'])
+                ->middleware('permission:routes.external_delivery.reconcile.correct')
+                ->name('external-delivery-reconciliation-items.return');
 
             Route::get('/delivery-runs', [RouteDeliveryRunController::class, 'index'])->middleware('permission:routes.delivery_runs.view')->name('delivery-runs.index');
             Route::post('/delivery-runs', [RouteDeliveryRunController::class, 'store'])->middleware('permission:routes.delivery_runs.manage')->name('delivery-runs.store');
@@ -316,6 +320,7 @@ Route::middleware('auth')->group(function () {
             Route::post('/delivery-stops/{stop}/complete', [RouteDeliveryStopController::class, 'complete'])->middleware('permission:routes.delivery_runs.execute')->name('delivery-stops.complete');
             Route::post('/delivery-stops/{stop}/collect', [RouteDeliveryStopController::class, 'collect'])->middleware('permission:routes.delivery_runs.execute')->name('delivery-stops.collect');
             Route::post('/delivery-stops/{stop}/correct', [RouteDeliveryStopController::class, 'correct'])->middleware('permission:routes.delivery_runs.correct')->name('delivery-stops.correct');
+            Route::post('/delivery-stops/{stop}/return', [RouteOperationReturnController::class, 'inApp'])->middleware('permission:routes.delivery_runs.correct')->name('delivery-stops.return');
             Route::post('/delivery-collections/{collection}/reverse', [RouteDeliveryCollectionReversalController::class, 'store'])->middleware('permission:routes.delivery_collections.reverse')->name('delivery-collections.reverse');
 
             Route::get('/cash-settlements', [RouteCashSettlementController::class, 'index'])->name('cash-settlements.index');

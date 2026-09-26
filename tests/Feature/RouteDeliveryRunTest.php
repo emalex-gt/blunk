@@ -36,6 +36,81 @@ class RouteDeliveryRunTest extends TestCase
         Permissions::syncDefaults();
     }
 
+    public function test_delivered_unpaid_in_app_stop_can_be_returned_without_changing_original_stop(): void
+    {
+        [$manager, $deliveryUser, $entries] = $this->inAppEntries();
+        $entry = $entries[0];
+        $run = app(RouteDeliveryRunAssignmentService::class)->createDraft($manager, $deliveryUser, [$entry->id]);
+        app(RouteDeliveryRunService::class)->start($run, $deliveryUser, 'phase2a-in-app-start');
+        $stop = $run->fresh()->stops()->firstOrFail();
+        app(RouteDeliveryStopService::class)->complete($stop, ['delivery_status' => 'delivered', 'collected' => false], $deliveryUser, 'phase2a-in-app-delivered');
+
+        $result = app(\App\Services\Routes\RouteOperationReturnService::class)->completeStop($stop->fresh(), [
+            'idempotency_key' => 'phase2a-in-app-return', 'reason' => 'Mercancía recibida de vuelta', 'goods_received' => true,
+        ], $manager);
+
+        $this->assertDatabaseHas('route_operation_returns', ['id' => $result->resultId, 'sale_id' => $entry->sale_id, 'route_delivery_stop_id' => $stop->id, 'route_external_delivery_reconciliation_item_id' => null, 'status' => 'completed']);
+        $this->assertDatabaseHas('route_delivery_stops', ['id' => $stop->id, 'status' => 'delivered']);
+        $this->assertDatabaseHas('sales', ['id' => $entry->sale_id, 'status' => 'cancelled', 'payment_status' => 'unpaid']);
+        $this->assertDatabaseHas('route_pending_collection_cases', ['sale_id' => $entry->sale_id, 'status' => 'not_applicable']);
+        $this->assertDatabaseCount('sale_payments', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertSame(0, app(RouteDeliveryRunService::class)->progress($run->fresh())['unpaid_delivered_count']);
+        try {
+            app(RouteDeliveryStopService::class)->collect($stop->fresh(), [
+                'amount' => 60, 'payment_method' => 'transfer', 'collected_by' => $deliveryUser->id, 'collected_at' => now()->toDateTimeString(),
+            ], $deliveryUser, 'phase2a-in-app-late-collect');
+            $this->fail('A returned, cancelled sale cannot be collected.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('sale', $exception->errors());
+        }
+    }
+
+    public function test_in_app_return_http_preserves_stop_and_exposes_return_in_detail(): void
+    {
+        [$manager, $deliveryUser, $entries] = $this->inAppEntries();
+        $entry = $entries[0];
+        $run = app(RouteDeliveryRunAssignmentService::class)->createDraft($manager, $deliveryUser, [$entry->id]);
+        app(RouteDeliveryRunService::class)->start($run, $deliveryUser, 'phase2a-stop-http-start');
+        $stop = $run->fresh()->stops()->firstOrFail();
+        app(RouteDeliveryStopService::class)->complete($stop, ['delivery_status' => 'delivered', 'collected' => false], $deliveryUser, 'phase2a-stop-http-delivered');
+        $this->actingAs($manager)->withSession(['active_business_id' => $manager->business_id])
+            ->get(route('routes.delivery-stops.show', $stop))->assertOk()
+            ->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+                ->component('Routes/Mobile/DeliveryRuns/Stop')
+                ->where('can_return', true));
+        $this->actingAs($manager)->withSession(['active_business_id' => $manager->business_id])
+            ->post(route('routes.delivery-stops.return', $stop), [
+                'idempotency_key' => 'phase2a-stop-http-return', 'reason' => 'Devolución aceptada', 'goods_received' => true,
+            ])->assertSessionHasNoErrors();
+        $this->actingAs($manager)->withSession(['active_business_id' => $manager->business_id])
+            ->get(route('routes.delivery-stops.show', $stop))->assertOk()
+            ->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+                ->component('Routes/Mobile/DeliveryRuns/Stop')
+                ->where('stop.status', 'delivered')
+                ->where('stop.operation_return.status', 'completed'));
+    }
+
+    public function test_simple_stop_correction_cannot_disguise_a_delivered_operation_as_non_delivery(): void
+    {
+        [$manager, $deliveryUser, $entries] = $this->inAppEntries();
+        $run = app(RouteDeliveryRunAssignmentService::class)->createDraft($manager, $deliveryUser, [$entries[0]->id]);
+        app(RouteDeliveryRunService::class)->start($run, $deliveryUser, 'phase2a-correction-start');
+        $stop = $run->fresh()->stops()->firstOrFail();
+        app(RouteDeliveryStopService::class)->complete($stop, ['delivery_status' => 'delivered', 'collected' => false], $deliveryUser, 'phase2a-correction-delivered');
+
+        try {
+            app(RouteDeliveryStopCorrectionService::class)->correct($stop->fresh(), [
+                'delivery_status' => 'not_delivered', 'not_delivered_reason_code' => 'customer_absent', 'correction_reason' => 'Intento de anulación simple',
+            ], $manager);
+            $this->fail('Expected terminal correction to require its own orchestration.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('correction', $exception->errors());
+        }
+        $this->assertSame('delivered', $stop->fresh()->status);
+        $this->assertSame('completed', $entries[0]->sale->fresh()->status);
+    }
+
     public function test_draft_can_be_reordered_then_started_and_closed_with_an_unpaid_warning(): void
     {
         [$manager, $deliveryUser, $entries] = $this->inAppEntries(2);

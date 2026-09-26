@@ -12,7 +12,7 @@ use Illuminate\Validation\ValidationException;
 class SaleStockCancellationService
 {
     /** The caller owns the transaction and holds the Sale lock. */
-    public function restore(Sale $sale, User $actor, bool $requireCompleteReturn = false): void
+    public function restore(Sale $sale, User $actor, bool $requireCompleteReturn = false, array $context = []): void
     {
         $businessId = (int) $sale->business_id;
         $branchId = (int) ($sale->branch_id ?: BranchInventory::defaultBranch($businessId)->id);
@@ -49,6 +49,7 @@ class SaleStockCancellationService
                 'new_stock' => $newStock,
                 'note' => $note,
                 'created_by' => $actor->id,
+                'route_operation_return_id' => $context['route_operation_return_id'] ?? null,
             ]);
         }
     }

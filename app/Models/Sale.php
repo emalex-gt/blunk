@@ -123,6 +123,11 @@ class Sale extends Model
         return $this->hasMany(RoutePostConversionCollection::class);
     }
 
+    public function routeOperationReturn(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(RouteOperationReturn::class)->where('status', 'completed');
+    }
+
     public function creditPaymentAllocations(): HasMany
     {
         return $this->hasMany(CustomerCreditPaymentAllocation::class);

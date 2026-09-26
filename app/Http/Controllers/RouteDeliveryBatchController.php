@@ -40,10 +40,12 @@ class RouteDeliveryBatchController extends Controller
             'preSales.preSale.customer:id,name,commercial_name,doc_number',
             'preSales.preSale:id,status,fel_eligibility_status,fel_eligibility_reason,customer_id',
             'preSales.preSale.collections' => fn ($query) => $query->whereIn('status', ['captured', 'linked'])->with(['collectedBy:id,name', 'recordedBy:id,name']),
-            'preSales.sale:id,business_id,business_number,total,document_type,payment_status,payment_method,certification_status,electronic_document_id',
+            'preSales.sale:id,business_id,business_number,total,status,document_type,payment_status,payment_method,certification_status,electronic_document_id',
             'preSales.sale.electronicDocument:id,sale_id,status,error_message',
             'preSales.sale.payments:id,sale_id,method,amount,collected_by,collected_at,route_pre_sale_collection_id,route_delivery_collection_id',
             'preSales.externalDeliveryReconciliationItem.deliveryCollection.collectedBy:id,name',
+            'preSales.operationReturn:id,route_delivery_batch_pre_sale_id,status,reason,note,goods_received_at,completed_at',
+            'preSales.sale.items:id,sale_id,product_name,quantity',
         ]);
 
         $eligibility = app(ExternalDeliveryEligibility::class);
@@ -87,7 +89,9 @@ class RouteDeliveryBatchController extends Controller
                     'collected_at' => $deliveryCollection->collected_at?->toIso8601String(),
                     'custody_status' => $deliveryCollection->custody_status,
                 ] : null,
-                'reconciliation' => $entry->externalDeliveryReconciliationItem ? ['id' => $entry->externalDeliveryReconciliationItem->id, 'delivery_status' => $entry->externalDeliveryReconciliationItem->delivery_status, 'not_delivered_reason' => $entry->externalDeliveryReconciliationItem->not_delivered_reason, 'notes' => $entry->externalDeliveryReconciliationItem->notes] : null,
+                'reconciliation' => $entry->externalDeliveryReconciliationItem ? ['id' => $entry->externalDeliveryReconciliationItem->id, 'delivery_status' => $entry->externalDeliveryReconciliationItem->delivery_status, 'not_delivered_reason' => $entry->externalDeliveryReconciliationItem->not_delivered_reason, 'notes' => $entry->externalDeliveryReconciliationItem->notes, 'reconciled_at' => $entry->externalDeliveryReconciliationItem->reconciled_at?->toIso8601String()] : null,
+                'operation_return' => $entry->operationReturn ? ['status' => $entry->operationReturn->status, 'reason' => $entry->operationReturn->reason, 'goods_received_at' => $entry->operationReturn->goods_received_at?->toIso8601String(), 'completed_at' => $entry->operationReturn->completed_at?->toIso8601String()] : null,
+                'can_register_return' => $entry->operationReturn === null && $entry->externalDeliveryReconciliationItem?->delivery_status === 'delivered' && $entry->sale?->payment_status === 'unpaid' && $entry->sale?->status === 'completed' && Permissions::userHas(request()->user(), Permissions::ROUTES_EXTERNAL_DELIVERY_RECONCILE_CORRECT),
                 'external_eligibility' => $context,
                 ];
             })->values(), 'reconciliation_progress' => ['total' => $batch->preSales->count(), 'reconciled' => $reconciled, 'pending' => $batch->preSales->count() - $reconciled]],
