@@ -20,6 +20,7 @@ function ReturnForm({ entry }: { entry: Entry }) {
     const [received, setReceived] = useState(false);
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [processing, setProcessing] = useState(false);
+    const [open, setOpen] = useState(false);
     const [key] = useState(() => crypto.randomUUID());
     const confirm = () => {
         if (processing || !entry.reconciliation?.id || !received || !reason.trim()) return;
@@ -27,8 +28,9 @@ function ReturnForm({ entry }: { entry: Entry }) {
             idempotency_key: key, reason: reason.trim(), note: note.trim() || null, goods_received: true,
         }, { preserveScroll: true, onStart: () => setProcessing(true), onFinish: () => { setProcessing(false); setConfirmOpen(false); } });
     };
+    if (!open) return <button type="button" className="rounded border border-rose-300 px-3 py-2 text-sm font-semibold text-rose-700" onClick={() => setOpen(true)}>Registrar devolución</button>;
     return <div className="space-y-2 rounded border border-rose-200 bg-rose-50 p-3 text-sm">
-        <h3 className="font-semibold">Registrar devolución</h3>
+        <div className="flex items-center justify-between"><h3 className="font-semibold">Registrar devolución</h3><button type="button" className="text-slate-600 underline" onClick={() => setOpen(false)}>Cancelar</button></div>
         <p>Cliente: {entry.pre_sale?.customer?.commercial_name || entry.pre_sale?.customer?.name || '-'} · Venta #{entry.sale?.business_number ?? entry.sale?.id} · Q {Number(entry.sale?.total ?? 0).toFixed(2)}</p>
         <p>Entrega original: {entry.reconciliation?.reconciled_at ? new Date(entry.reconciliation.reconciled_at).toLocaleString() : '-'}</p>
         <ul className="list-inside list-disc">{entry.sale?.items?.map((item, index) => <li key={index}>{item.product_name} · {item.quantity}</li>)}</ul>
