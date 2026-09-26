@@ -20,6 +20,7 @@ class RouteExternalDeliveryReconciliationService
         private readonly ExternalDeliveryEligibility $eligibility,
         private readonly RouteDeliveryCollectionService $collections,
         private readonly RoutePendingCollectionCaseService $pendingCases,
+        private readonly RouteUnpaidSaleCancellationService $cancellation,
     ) {
     }
 
@@ -54,6 +55,10 @@ class RouteExternalDeliveryReconciliationService
                     $status = $outcome['delivery_status'];
                     $reason = $outcome['not_delivered_reason_code'];
                     $notes = $outcome['delivery_notes'];
+                    $paymentFields = ['amount', 'payment_method', 'collected_by', 'collected_at', 'reference', 'details', 'override_reason', 'receive_cash_in_current_session'];
+                    if ($status === 'not_delivered' && ((bool) ($data['collected'] ?? false) || array_intersect($paymentFields, array_keys($data)) !== [])) {
+                        throw ValidationException::withMessages(['collected' => 'Una operación no entregada no puede registrar cobro.']);
+                    }
 
                     $reconciliation = RouteExternalDeliveryReconciliation::query()->where('route_delivery_batch_id', $lockedBatch->id)->lockForUpdate()->first();
                     if (! $reconciliation) {
@@ -73,6 +78,9 @@ class RouteExternalDeliveryReconciliationService
                         'delivery_status' => $status, 'not_delivered_reason' => $reason, 'notes' => $notes,
                         'reconciled_by' => $actor->id, 'reconciled_at' => now(),
                     ]);
+                    if ($status === 'not_delivered') {
+                        $this->cancellation->cancel($lockedEntry, $actor, (string) $reason);
+                    }
                     $collection = null;
                     if ($context['responsibility'] === 'pre_seller' && (bool) ($data['collected'] ?? false)) {
                         throw ValidationException::withMessages(['collected' => 'El pago del preventista es sólo de lectura durante la conciliación.']);

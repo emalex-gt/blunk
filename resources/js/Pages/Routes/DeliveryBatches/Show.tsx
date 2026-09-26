@@ -1,4 +1,5 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import ConfirmDialog from '@/Components/ConfirmDialog';
 import { Head, Link, router } from '@inertiajs/react';
 import { useState } from 'react';
 
@@ -18,19 +19,85 @@ function ReconciliationForm({ batch, entry, actorId, canOverrideCollector, colle
     const [reason, setReason] = useState('customer_absent');
     const [notes, setNotes] = useState('');
     const [collected, setCollected] = useState(false);
-    const [method, setMethod] = useState<Method>(() => defaultMethod(entry));
+    const [method, setMethod] = useState<Method | ''>(() => defaultMethod(entry));
     const [reference, setReference] = useState('');
     const [collectorId, setCollectorId] = useState(actorId);
     const [collectedAt, setCollectedAt] = useState(localDateTime());
     const [overrideReason, setOverrideReason] = useState('');
     const [receivingNow, setReceivingNow] = useState(false);
+    const [confirmOpen, setConfirmOpen] = useState(false);
+    const [processing, setProcessing] = useState(false);
+
     if (entry.reconciliation) return <span className="text-sm font-semibold text-emerald-700">Conciliado: {entry.reconciliation.delivery_status === 'delivered' ? 'Entregado' : 'No entregado'}</span>;
     if (!entry.external_eligibility.eligible) return <span className="text-sm font-semibold text-amber-800">Revisión administrativa requerida</span>;
-    const deliveryAgent = entry.external_eligibility.responsibility === 'delivery_agent';
-    const save = () => router.post(route('routes.delivery-batches.external-reconciliation.store', [batch.id, entry.id]), { idempotency_key: crypto.randomUUID(), delivery_status: status, not_delivered_reason: status === 'not_delivered' ? reason : null, notes: notes || null, collected, ...(collected ? { amount: entry.sale?.total, payment_method: method, collected_by: collectorId, collected_at: new Date(collectedAt).toISOString(), reference: reference || null, override_reason: collectorId !== actorId ? overrideReason : null, receive_cash_in_current_session: receivingNow } : {}) }, { preserveScroll: true });
-    return <div className="min-w-72 space-y-2 text-xs"><div className="flex gap-2"><button type="button" className={status === 'delivered' ? 'rounded bg-emerald-600 px-2 py-1 text-white' : 'rounded border px-2 py-1'} onClick={() => setStatus('delivered')}>Entregado</button><button type="button" className={status === 'not_delivered' ? 'rounded bg-amber-600 px-2 py-1 text-white' : 'rounded border px-2 py-1'} onClick={() => setStatus('not_delivered')}>No entregado</button></div>{status === 'not_delivered' && <><select className="w-full rounded border p-1" value={reason} onChange={(event) => setReason(event.target.value)}>{notDeliveredReasons.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><textarea className="w-full rounded border p-1" placeholder={reason === 'other' ? 'Nota obligatoria' : 'Notas'} value={notes} onChange={(event) => setNotes(event.target.value)} /></>}{deliveryAgent && entry.sale?.payment_status === 'unpaid' && <><label className="flex gap-2"><input type="checkbox" checked={collected} onChange={(event) => setCollected(event.target.checked)} />Cobrado</label>{collected && <><div className="rounded border border-slate-200 p-2"><p>Importe completo: <strong>Q {Number(entry.sale.total).toFixed(2)}</strong></p><label className="mt-1 block">Método<select className="mt-1 w-full rounded border p-1" value={method} onChange={(event) => setMethod(event.target.value as Method)}>{entry.payment_policy.allowed_methods.map((value) => <option value={value} key={value}>{methodLabel(value)}</option>)}</select></label><label className="mt-1 block">Cobrador{canOverrideCollector ? <select className="mt-1 w-full rounded border p-1" value={collectorId} onChange={(event) => setCollectorId(Number(event.target.value))}>{collectors.map((collector) => <option value={collector.id} key={collector.id}>{collector.name}</option>)}</select> : <span className="mt-1 block rounded bg-slate-50 p-1">Usuario actual</span>}</label>{collectorId !== actorId && <textarea className="mt-1 w-full rounded border p-1" placeholder="Motivo obligatorio del override" value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} />}<label className="mt-1 block">Fecha y hora del cobro<input className="mt-1 w-full rounded border p-1" type="datetime-local" value={collectedAt} onChange={(event) => setCollectedAt(event.target.value)} /></label><input className="mt-1 w-full rounded border p-1" placeholder="Referencia" value={reference} onChange={(event) => setReference(event.target.value)} /></div><div className="min-h-[52px]">{method === 'cash' && <label className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"><input type="checkbox" checked={receivingNow} onChange={(event) => setReceivingNow(event.target.checked)} /><span>Confirmo la recepción de este efectivo en la caja abierta actual.</span></label>}</div></>}</>}<button type="button" className="rounded bg-indigo-600 px-2 py-1 font-semibold text-white" onClick={save}>Guardar</button></div>;
-}
 
+    const deliveryAgent = entry.external_eligibility.responsibility === 'delivery_agent';
+    const selectStatus = (next: 'delivered' | 'not_delivered') => {
+        setStatus(next);
+        if (next === 'not_delivered') {
+            setCollected(false);
+            setMethod('');
+            setReference('');
+            setCollectorId(actorId);
+            setCollectedAt('');
+            setOverrideReason('');
+            setReceivingNow(false);
+        } else {
+            setMethod(defaultMethod(entry));
+            setCollectedAt(localDateTime());
+        }
+    };
+    const post = () => {
+        if (processing) return;
+        const payment = status === 'delivered' && collected;
+        router.post(route('routes.delivery-batches.external-reconciliation.store', [batch.id, entry.id]), {
+            idempotency_key: crypto.randomUUID(),
+            delivery_status: status,
+            not_delivered_reason: status === 'not_delivered' ? reason : null,
+            notes: notes || null,
+            collected: payment,
+            ...(payment ? {
+                amount: entry.sale?.total,
+                payment_method: method,
+                collected_by: collectorId,
+                collected_at: new Date(collectedAt).toISOString(),
+                reference: reference || null,
+                override_reason: collectorId !== actorId ? overrideReason : null,
+                receive_cash_in_current_session: receivingNow,
+            } : {}),
+        }, { preserveScroll: true, onStart: () => setProcessing(true), onFinish: () => setProcessing(false) });
+        setConfirmOpen(false);
+    };
+    const save = () => status === 'not_delivered' ? setConfirmOpen(true) : post();
+
+    return <div className="min-w-72 space-y-2 text-xs">
+        <div className="flex gap-2">
+            <button type="button" className={status === 'delivered' ? 'rounded bg-emerald-600 px-2 py-1 text-white' : 'rounded border px-2 py-1'} onClick={() => selectStatus('delivered')}>Entregado</button>
+            <button type="button" className={status === 'not_delivered' ? 'rounded bg-amber-600 px-2 py-1 text-white' : 'rounded border px-2 py-1'} onClick={() => selectStatus('not_delivered')}>No entregado</button>
+        </div>
+        {status === 'not_delivered' && <>
+            <select className="w-full rounded border p-1" value={reason} onChange={(event) => setReason(event.target.value)}>{notDeliveredReasons.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>
+            <textarea className="w-full rounded border p-1" placeholder={reason === 'other' ? 'Nota obligatoria' : 'Notas'} value={notes} onChange={(event) => setNotes(event.target.value)} />
+            <p className="rounded border border-red-200 bg-red-50 p-2 font-semibold text-red-800">Esta operación se anulará y los productos volverán al inventario.</p>
+        </>}
+        {status === 'delivered' && deliveryAgent && entry.sale?.payment_status === 'unpaid' && <>
+            <label className="flex gap-2"><input type="checkbox" checked={collected} onChange={(event) => setCollected(event.target.checked)} />Cobrado</label>
+            {collected && <>
+                <div className="rounded border border-slate-200 p-2">
+                    <p>Importe completo: <strong>Q {Number(entry.sale.total).toFixed(2)}</strong></p>
+                    <label className="mt-1 block">Método<select className="mt-1 w-full rounded border p-1" value={method} onChange={(event) => setMethod(event.target.value as Method)}>{entry.payment_policy.allowed_methods.map((value) => <option value={value} key={value}>{methodLabel(value)}</option>)}</select></label>
+                    <label className="mt-1 block">Cobrador{canOverrideCollector ? <select className="mt-1 w-full rounded border p-1" value={collectorId} onChange={(event) => setCollectorId(Number(event.target.value))}>{collectors.map((collector) => <option value={collector.id} key={collector.id}>{collector.name}</option>)}</select> : <span className="mt-1 block rounded bg-slate-50 p-1">Usuario actual</span>}</label>
+                    {collectorId !== actorId && <textarea className="mt-1 w-full rounded border p-1" placeholder="Motivo obligatorio del override" value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} />}
+                    <label className="mt-1 block">Fecha y hora del cobro<input className="mt-1 w-full rounded border p-1" type="datetime-local" value={collectedAt} onChange={(event) => setCollectedAt(event.target.value)} /></label>
+                    <input className="mt-1 w-full rounded border p-1" placeholder="Referencia" value={reference} onChange={(event) => setReference(event.target.value)} />
+                </div>
+                {method === 'cash' && <label className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"><input type="checkbox" checked={receivingNow} onChange={(event) => setReceivingNow(event.target.checked)} /><span>Confirmo que este efectivo está siendo recibido físicamente ahora en la caja abierta actual.</span></label>}
+            </>}
+        </>}
+        <button type="button" disabled={processing} className="rounded bg-indigo-600 px-2 py-1 font-semibold text-white disabled:opacity-60" onClick={save}>{status === 'not_delivered' ? 'Anular operación' : 'Guardar'}</button>
+        <ConfirmDialog open={confirmOpen} title="Anular operación" message="Esta operación se anulará y los productos volverán al inventario." confirmLabel="Anular operación" processing={processing} onCancel={() => setConfirmOpen(false)} onConfirm={post} />
+    </div>;
+}
 function localDateTime() { const date = new Date(); date.setMinutes(date.getMinutes() - date.getTimezoneOffset()); return date.toISOString().slice(0, 16); }
 function defaultMethod(entry: Entry): Method { const allowed = entry.payment_policy.allowed_methods; return allowed.includes(entry.agreed_payment_method_snapshot as Method) ? entry.agreed_payment_method_snapshot as Method : allowed.includes(entry.payment_policy.primary_method as Method) ? entry.payment_policy.primary_method as Method : allowed[0] ?? 'cash'; }
 function financialLabel(entry: Entry) { if (entry.sale?.payment_status === 'paid') { const collection = entry.financial_collection ?? entry.collection; return `Cobrado · ${methodLabel(collection?.payment_method ?? entry.sale.payment_method)} · ${collection?.collected_by?.name ?? '-'}${collection?.collected_at ? ` · ${new Date(collection.collected_at).toLocaleString()}` : ''}`; } return entry.collection_responsibility === 'review_required' ? 'Revisión administrativa requerida' : `Pendiente de cobro · ${entry.collection_responsibility === 'delivery_agent' ? 'entregador' : 'preventista'}`; }

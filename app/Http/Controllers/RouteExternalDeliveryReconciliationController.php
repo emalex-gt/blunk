@@ -27,7 +27,9 @@ class RouteExternalDeliveryReconciliationController extends Controller
         ]);
         $reconciliations->reconcileItem($batch, $entry, $data, $request->user());
 
-        return back()->with('success', 'Entrega conciliada.');
+        return back()->with('success', $data['delivery_status'] === 'not_delivered'
+            ? 'Operación anulada y productos devueltos al inventario.'
+            : 'Entrega conciliada.');
     }
 
     public function correct(Request $request, RouteExternalDeliveryReconciliationItem $item, RouteExternalDeliveryReconciliationCorrectionService $corrections): RedirectResponse

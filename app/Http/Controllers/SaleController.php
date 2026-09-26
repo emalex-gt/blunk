@@ -18,6 +18,7 @@ use App\Models\StockMovement;
 use App\Models\TenantSetting;
 use App\Models\TenantFelSetting;
 use App\Services\Fel\FelException;
+use App\Services\SaleStockCancellationService;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Fel\Providers\Digifact\DigifactNit;
@@ -1225,30 +1226,7 @@ class SaleController extends Controller
 
             AccountsReceivable::cancelSaleCharge($sale, $request->user());
 
-            foreach ($sale->items as $item) {
-                $product = Product::query()
-                    ->where('business_id', $businessId)
-                    ->lockForUpdate()
-                    ->find($item->product_id);
-
-                if (! $product) {
-                    continue;
-                }
-
-                [$previousStock, $newStock] = BranchInventory::increase($product, $branchId, (float) $item->quantity);
-
-                StockMovement::create([
-                    'business_id' => $businessId,
-                    'branch_id' => $branchId,
-                    'product_id' => $product->id,
-                    'type' => 'sale_cancel',
-                    'quantity' => (float) $item->quantity,
-                    'previous_stock' => $previousStock,
-                    'new_stock' => $newStock,
-                    'note' => stockMovementNote('sale_cancel', $sale->business_number ?: $sale->id),
-                    'created_by' => $request->user()->id,
-                ]);
-            }
+            app(SaleStockCancellationService::class)->restore($sale, $request->user());
 
             if ($cashAmount > 0) {
                 $cashSession = CashRegister::requireOpenSession(

@@ -18,6 +18,7 @@ type PreSale = {
     id: number;
     branch_id: number;
     status: string;
+    operational_status?: string;
     total: string;
     created_at: string;
     submitted_at?: string | null;
@@ -247,7 +248,7 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
                                             {preSale.picked_at && <div className="text-xs text-slate-500">{formatDate(preSale.picked_at)}</div>}
                                         </td>
                                         <td className="px-4 py-3">Q {Number(preSale.total).toFixed(2)}</td>
-                                        <td className="px-4 py-3"><StatusBadge status={preSale.status} /></td>
+                                        <td className="px-4 py-3"><StatusBadge status={preSale.operational_status ?? preSale.status} /></td>
                                         <td className="px-4 py-3">
                                             {preSale.status === 'converted' ? <FelBadge status={preSale.fel_status ?? 'not_requested'} /> : '-'}
                                             {preSale.fel_eligibility && <div className={preSale.fel_eligibility.eligible ? 'mt-1 text-xs font-semibold text-emerald-700' : 'mt-1 text-xs font-semibold text-amber-700'}>
@@ -385,6 +386,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 function StatusBadge({ status }: { status: string }) {
     const styles: Record<string, string> = {
+        operation_cancelled: 'bg-red-50 text-red-700',
         submitted: 'bg-sky-50 text-sky-700',
         processing: 'bg-amber-50 text-amber-700',
         picked: 'bg-emerald-50 text-emerald-700',
@@ -393,6 +395,7 @@ function StatusBadge({ status }: { status: string }) {
     };
 
     const labels: Record<string, string> = {
+        operation_cancelled: 'Operación anulada',
         submitted: 'Enviada',
         processing: 'En preparación',
         picked: 'Listo para facturar',

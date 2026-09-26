@@ -75,7 +75,7 @@ class RouteDeliveryRunTest extends TestCase
         $run = app(RouteDeliveryRunAssignmentService::class)->createDraft($manager, $deliveryUser, [$entries[0]->id]);
         app(RouteDeliveryRunService::class)->start($run, $deliveryUser, 'in-app-collect-start-0001');
         $stop = $run->fresh()->stops()->firstOrFail();
-        app(RouteDeliveryStopService::class)->complete($stop, ['delivery_status' => 'not_delivered', 'not_delivered_reason_code' => 'customer_absent', 'collected' => false], $deliveryUser, 'in-app-collect-outcome-0001');
+        app(RouteDeliveryStopService::class)->complete($stop, ['delivery_status' => 'delivered', 'collected' => false], $deliveryUser, 'in-app-collect-outcome-0001');
 
         $first = app(RouteDeliveryStopService::class)->collect($stop->fresh(), [
             'amount' => 60, 'payment_method' => 'transfer', 'collected_by' => $deliveryUser->id, 'collected_at' => now()->toDateTimeString(),
@@ -91,6 +91,33 @@ class RouteDeliveryRunTest extends TestCase
         $this->assertDatabaseCount('sale_payments', 1);
         $this->assertDatabaseCount('cash_movements', 0);
         $this->assertDatabaseCount('customer_account_movements', 0);
+    }
+
+    public function test_not_delivered_stop_cannot_collect_during_or_after_completion(): void
+    {
+        [$manager, $deliveryUser, $entries] = $this->inAppEntries();
+        $run = app(RouteDeliveryRunAssignmentService::class)->createDraft($manager, $deliveryUser, [$entries[0]->id]);
+        app(RouteDeliveryRunService::class)->start($run, $deliveryUser, 'in-app-terminal-start-0001');
+        $stop = $run->fresh()->stops()->firstOrFail();
+        $payment = ['amount' => 60, 'payment_method' => 'transfer', 'collected_by' => $deliveryUser->id, 'collected_at' => now()->toDateTimeString()];
+
+        try {
+            app(RouteDeliveryStopService::class)->complete($stop, ['delivery_status' => 'not_delivered', 'not_delivered_reason_code' => 'customer_absent', 'collected' => true, ...$payment], $deliveryUser, 'in-app-terminal-invalid-0001');
+            $this->fail('Expected not-delivered payment to be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('collected', $exception->errors());
+        }
+        $this->assertSame('pending', $stop->fresh()->status);
+
+        app(RouteDeliveryStopService::class)->complete($stop, ['delivery_status' => 'not_delivered', 'not_delivered_reason_code' => 'customer_absent', 'collected' => false], $deliveryUser, 'in-app-terminal-valid-0001');
+        try {
+            app(RouteDeliveryStopService::class)->collect($stop->fresh(), $payment, $deliveryUser, 'in-app-terminal-late-0001');
+            $this->fail('Expected post-result payment to be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('stop', $exception->errors());
+        }
+        $this->assertDatabaseCount('route_delivery_collections', 0);
+        $this->assertDatabaseCount('sale_payments', 0);
     }
 
     public function test_assignment_rejects_external_and_duplicate_entries(): void

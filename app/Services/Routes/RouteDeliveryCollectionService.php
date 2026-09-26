@@ -20,17 +20,17 @@ class RouteDeliveryCollectionService
 
     public function captureFull(RouteExternalDeliveryReconciliationItem|RouteDeliveryStop $item, array $data, User $actor): RouteDeliveryCollection
     {
-        return $this->capture($item, $data, $actor, true, false);
+        return $this->capture($item, $data, $actor, true);
     }
 
     public function capturePostDeliveryFull(RouteExternalDeliveryReconciliationItem|RouteDeliveryStop $item, array $data, User $actor): RouteDeliveryCollection
     {
-        return $this->capture($item, $data, $actor, false, true);
+        return $this->capture($item, $data, $actor, false);
     }
 
-    private function capture(RouteExternalDeliveryReconciliationItem|RouteDeliveryStop $item, array $data, User $actor, bool $liveInAppExecution, bool $requireDelivered): RouteDeliveryCollection
+    private function capture(RouteExternalDeliveryReconciliationItem|RouteDeliveryStop $item, array $data, User $actor, bool $liveInAppExecution): RouteDeliveryCollection
     {
-        return DB::transaction(function () use ($item, $data, $actor, $liveInAppExecution, $requireDelivered) {
+        return DB::transaction(function () use ($item, $data, $actor, $liveInAppExecution) {
             $external = $item instanceof RouteExternalDeliveryReconciliationItem;
             $lockedItem = $external
                 ? RouteExternalDeliveryReconciliationItem::query()->whereKey($item->id)->lockForUpdate()->firstOrFail()
@@ -42,7 +42,7 @@ class RouteDeliveryCollectionService
             if ($lockedItem->collection_responsibility_snapshot !== 'delivery_agent') {
                 throw ValidationException::withMessages(['collection' => 'Sólo el entregador puede registrar este cobro posterior a la venta.']);
             }
-            if ($requireDelivered && (($external && $lockedItem->delivery_status !== 'delivered') || (! $external && $lockedItem->status !== 'delivered'))) {
+            if (($external && $lockedItem->delivery_status !== 'delivered') || (! $external && $lockedItem->status !== 'delivered')) {
                 throw ValidationException::withMessages(['delivery' => 'El cobro posterior sólo puede registrarse sobre una entrega realizada.']);
             }
             if ($liveInAppExecution && ! $external) {

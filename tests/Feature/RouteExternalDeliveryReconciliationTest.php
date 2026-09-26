@@ -8,6 +8,7 @@ use App\Models\PreSale;
 use App\Models\PreSaleItem;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
+use App\Models\RouteBranchCollectionSetting;
 use App\Models\RouteDeliveryBatch;
 use App\Models\RouteDeliveryBatchPreSale;
 use App\Models\RouteExternalDeliveryReconciliation;
@@ -15,6 +16,7 @@ use App\Models\RouteExternalDeliveryReconciliationItem;
 use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
 use App\Models\SalePayment;
+use App\Models\StockMovement;
 use App\Models\StockReservation;
 use App\Models\TenantModule;
 use App\Models\TenantSetting;
@@ -25,6 +27,8 @@ use App\Services\Routes\RouteDeliveryCollectionService;
 use App\Services\Routes\RouteExternalDeliveryReconciliationService;
 use App\Services\Routes\RouteExternalDeliveryReconciliationCorrectionService;
 use App\Services\Routes\RoutePreSaleCollectionService;
+use App\Services\Routes\RoutePreSalePreparationService;
+use App\Services\Routes\RouteUnpaidSaleCancellationService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use App\Support\SystemIntegrityAuditor;
@@ -127,14 +131,13 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         $actor = User::query()->findOrFail($entry->batch->delivered_by);
         $result = app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
             'idempotency_key' => 'external-correction-source-key',
-            'delivery_status' => 'not_delivered',
-            'not_delivered_reason' => 'customer_absent',
+            'delivery_status' => 'delivered',
             'collected' => false,
         ], $actor);
 
         $corrected = app(RouteExternalDeliveryReconciliationCorrectionService::class)->correctDeliveryResult(
             RouteExternalDeliveryReconciliationItem::query()->findOrFail($result->resultId),
-            ['delivery_status' => 'delivered', 'correction_reason' => 'Cliente confirmó recepción posterior'],
+            ['delivery_status' => 'delivered', 'notes' => 'Recibió encargado', 'correction_reason' => 'Ajuste de nota'],
             $actor,
         );
 
@@ -154,8 +157,8 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         $actor = User::query()->findOrFail($entry->batch->delivered_by);
         $result = app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
             'idempotency_key' => 'external-delivered-note-source-key',
-            'delivery_status' => 'not_delivered',
-            'not_delivered_reason' => 'customer_absent',
+            'delivery_status' => 'delivered',
+            'notes' => 'Nota inicial',
             'collected' => false,
         ], $actor);
 
@@ -168,6 +171,29 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         $this->assertSame('delivered', $corrected->delivery_status);
         $this->assertNull($corrected->not_delivered_reason);
         $this->assertSame('Recibió recepción.', $corrected->notes);
+    }
+
+    public function test_admin_correction_cannot_turn_delivered_into_terminal_non_delivery_without_cancellation(): void
+    {
+        [$business, $entry] = $this->deliveryAgentEntry();
+        $actor = User::query()->findOrFail($entry->batch->delivered_by);
+        $result = app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
+            'idempotency_key' => 'external-correction-terminal-source-key', 'delivery_status' => 'delivered', 'collected' => false,
+        ], $actor);
+
+        try {
+            app(RouteExternalDeliveryReconciliationCorrectionService::class)->correctDeliveryResult(
+                RouteExternalDeliveryReconciliationItem::query()->findOrFail($result->resultId),
+                ['delivery_status' => 'not_delivered', 'not_delivered_reason' => 'customer_absent', 'correction_reason' => 'Entrega fallida'],
+                $actor,
+            );
+            $this->fail('Expected terminal change to require cancellation orchestration.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('correction', $exception->errors());
+        }
+        $this->assertDatabaseHas('route_external_delivery_reconciliation_items', ['id' => $result->resultId, 'delivery_status' => 'delivered']);
+        $this->assertDatabaseCount('route_external_delivery_reconciliation_item_revisions', 0);
+        $this->assertSame('completed', $entry->sale->fresh()->status);
     }
 
     public function test_immediate_cash_without_physical_receipt_stays_held_without_a_cash_session(): void
@@ -206,17 +232,192 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         $this->assertFalse(collect($audit['results']['sales'])->contains(fn (array $issue) => $issue['code'] === 'cash_sale_without_cash_movement'));
     }
 
-    public function test_not_delivered_with_collected_delivery_agent_payment_is_valid(): void
+    public function test_not_delivered_rejects_collected_payment_without_persisting_reconciliation(): void
     {
         [$business, $entry] = $this->deliveryAgentEntry();
         $actor = User::query()->findOrFail($entry->batch->delivered_by);
 
-        app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, ['idempotency_key' => 'external-not-delivered-collected-key', 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'customer_absent', 'collected' => true, 'amount' => 60, 'payment_method' => 'transfer', 'collected_by' => $actor->id, 'collected_at' => now()->toDateTimeString()], $actor);
+        try {
+            app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, ['idempotency_key' => 'external-not-delivered-collected-key', 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'customer_absent', 'collected' => true, 'amount' => 60, 'payment_method' => 'transfer', 'collected_by' => $actor->id, 'collected_at' => now()->toDateTimeString()], $actor);
+            $this->fail('Expected the contradictory payment to be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('collected', $exception->errors());
+        }
 
-        $this->assertDatabaseHas('route_external_delivery_reconciliation_items', ['route_delivery_batch_pre_sale_id' => $entry->id, 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'customer_absent']);
-        $this->assertDatabaseCount('route_delivery_collections', 1);
-        $this->assertDatabaseCount('sale_payments', 1);
+        $this->assertDatabaseCount('route_external_delivery_reconciliation_items', 0);
+        $this->assertDatabaseCount('route_delivery_collections', 0);
+        $this->assertDatabaseCount('sale_payments', 0);
         $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertSame('completed', $entry->sale->fresh()->status);
+    }
+
+    public function test_unpaid_external_non_delivery_cancels_sale_and_restores_invoice_stock_once(): void
+    {
+        [$business, $entry] = $this->routeEntry('delivery_agent', true);
+        $actor = User::query()->findOrFail($entry->batch->delivered_by);
+        $stock = ProductBranchStock::query()->where('business_id', $business->id)->firstOrFail();
+        $this->assertEquals(7, $stock->stock);
+        $payload = ['idempotency_key' => 'external-terminal-invoice-key', 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'customer_absent', 'collected' => false];
+
+        $first = app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, $payload, $actor);
+        $second = app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, $payload, $actor);
+
+        $this->assertFalse($first->replayed);
+        $this->assertTrue($second->replayed);
+        $this->assertSame($first->resultId, $second->resultId);
+        $this->assertDatabaseHas('route_external_delivery_reconciliation_items', ['id' => $first->resultId, 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'customer_absent']);
+        $this->assertDatabaseHas('sales', ['id' => $entry->sale_id, 'status' => 'cancelled', 'payment_status' => 'unpaid']);
+        $this->assertStringContainsString('customer_absent', (string) $entry->sale->fresh()->cancellation_reason);
+        $this->assertDatabaseHas('pre_sales', ['id' => $entry->pre_sale_id, 'status' => 'converted', 'converted_sale_id' => $entry->sale_id]);
+        $this->assertDatabaseHas('route_delivery_batch_pre_sales', ['id' => $entry->id, 'sale_id' => $entry->sale_id, 'status' => 'delivered']);
+        $this->assertEquals(10, $stock->fresh()->stock);
+        $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+        try {
+            app(RouteUnpaidSaleCancellationService::class)->cancel($entry, $actor, 'customer_absent');
+            $this->fail('Expected an already cancelled Sale to reject a second stock return.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('sale', $exception->errors());
+        }
+        $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+        $this->assertDatabaseCount('sale_payments', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertDatabaseCount('route_pending_collection_cases', 0);
+        $this->as($actor, $business)->get(route('routes.pre-sales.show', $entry->pre_sale_id))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/PreSales/Show')
+                ->where('preSale.status', 'converted')
+                ->where('preSale.operational_status', 'operation_cancelled')
+                ->where('preSale.converted_sale.id', $entry->sale_id)
+                ->where('preSale.converted_sale.status', 'cancelled'));
+        $this->as($actor, $business)->get(route('routes.pre-sales.index', ['status' => 'converted']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/PreSales/Index')
+                ->where('preSales.data.0.id', $entry->pre_sale_id)
+                ->where('preSales.data.0.operational_status', 'operation_cancelled'));
+
+        try {
+            app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
+                ...$payload, 'idempotency_key' => 'external-terminal-invoice-different-key',
+            ], $actor);
+            $this->fail('Expected a second key to find the terminal reconciliation.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('reconciliation', $exception->errors());
+        }
+        $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+    }
+
+    public function test_unpaid_external_non_delivery_restores_picking_stock_without_reversing_picking_twice(): void
+    {
+        [$business, $entry] = $this->routeEntry('delivery_agent', true, 'picking');
+        $actor = User::query()->findOrFail($entry->batch->delivered_by);
+        $stock = ProductBranchStock::query()->where('business_id', $business->id)->firstOrFail();
+        $this->assertSame('picking', $entry->batch->stock_deduction_timing);
+        $this->assertEquals(7, $stock->stock);
+        $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('type', 'pre_sale_picking')->count());
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale')->count());
+
+        app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
+            'idempotency_key' => 'external-terminal-picking-key', 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'damaged_goods', 'collected' => false,
+        ], $actor);
+
+        $this->assertEquals(10, $stock->fresh()->stock);
+        $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+        $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('type', 'pre_sale_picking')->count());
+        $this->assertDatabaseHas('sales', ['id' => $entry->sale_id, 'status' => 'cancelled']);
+    }
+
+    public function test_terminal_reconciliation_http_reports_operation_cancellation(): void
+    {
+        [$business, $entry] = $this->routeEntry('delivery_agent', true);
+        $actor = User::query()->findOrFail($entry->batch->delivered_by);
+
+        $this->as($actor, $business)->post(route('routes.delivery-batches.external-reconciliation.store', [$entry->batch, $entry]), [
+            'idempotency_key' => 'external-terminal-http-key', 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'business_closed', 'collected' => false,
+        ])->assertSessionHasNoErrors()->assertSessionHas('success', 'Operación anulada y productos devueltos al inventario.');
+        $this->assertDatabaseHas('sales', ['id' => $entry->sale_id, 'status' => 'cancelled']);
+    }
+
+    public function test_not_delivered_rejects_payment_fields_even_if_collected_is_false(): void
+    {
+        [$business, $entry] = $this->deliveryAgentEntry();
+        $actor = User::query()->findOrFail($entry->batch->delivered_by);
+        try {
+            app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
+                'idempotency_key' => 'external-terminal-manipulated-key', 'delivery_status' => 'not_delivered',
+                'not_delivered_reason' => 'customer_absent', 'collected' => false, 'payment_method' => 'cash',
+            ], $actor);
+            $this->fail('Expected incompatible payment fields to be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('collected', $exception->errors());
+        }
+        $this->assertDatabaseCount('route_external_delivery_reconciliation_items', 0);
+    }
+
+    public function test_pending_and_unknown_fel_states_block_terminal_non_delivery(): void
+    {
+        foreach (['pending', 'unknown'] as $status) {
+            [$business, $entry] = $this->routeEntry('delivery_agent', true);
+            $actor = User::query()->findOrFail($entry->batch->delivered_by);
+            $entry->sale->update(['certification_status' => $status]);
+            try {
+                app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
+                    'idempotency_key' => 'external-fel-'.$status.'-key', 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'customer_absent', 'collected' => false,
+                ], $actor);
+                $this->fail('Expected the '.$status.' fiscal state to block cancellation.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('fel', $exception->errors());
+            }
+            $this->assertSame('completed', $entry->sale->fresh()->status);
+            $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+            $this->assertSame(0, RouteExternalDeliveryReconciliationItem::query()->where('business_id', $business->id)->count());
+        }
+    }
+
+    public function test_immediate_paid_non_delivery_blocks_before_reconciliation_or_stock_return(): void
+    {
+        [$business, $entry] = $this->routeEntry('delivery_agent', true, 'invoice', 'immediate_paid');
+        $actor = User::query()->findOrFail($entry->batch->delivered_by);
+        $this->assertSame('paid', $entry->sale->payment_status);
+        $this->assertSame(1, SalePayment::query()->where('sale_id', $entry->sale_id)->count());
+        try {
+            app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
+                'idempotency_key' => 'external-paid-no-delivery-key', 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'customer_absent', 'collected' => false,
+            ], $actor);
+            $this->fail('Expected paid operation to require causal reversal.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('reconciliation', $exception->errors());
+        }
+        $this->assertSame('completed', $entry->sale->fresh()->status);
+        $this->assertSame(0, RouteExternalDeliveryReconciliationItem::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+    }
+
+    public function test_failed_sale_cancellation_rolls_back_reconciliation_and_stock_then_can_retry(): void
+    {
+        [$business, $entry] = $this->routeEntry('delivery_agent', true);
+        $actor = User::query()->findOrFail($entry->batch->delivered_by);
+        $stock = ProductBranchStock::query()->where('business_id', $business->id)->firstOrFail();
+        $payload = ['idempotency_key' => 'external-terminal-rollback-key', 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'address_issue', 'collected' => false];
+        \App\Models\Sale::updating(function ($sale): void {
+            if ($sale->status === 'cancelled') throw new \RuntimeException('Intentional terminal cancellation failure.');
+        });
+        try {
+            app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, $payload, $actor);
+            $this->fail('Expected cancellation failure.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('Intentional terminal cancellation failure.', $exception->getMessage());
+        } finally {
+            \App\Models\Sale::flushEventListeners();
+        }
+        $this->assertSame('completed', $entry->sale->fresh()->status);
+        $this->assertEquals(7, $stock->fresh()->stock);
+        $this->assertDatabaseCount('route_external_delivery_reconciliation_items', 0);
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+        app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, $payload, $actor);
+        $this->assertEquals(10, $stock->fresh()->stock);
+        $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
     }
 
     public function test_other_not_delivered_reason_requires_a_note(): void
@@ -233,13 +434,19 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         $this->assertDatabaseCount('route_external_delivery_reconciliation_items', 0);
     }
 
-    public function test_pre_seller_not_delivered_reconciliation_keeps_existing_payment_without_a_delivery_collection(): void
+    public function test_pre_seller_paid_non_delivery_requires_financial_reversal_before_reconciliation(): void
     {
         [$business, $entry] = $this->routeEntry('pre_seller');
         $actor = User::query()->findOrFail($entry->batch->delivered_by);
 
-        app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, ['idempotency_key' => 'external-pre-seller-not-delivered-key', 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'customer_rejected', 'collected' => false], $actor);
+        try {
+            app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, ['idempotency_key' => 'external-pre-seller-not-delivered-key', 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'customer_rejected', 'collected' => false], $actor);
+            $this->fail('Expected paid provenance to require reversal.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('reconciliation', $exception->errors());
+        }
 
+        $this->assertDatabaseCount('route_external_delivery_reconciliation_items', 0);
         $this->assertSame('paid', $entry->sale->fresh()->payment_status);
         $this->assertDatabaseCount('sale_payments', 1);
         $this->assertDatabaseCount('route_delivery_collections', 0);
@@ -396,23 +603,29 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         $this->assertDatabaseCount('cash_movements', 0);
     }
 
-    public function test_reconciliation_does_not_change_fel_stock_or_reservations(): void
+    public function test_certified_sale_cannot_be_terminally_reconciled_or_have_stock_restored(): void
     {
-        [$business, $entry] = $this->deliveryAgentEntry();
+        [$business, $entry] = $this->routeEntry('delivery_agent', true);
         $actor = User::query()->findOrFail($entry->batch->delivered_by);
         $stock = ProductBranchStock::query()->where('business_id', $business->id)->firstOrFail();
         $stockBefore = $stock->stock;
         $reservationsBefore = StockReservation::query()->where('business_id', $business->id)->count();
         $entry->sale->update(['certification_status' => 'certified']);
 
-        app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
-            'idempotency_key' => 'external-invariants-key', 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'business_closed', 'collected' => false,
-        ], $actor);
+        try {
+            app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
+                'idempotency_key' => 'external-invariants-key', 'delivery_status' => 'not_delivered', 'not_delivered_reason' => 'business_closed', 'collected' => false,
+            ], $actor);
+            $this->fail('Expected fiscal guard.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('fel', $exception->errors());
+        }
 
         $this->assertSame($stockBefore, ProductBranchStock::query()->findOrFail($stock->id)->stock);
         $this->assertSame($reservationsBefore, StockReservation::query()->where('business_id', $business->id)->count());
         $this->assertSame('certified', $entry->sale->fresh()->certification_status);
         $this->assertDatabaseCount('sale_payments', 0);
+        $this->assertDatabaseCount('route_external_delivery_reconciliation_items', 0);
     }
 
     private function deliveryAgentEntry(): array
@@ -420,13 +633,16 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         return $this->routeEntry('delivery_agent');
     }
 
-    private function routeEntry(string $responsibility): array
+    private function routeEntry(string $responsibility, bool $policyAware = false, string $timing = 'invoice', string $workflow = 'per_order_collection'): array
     {
         $business = Business::query()->create(['name' => 'External '.uniqid(), 'slug' => 'external-'.uniqid(), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
         $branch = BranchInventory::defaultBranchForBusiness($business);
         $user = User::factory()->create(['business_id' => $business->id, 'current_branch_id' => $branch->id, 'is_active' => true]);
         Permissions::assignRole($user, 'owner');
-        TenantSetting::query()->create(['business_id' => $business->id, 'use_branches' => true, 'allow_receipts' => true, 'allow_invoices' => true, 'route_collection_responsibility' => $responsibility, 'route_delivery_tracking' => 'external']);
+        TenantSetting::query()->create(['business_id' => $business->id, 'use_branches' => true, 'allow_receipts' => true, 'allow_invoices' => true, 'route_collection_responsibility' => $responsibility, 'route_delivery_tracking' => 'external', 'route_pre_sale_stock_deduction_timing' => $timing]);
+        if ($policyAware) {
+            RouteBranchCollectionSetting::query()->create(['branch_id' => $branch->id, 'collection_workflow_mode' => $workflow, 'allowed_payment_methods' => ['cash', 'card', 'transfer', 'check'], 'primary_payment_method' => 'cash']);
+        }
         TenantModule::query()->create(['business_id' => $business->id, 'module' => 'routes', 'is_enabled' => true, 'enabled_at' => now()]);
         TenantModule::query()->create(['business_id' => $business->id, 'module' => 'cash_register', 'is_enabled' => true, 'enabled_at' => now()]);
         $zone = RouteZone::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'assigned_user_id' => $user->id, 'name' => 'Zona '.uniqid(), 'is_active' => true]);
@@ -434,10 +650,13 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         $customer = Customer::query()->create(['business_id' => $business->id, 'name' => 'Cliente '.uniqid(), 'doc_type' => 'CF', 'doc_number' => 'CF', 'country' => 'GT']);
         $product = Product::query()->create(['business_id' => $business->id, 'name' => 'Producto '.uniqid(), 'code' => 'EXT-'.uniqid(), 'cost_price' => 10, 'sale_price' => 20, 'stock' => 10, 'min_stock' => 0, 'is_active' => true]);
         ProductBranchStock::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id, 'stock' => 10]);
-        $preSale = PreSale::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_work_day_id' => $workDay->id, 'route_zone_id' => $zone->id, 'customer_id' => $customer->id, 'seller_id' => $user->id, 'status' => PreSale::STATUS_PICKED, 'subtotal' => 60, 'discount_total' => 0, 'total' => 60, 'payment_method' => 'cash', 'agreed_payment_method' => 'cash', 'picked_at' => now(), 'picked_by' => $user->id]);
+        $preSale = PreSale::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_work_day_id' => $workDay->id, 'route_zone_id' => $zone->id, 'customer_id' => $customer->id, 'seller_id' => $user->id, 'status' => $timing === 'picking' ? PreSale::STATUS_SUBMITTED : PreSale::STATUS_PICKED, 'subtotal' => 60, 'discount_total' => 0, 'total' => 60, 'payment_method' => 'cash', 'agreed_payment_method' => 'cash', 'picked_at' => $timing === 'picking' ? null : now(), 'picked_by' => $timing === 'picking' ? null : $user->id]);
         $item = PreSaleItem::query()->create(['business_id' => $business->id, 'pre_sale_id' => $preSale->id, 'product_id' => $product->id, 'quantity' => 3, 'picked_quantity' => 3, 'unit_price' => 20, 'original_price' => 20, 'discount' => 0, 'total' => 60]);
         StockReservation::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id, 'source_type' => 'pre_sale', 'source_id' => $preSale->id, 'source_item_id' => $item->id, 'quantity' => 3, 'status' => 'active', 'created_by' => $user->id]);
         \App\Models\CashRegisterSession::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'opened_by' => $user->id, 'status' => 'open', 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now()]);
+        if ($timing === 'picking') {
+            \Illuminate\Support\Facades\DB::transaction(fn () => app(RoutePreSalePreparationService::class)->prepare($preSale, [['id' => $item->id, 'picked_quantity' => 3]], $user, 'picking'));
+        }
         if ($responsibility === 'pre_seller') {
             app(RoutePreSaleCollectionService::class)->capture($preSale, ['amount' => 60, 'payment_method' => 'cash', 'idempotency_key' => 'external-pre-seller-collection-key'], $user);
         }

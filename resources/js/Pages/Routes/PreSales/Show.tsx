@@ -33,7 +33,8 @@ type PreSale = {
     picked_by?: Related | null;
     converted_at?: string | null;
     converted_by?: Related | null;
-    converted_sale?: { id: number; business_number?: number | null; document_type?: string | null; total?: number | null; payment_status?: 'paid' | 'unpaid' | null; amount_paid?: number | null; payment_method?: 'cash' | 'card' | 'transfer' | 'check' | null } | null;
+    converted_sale?: { id: number; business_number?: number | null; document_type?: string | null; total?: number | null; status?: string | null; payment_status?: 'paid' | 'unpaid' | null; amount_paid?: number | null; payment_method?: 'cash' | 'card' | 'transfer' | 'check' | null } | null;
+    operational_status?: string;
     fel?: FelState;
     fel_eligibility?: { eligible: boolean; status: 'eligible' | 'not_eligible'; reason_code?: string | null; reason?: string | null };
     fel_availability?: { available: boolean; reason_code?: string | null; reason?: string | null };
@@ -244,7 +245,7 @@ export default function Show({ preSale, canInvoice, canCertifyFel, canRegisterCo
                                 Ver venta {preSale.converted_sale.business_number ? `V-${preSale.converted_sale.business_number}` : ''}
                             </Link>
                         )}
-                        {preSale.status === 'converted' && preSale.converted_sale && canCertifyFel && ['not_requested', 'failed'].includes(fel.status) && (
+                        {preSale.status === 'converted' && preSale.operational_status !== 'operation_cancelled' && preSale.converted_sale && canCertifyFel && ['not_requested', 'failed'].includes(fel.status) && (
                             <button type="button" onClick={certifyFel} disabled={felForm.processing} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">
                                 {felForm.processing ? 'Certificando FEL...' : 'Certificar FEL'}
                             </button>
@@ -262,7 +263,7 @@ export default function Show({ preSale, canInvoice, canCertifyFel, canRegisterCo
                 <section className="rounded-lg border border-slate-200 bg-white p-4">
                     <h2 className="text-sm font-semibold text-slate-900">Cobro</h2>
                     <p className="mt-1 text-sm text-slate-600">Método de pago acordado: {paymentMethodLabel(preSale.agreed_payment_method)}</p>
-                    {preSale.collection ? <div className="mt-2 grid gap-1 text-sm text-slate-700"><div><span className="font-semibold">Cobro registrado</span>: {paymentMethodLabel(preSale.collection.payment_method as PreSale['payment_method'])} · Q {preSale.collection.amount.toFixed(2)}</div><div>Cobrador: {preSale.collection.collected_by?.name ?? '-'} · Fecha/hora: {preSale.collection.collected_at ? new Date(preSale.collection.collected_at).toLocaleString() : '-'}</div>{preSale.collection.recorded_by && preSale.collection.recorded_by.id !== preSale.collection.collected_by?.id && <div>Registrado por: {preSale.collection.recorded_by.name}</div>}<div>Custodia: {custodyLabel(preSale.collection.custody_status)}</div>{preSale.collection.reference && <div>Referencia: {preSale.collection.reference}</div>}</div> : preSale.collection_message ? <p className="mt-2 text-sm font-semibold text-amber-800">{preSale.collection_message}</p> : preSale.converted_sale?.payment_status === 'paid' ? null : <div className="mt-2 flex items-center gap-3"><span className="text-sm font-semibold text-amber-800">Cobro pendiente</span>{canRegisterCollection && <button type="button" onClick={() => setCollectionOpen(true)} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Registrar cobro</button>}{canOverrideCollection && <span className="text-xs text-slate-500">Override administrativo disponible</span>}</div>}
+                    {preSale.operational_status === 'operation_cancelled' ? <p className="mt-2 text-sm font-semibold text-red-800">Operación anulada. No hay cobro pendiente.</p> : preSale.collection ? <div className="mt-2 grid gap-1 text-sm text-slate-700"><div><span className="font-semibold">Cobro registrado</span>: {paymentMethodLabel(preSale.collection.payment_method as PreSale['payment_method'])} · Q {preSale.collection.amount.toFixed(2)}</div><div>Cobrador: {preSale.collection.collected_by?.name ?? '-'} · Fecha/hora: {preSale.collection.collected_at ? new Date(preSale.collection.collected_at).toLocaleString() : '-'}</div>{preSale.collection.recorded_by && preSale.collection.recorded_by.id !== preSale.collection.collected_by?.id && <div>Registrado por: {preSale.collection.recorded_by.name}</div>}<div>Custodia: {custodyLabel(preSale.collection.custody_status)}</div>{preSale.collection.reference && <div>Referencia: {preSale.collection.reference}</div>}</div> : preSale.collection_message ? <p className="mt-2 text-sm font-semibold text-amber-800">{preSale.collection_message}</p> : preSale.converted_sale?.payment_status === 'paid' ? null : <div className="mt-2 flex items-center gap-3"><span className="text-sm font-semibold text-amber-800">Cobro pendiente</span>{canRegisterCollection && <button type="button" onClick={() => setCollectionOpen(true)} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Registrar cobro</button>}{canOverrideCollection && <span className="text-xs text-slate-500">Override administrativo disponible</span>}</div>}
                 </section>
                 {postConversionCollection && <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
                     <h2 className="text-sm font-semibold text-emerald-950">Cobro post-conversión</h2>
@@ -299,6 +300,7 @@ export default function Show({ preSale, canInvoice, canCertifyFel, canRegisterCo
                     </InfoCard>
                     <InfoCard title="Estado">
                         <Info label="Estado preventa" value={statusLabel(preSale.status)} />
+                        {preSale.operational_status === 'operation_cancelled' && <Info label="Estado operativo" value="Operación anulada" />}
                         <Info label="Creada" value={formatDate(preSale.created_at)} />
                         <Info label="Enviada" value={formatDate(preSale.submitted_at)} />
                         <Info label="En preparación" value={formatDate(preSale.processing_started_at)} />

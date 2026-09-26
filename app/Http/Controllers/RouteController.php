@@ -523,7 +523,7 @@ class RouteController extends Controller
                 'zone:id,name',
                 'branch:id,name',
                 'workDay:id,work_date,status',
-                'convertedSale:id,business_id,certification_status,electronic_document_id',
+                'convertedSale:id,business_id,status,certification_status,electronic_document_id',
                 'convertedSale.electronicDocument:id,sale_id,status',
             ])
             ->select('pre_sales.*')
@@ -582,6 +582,7 @@ class RouteController extends Controller
             ->through(function (PreSale $preSale) {
                 $payload = $preSale->toArray();
                 $payload['fel_status'] = $this->routePreSaleFelState($preSale->convertedSale)['status'];
+                $payload['operational_status'] = $preSale->convertedSale?->status === 'cancelled' ? 'operation_cancelled' : $preSale->status;
                 $payload['fel_eligibility'] = app(RoutePreSaleFelEligibilityService::class)->evaluate($preSale);
 
                 return $payload;
@@ -624,7 +625,7 @@ class RouteController extends Controller
             'processingUser:id,name',
             'pickedBy:id,name',
             'convertedBy:id,name',
-            'convertedSale:id,business_id,business_number,document_type,total,payment_status,amount_paid,payment_method,certification_status,fel_uuid,electronic_document_id',
+            'convertedSale:id,business_id,business_number,document_type,total,status,payment_status,amount_paid,payment_method,certification_status,fel_uuid,electronic_document_id',
             'convertedSale.electronicDocument:id,sale_id,status,error_message,uuid,certification_date',
             'customer:id,name,commercial_name,contact_name,doc_number,address,phone',
             'workDay:id,work_date,status,started_at,closed_at',
@@ -704,12 +705,14 @@ class RouteController extends Controller
             'payment_status' => $preSale->convertedSale->payment_status,
             'amount_paid' => (float) $preSale->convertedSale->amount_paid,
             'payment_method' => $preSale->convertedSale->payment_method,
+            'status' => $preSale->convertedSale->status,
         ] : null;
 
         return Inertia::render('Routes/PreSales/Show', [
             'preSale' => [
                 'id' => $preSale->id,
                 'status' => $preSale->status,
+                'operational_status' => $preSale->convertedSale?->status === 'cancelled' ? 'operation_cancelled' : $preSale->status,
                 'created_at' => $preSale->created_at?->toIso8601String(),
                 'submitted_at' => $preSale->submitted_at?->toIso8601String(),
                 'processing_started_at' => $preSale->processing_started_at?->toIso8601String(),

@@ -458,29 +458,27 @@ class RoutePendingCollectionEligibilityTest extends TestCase
         $this->assertTrue($issues->contains('pending_collection_stale_not_applicable'));
     }
 
-    public function test_physical_correction_marks_open_case_not_applicable_and_reopens_only_when_delivered_is_restored(): void
+    public function test_physical_correction_cannot_bypass_terminal_non_delivery_cancellation(): void
     {
         [, , $item] = $this->externalDeliveredUnpaid();
         $actor = User::query()->findOrFail($item->reconciled_by);
         $case = RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->firstOrFail();
         $corrections = app(RouteExternalDeliveryReconciliationCorrectionService::class);
 
-        $corrections->correctDeliveryResult($item, [
-            'delivery_status' => 'not_delivered',
-            'not_delivered_reason' => 'customer_absent',
-            'correction_reason' => 'El cliente confirmó que la entrega no ocurrió.',
-        ], $actor);
-        $this->assertDatabaseHas('route_pending_collection_cases', [
-            'id' => $case->id,
-            'status' => 'not_applicable',
-            'not_applicable_by' => $actor->id,
-        ]);
+        try {
+            $corrections->correctDeliveryResult($item, [
+                'delivery_status' => 'not_delivered',
+                'not_delivered_reason' => 'customer_absent',
+                'correction_reason' => 'El cliente confirmó que la entrega no ocurrió.',
+            ], $actor);
+            $this->fail('A simple correction must not create a terminal non-delivery result.');
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $this->assertArrayHasKey('correction', $exception->errors());
+        }
 
-        $corrections->correctDeliveryResult($item->fresh(), [
-            'delivery_status' => 'delivered',
-            'correction_reason' => 'La visita posterior confirmó entrega.',
-        ], $actor);
+        $this->assertDatabaseHas('route_external_delivery_reconciliation_items', ['id' => $item->id, 'delivery_status' => 'delivered']);
         $this->assertDatabaseHas('route_pending_collection_cases', ['id' => $case->id, 'status' => 'open']);
+        $this->assertDatabaseCount('route_external_delivery_reconciliation_item_revisions', 0);
     }
 
     public function test_route_delivery_collection_reversal_of_late_transfer_leaves_no_cash_movement(): void

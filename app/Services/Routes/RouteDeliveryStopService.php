@@ -39,6 +39,10 @@ class RouteDeliveryStopService
                     }
                 }
                 $outcome = DeliveryOutcomeRules::normalize((string) ($data['delivery_status'] ?? ''), $data['not_delivered_reason_code'] ?? $data['not_delivered_reason'] ?? null, $data['delivery_notes'] ?? $data['notes'] ?? null);
+                $paymentFields = ['amount', 'payment_method', 'collected_by', 'collected_at', 'reference', 'details', 'override_reason', 'receive_cash_in_current_session'];
+                if ($outcome['delivery_status'] === 'not_delivered' && ((bool) ($data['collected'] ?? false) || array_intersect($paymentFields, array_keys($data)) !== [])) {
+                    throw ValidationException::withMessages(['collected' => 'Una operación no entregada no puede registrar cobro.']);
+                }
                 $locked->update([
                     'status' => $outcome['delivery_status'],
                     'not_delivered_reason_code' => $outcome['not_delivered_reason_code'],
@@ -56,11 +60,7 @@ class RouteDeliveryStopService
         }, 'route_delivery_stop');
     }
 
-    /**
-     * Captures the post-sale collection separately from the physical outcome.
-     * A completed stop is intentionally allowed to remain unpaid, so this is
-     * not folded into complete() or inferred from delivery status.
-     */
+    /** Captures payment after a delivered stop that was left unpaid. */
     public function collect(RouteDeliveryStop $stop, array $data, User $actor, string $key): IdempotencyResult
     {
         $businessId = (int) $stop->business_id;
@@ -80,8 +80,8 @@ class RouteDeliveryStopService
                     ->firstOrFail();
 
                 abort_unless((int) $locked->run->delivery_user_id === (int) $actor->id, 403);
-                if ($locked->run->status !== 'open' || ! in_array($locked->status, ['delivered', 'not_delivered'], true)) {
-                    throw ValidationException::withMessages(['stop' => 'El cobro sólo puede registrarse en una parada finalizada de una jornada abierta.']);
+                if ($locked->run->status !== 'open' || $locked->status !== 'delivered') {
+                    throw ValidationException::withMessages(['stop' => 'El cobro sólo puede registrarse en una entrega realizada de una jornada abierta.']);
                 }
                 if ($locked->collection_responsibility_snapshot !== 'delivery_agent') {
                     throw ValidationException::withMessages(['collection' => 'El cobro del preventista es sólo de lectura.']);

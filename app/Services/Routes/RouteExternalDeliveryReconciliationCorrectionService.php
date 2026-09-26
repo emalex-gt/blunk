@@ -4,7 +4,6 @@ namespace App\Services\Routes;
 
 use App\Models\RouteExternalDeliveryReconciliationItem;
 use App\Models\RouteExternalDeliveryReconciliationItemRevision;
-use App\Models\RouteDeliveryCollection;
 use App\Models\User;
 use App\Support\Permissions;
 use Illuminate\Support\Facades\DB;
@@ -39,8 +38,8 @@ class RouteExternalDeliveryReconciliationCorrectionService
             $notes = $outcome['delivery_notes'];
             $previous = ['delivery_status' => $locked->delivery_status, 'not_delivered_reason' => $locked->not_delivered_reason, 'notes' => $locked->notes];
             $next = ['delivery_status' => $status, 'not_delivered_reason' => $reason, 'notes' => $notes];
-            if ($locked->delivery_status === 'delivered' && $next['delivery_status'] === 'not_delivered' && RouteDeliveryCollection::query()->where('route_external_delivery_reconciliation_item_id', $locked->id)->lockForUpdate()->exists()) {
-                throw ValidationException::withMessages(['correction' => 'La corrección requiere una reversión financiera o logística que aún no existe.']);
+            if ($locked->delivery_status !== $status && ($locked->delivery_status === 'not_delivered' || $status === 'not_delivered')) {
+                throw ValidationException::withMessages(['correction' => 'El resultado terminal requiere anulación de venta, inventario y cobros; no puede cambiarse con una corrección simple.']);
             }
             $version = (int) RouteExternalDeliveryReconciliationItemRevision::query()->where('route_external_delivery_reconciliation_item_id', $locked->id)->max('version') + 1;
             RouteExternalDeliveryReconciliationItemRevision::query()->create([
