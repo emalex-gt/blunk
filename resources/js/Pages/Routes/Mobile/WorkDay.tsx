@@ -26,11 +26,31 @@ const noSaleReasons = [
     'Otro',
 ];
 
+function normalizeCustomerSearch(value: string | null | undefined): string {
+    return (value ?? '').trim().toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+export function filterWorkDayVisits(visits: Visit[], query: string): Visit[] {
+    const normalizedQuery = normalizeCustomerSearch(query);
+    if (!normalizedQuery) {
+        return visits;
+    }
+
+    return visits.filter((visit) => [
+        visit.customer.commercial_name ?? visit.customer.name,
+        visit.customer.contact_name,
+        visit.customer.name,
+        visit.customer.doc_number,
+    ].some((value) => normalizeCustomerSearch(value).includes(normalizedQuery)));
+}
+
 export default function WorkDay({ workDay, visits, routeCash, canPostConversionCollect }: { workDay: { id: number; status: string; zone?: { name: string }; branch?: { name: string; department: string | null; municipality: string | null } }; visits: Visit[]; routeCash: { is_open: boolean }; canPostConversionCollect: boolean }) {
     const mapHref = (visit: Visit) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(visit.customer.address || visit.customer.name)}`;
     const branchDepartment = workDay.branch?.department ?? '';
     const branchMunicipality = workDay.branch?.municipality ?? '';
     const [showCustomerForm, setShowCustomerForm] = useState(false);
+    const [customerSearch, setCustomerSearch] = useState('');
+    const filteredVisits = filterWorkDayVisits(visits, customerSearch);
     const customerForm = useForm({
         name: '',
         commercial_name: '',
@@ -299,8 +319,26 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                     </form>
                 )}
 
+                <div className="space-y-3">
+                    <label className="block">
+                        <span className="sr-only">Buscar cliente</span>
+                        <input
+                            type="search"
+                            value={customerSearch}
+                            onChange={(event) => setCustomerSearch(event.target.value)}
+                            placeholder="Buscar por negocio, contacto, nombre fiscal o NIT"
+                            className="w-full rounded-xl border-slate-200 px-4 py-3 text-base"
+                        />
+                    </label>
+                    {customerSearch.trim() !== '' && filteredVisits.length === 0 && (
+                        <div className="rounded-xl bg-slate-100 px-4 py-4 text-center text-sm text-slate-600">
+                            <p>No se encontraron clientes en esta jornada.</p>
+                            <button type="button" className="mt-2 font-semibold text-indigo-600" onClick={() => setCustomerSearch('')}>Limpiar búsqueda</button>
+                        </div>
+                    )}
+                </div>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    {visits.map((visit) => (
+                    {filteredVisits.map((visit) => (
                         <div key={visit.id} className="flex h-full flex-col rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
                             <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">

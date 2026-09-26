@@ -57,6 +57,20 @@ class RoutesPreSalesTest extends TestCase
         Permissions::syncDefaults();
     }
 
+    public function test_mobile_work_day_customer_search_filters_only_loaded_visit_customer_fields(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Routes/Mobile/WorkDay.tsx'));
+
+        $this->assertStringContainsString('export function filterWorkDayVisits', $source);
+        $this->assertStringContainsString("commercial_name ?? visit.customer.name", $source);
+        $this->assertStringContainsString('contact_name', $source);
+        $this->assertStringContainsString('doc_number', $source);
+        $this->assertStringContainsString("normalize('NFD')", $source);
+        $this->assertStringContainsString('Buscar por negocio, contacto, nombre fiscal o NIT', $source);
+        $this->assertStringContainsString('No se encontraron clientes en esta jornada.', $source);
+        $this->assertStringContainsString('Limpiar búsqueda', $source);
+    }
+
     public function test_admin_can_create_route_zone_and_assign_customer(): void
     {
         [$business, $admin, $branch] = $this->tenant(role: 'owner');
