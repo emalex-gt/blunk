@@ -139,7 +139,7 @@ export default function Pick({ preSale }: Props) {
                                                 type="number"
                                                 min="0"
                                                 max={Math.min(item.quantity, item.reserved_quantity)}
-                                                step="0.0001"
+                                                step="1"
                                                 value={form.data.items[index]?.picked_quantity ?? ''}
                                                 onChange={(event) => updateItem(index, 'picked_quantity', event.target.value)}
                                                 className="h-10 w-28 rounded-lg border-slate-200 text-sm"

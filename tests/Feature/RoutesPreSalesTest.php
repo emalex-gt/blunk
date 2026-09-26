@@ -974,6 +974,25 @@ class RoutesPreSalesTest extends TestCase
         $this->assertSame(10.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->where('branch_id', $branch->id)->value('stock'));
     }
 
+    public function test_route_pre_sale_rejects_fractional_product_quantities(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner', allowNegativeStock: false);
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10, salePrice: 100);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
+                'items' => [['product_id' => $product->id, 'quantity' => 1.5, 'discount' => 0]],
+            ])
+            ->assertSessionHasErrors('items.0.quantity');
+
+        $this->assertDatabaseMissing('pre_sales', ['route_visit_id' => $visit->id]);
+        $this->assertSame(10.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->where('branch_id', $branch->id)->value('stock'));
+        $this->assertSame(0, StockReservation::query()->where('product_id', $product->id)->count());
+    }
+
     public function test_cancelling_draft_pre_sale_releases_reservation(): void
     {
         [$business, , $branch] = $this->tenant(role: 'owner');
@@ -2571,6 +2590,37 @@ class RoutesPreSalesTest extends TestCase
         $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
         $this->assertSame(2.0, $breakdown['reserved_pre_sales']);
         $this->assertSame(8.0, $breakdown['available_stock']);
+    }
+
+    public function test_route_pre_sale_picking_rejects_fractional_product_quantities(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 3);
+        $item = $preSale->items()->firstOrFail();
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
+                'items' => [['id' => $item->id, 'picked_quantity' => 1.5]],
+            ])
+            ->assertSessionHasErrors('items.0.picked_quantity');
+
+        $this->assertSame(PreSale::STATUS_SUBMITTED, $preSale->refresh()->status);
+        $this->assertNull($item->refresh()->picked_quantity);
+        $this->assertSame(3.0, (float) StockReservation::query()->where('source_item_id', $item->id)->where('status', 'active')->sum('quantity'));
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_route_quantity_inputs_use_whole_unit_spinner_steps(): void
+    {
+        $visitSource = file_get_contents(resource_path('js/Pages/Routes/Mobile/Visit.tsx'));
+        $pickSource = file_get_contents(resource_path('js/Pages/Routes/PreSales/Pick.tsx'));
+
+        $this->assertMatchesRegularExpression('/min="1"\s+step="1"\s+value=\{item\.quantity\}/', $visitSource);
+        $this->assertMatchesRegularExpression('/min="0"\s+max=\{Math\.min\(item\.quantity, item\.reserved_quantity\)\}\s+step="1"/', $pickSource);
+        $this->assertStringNotContainsString('step="0.0001"', $visitSource.$pickSource);
     }
 
     public function test_admin_can_pick_processing_pre_sale(): void

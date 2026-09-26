@@ -149,8 +149,8 @@ export default function StockIndex({
             return false;
         }
 
-        if (!Number.isFinite(numericQuantity) || numericQuantity <= 0) {
-            setModalError('La cantidad debe ser mayor a 0.');
+        if (!Number.isInteger(numericQuantity) || numericQuantity <= 0) {
+            setModalError('La cantidad debe ser un número entero mayor a 0.');
             return false;
         }
 
@@ -425,8 +425,8 @@ export default function StockIndex({
                                 <input
                                     ref={quantityInputRef}
                                     type="number"
-                                    min="0.01"
-                                    step="0.01"
+                                    min="1"
+                                    step="1"
                                     value={quantity}
                                     onChange={(event) => setQuantity(event.target.value)}
                                     className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-right text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"

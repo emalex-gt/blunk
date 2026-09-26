@@ -103,12 +103,13 @@ class StockController extends Controller
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'product_id' => ['required', 'integer'],
             'type' => ['required', 'in:increase,decrease'],
-            'quantity' => ['required', 'numeric', 'gt:0'],
+            'quantity' => ['required', 'integer', 'min:1'],
             'note' => ['required', 'string', 'min:5', 'max:1000'],
         ], [
             'note.required' => 'La nota es obligatoria.',
             'note.min' => 'La nota debe tener al menos 5 caracteres.',
-            'quantity.gt' => 'La cantidad debe ser mayor a 0.',
+            'quantity.integer' => 'La cantidad debe ser un número entero.',
+            'quantity.min' => 'La cantidad debe ser mayor a 0.',
         ]);
 
         $businessId = currentBusinessId();

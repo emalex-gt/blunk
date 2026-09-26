@@ -248,6 +248,12 @@ export default function Visit({
     };
 
     const requestSavePreSale = () => {
+        if (form.data.items.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1)) {
+            form.setError('items', 'Las cantidades deben ser números enteros mayores a 0.');
+            return;
+        }
+
+        form.clearErrors('items');
         const saveMessage = form.data.collect_now
             ? 'Al registrar el cobro, esta preventa quedará enviada y no podrá editarse normalmente. ¿Confirmas el pedido y el cobro?'
             : visitIsWithoutSale
@@ -497,8 +503,8 @@ export default function Visit({
                                         <button type="button" disabled={!canModifyPreSale} onClick={() => updateItem(index, { quantity: Math.max(1, item.quantity - 1) })} className="px-3 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">-</button>
                                         <input
                                             type="number"
-                                            min="0.0001"
-                                            step="0.0001"
+                                            min="1"
+                                            step="1"
                                             value={item.quantity}
                                             disabled={!canModifyPreSale}
                                             onChange={(event) => updateItem(index, { quantity: Number(event.target.value) })}

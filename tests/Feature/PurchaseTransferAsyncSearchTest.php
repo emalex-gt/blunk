@@ -442,6 +442,36 @@ class PurchaseTransferAsyncSearchTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_stock_adjustment_rejects_fractional_quantities_and_uses_whole_unit_spinner_steps(): void
+    {
+        [$business, $user, $branch] = $this->tenant('stock_manager', ['inventory']);
+        $product = $this->product($business, 'Producto ajuste entero', 'ADJ-WHOLE');
+        ProductBranchStock::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+            'stock' => 7,
+        ]);
+
+        $this->actingAs($user)
+            ->postJson(route('stock.adjustments.store'), [
+                'idempotency_key' => 'test-stock-adjust-fractional',
+                'product_id' => $product->id,
+                'type' => 'increase',
+                'quantity' => 0.25,
+                'note' => 'Intento fraccionario',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('quantity');
+
+        $this->assertSame(7.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->where('branch_id', $branch->id)->value('stock'));
+        $this->assertSame(0, StockMovement::query()->where('product_id', $product->id)->count());
+
+        $source = file_get_contents(resource_path('js/Pages/Stock/Index.tsx'));
+        $this->assertMatchesRegularExpression('/type="number"\s+min="1"\s+step="1"\s+value=\{quantity\}/', $source);
+        $this->assertStringContainsString('Number.isInteger(numericQuantity)', $source);
+    }
+
     private function tenant(string $role, array $modules, string $name = 'Tenant async'): array
     {
         $business = Business::query()->create([

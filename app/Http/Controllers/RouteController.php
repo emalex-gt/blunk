@@ -888,8 +888,10 @@ class RouteController extends Controller
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.id' => ['required', 'integer'],
-            'items.*.picked_quantity' => ['required', 'numeric', 'min:0'],
+            'items.*.picked_quantity' => ['required', 'integer', 'min:0'],
             'items.*.picking_note' => ['nullable', 'string', 'max:1000'],
+        ], [
+            'items.*.picked_quantity.integer' => 'La cantidad preparada debe ser un número entero.',
         ]);
 
         app(IdempotencyService::class)->run(
@@ -1174,12 +1176,15 @@ class RouteController extends Controller
             'collection_payment_method' => ['nullable', 'in:cash,card,transfer,check'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'integer'],
-            'items.*.quantity' => ['required', 'numeric', 'gt:0'],
+            'items.*.quantity' => ['required', 'integer', 'min:1'],
             'items.*.price_type_id' => ['nullable', 'integer'],
             'items.*.unit_price' => ['nullable', 'numeric', 'gt:0'],
             'items.*.manual_price' => ['nullable', 'boolean'],
             'items.*.discount' => ['nullable', 'numeric', 'min:0'],
             'items.*.notes' => ['nullable', 'string'],
+        ], [
+            'items.*.quantity.integer' => 'La cantidad debe ser un número entero.',
+            'items.*.quantity.min' => 'La cantidad debe ser al menos 1.',
         ]);
 
         app(IdempotencyService::class)->run(
