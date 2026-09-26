@@ -128,6 +128,11 @@ class Sale extends Model
         return $this->hasOne(RouteOperationReturn::class)->where('status', 'completed');
     }
 
+    public function refunds(): HasMany
+    {
+        return $this->hasMany(SaleRefund::class);
+    }
+
     public function creditPaymentAllocations(): HasMany
     {
         return $this->hasMany(CustomerCreditPaymentAllocation::class);

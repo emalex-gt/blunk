@@ -13,6 +13,7 @@ use App\Models\RoutePendingCollectionCase;
 use App\Models\RoutePendingCollectionEvent;
 use App\Models\Sale;
 use App\Models\SalePayment;
+use App\Models\SaleRefund;
 use App\Models\User;
 use App\Support\IdempotencyResult;
 use App\Support\IdempotencyService;
@@ -95,6 +96,9 @@ class RouteDeliveryCollectionReversalService
 
             $this->assertEligible($locked, $sale, $payments, $source, $case, $settlementItems, $settlements);
             $payment = $payments->firstWhere('route_delivery_collection_id', $locked->id);
+            if ($payment && SaleRefund::query()->where('sale_payment_id', $payment->id)->where('status', 'confirmed')->exists()) {
+                throw ValidationException::withMessages(['payment' => 'Un pago ya reembolsado no puede convertirse después en una corrección de cobro.']);
+            }
             $now = now()->startOfSecond();
             $cashType = $this->cashCorrectionType($locked, $data, $businessId, $branchId);
             $operationId = OperationIdempotencyKey::query()

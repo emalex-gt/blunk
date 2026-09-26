@@ -27,6 +27,7 @@ type Session = {
     closing_notes: string | null;
     summary: {
         cash_sales: number;
+        cash_refunds: number;
         cash_sale_cancellations: number;
         expenses: number;
         cash_purchases: number;
@@ -80,8 +81,9 @@ export default function Show({ session }: { session: Session }) {
                             <Detail label="Abierta por" value={session.opened_by ?? '-'} />
                             <Detail label="Cerrada por" value={session.closed_by ?? '-'} />
                         </div>
-                        <div className="mt-5 grid gap-4 md:grid-cols-4">
+                        <div className="mt-5 grid gap-4 md:grid-cols-5">
                             <Detail label="Ventas en efectivo" value={formatCurrency(session.summary.cash_sales, country)} />
+                            <Detail label="Reembolsos" value={formatCurrency(session.summary.cash_refunds, country)} />
                             <Detail label="Anulaciones" value={formatCurrency(session.summary.cash_sale_cancellations, country)} />
                             <Detail label="Gastos" value={formatCurrency(session.summary.expenses, country)} />
                             <Detail label="Compras desde caja" value={formatCurrency(session.summary.cash_purchases, country)} />

@@ -34,6 +34,7 @@ class RouteOperationReturnController extends Controller
             'reason' => ['required', 'string', 'max:2000'],
             'note' => ['nullable', 'string', 'max:2000'],
             'goods_received' => ['required', 'accepted'],
+            'refund_cash_confirmed' => ['sometimes', 'accepted'],
         ]);
     }
 

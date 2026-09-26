@@ -134,7 +134,7 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
                 ], $actor);
                 $this->fail('Expected paid/FEL state to block the return.');
             } catch (ValidationException $exception) {
-                $this->assertArrayHasKey($state === 'paid' ? 'sale' : 'fel', $exception->errors());
+                $this->assertArrayHasKey($state === 'paid' ? 'refund' : 'fel', $exception->errors());
             }
             $this->assertSame('completed', $entry->sale->fresh()->status);
             $this->assertDatabaseCount('route_operation_returns', 0);
@@ -637,6 +637,210 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         $this->assertSame('completed', $entry->sale->fresh()->status);
         $this->assertSame(0, RouteExternalDeliveryReconciliationItem::query()->where('business_id', $business->id)->count());
         $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+    }
+
+    public function test_delivered_immediate_paid_cash_is_refunded_from_the_current_open_session_without_reversing_original_payment(): void
+    {
+        [$business, $entry] = $this->routeEntry('delivery_agent', true, 'invoice', 'immediate_paid');
+        $actor = User::query()->findOrFail($entry->batch->delivered_by);
+        $delivery = app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
+            'idempotency_key' => 'phase2b1-delivered-immediate', 'delivery_status' => 'delivered', 'collected' => false,
+        ], $actor);
+        $source = RouteExternalDeliveryReconciliationItem::query()->findOrFail($delivery->resultId);
+        $originalSession = \App\Models\CashRegisterSession::query()->where('business_id', $business->id)->sole();
+        $originalSession->update(['status' => 'closed', 'closed_by' => $actor->id, 'closed_at' => now()]);
+        $currentSession = \App\Models\CashRegisterSession::query()->create([
+            'business_id' => $business->id, 'branch_id' => $entry->batch->branch_id, 'opened_by' => $actor->id,
+            'status' => 'open', 'opening_amount' => 100, 'expected_cash' => 100, 'opened_at' => now()->addSecond(),
+        ]);
+        \App\Support\CashRegister::recordMovement($currentSession, 'opening', 100, null, null, 'Apertura', $actor->id);
+        $returnContext = app(\App\Services\Routes\RouteOperationReturnService::class)->previewForEntry($entry->fresh());
+        $this->assertTrue($returnContext['eligible']);
+        $this->assertTrue($returnContext['requires_cash_refund']);
+        $this->assertSame(60.0, $returnContext['refund_amount']);
+        $this->assertSame('cash', $returnContext['original_payment_method']);
+        $batchSource = file_get_contents(resource_path('js/Pages/Routes/DeliveryBatches/Show.tsx'));
+        $this->assertStringContainsString('refund_cash_confirmed: entry.return_context?.requires_cash_refund ? true : null', $batchSource);
+        $this->assertStringContainsString('Confirmar devolución y reembolso', $batchSource);
+        $this->assertStringContainsString('se devolverán ahora en efectivo desde la caja abierta.', $batchSource);
+
+        $result = app(\App\Services\Routes\RouteOperationReturnService::class)->completeExternal($source, [
+            'idempotency_key' => 'phase2b1-cash-refund', 'reason' => 'Cliente devolvió el pedido',
+            'goods_received' => true, 'refund_cash_confirmed' => true,
+        ], $actor);
+        $replay = app(\App\Services\Routes\RouteOperationReturnService::class)->completeExternal($source, [
+            'idempotency_key' => 'phase2b1-cash-refund', 'reason' => 'Cliente devolvió el pedido',
+            'goods_received' => true, 'refund_cash_confirmed' => true,
+        ], $actor);
+
+        $payment = SalePayment::query()->where('sale_id', $entry->sale_id)->sole();
+        $this->assertSame('captured', $payment->status);
+        $this->assertTrue($replay->replayed);
+        $this->assertSame($result->resultId, $replay->resultId);
+        $this->assertSame($entry->id, (int) $payment->route_immediate_paid_entry_id);
+        $this->assertDatabaseHas('sale_refunds', [
+            'route_operation_return_id' => $result->resultId, 'sale_id' => $entry->sale_id,
+            'sale_payment_id' => $payment->id, 'amount' => 60, 'status' => 'confirmed',
+            'original_payment_method' => 'cash', 'refund_method' => 'cash',
+            'cash_register_session_id' => $currentSession->id,
+        ]);
+        $refund = \App\Models\SaleRefund::query()->sole();
+        $this->assertDatabaseHas('cash_movements', [
+            'id' => $refund->cash_movement_id, 'cash_register_session_id' => $currentSession->id,
+            'type' => 'sale_refund_cash', 'amount' => -60, 'reference_type' => 'sale_refund',
+            'reference_id' => $refund->id,
+        ]);
+        $this->assertSame(1, \App\Models\CashMovement::query()->where('cash_register_session_id', $originalSession->id)->where('type', 'sale_cash')->count());
+        $this->assertSame(0, \App\Models\CashMovement::query()->where('cash_register_session_id', $originalSession->id)->where('type', 'sale_refund_cash')->count());
+        $this->assertDatabaseHas('sales', ['id' => $entry->sale_id, 'status' => 'cancelled', 'payment_status' => 'paid', 'amount_paid' => 60]);
+        $this->assertDatabaseHas('pre_sales', ['id' => $entry->pre_sale_id, 'status' => 'converted', 'converted_sale_id' => $entry->sale_id]);
+        $this->assertDatabaseHas('route_external_delivery_reconciliation_items', ['id' => $source->id, 'delivery_status' => 'delivered']);
+        $this->assertSame(10.0, (float) ProductBranchStock::query()->where('business_id', $business->id)->firstOrFail()->stock);
+        $this->assertDatabaseCount('sale_refunds', 1);
+        $this->assertSame(1, \App\Models\CashMovement::query()->where('type', 'sale_refund_cash')->count());
+        $this->assertFalse(app(\App\Services\Routes\RouteOperationReturnService::class)->previewForEntry($entry->fresh())['eligible']);
+        $cashSummary = \App\Support\CashRegister::summary($currentSession);
+        $this->assertSame(60.0, $cashSummary['cash_refunds']);
+        $this->assertSame(40.0, $cashSummary['expected_cash']);
+        $salesIssues = collect(app(SystemIntegrityAuditor::class)->audit([
+            'business' => $business->id,
+            'section' => 'sales',
+        ])['results']['sales'])->pluck('issue_type');
+        $this->assertNotContains('cancelled_sale_cash_not_reversed', $salesIssues);
+
+        TenantModule::query()->updateOrCreate(
+            ['business_id' => $business->id, 'module' => 'reports'],
+            ['is_enabled' => true, 'enabled_at' => now()],
+        );
+        $this->as($actor, $business)
+            ->get(route('reports.daily', ['date' => now()->toDateString(), 'payment_method' => 'cash']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('summary.0.value', 100)
+                ->where('summary.1.value', 0)
+                ->where('summary.2.label', 'Reembolsos')
+                ->where('summary.2.value', 60)
+                ->where('summary.5.value', 40));
+        $this->as($actor, $business)
+            ->get(route('reports.sales', ['status' => 'all']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('summary.1.value', 60)
+                ->where('summary.6.label', 'Total reembolsado')
+                ->where('summary.6.value', 60));
+        try {
+            app(\App\Services\Routes\RouteOperationReturnService::class)->completeExternal($source, [
+                'idempotency_key' => 'phase2b1-cash-refund-other-key', 'reason' => 'Cliente devolvió el pedido',
+                'goods_received' => true, 'refund_cash_confirmed' => true,
+            ], $actor);
+            $this->fail('A confirmed refund cannot be repeated with another key.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('sale', $exception->errors());
+        }
+    }
+
+    public function test_cash_refund_blocks_legacy_noncash_unsafe_fel_and_missing_current_cash_session(): void
+    {
+        foreach (['legacy', 'noncash', 'certified', 'pending', 'unknown', 'no_session'] as $case) {
+            [$business, $entry] = $this->routeEntry('delivery_agent', true, 'invoice', 'immediate_paid');
+            $actor = User::query()->findOrFail($entry->batch->delivered_by);
+            $delivery = app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
+                'idempotency_key' => 'phase2b1-block-delivery-'.$case, 'delivery_status' => 'delivered', 'collected' => false,
+            ], $actor);
+            $source = RouteExternalDeliveryReconciliationItem::query()->findOrFail($delivery->resultId);
+            if ($case === 'legacy') {
+                SalePayment::query()->where('sale_id', $entry->sale_id)->update(['route_immediate_paid_entry_id' => null]);
+            } elseif ($case === 'noncash') {
+                SalePayment::query()->where('sale_id', $entry->sale_id)->update(['method' => 'card']);
+                $entry->sale->update(['payment_method' => 'card']);
+            } elseif (in_array($case, ['certified', 'pending', 'unknown'], true)) {
+                $entry->sale->update(['certification_status' => $case]);
+            } elseif ($case === 'no_session') {
+                \App\Models\CashRegisterSession::query()->where('business_id', $business->id)->update(['status' => 'closed', 'closed_at' => now()]);
+            }
+
+            try {
+                app(\App\Services\Routes\RouteOperationReturnService::class)->completeExternal($source, [
+                    'idempotency_key' => 'phase2b1-block-return-'.$case, 'reason' => 'Devolución',
+                    'goods_received' => true, 'refund_cash_confirmed' => true,
+                ], $actor);
+                $this->fail('Expected Phase 2B1 eligibility to block '.$case.'.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey(in_array($case, ['certified', 'pending', 'unknown'], true) ? 'fel' : ($case === 'no_session' ? 'cash_register' : 'refund'), $exception->errors());
+            }
+            $this->assertSame(0, \App\Models\SaleRefund::query()->where('business_id', $business->id)->count());
+            $this->assertSame(0, \App\Models\RouteOperationReturn::query()->where('business_id', $business->id)->count());
+            $this->assertSame('completed', $entry->sale->fresh()->status);
+        }
+    }
+
+    public function test_cash_refund_failures_roll_back_financial_stock_and_sale_effects_then_allow_retry(): void
+    {
+        foreach (['cash_movement', 'stock', 'sale'] as $stage) {
+            [$business, $entry] = $this->routeEntry('delivery_agent', true, 'invoice', 'immediate_paid');
+            $actor = User::query()->findOrFail($entry->batch->delivered_by);
+            $delivery = app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
+                'idempotency_key' => 'phase2b1-rollback-delivery-'.$stage, 'delivery_status' => 'delivered', 'collected' => false,
+            ], $actor);
+            $source = RouteExternalDeliveryReconciliationItem::query()->findOrFail($delivery->resultId);
+            $payload = [
+                'idempotency_key' => 'phase2b1-rollback-return-'.$stage, 'reason' => 'Devolución',
+                'goods_received' => true, 'refund_cash_confirmed' => true,
+            ];
+            if ($stage === 'cash_movement') {
+                \App\Models\CashMovement::creating(function ($movement): void {
+                    if ($movement->type === 'sale_refund_cash') throw new \RuntimeException('Injected refund movement failure');
+                });
+            } elseif ($stage === 'stock') {
+                StockMovement::creating(function ($movement): void {
+                    if ($movement->route_operation_return_id) throw new \RuntimeException('Injected refund stock failure');
+                });
+            } else {
+                \App\Models\Sale::updating(function ($sale): void {
+                    if ($sale->status === 'cancelled') throw new \RuntimeException('Injected refund sale failure');
+                });
+            }
+            try {
+                app(\App\Services\Routes\RouteOperationReturnService::class)->completeExternal($source, $payload, $actor);
+                $this->fail('Expected injected '.$stage.' failure.');
+            } catch (\RuntimeException $exception) {
+                $this->assertStringContainsString('Injected refund', $exception->getMessage());
+            } finally {
+                \App\Models\CashMovement::flushEventListeners();
+                StockMovement::flushEventListeners();
+                \App\Models\Sale::flushEventListeners();
+            }
+            $this->assertSame(0, \App\Models\SaleRefund::query()->where('business_id', $business->id)->count());
+            $this->assertSame(0, \App\Models\RouteOperationReturn::query()->where('business_id', $business->id)->count());
+            $this->assertSame('completed', $entry->sale->fresh()->status);
+            $this->assertSame('paid', $entry->sale->fresh()->payment_status);
+            $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->whereNotNull('route_operation_return_id')->count());
+            $this->assertSame(0, \App\Models\CashMovement::query()->where('business_id', $business->id)->where('type', 'sale_refund_cash')->count());
+            $this->assertSame(7.0, (float) ProductBranchStock::query()->where('business_id', $business->id)->firstOrFail()->stock);
+
+            app(\App\Services\Routes\RouteOperationReturnService::class)->completeExternal($source, $payload, $actor);
+            $this->assertSame(1, \App\Models\SaleRefund::query()->where('business_id', $business->id)->count());
+            $this->assertSame(1, \App\Models\CashMovement::query()->where('business_id', $business->id)->where('type', 'sale_refund_cash')->count());
+            $this->assertSame(10.0, (float) ProductBranchStock::query()->where('business_id', $business->id)->firstOrFail()->stock);
+        }
+    }
+
+    public function test_immediate_paid_cash_refund_restores_picking_stock_exactly_once(): void
+    {
+        [$business, $entry] = $this->routeEntry('delivery_agent', true, 'picking', 'immediate_paid');
+        $actor = User::query()->findOrFail($entry->batch->delivered_by);
+        $delivery = app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
+            'idempotency_key' => 'phase2b1-picking-delivery', 'delivery_status' => 'delivered', 'collected' => false,
+        ], $actor);
+        app(\App\Services\Routes\RouteOperationReturnService::class)->completeExternal(
+            RouteExternalDeliveryReconciliationItem::query()->findOrFail($delivery->resultId),
+            ['idempotency_key' => 'phase2b1-picking-refund', 'reason' => 'Devolución', 'goods_received' => true, 'refund_cash_confirmed' => true],
+            $actor,
+        );
+
+        $this->assertSame(10.0, (float) ProductBranchStock::query()->where('business_id', $business->id)->firstOrFail()->stock);
+        $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+        $this->assertDatabaseCount('sale_refunds', 1);
     }
 
     public function test_failed_sale_cancellation_rolls_back_reconciliation_and_stock_then_can_retry(): void

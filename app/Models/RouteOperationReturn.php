@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class RouteOperationReturn extends Model
 {
@@ -25,4 +26,5 @@ class RouteOperationReturn extends Model
     public function externalDeliveryItem(): BelongsTo { return $this->belongsTo(RouteExternalDeliveryReconciliationItem::class, 'route_external_delivery_reconciliation_item_id'); }
     public function deliveryStop(): BelongsTo { return $this->belongsTo(RouteDeliveryStop::class); }
     public function stockMovements(): HasMany { return $this->hasMany(StockMovement::class, 'route_operation_return_id'); }
+    public function refund(): HasOne { return $this->hasOne(SaleRefund::class); }
 }

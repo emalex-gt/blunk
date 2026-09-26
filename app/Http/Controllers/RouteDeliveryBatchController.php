@@ -7,6 +7,7 @@ use App\Models\RouteDeliveryBatch;
 use App\Models\User;
 use App\Services\Routes\RouteDeliveryBatchService;
 use App\Services\Routes\ExternalDeliveryEligibility;
+use App\Services\Routes\RouteOperationReturnService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
@@ -40,15 +41,17 @@ class RouteDeliveryBatchController extends Controller
             'preSales.preSale.customer:id,name,commercial_name,doc_number',
             'preSales.preSale:id,status,fel_eligibility_status,fel_eligibility_reason,customer_id',
             'preSales.preSale.collections' => fn ($query) => $query->whereIn('status', ['captured', 'linked'])->with(['collectedBy:id,name', 'recordedBy:id,name']),
-            'preSales.sale:id,business_id,business_number,total,status,document_type,payment_status,payment_method,certification_status,electronic_document_id',
+            'preSales.sale:id,business_id,business_number,total,status,document_type,payment_status,amount_paid,payment_method,certification_status,electronic_document_id,fel_certified_at,fel_uuid,fel_number',
             'preSales.sale.electronicDocument:id,sale_id,status,error_message',
-            'preSales.sale.payments:id,sale_id,method,amount,collected_by,collected_at,route_pre_sale_collection_id,route_delivery_collection_id',
+            'preSales.sale.payments:id,sale_id,method,amount,status,collected_by,collected_at,route_pre_sale_collection_id,route_delivery_collection_id,route_post_conversion_collection_id,route_immediate_paid_entry_id,created_at',
             'preSales.externalDeliveryReconciliationItem.deliveryCollection.collectedBy:id,name',
             'preSales.operationReturn:id,route_delivery_batch_pre_sale_id,status,reason,note,goods_received_at,completed_at',
+            'preSales.operationReturn.refund:id,route_operation_return_id,amount,refund_method,status,refunded_at',
             'preSales.sale.items:id,sale_id,product_name,quantity',
         ]);
 
         $eligibility = app(ExternalDeliveryEligibility::class);
+        $returnEligibility = app(RouteOperationReturnService::class);
         $reconciled = $batch->preSales->filter(fn ($entry) => $entry->externalDeliveryReconciliationItem !== null)->count();
         $canOverrideCollector = Permissions::userHas(request()->user(), Permissions::ROUTES_EXTERNAL_DELIVERY_COLLECTION_OVERRIDE);
         return Inertia::render('Routes/DeliveryBatches/Show', [
@@ -58,11 +61,12 @@ class RouteDeliveryBatchController extends Controller
                 ? User::query()->where('business_id', $batch->business_id)->where('current_branch_id', $batch->branch_id)->where('is_active', true)->orderBy('name')->get(['id', 'name'])
                 : [],
             'current_user_id' => request()->user()->id,
-            'batch' => [...$this->payload($batch), 'pre_sales' => $batch->preSales->map(function ($entry) use ($eligibility, $batch) {
+            'batch' => [...$this->payload($batch), 'pre_sales' => $batch->preSales->map(function ($entry) use ($eligibility, $returnEligibility, $batch) {
                 $context = $eligibility->forEntry($entry);
                 $collectionResponsibility = $context['responsibility'] ?? 'review_required';
                 $preSaleCollection = $entry->preSale?->collections->first();
                 $deliveryCollection = $entry->externalDeliveryReconciliationItem?->deliveryCollection;
+                $returnContext = $returnEligibility->previewForEntry($entry);
 
                 return [
                 'id' => $entry->id, 'status' => $entry->status, 'payment_method' => $entry->payment_method,
@@ -90,8 +94,9 @@ class RouteDeliveryBatchController extends Controller
                     'custody_status' => $deliveryCollection->custody_status,
                 ] : null,
                 'reconciliation' => $entry->externalDeliveryReconciliationItem ? ['id' => $entry->externalDeliveryReconciliationItem->id, 'delivery_status' => $entry->externalDeliveryReconciliationItem->delivery_status, 'not_delivered_reason' => $entry->externalDeliveryReconciliationItem->not_delivered_reason, 'notes' => $entry->externalDeliveryReconciliationItem->notes, 'reconciled_at' => $entry->externalDeliveryReconciliationItem->reconciled_at?->toIso8601String()] : null,
-                'operation_return' => $entry->operationReturn ? ['status' => $entry->operationReturn->status, 'reason' => $entry->operationReturn->reason, 'goods_received_at' => $entry->operationReturn->goods_received_at?->toIso8601String(), 'completed_at' => $entry->operationReturn->completed_at?->toIso8601String()] : null,
-                'can_register_return' => $entry->operationReturn === null && $entry->externalDeliveryReconciliationItem?->delivery_status === 'delivered' && $entry->sale?->payment_status === 'unpaid' && $entry->sale?->status === 'completed' && Permissions::userHas(request()->user(), Permissions::ROUTES_EXTERNAL_DELIVERY_RECONCILE_CORRECT),
+                'operation_return' => $entry->operationReturn ? ['status' => $entry->operationReturn->status, 'reason' => $entry->operationReturn->reason, 'goods_received_at' => $entry->operationReturn->goods_received_at?->toIso8601String(), 'completed_at' => $entry->operationReturn->completed_at?->toIso8601String(), 'refund' => $entry->operationReturn->refund ? ['amount' => (float) $entry->operationReturn->refund->amount, 'method' => $entry->operationReturn->refund->refund_method, 'status' => $entry->operationReturn->refund->status, 'refunded_at' => $entry->operationReturn->refund->refunded_at?->toIso8601String()] : null] : null,
+                'return_context' => $returnContext,
+                'can_register_return' => $entry->operationReturn === null && $entry->externalDeliveryReconciliationItem?->delivery_status === 'delivered' && $returnContext['eligible'] && Permissions::userHas(request()->user(), Permissions::ROUTES_EXTERNAL_DELIVERY_RECONCILE_CORRECT),
                 'external_eligibility' => $context,
                 ];
             })->values(), 'reconciliation_progress' => ['total' => $batch->preSales->count(), 'reconciled' => $reconciled, 'pending' => $batch->preSales->count() - $reconciled]],

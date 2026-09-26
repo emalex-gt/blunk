@@ -205,6 +205,11 @@ class ReportController extends Controller
             ->groupBy('sale_payments.method')
             ->selectRaw('sale_payments.method, SUM(sale_payments.amount) as total')
             ->pluck('total', 'method');
+        $refundedTotal = (float) DB::table('sale_refunds')
+            ->where('sale_refunds.business_id', $businessId)
+            ->where('sale_refunds.status', 'confirmed')
+            ->whereIn('sale_refunds.sale_id', (clone $summaryBase)->select('sales.id'))
+            ->sum('sale_refunds.amount');
 
         $rows = $query
             ->latest('sales.created_at')
@@ -258,6 +263,7 @@ class ReportController extends Controller
                 ['label' => 'Total tarjeta', 'value' => (float) ($paymentTotals['card'] ?? 0), 'money' => true],
                 ['label' => 'Total transferencia', 'value' => (float) (($paymentTotals['transfer'] ?? 0) + ($paymentTotals['bank_transfer'] ?? 0)), 'money' => true],
                 ['label' => 'Total otros', 'value' => (float) (($paymentTotals['check'] ?? 0) + ($paymentTotals['credit'] ?? 0) + ($paymentTotals['other'] ?? 0)), 'money' => true],
+                ['label' => 'Total reembolsado', 'value' => $refundedTotal, 'money' => true],
                 ['label' => 'Cantidad de facturas', 'value' => $invoiceCount],
                 ['label' => 'Cantidad de comprobantes', 'value' => $receiptCount],
             ],
@@ -622,6 +628,12 @@ class ReportController extends Controller
         $opening = $cashOnly ? (float) CashRegisterSession::query()->where('business_id', $businessId)->where('branch_id', $scope->branch->id)->whereBetween('opened_at', [$range->start, $range->end])->sum('opening_amount') : 0;
         $cashPurchases = $cashOnly ? (float) Purchase::query()->where('business_id', $businessId)->where('branch_id', $scope->branch->id)->where('paid_from_cash', true)->where('payment_method', 'cash')->whereBetween('created_at', [$range->start, $range->end])->sum('total') : 0;
         $expenses = $cashOnly ? (float) CashExpense::query()->where('business_id', $businessId)->where('branch_id', $scope->branch->id)->whereBetween('created_at', [$range->start, $range->end])->sum('amount') : 0;
+        $cashRefunds = $cashOnly ? (float) DB::table('sale_refunds')
+            ->where('business_id', $businessId)
+            ->where('branch_id', $scope->branch->id)
+            ->where('status', 'confirmed')
+            ->whereBetween('refunded_at', [$range->start, $range->end])
+            ->sum('amount') : 0;
 
         return $this->report('Diario', 'reports.daily', [
             ['key' => 'number', 'label' => 'No. venta'],
@@ -633,9 +645,10 @@ class ReportController extends Controller
             'summary' => [
                 ['label' => 'Apertura de caja', 'value' => $opening, 'money' => true, 'hidden' => ! $cashOnly],
                 ['label' => 'Ventas', 'value' => $selectedSales, 'money' => true],
+                ['label' => 'Reembolsos', 'value' => $cashRefunds, 'money' => true, 'hidden' => ! $cashOnly],
                 ['label' => 'Compras', 'value' => $cashPurchases, 'money' => true, 'hidden' => ! $cashOnly],
                 ['label' => 'Gastos', 'value' => $expenses, 'money' => true, 'hidden' => ! $cashOnly],
-                ['label' => 'Total', 'value' => $cashOnly ? $opening + $cashSales - $cashPurchases - $expenses : $selectedSales, 'money' => true],
+                ['label' => 'Total', 'value' => $cashOnly ? $opening + $cashSales - $cashRefunds - $cashPurchases - $expenses : $selectedSales, 'money' => true],
             ],
             'branch' => $scope->payload(),
         ]);

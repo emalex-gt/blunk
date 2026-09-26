@@ -130,6 +130,7 @@
                         <td>{{ match($movement->type) {
                             'opening' => 'Apertura',
                             'sale_cash' => 'Venta',
+                            'sale_refund_cash' => 'Reembolso de venta',
                             'sale_cash_cancel' => 'Anulación',
                             'expense' => 'Gasto',
                             'purchase_cash' => 'Compra',

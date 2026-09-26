@@ -14,11 +14,13 @@ use App\Models\RoutePostConversionCollection;
 use App\Models\RoutePreSaleCollection;
 use App\Models\Sale;
 use App\Models\SalePayment;
+use App\Models\SaleRefund;
 use App\Models\User;
 use App\Services\SaleStockCancellationService;
 use App\Support\IdempotencyResult;
 use App\Support\IdempotencyService;
 use App\Support\Permissions;
+use App\Support\CashRegister;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -34,6 +36,43 @@ class RouteOperationReturnService
     public function completeStop(RouteDeliveryStop $stop, array $data, User $actor): IdempotencyResult
     {
         return $this->complete('in_app', (int) $stop->id, (int) $stop->business_id, (int) $stop->branch_id, $data, $actor);
+    }
+
+    public function previewForEntry(RouteDeliveryBatchPreSale $entry): array
+    {
+        $entry->loadMissing(['batch', 'sale.payments', 'preSale', 'operationReturn.refund']);
+        $sale = $entry->sale;
+        $payment = $sale?->payments->count() === 1 ? $sale->payments->first() : null;
+        $requiresRefund = $sale?->payment_status === 'paid';
+        $felSafe = $sale && ! $sale->electronic_document_id
+            && ! in_array($sale->certification_status, ['certified', 'pending', 'unknown'], true)
+            && ! $sale->fel_certified_at && ! $sale->fel_uuid && ! $sale->fel_number;
+
+        $eligible = $sale && ! $entry->operationReturn && $sale->status === 'completed' && $felSafe;
+        if ($eligible && $requiresRefund) {
+            $eligible = $payment && $payment->status === 'captured' && $payment->method === 'cash'
+                && (int) $payment->route_immediate_paid_entry_id === (int) $entry->id
+                && ! $payment->route_pre_sale_collection_id && ! $payment->route_delivery_collection_id && ! $payment->route_post_conversion_collection_id
+                && $entry->batch?->collection_workflow_mode_snapshot === RouteBranchCollectionSettingsService::WORKFLOW_IMMEDIATE_PAID
+                && bccomp((string) $payment->amount, (string) $sale->total, 2) === 0
+                && bccomp((string) $sale->amount_paid, (string) $sale->total, 2) === 0
+                && ! SaleRefund::query()->where('sale_payment_id', $payment->id)->exists()
+                && ! RoutePreSaleCollection::query()->where('pre_sale_id', $entry->pre_sale_id)->exists()
+                && ! RouteDeliveryCollection::query()->where('sale_id', $sale->id)->exists()
+                && ! RoutePostConversionCollection::query()->where('sale_id', $sale->id)->exists()
+                && ! DB::table('customer_account_movements')->where('sale_id', $sale->id)->exists()
+                && CashRegister::currentOpenSession((int) $entry->batch->business_id, false, (int) $entry->batch->branch_id) !== null;
+        } elseif ($eligible) {
+            $eligible = $sale->payment_status === 'unpaid' && bccomp((string) $sale->amount_paid, '0', 2) === 0;
+        }
+
+        return [
+            'eligible' => (bool) $eligible,
+            'requires_cash_refund' => $requiresRefund,
+            'refund_amount' => $requiresRefund && $sale ? (float) $sale->total : null,
+            'original_payment_method' => $requiresRefund ? $payment?->method : null,
+            'paid_at' => $requiresRefund ? $payment?->collected_at?->toIso8601String() ?? $payment?->created_at?->toIso8601String() : null,
+        ];
     }
 
     private function complete(string $origin, int $sourceId, int $businessId, int $branchId, array $data, User $actor): IdempotencyResult
@@ -54,13 +93,13 @@ class RouteOperationReturnService
 
         return app(IdempotencyService::class)->run(
             $businessId, $branchId, $actor->id, 'route_operation_return', $key,
-            ['origin' => $origin, 'source_id' => $sourceId, 'reason' => $reason, 'note' => $data['note'] ?? null, 'goods_received' => true],
-            fn () => $this->completeLocked($origin, $sourceId, $businessId, $branchId, $reason, $data['note'] ?? null, $key, $actor),
+            ['origin' => $origin, 'source_id' => $sourceId, 'reason' => $reason, 'note' => $data['note'] ?? null, 'goods_received' => true, 'refund_cash_confirmed' => (bool) ($data['refund_cash_confirmed'] ?? false)],
+            fn () => $this->completeLocked($origin, $sourceId, $businessId, $branchId, $reason, $data['note'] ?? null, $key, (bool) ($data['refund_cash_confirmed'] ?? false), $actor),
             'route_operation_return',
         );
     }
 
-    private function completeLocked(string $origin, int $sourceId, int $businessId, int $branchId, string $reason, ?string $note, string $key, User $actor): array
+    private function completeLocked(string $origin, int $sourceId, int $businessId, int $branchId, string $reason, ?string $note, string $key, bool $refundCashConfirmed, User $actor): array
     {
         $source = $origin === 'external'
             ? RouteExternalDeliveryReconciliationItem::query()->where('business_id', $businessId)->where('branch_id', $branchId)->whereKey($sourceId)->lockForUpdate()->firstOrFail()
@@ -84,19 +123,55 @@ class RouteOperationReturnService
         $sale = Sale::query()->where('business_id', $businessId)->where('branch_id', $branchId)->whereKey($entry->sale_id)->lockForUpdate()->firstOrFail();
         $preSale = PreSale::query()->where('business_id', $businessId)->where('branch_id', $branchId)->whereKey($entry->pre_sale_id)->lockForUpdate()->firstOrFail();
         if ($preSale->status !== PreSale::STATUS_CONVERTED || (int) $preSale->converted_sale_id !== (int) $sale->id
-            || $sale->status !== 'completed' || $sale->payment_status !== 'unpaid'
-            || bccomp((string) $sale->amount_paid, '0', 2) !== 0 || bccomp((string) $sale->credit_balance, '0', 2) !== 0
+            || $sale->status !== 'completed' || bccomp((string) $sale->credit_balance, '0', 2) !== 0
             || $sale->is_credit_sale || $sale->due_date !== null) {
-            throw ValidationException::withMessages(['sale' => 'La venta no es elegible para devolución sin reembolso.']);
+            throw ValidationException::withMessages(['sale' => 'La venta no es elegible para devolución.']);
         }
 
-        if (SalePayment::query()->where('sale_id', $sale->id)->exists()
+        $payments = SalePayment::query()->where('sale_id', $sale->id)->orderBy('id')->lockForUpdate()->get();
+        $isPaidRefund = $sale->payment_status === 'paid';
+        $payment = null;
+        $cashSession = null;
+        if ($isPaidRefund) {
+            $payment = $payments->count() === 1 ? $payments->first() : null;
+            if (! $payment || $payment->status !== 'captured' || $payment->method !== 'cash'
+                || (int) $payment->route_immediate_paid_entry_id !== (int) $entry->id
+                || $payment->route_pre_sale_collection_id || $payment->route_delivery_collection_id || $payment->route_post_conversion_collection_id
+                || $batch->collection_workflow_mode_snapshot !== RouteBranchCollectionSettingsService::WORKFLOW_IMMEDIATE_PAID
+                || bccomp((string) $payment->amount, (string) $sale->total, 2) !== 0
+                || bccomp((string) $sale->amount_paid, (string) $sale->total, 2) !== 0
+                || SaleRefund::query()->where('sale_payment_id', $payment->id)->exists()
+                || RoutePreSaleCollection::query()->where('pre_sale_id', $preSale->id)->exists()
+                || RouteDeliveryCollection::query()->where('sale_id', $sale->id)->exists()
+                || RoutePostConversionCollection::query()->where('sale_id', $sale->id)->exists()
+                || DB::table('customer_account_movements')->where('sale_id', $sale->id)->exists()) {
+                throw ValidationException::withMessages(['refund' => 'El pago no es elegible para reembolso automático de efectivo.']);
+            }
+            if (! $refundCashConfirmed) {
+                throw ValidationException::withMessages(['refund_cash_confirmed' => 'Debe confirmar que el efectivo se devolverá ahora desde la caja abierta.']);
+            }
+            $cashMovement = CashMovement::query()
+                ->where('business_id', $businessId)->where('branch_id', $branchId)
+                ->where('reference_type', 'sale')->where('reference_id', $sale->id)
+                ->where('type', 'sale_cash')->lockForUpdate()->get();
+            if ($cashMovement->count() !== 1 || bccomp((string) $cashMovement->first()->amount, (string) $sale->total, 2) !== 0) {
+                throw ValidationException::withMessages(['refund' => 'El ingreso original en efectivo no tiene trazabilidad inequívoca.']);
+            }
+            $cashSession = CashRegister::requireOpenSession(
+                $businessId,
+                'Debe abrir la caja actual antes de confirmar el reembolso en efectivo.',
+                true,
+                $branchId,
+            );
+        } elseif ($sale->payment_status !== 'unpaid' || bccomp((string) $sale->amount_paid, '0', 2) !== 0) {
+            throw ValidationException::withMessages(['sale' => 'La venta no es elegible para devolución.']);
+        } elseif ($payments->isNotEmpty()
             || RoutePreSaleCollection::query()->where('pre_sale_id', $preSale->id)->exists()
             || RouteDeliveryCollection::query()->where('sale_id', $sale->id)->exists()
             || RoutePostConversionCollection::query()->where('sale_id', $sale->id)->exists()
             || DB::table('customer_account_movements')->where('sale_id', $sale->id)->exists()
             || CashMovement::query()->where('reference_type', 'sale')->where('reference_id', $sale->id)->exists()) {
-            throw ValidationException::withMessages(['sale' => 'La venta tiene efectos financieros; requiere la fase de reembolso.']);
+            throw ValidationException::withMessages(['sale' => 'La venta tiene efectos financieros; requiere una fase de reembolso compatible.']);
         }
 
         $document = $sale->electronicDocument()->lockForUpdate()->first();
@@ -137,6 +212,23 @@ class RouteOperationReturnService
             'goods_received_at' => $now, 'goods_received_by' => $actor->id,
             'idempotency_key' => $key,
         ]);
+
+        if ($isPaidRefund) {
+            $refund = SaleRefund::query()->create([
+                'business_id' => $businessId, 'branch_id' => $branchId,
+                'route_operation_return_id' => $return->id, 'sale_id' => $sale->id,
+                'sale_payment_id' => $payment->id, 'amount' => $sale->total,
+                'original_payment_method' => 'cash', 'refund_method' => 'cash', 'status' => 'confirmed',
+                'refunded_to' => $sale->customer_name, 'refunded_by' => $actor->id,
+                'refunded_at' => $now, 'cash_register_session_id' => $cashSession->id,
+                'idempotency_key' => $key,
+            ]);
+            $movement = CashRegister::recordMovement(
+                $cashSession, 'sale_refund_cash', -1 * (float) $sale->total,
+                'sale_refund', $refund->id, "Reembolso de venta de ruta #{$sale->business_number}", $actor->id,
+            );
+            $refund->update(['cash_movement_id' => $movement->id]);
+        }
 
         $this->stock->restore($sale, $actor, true, ['route_operation_return_id' => $return->id]);
         $sale->update([

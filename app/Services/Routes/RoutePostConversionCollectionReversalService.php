@@ -11,6 +11,7 @@ use App\Models\RoutePostConversionCollection;
 use App\Models\RoutePostConversionCollectionReversal;
 use App\Models\Sale;
 use App\Models\SalePayment;
+use App\Models\SaleRefund;
 use App\Models\User;
 use App\Support\CashRegister;
 use App\Support\IdempotencyResult;
@@ -50,6 +51,9 @@ class RoutePostConversionCollectionReversalService
             $entry = RouteDeliveryBatchPreSale::query()->whereKey($locked->route_delivery_batch_pre_sale_id)->lockForUpdate()->firstOrFail();
             $sale = Sale::query()->whereKey($locked->sale_id)->where('business_id', $businessId)->where('branch_id', $branchId)->lockForUpdate()->firstOrFail();
             $payment = SalePayment::query()->where('sale_id', $sale->id)->where('route_post_conversion_collection_id', $locked->id)->lockForUpdate()->firstOrFail();
+            if (SaleRefund::query()->where('sale_payment_id', $payment->id)->where('status', 'confirmed')->exists()) {
+                throw ValidationException::withMessages(['payment' => 'Un pago ya reembolsado no puede convertirse después en una corrección de cobro.']);
+            }
             if ($sale->payment_status !== 'paid' || $payment->status !== 'captured' || (string) $sale->amount_paid !== (string) $locked->amount || (string) $sale->total !== (string) $locked->amount) {
                 throw ValidationException::withMessages(['sale' => 'La venta no es elegible para reversa total.']);
             }

@@ -11,6 +11,7 @@ use App\Models\RouteDeliveryBatch;
 use App\Models\RouteDeliveryBatchPreSale;
 use App\Models\RouteWorkDay;
 use App\Models\RoutePreSaleCollection;
+use App\Models\SalePayment;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\BranchInventory;
@@ -208,7 +209,7 @@ class RouteDeliveryBatchService
                             ]);
                         }
 
-                        RouteDeliveryBatchPreSale::query()->create([
+                        $entry = RouteDeliveryBatchPreSale::query()->create([
                             'route_delivery_batch_id' => $batch->id,
                             'pre_sale_id' => $preSale->id,
                             'sale_id' => $sale->id,
@@ -218,6 +219,10 @@ class RouteDeliveryBatchService
                             'fel_dispatch_status' => $eligibleForAutomaticFel ? 'queued' : 'not_requested',
                             'error_message' => $automaticFelReason,
                         ]);
+                        if ($isImmediatePaid && $collection === null) {
+                            $payment = SalePayment::query()->where('sale_id', $sale->id)->lockForUpdate()->sole();
+                            $payment->update(['route_immediate_paid_entry_id' => $entry->id]);
+                        }
 
                         $totalItems += $sale->items_count;
                         $totalAmount += (float) $sale->total;

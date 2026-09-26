@@ -31,6 +31,7 @@ type CashSession = {
     summary: {
         opening: number;
         cash_sales: number;
+        cash_refunds: number;
         cash_sale_cancellations: number;
         expenses: number;
         cash_purchases: number;
@@ -188,8 +189,9 @@ export default function Index({
                             </section>
 
                             <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
-                                <div className="grid gap-4 md:grid-cols-4">
+                                <div className="grid gap-4 md:grid-cols-5">
                                     <Summary label="Ventas en efectivo" value={formatCurrency(openSession.summary.cash_sales, country)} />
+                                    <Summary label="Reembolsos en efectivo" value={formatCurrency(openSession.summary.cash_refunds, country)} />
                                     <Summary label="Anulaciones en efectivo" value={formatCurrency(openSession.summary.cash_sale_cancellations, country)} />
                                     <Summary label="Gastos" value={formatCurrency(openSession.summary.expenses, country)} />
                                     <Summary label="Compras pagadas de caja" value={formatCurrency(openSession.summary.cash_purchases, country)} />

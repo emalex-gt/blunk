@@ -368,6 +368,7 @@ class RouteDeliveryBatchTest extends TestCase
         $this->assertSame(1, $sale->payments()->count());
         $this->assertSame('cash', $sale->payments()->sole()->method);
         $this->assertSame(60.0, (float) $sale->payments()->sole()->amount);
+        $this->assertSame($entry->id, (int) $sale->payments()->sole()->route_immediate_paid_entry_id);
         $this->assertSame('sale_cash', $movement->type);
         $this->assertSame($sale->id, (int) $movement->reference_id);
         $this->assertSame(60.0, (float) $movement->amount);

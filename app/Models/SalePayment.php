@@ -21,6 +21,7 @@ class SalePayment extends Model
         'route_pre_sale_collection_id',
         'route_delivery_collection_id',
         'route_post_conversion_collection_id',
+        'route_immediate_paid_entry_id',
         'status',
     ];
 
@@ -53,6 +54,16 @@ class SalePayment extends Model
     public function routePostConversionCollection(): BelongsTo
     {
         return $this->belongsTo(RoutePostConversionCollection::class);
+    }
+
+    public function routeImmediatePaidEntry(): BelongsTo
+    {
+        return $this->belongsTo(RouteDeliveryBatchPreSale::class, 'route_immediate_paid_entry_id');
+    }
+
+    public function refund(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(SaleRefund::class);
     }
 
     public function routeDeliveryCollectionReversal(): \Illuminate\Database\Eloquent\Relations\HasOne

@@ -177,9 +177,10 @@ class TenantReportsTest extends TestCase
                 ->component('Reports/Generic')
                 ->where('summary.0.value', 50)
                 ->where('summary.1.value', 100)
-                ->where('summary.2.value', 30)
-                ->where('summary.3.value', 10)
-                ->where('summary.4.value', 110));
+                ->where('summary.2.value', 0)
+                ->where('summary.3.value', 30)
+                ->where('summary.4.value', 10)
+                ->where('summary.5.value', 110));
     }
 
     public function test_daily_report_non_cash_ignores_cash_only_movements(): void
@@ -195,7 +196,8 @@ class TenantReportsTest extends TestCase
                 ->component('Reports/Generic')
                 ->where('summary.0.hidden', true)
                 ->where('summary.1.value', 80)
-                ->where('summary.4.value', 80));
+                ->where('summary.2.hidden', true)
+                ->where('summary.5.value', 80));
     }
 
     public function test_profit_report_uses_stored_sale_line_cost_snapshot(): void

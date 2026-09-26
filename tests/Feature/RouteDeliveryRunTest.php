@@ -9,6 +9,7 @@ use App\Models\PreSaleItem;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
 use App\Models\RouteDeliveryBatchPreSale;
+use App\Models\RouteBranchCollectionSetting;
 use App\Models\RouteDeliveryStop;
 use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
@@ -89,6 +90,45 @@ class RouteDeliveryRunTest extends TestCase
                 ->component('Routes/Mobile/DeliveryRuns/Stop')
                 ->where('stop.status', 'delivered')
                 ->where('stop.operation_return.status', 'completed'));
+    }
+
+    public function test_delivered_immediate_paid_cash_in_app_stop_can_be_refunded_without_rewriting_delivery(): void
+    {
+        [$manager, $deliveryUser, $entries] = $this->inAppEntries(1, true);
+        $entry = $entries[0];
+        $run = app(RouteDeliveryRunAssignmentService::class)->createDraft($manager, $deliveryUser, [$entry->id]);
+        app(RouteDeliveryRunService::class)->start($run, $deliveryUser, 'phase2b1-in-app-start');
+        $stop = $run->fresh()->stops()->firstOrFail();
+        app(RouteDeliveryStopService::class)->complete($stop, ['delivery_status' => 'delivered', 'collected' => false], $deliveryUser, 'phase2b1-in-app-delivered');
+
+        $this->actingAs($manager)->withSession(['active_business_id' => $manager->business_id])
+            ->get(route('routes.delivery-stops.show', $stop))->assertOk()
+            ->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+                ->where('can_return', true)
+                ->where('stop.return_context.requires_cash_refund', true)
+                ->where('stop.return_context.refund_amount', 60));
+        $stopSource = file_get_contents(resource_path('js/Pages/Routes/Mobile/DeliveryRuns/Stop.tsx'));
+        $this->assertStringContainsString('refund_cash_confirmed: stop.return_context?.requires_cash_refund ? true : null', $stopSource);
+        $this->assertStringContainsString('Confirmar devolución y reembolso', $stopSource);
+
+        $result = app(\App\Services\Routes\RouteOperationReturnService::class)->completeStop($stop->fresh(), [
+            'idempotency_key' => 'phase2b1-in-app-refund', 'reason' => 'Cliente devolvió productos',
+            'goods_received' => true, 'refund_cash_confirmed' => true,
+        ], $manager);
+
+        $this->assertDatabaseHas('route_operation_returns', ['id' => $result->resultId, 'route_delivery_stop_id' => $stop->id, 'status' => 'completed']);
+        $this->assertDatabaseHas('route_delivery_stops', ['id' => $stop->id, 'status' => 'delivered']);
+        $this->assertDatabaseHas('sales', ['id' => $entry->sale_id, 'status' => 'cancelled', 'payment_status' => 'paid']);
+        $this->assertDatabaseHas('pre_sales', ['id' => $entry->pre_sale_id, 'status' => 'converted', 'converted_sale_id' => $entry->sale_id]);
+        $this->assertDatabaseHas('sale_refunds', ['sale_id' => $entry->sale_id, 'status' => 'confirmed']);
+        $this->assertDatabaseHas('cash_movements', ['type' => 'sale_refund_cash', 'amount' => -60]);
+        $this->assertSame('captured', $entry->sale->payments()->sole()->status);
+        $this->actingAs($manager)->withSession(['active_business_id' => $manager->business_id])
+            ->get(route('routes.delivery-stops.show', $stop))->assertOk()
+            ->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+                ->where('can_return', false)
+                ->where('stop.operation_return.refund.status', 'confirmed')
+                ->where('stop.operation_return.refund.amount', 60));
     }
 
     public function test_simple_stop_correction_cannot_disguise_a_delivered_operation_as_non_delivery(): void
@@ -222,7 +262,7 @@ class RouteDeliveryRunTest extends TestCase
     }
 
     /** @return array{0: User, 1: User, 2: array<int, RouteDeliveryBatchPreSale>} */
-    private function inAppEntries(int $count = 1): array
+    private function inAppEntries(int $count = 1, bool $immediatePaid = false): array
     {
         $business = Business::query()->create(['name' => 'In-app '.uniqid(), 'slug' => 'in-app-'.uniqid(), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
         $branch = BranchInventory::defaultBranchForBusiness($business);
@@ -231,6 +271,12 @@ class RouteDeliveryRunTest extends TestCase
         Permissions::assignRole($manager, 'owner');
         Permissions::assignRole($deliveryUser, 'delivery_agent');
         TenantSetting::query()->create(['business_id' => $business->id, 'use_branches' => true, 'allow_receipts' => true, 'allow_invoices' => true, 'route_collection_responsibility' => 'delivery_agent', 'route_delivery_tracking' => 'in_app']);
+        if ($immediatePaid) {
+            RouteBranchCollectionSetting::query()->create([
+                'branch_id' => $branch->id, 'collection_workflow_mode' => 'immediate_paid',
+                'allowed_payment_methods' => ['cash'], 'primary_payment_method' => 'cash',
+            ]);
+        }
         foreach (['routes', 'cash_register'] as $module) TenantModule::query()->create(['business_id' => $business->id, 'module' => $module, 'is_enabled' => true, 'enabled_at' => now()]);
         $zone = RouteZone::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'assigned_user_id' => $manager->id, 'name' => 'Zona '.uniqid(), 'is_active' => true]);
         $workDay = RouteWorkDay::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_zone_id' => $zone->id, 'seller_id' => $manager->id, 'work_date' => today(), 'status' => 'closed', 'started_at' => now()->subHour(), 'closed_at' => now()]);

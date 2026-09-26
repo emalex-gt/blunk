@@ -267,6 +267,7 @@ class CashRegisterController extends Controller
         return match ($type) {
             'opening' => 'Apertura',
             'sale_cash' => 'Venta en efectivo',
+            'sale_refund_cash' => 'Reembolso de venta',
             'sale_cash_cancel' => 'Anulación de venta',
             'expense' => 'Gasto',
             'purchase_cash' => 'Compra desde caja',

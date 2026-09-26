@@ -345,6 +345,11 @@ class SystemIntegrityAuditor
             ->where('business_id', $businessId)
             ->where('reference_type', 'sale')
             ->groupBy('reference_id');
+        $cashRefunds = DB::table('sale_refunds')
+            ->select('sale_id', DB::raw('COALESCE(SUM(amount), 0) as refunded_cash'))
+            ->where('business_id', $businessId)
+            ->where('status', 'confirmed')
+            ->groupBy('sale_id');
         $cashPayments = DB::table('sale_payments as sp')
             ->leftJoin('route_pre_sale_collections as pre_collection', 'pre_collection.id', '=', 'sp.route_pre_sale_collection_id')
             ->leftJoin('route_delivery_collections as delivery_collection', 'delivery_collection.id', '=', 'sp.route_delivery_collection_id')
@@ -404,6 +409,7 @@ class SystemIntegrityAuditor
         $sales = DB::table('sales as s')
             ->leftJoinSub($itemTotals, 'items', fn ($join) => $join->on('items.sale_id', '=', 's.id'))
             ->leftJoinSub($cashMovements, 'cash', fn ($join) => $join->on('cash.reference_id', '=', 's.id'))
+            ->leftJoinSub($cashRefunds, 'refunds', fn ($join) => $join->on('refunds.sale_id', '=', 's.id'))
             ->leftJoinSub($cashPayments, 'payments', fn ($join) => $join->on('payments.sale_id', '=', 's.id'))
             ->leftJoinSub($routeCashMovements, 'route_cash', fn ($join) => $join->on('route_cash.sale_id', '=', 's.id'))
             ->leftJoin('customers as c', 'c.id', '=', 's.customer_id')
@@ -411,7 +417,7 @@ class SystemIntegrityAuditor
             ->where('s.business_id', $businessId)
             ->when($context['branch_id'], fn (Builder $q, $branch) => $q->where('s.branch_id', $branch))
             ->tap(fn (Builder $q) => $this->applyDates($q, 's.created_at', $context))
-            ->select('s.*', DB::raw('COALESCE(items.item_count, 0) as item_count'), DB::raw('COALESCE(items.expected_total, 0) as expected_total'), DB::raw('COALESCE(cash.cash_in, 0) as cash_in'), DB::raw('COALESCE(cash.cash_cancel, 0) as cash_cancel'), DB::raw('COALESCE(payments.cash_paid, 0) as cash_paid'), DB::raw('COALESCE(payments.held_route_cash, 0) as held_route_cash'), DB::raw('COALESCE(route_cash.cash_in, 0) as route_cash_in'), 'c.business_id as customer_business_id', 'b.business_id as branch_business_id')
+            ->select('s.*', DB::raw('COALESCE(items.item_count, 0) as item_count'), DB::raw('COALESCE(items.expected_total, 0) as expected_total'), DB::raw('COALESCE(cash.cash_in, 0) as cash_in'), DB::raw('COALESCE(cash.cash_cancel, 0) as cash_cancel'), DB::raw('COALESCE(refunds.refunded_cash, 0) as refunded_cash'), DB::raw('COALESCE(payments.cash_paid, 0) as cash_paid'), DB::raw('COALESCE(payments.held_route_cash, 0) as held_route_cash'), DB::raw('COALESCE(route_cash.cash_in, 0) as route_cash_in'), 'c.business_id as customer_business_id', 'b.business_id as branch_business_id')
             ->orderBy('s.id')
             ->cursor();
 
@@ -444,7 +450,7 @@ class SystemIntegrityAuditor
             $cashExpected = (float) $sale->cash_paid > 0
                 ? max(0, (float) $sale->cash_paid - (float) $sale->held_route_cash)
                 : ($sale->payment_method === 'cash' && ! $sale->is_credit_sale ? (float) $sale->total : 0);
-            $cashNet = round((float) $sale->cash_in + (float) $sale->route_cash_in + (float) $sale->cash_cancel, 2);
+            $cashNet = round((float) $sale->cash_in + (float) $sale->route_cash_in + (float) $sale->cash_cancel - (float) $sale->refunded_cash, 2);
 
             if (($sale->status ?? 'completed') === 'cancelled' && $cashExpected > 0 && $cashNet > 0.001) {
                 $issues[] = $this->issue($base, 'critical', 'cancelled_sale_cash_not_reversed', 'Venta anulada conserva efectivo activo en caja.', 'Revisar la reversa de caja asociada a la anulación.');
@@ -711,7 +717,7 @@ class SystemIntegrityAuditor
                 }
             }
 
-            if ((float) $movement->amount < 0 && ! in_array($movement->type, ['purchase_cash', 'expense', 'sale_cash_cancel', 'credit_payment_cash_cancel', 'closing_adjustment', 'route_cash_variance_overage_returned', 'route_delivery_collection_reversal_current_session'], true)) {
+            if ((float) $movement->amount < 0 && ! in_array($movement->type, ['purchase_cash', 'expense', 'sale_cash_cancel', 'sale_refund_cash', 'credit_payment_cash_cancel', 'closing_adjustment', 'route_cash_variance_overage_returned', 'route_delivery_collection_reversal_current_session'], true)) {
                 $issues[] = $this->issue($base, 'warning', 'invalid_negative_cash_movement', 'Movimiento de caja negativo con tipo que no representa una salida o reversa válida.', 'Revisar tipo, referencia y evidencia del movimiento.');
             }
 
@@ -747,7 +753,7 @@ class SystemIntegrityAuditor
 
         foreach (DB::table('cash_movements')
             ->where('business_id', $businessId)
-            ->whereIn('type', ['sale_cash', 'purchase_cash', 'credit_payment_cash', 'route_cash_settlement', 'route_delivery_collection_reversal_current_session'])
+            ->whereIn('type', ['sale_cash', 'sale_refund_cash', 'purchase_cash', 'credit_payment_cash', 'route_cash_settlement', 'route_delivery_collection_reversal_current_session'])
             ->whereNotNull('reference_type')
             ->whereNotNull('reference_id')
             ->when($context['branch_id'], fn (Builder $q, $branch) => $q->where('branch_id', $branch))
