@@ -73,7 +73,7 @@ class DeployProductionScriptTest extends TestCase
         $this->assertStringContainsString('$this->runJob($job, $connectionName, $options);', $worker);
         $this->assertGreaterThan(
             strpos($worker, '$this->runJob($job, $connectionName, $options);'),
-            strpos($worker, '$status = $this->stopIfNecessary('),
+            strpos($worker, '[$status, $reason] = $this->stopIfNecessary('),
         );
         $this->assertGreaterThan(
             strpos($service, "->run(['bash', \$scriptPath, \$target])"),
