@@ -46,6 +46,12 @@ class DeployController extends Controller
             ]);
         }
 
+        if (! $this->service->queueRetryWindowIsSafe()) {
+            throw ValidationException::withMessages([
+                'deploy' => 'DB_QUEUE_RETRY_AFTER debe ser mayor que el timeout del despliegue antes de habilitar la ejecución.',
+            ]);
+        }
+
         $rateKey = 'production-deploy:'.(int) $request->user()->id;
 
         if (RateLimiter::tooManyAttempts($rateKey, 3)) {
