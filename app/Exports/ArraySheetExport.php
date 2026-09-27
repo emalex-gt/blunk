@@ -3,10 +3,11 @@
 namespace App\Exports;
 
 use Maatwebsite\Excel\Concerns\FromArray;
+use Maatwebsite\Excel\Concerns\Export;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
 use Maatwebsite\Excel\Concerns\WithTitle;
 
-class ArraySheetExport implements FromArray, ShouldAutoSize, WithTitle
+class ArraySheetExport implements Export, FromArray, ShouldAutoSize, WithTitle
 {
     public function __construct(
         private readonly string $title,

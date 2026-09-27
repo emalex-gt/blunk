@@ -2,9 +2,10 @@
 
 namespace App\Exports;
 
+use Maatwebsite\Excel\Concerns\Export;
 use Maatwebsite\Excel\Concerns\WithMultipleSheets;
 
-class MultiSheetArrayExport implements WithMultipleSheets
+class MultiSheetArrayExport implements Export, WithMultipleSheets
 {
     public function __construct(
         private readonly array $sheets,

@@ -3,10 +3,11 @@
 namespace App\Exports;
 
 use Maatwebsite\Excel\Concerns\FromArray;
+use Maatwebsite\Excel\Concerns\Export;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
 use Maatwebsite\Excel\Concerns\WithTitle;
 
-class ArrayTableExport implements FromArray, ShouldAutoSize, WithTitle
+class ArrayTableExport implements Export, FromArray, ShouldAutoSize, WithTitle
 {
     public function __construct(
         private readonly array $rows,
