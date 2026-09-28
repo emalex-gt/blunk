@@ -3148,6 +3148,19 @@ class RoutesPreSalesTest extends TestCase
         $this->assertStringContainsString('details={confirmationDetails}', $source);
     }
 
+    public function test_route_visit_product_line_groups_quantity_price_and_subtotal_responsively(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Routes/Mobile/Visit.tsx'));
+
+        $this->assertStringContainsString("import { formatCurrency } from '@/utils/currency';", $source);
+        $this->assertStringContainsString('sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,0.8fr)]', $source);
+        $this->assertStringContainsString('>Cantidad</p>', $source);
+        $this->assertStringContainsString('>Precio</p>', $source);
+        $this->assertStringContainsString('>Subtotal</p>', $source);
+        $this->assertStringContainsString('formatCurrency(item.quantity * item.unit_price)', $source);
+        $this->assertStringNotContainsString('Q {(item.quantity * item.unit_price).toFixed(2)}', $source);
+    }
+
     public function test_stock_breakdown_is_branch_and_tenant_scoped(): void
     {
         [$business, $admin, $branch] = $this->tenant(role: 'owner');
