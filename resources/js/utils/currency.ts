@@ -8,6 +8,24 @@ const currencies: Record<string, CurrencyConfig> = {
     GT: { symbol: 'Q', position: 'before' },
 };
 
+export function formatMoneyValue(amount: number | string | null | undefined): string {
+    return Number(amount ?? 0).toLocaleString('en-US', {
+        useGrouping: false,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+}
+
+export function parseMoneyValue(value: string): number | null {
+    if (!/^\d+(?:\.\d{1,2})?$/.test(value)) {
+        return null;
+    }
+
+    const parsed = Number(value);
+
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function formatCurrency(amount: number | string | null | undefined, country?: string | null): string {
     const config = currencies[country || 'GT'] ?? currencies.GT;
     const value = Number(amount ?? 0).toLocaleString('en-US', {

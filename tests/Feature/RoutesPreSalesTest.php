@@ -3152,13 +3152,28 @@ class RoutesPreSalesTest extends TestCase
     {
         $source = file_get_contents(resource_path('js/Pages/Routes/Mobile/Visit.tsx'));
 
-        $this->assertStringContainsString("import { formatCurrency } from '@/utils/currency';", $source);
+        $this->assertMatchesRegularExpression("/import \\{[^}]*formatCurrency[^}]*\\} from '@\/utils\/currency';/", $source);
         $this->assertStringContainsString('sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,0.8fr)]', $source);
         $this->assertStringContainsString('>Cantidad</p>', $source);
         $this->assertStringContainsString('>Precio</p>', $source);
         $this->assertStringContainsString('>Subtotal</p>', $source);
         $this->assertStringContainsString('formatCurrency(item.quantity * item.unit_price)', $source);
         $this->assertStringNotContainsString('Q {(item.quantity * item.unit_price).toFixed(2)}', $source);
+    }
+
+    public function test_route_visit_price_input_keeps_numeric_price_and_formats_valid_values_on_blur(): void
+    {
+        $visitSource = file_get_contents(resource_path('js/Pages/Routes/Mobile/Visit.tsx'));
+        $currencySource = file_get_contents(resource_path('js/utils/currency.ts'));
+
+        $this->assertStringContainsString('formatMoneyValue', $currencySource);
+        $this->assertStringContainsString('minimumFractionDigits: 2', $currencySource);
+        $this->assertStringContainsString('maximumFractionDigits: 2', $currencySource);
+        $this->assertStringContainsString('const [priceTexts, setPriceTexts]', $visitSource);
+        $this->assertStringContainsString('inputMode="decimal"', $visitSource);
+        $this->assertStringContainsString('onBlur={() => commitUnitPrice(index)}', $visitSource);
+        $this->assertStringContainsString('formatMoneyValue(item.unit_price)', $visitSource);
+        $this->assertStringContainsString('formatCurrency(item.quantity * item.unit_price)', $visitSource);
     }
 
     public function test_stock_breakdown_is_branch_and_tenant_scoped(): void

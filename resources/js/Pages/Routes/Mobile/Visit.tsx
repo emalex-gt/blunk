@@ -2,7 +2,7 @@ import ConfirmDialog from '@/Components/ConfirmDialog';
 import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { makeOperationKey } from '@/lib/idempotency';
-import { formatCurrency } from '@/utils/currency';
+import { formatCurrency, formatMoneyValue, parseMoneyValue } from '@/utils/currency';
 import { Head, Link, router, useForm } from '@inertiajs/react';
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -136,6 +136,9 @@ export default function Visit({
     const [searchLoading, setSearchLoading] = useState(false);
     const [searchTouched, setSearchTouched] = useState(Boolean(filters.search));
     const [quantityMessages, setQuantityMessages] = useState<Record<number, string>>({});
+    const [priceTexts, setPriceTexts] = useState<Record<number, string>>(() => Object.fromEntries(
+        initialItems.map((item) => [item.product_id, formatMoneyValue(item.unit_price)]),
+    ));
     const searchRequestRef = useRef(0);
     const customerForm = useForm({
         commercial_name: visit.customer.commercial_name ?? '',
@@ -248,12 +251,37 @@ export default function Visit({
             unit_price: Number(product.sale_price ?? 0),
             manual_price: false,
         }]);
+        setPriceTexts((prices) => ({ ...prices, [product.id]: formatMoneyValue(product.sale_price) }));
     };
 
     const updateItem = (index: number, payload: Partial<Item>) => {
         form.setData('items', form.data.items.map((row, rowIndex) => (
             rowIndex === index ? { ...row, ...payload } : row
         )));
+    };
+
+    const updateUnitPriceText = (productId: number, value: string) => {
+        if (/^\d*(?:\.\d*)?$/.test(value)) {
+            setPriceTexts((prices) => ({ ...prices, [productId]: value }));
+        }
+    };
+
+    const commitUnitPrice = (index: number) => {
+        const item = form.data.items[index];
+
+        if (!item) {
+            return;
+        }
+
+        const parsed = parseMoneyValue(priceTexts[item.product_id] ?? '');
+
+        if (parsed === null) {
+            setPriceTexts((prices) => ({ ...prices, [item.product_id]: formatMoneyValue(item.unit_price) }));
+            return;
+        }
+
+        updateItem(index, { unit_price: parsed, manual_price: true });
+        setPriceTexts((prices) => ({ ...prices, [item.product_id]: formatMoneyValue(parsed) }));
     };
 
     const updateQuantity = (index: number, requestedQuantity: number) => {
@@ -595,12 +623,14 @@ export default function Visit({
                                     <div className="min-w-0 space-y-1.5">
                                         <p className="text-xs font-semibold text-slate-500">Precio</p>
                                         <input
-                                            type="number"
+                                            type="text"
+                                            inputMode="decimal"
                                             min="0.01"
                                             step="0.01"
-                                            value={item.unit_price}
+                                            value={priceTexts[item.product_id] ?? formatMoneyValue(item.unit_price)}
                                             disabled={!allowManualPrice || !canModifyPreSale}
-                                            onChange={(event) => updateItem(index, { unit_price: Number(event.target.value), manual_price: true })}
+                                            onChange={(event) => updateUnitPriceText(item.product_id, event.target.value)}
+                                            onBlur={() => commitUnitPrice(index)}
                                             className="w-full rounded-lg border-slate-200 text-sm disabled:bg-slate-100"
                                         />
                                     </div>
