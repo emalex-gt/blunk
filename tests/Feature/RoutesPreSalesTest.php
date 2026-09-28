@@ -2618,7 +2618,7 @@ class RoutesPreSalesTest extends TestCase
         $visitSource = file_get_contents(resource_path('js/Pages/Routes/Mobile/Visit.tsx'));
         $pickSource = file_get_contents(resource_path('js/Pages/Routes/PreSales/Pick.tsx'));
 
-        $this->assertMatchesRegularExpression('/min="1"\s+step="1"\s+value=\{item\.quantity\}/', $visitSource);
+        $this->assertMatchesRegularExpression('/min="1"\s+(?:max=\{[\s\S]*?\}\s+)?step="1"\s+value=\{item\.quantity\}/', $visitSource);
         $this->assertMatchesRegularExpression('/min="0"\s+max=\{Math\.min\(item\.quantity, item\.reserved_quantity\)\}\s+step="1"/', $pickSource);
         $this->assertStringNotContainsString('step="0.0001"', $visitSource.$pickSource);
     }
@@ -3090,6 +3090,62 @@ class RoutesPreSalesTest extends TestCase
             ->assertSessionHasErrors(['items' => 'No hay suficiente stock disponible.']);
 
         $this->assertSame(1, PreSale::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_oversold_line_rejects_the_entire_route_pre_sale_without_partial_writes(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $availableProduct = $this->product($business, $branch, stock: 5);
+        $oversoldProduct = $this->product($business, $branch, stock: 1);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)
+            ->from(route('routes.mobile.visits.show', $visit))
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
+                'items' => [
+                    ['product_id' => $availableProduct->id, 'quantity' => 1],
+                    ['product_id' => $oversoldProduct->id, 'quantity' => 2],
+                ],
+            ])
+            ->assertRedirect(route('routes.mobile.visits.show', $visit))
+            ->assertSessionHasErrors(['items' => 'No hay suficiente stock disponible.']);
+
+        $this->assertDatabaseCount('pre_sales', 0);
+        $this->assertDatabaseCount('pre_sale_items', 0);
+        $this->assertDatabaseCount('stock_reservations', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('sale_payments', 0);
+    }
+
+    public function test_route_visit_exposes_the_editable_quantity_limit_without_counting_its_own_reservation(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch, stock: 5);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+            'idempotency_key' => 'test-route-'.str_replace('.', '-', uniqid('', true)),
+            'items' => [['product_id' => $product->id, 'quantity' => 3]],
+        ])->assertSessionHasNoErrors();
+
+        $this->actingAs($seller)->get(route('routes.mobile.visits.show', $visit))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/Mobile/Visit')
+                ->where('preSale.items.0.maximum_quantity', 5));
+    }
+
+    public function test_route_visit_quantity_controls_use_the_server_supplied_limit_before_confirmation(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Routes/Mobile/Visit.tsx'));
+
+        $this->assertStringContainsString('maximum_quantity', $source);
+        $this->assertStringContainsString('max={!allowNegativeStock ? item.maximum_quantity ?? undefined : undefined}', $source);
+        $this->assertStringContainsString('Stock disponible:', $source);
+        $this->assertStringContainsString('La cantidad máxima disponible es', $source);
+        $this->assertStringContainsString('details={confirmationDetails}', $source);
     }
 
     public function test_stock_breakdown_is_branch_and_tenant_scoped(): void

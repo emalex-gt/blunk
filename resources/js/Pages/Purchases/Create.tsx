@@ -1141,7 +1141,7 @@ export default function Create({
                                                     ×
                                                 </button>
                                             </div>
-                                            <div className="mt-3 grid gap-2 sm:grid-cols-[116px_minmax(0,1fr)_auto] lg:grid-cols-[112px_minmax(0,1fr)] xl:grid-cols-[116px_minmax(0,1fr)_auto]">
+                                            <div className="mt-3 grid gap-2 sm:grid-cols-[160px_minmax(0,1fr)_auto] lg:grid-cols-[160px_minmax(0,1fr)] xl:grid-cols-[160px_minmax(0,1fr)_auto]">
                                                 <div>
                                                     <label className="mb-1 block text-[11px] font-semibold uppercase text-slate-400">
                                                         Cantidad

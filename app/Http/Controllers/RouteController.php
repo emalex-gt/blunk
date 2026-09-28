@@ -6,6 +6,7 @@ use App\Models\Branch;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\PreSale;
+use App\Models\PreSaleItem;
 use App\Models\Product;
 use App\Models\RouteDeliveryBatchPreSale;
 use App\Models\RoutePreSaleCollection;
@@ -14,6 +15,7 @@ use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
 use App\Models\RouteZoneCustomer;
 use App\Models\Sale;
+use App\Models\StockReservation;
 use App\Models\TenantSetting;
 use App\Models\TenantFelSetting;
 use App\Models\User;
@@ -1091,14 +1093,35 @@ class RouteController extends Controller
             && TenantSetting::query()->where('business_id', $visit->business_id)->value('route_collection_responsibility') !== 'delivery_agent'
             && Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_VIEW);
 
+        $preSale = PreSale::query()
+            ->where('business_id', currentBusinessId())
+            ->where('route_visit_id', $visit->id)
+            ->where('status', '!=', 'cancelled')
+            ->with('items.product:id,name,code,barcode,image_url')
+            ->first();
+
+        if ($preSale) {
+            $productIds = $preSale->items->pluck('product_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
+            $stockBreakdown = StockAvailability::getBreakdownForProducts((int) $visit->business_id, (int) $visit->branch_id, $productIds);
+            $reservedByProduct = StockReservation::query()
+                ->where('business_id', $visit->business_id)
+                ->where('branch_id', $visit->branch_id)
+                ->where('source_type', StockReservationService::SOURCE_PRE_SALE)
+                ->where('source_id', $preSale->id)
+                ->where('status', 'active')
+                ->groupBy('product_id')
+                ->selectRaw('product_id, COALESCE(SUM(quantity), 0) as quantity')
+                ->pluck('quantity', 'product_id');
+
+            $preSale->items->each(function (PreSaleItem $item) use ($stockBreakdown, $reservedByProduct) {
+                $breakdown = $stockBreakdown->get((int) $item->product_id, []);
+                $item->setAttribute('maximum_quantity', (float) ($breakdown['available_stock'] ?? 0) + (float) ($reservedByProduct[$item->product_id] ?? 0));
+            });
+        }
+
         return Inertia::render('Routes/Mobile/Visit', [
             'visit' => $visit->load(['customer:id,name,commercial_name,contact_name,doc_number,address,department,municipality,phone', 'workDay:id,status,work_date', 'zone:id,name']),
-            'preSale' => PreSale::query()
-                ->where('business_id', currentBusinessId())
-                ->where('route_visit_id', $visit->id)
-                ->where('status', '!=', 'cancelled')
-                ->with('items.product:id,name,code,barcode,image_url')
-                ->first(),
+            'preSale' => $preSale,
             'products' => $search !== '' ? $this->preSaleProductResults($visit, $search) : collect(),
             'filters' => ['search' => $search],
             'allowNegativeStock' => \App\Support\Inventory\StockPolicy::allowsNegativeStockForBusinessId(currentBusinessId()),

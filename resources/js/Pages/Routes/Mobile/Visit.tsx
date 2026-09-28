@@ -3,7 +3,7 @@ import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { makeOperationKey } from '@/lib/idempotency';
 import { Head, Link, router, useForm } from '@inertiajs/react';
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 type Product = {
     id: number;
@@ -24,6 +24,7 @@ type Item = {
     code: string | null;
     barcode: string | null;
     quantity: number;
+    maximum_quantity: number | null;
     unit_price: number;
     manual_price?: boolean;
 };
@@ -32,6 +33,7 @@ type ExistingItem = {
     product_id: number;
     quantity: string;
     unit_price: string;
+    maximum_quantity?: number | null;
     manual_price?: boolean;
     product?: { name: string; code: string | null; barcode: string | null };
 };
@@ -40,7 +42,7 @@ type Confirmation = {
     kind: 'save' | 'edit';
     title: string;
     message: string;
-    details?: string;
+    details?: ReactNode;
     confirmLabel: string;
 } | null;
 
@@ -89,6 +91,7 @@ export default function Visit({
         code: item.product?.code ?? null,
         barcode: item.product?.barcode ?? null,
         quantity: Number(item.quantity),
+        maximum_quantity: item.maximum_quantity === null || item.maximum_quantity === undefined ? null : Number(item.maximum_quantity),
         unit_price: Number(item.unit_price ?? 0),
         manual_price: Boolean(item.manual_price),
     }));
@@ -131,6 +134,7 @@ export default function Visit({
     const [productResults, setProductResults] = useState<Product[]>(products);
     const [searchLoading, setSearchLoading] = useState(false);
     const [searchTouched, setSearchTouched] = useState(Boolean(filters.search));
+    const [quantityMessages, setQuantityMessages] = useState<Record<number, string>>({});
     const searchRequestRef = useRef(0);
     const customerForm = useForm({
         commercial_name: visit.customer.commercial_name ?? '',
@@ -145,6 +149,28 @@ export default function Visit({
     const total = useMemo(() => form.data.items.reduce((sum, item) => {
         return sum + (Number(item.unit_price ?? 0) * item.quantity);
     }, 0), [form.data.items]);
+
+    const quantityLimit = (item: Item): number | null => {
+        if (allowNegativeStock || item.maximum_quantity === null) {
+            return null;
+        }
+
+        return Math.max(0, Math.floor(item.maximum_quantity));
+    };
+
+    const setQuantityMessage = (productId: number, message?: string) => {
+        setQuantityMessages((messages) => {
+            const next = { ...messages };
+
+            if (message) {
+                next[productId] = message;
+            } else {
+                delete next[productId];
+            }
+
+            return next;
+        });
+    };
 
     useEffect(() => {
         const value = searchTerm.trim();
@@ -197,6 +223,14 @@ export default function Visit({
 
         const existing = form.data.items.find((item) => item.product_id === product.id);
         if (existing) {
+            const maximumQuantity = quantityLimit(existing);
+
+            if (maximumQuantity !== null && existing.quantity >= maximumQuantity) {
+                setQuantityMessage(product.id, `La cantidad máxima disponible es ${maximumQuantity}.`);
+                return;
+            }
+
+            setQuantityMessage(product.id);
             form.setData('items', form.data.items.map((item) => (
                 item.product_id === product.id ? { ...item, quantity: item.quantity + 1 } : item
             )));
@@ -209,6 +243,7 @@ export default function Visit({
             code: product.code,
             barcode: product.barcode,
             quantity: 1,
+            maximum_quantity: allowNegativeStock ? null : Math.max(0, Math.floor(product.available_stock)),
             unit_price: Number(product.sale_price ?? 0),
             manual_price: false,
         }]);
@@ -218,6 +253,29 @@ export default function Visit({
         form.setData('items', form.data.items.map((row, rowIndex) => (
             rowIndex === index ? { ...row, ...payload } : row
         )));
+    };
+
+    const updateQuantity = (index: number, requestedQuantity: number) => {
+        const item = form.data.items[index];
+
+        if (!item) {
+            return;
+        }
+
+        if (!Number.isInteger(requestedQuantity) || requestedQuantity < 1) {
+            setQuantityMessage(item.product_id, 'La cantidad debe ser un número entero mayor a 0.');
+            return;
+        }
+
+        const maximumQuantity = quantityLimit(item);
+        if (maximumQuantity !== null && requestedQuantity > maximumQuantity) {
+            updateItem(index, { quantity: maximumQuantity });
+            setQuantityMessage(item.product_id, `La cantidad máxima disponible es ${maximumQuantity}.`);
+            return;
+        }
+
+        setQuantityMessage(item.product_id);
+        updateItem(index, { quantity: requestedQuantity });
     };
 
     const submit = () => {
@@ -248,7 +306,22 @@ export default function Visit({
     };
 
     const requestSavePreSale = () => {
-        if (form.data.items.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1)) {
+        const invalidItem = form.data.items.find((item) => {
+            const maximumQuantity = quantityLimit(item);
+
+            return !Number.isInteger(item.quantity)
+                || item.quantity < 1
+                || (maximumQuantity !== null && item.quantity > maximumQuantity);
+        });
+
+        if (invalidItem) {
+            const maximumQuantity = quantityLimit(invalidItem);
+            setQuantityMessage(
+                invalidItem.product_id,
+                maximumQuantity !== null && invalidItem.quantity > maximumQuantity
+                    ? `La cantidad máxima disponible es ${maximumQuantity}.`
+                    : 'La cantidad debe ser un número entero mayor a 0.',
+            );
             form.setError('items', 'Las cantidades deben ser números enteros mayores a 0.');
             return;
         }
@@ -268,6 +341,10 @@ export default function Visit({
             confirmLabel: form.data.collect_now ? 'Sí, confirmar y cobrar' : 'Sí, guardar',
         });
     };
+
+    const confirmationDetails = confirmation && form.errors.items
+        ? <div className="space-y-2"><div>{confirmation.details}</div><p className="rounded-lg bg-red-50 px-3 py-2 font-semibold text-red-700">{form.errors.items}</p></div>
+        : confirmation?.details;
 
     const requestEditPreSale = () => {
         if (!existingDraftCanBeEdited) {
@@ -500,18 +577,21 @@ export default function Visit({
                                 </div>
                                 <div className="mt-2 grid grid-cols-1 gap-2 sm:mt-1 sm:grid-cols-3">
                                     <div className="flex items-center rounded-lg border border-slate-200 bg-white">
-                                        <button type="button" disabled={!canModifyPreSale} onClick={() => updateItem(index, { quantity: Math.max(1, item.quantity - 1) })} className="px-3 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">-</button>
+                                        <button type="button" disabled={!canModifyPreSale} onClick={() => updateQuantity(index, Math.max(1, item.quantity - 1))} className="px-3 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">-</button>
                                         <input
                                             type="number"
                                             min="1"
+                                            max={!allowNegativeStock ? item.maximum_quantity ?? undefined : undefined}
                                             step="1"
                                             value={item.quantity}
                                             disabled={!canModifyPreSale}
-                                            onChange={(event) => updateItem(index, { quantity: Number(event.target.value) })}
+                                            onChange={(event) => updateQuantity(index, Number(event.target.value))}
                                             className="min-w-0 flex-1 border-0 p-2 text-center text-sm disabled:bg-slate-100"
                                         />
-                                        <button type="button" disabled={!canModifyPreSale} onClick={() => updateItem(index, { quantity: item.quantity + 1 })} className="px-3 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">+</button>
+                                        <button type="button" disabled={!canModifyPreSale} onClick={() => updateQuantity(index, item.quantity + 1)} className="px-3 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">+</button>
                                     </div>
+                                    {!allowNegativeStock && item.maximum_quantity !== null && <p className="text-xs font-semibold text-slate-500">Stock disponible: {Math.floor(item.maximum_quantity)}</p>}
+                                    {quantityMessages[item.product_id] && <p className="text-xs font-semibold text-red-600">{quantityMessages[item.product_id]}</p>}
                                     <input
                                         type="number"
                                         min="0.01"
@@ -552,7 +632,7 @@ export default function Visit({
                 open={confirmation !== null}
                 title={confirmation?.title ?? ''}
                 message={confirmation?.message ?? ''}
-                details={confirmation?.details}
+                details={confirmationDetails}
                 confirmLabel={confirmation?.confirmLabel ?? 'Confirmar'}
                 processing={form.processing}
                 onCancel={() => setConfirmation(null)}

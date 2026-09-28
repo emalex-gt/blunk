@@ -165,6 +165,15 @@ class PurchaseTransferAsyncSearchTest extends TestCase
         $this->assertStringNotContainsString('min-h-0 flex-1 overflow-y-auto p-4', $source);
     }
 
+    public function test_purchase_quantity_control_reserves_readable_space_beside_its_increment_buttons(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Purchases/Create.tsx'));
+
+        $this->assertStringContainsString('sm:grid-cols-[160px_minmax(0,1fr)_auto]', $source);
+        $this->assertStringContainsString('xl:grid-cols-[160px_minmax(0,1fr)_auto]', $source);
+        $this->assertStringContainsString('step="1"', $source);
+    }
+
     public function test_stock_menu_points_to_paginated_stock_index_not_full_catalog_quick_page(): void
     {
         $source = file_get_contents(resource_path('js/Layouts/AuthenticatedLayout.tsx'));
