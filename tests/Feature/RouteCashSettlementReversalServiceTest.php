@@ -340,6 +340,18 @@ class RouteCashSettlementReversalServiceTest extends TestCase
             'route_post_conversion_collection_id' => $collection->id,
             'is_active' => false,
         ]);
+
+        $replacement = app(RouteCashSettlementDraftService::class)->create(
+            $actor,
+            $collection->collected_by,
+            [['origin' => 'post_conversion_collection', 'collection_id' => $collection->id]],
+            'settlement-reversal-post-release-0001',
+        );
+        $this->assertDatabaseHas('route_cash_settlement_items', [
+            'route_cash_settlement_id' => $replacement->resultId,
+            'route_post_conversion_collection_id' => $collection->id,
+            'is_active' => true,
+        ]);
     }
 
     public function test_delivery_cash_returns_to_collector_custody_and_awaiting_physical_receipt(): void
@@ -360,6 +372,18 @@ class RouteCashSettlementReversalServiceTest extends TestCase
             'route_cash_settlement_id' => $settlement->id,
             'route_delivery_collection_id' => $collection->id,
             'is_active' => false,
+        ]);
+
+        $replacement = app(RouteCashSettlementDraftService::class)->create(
+            $actor,
+            $collection->collected_by,
+            [['origin' => 'delivery_collection', 'collection_id' => $collection->id]],
+            'settlement-reversal-delivery-release-0001',
+        );
+        $this->assertDatabaseHas('route_cash_settlement_items', [
+            'route_cash_settlement_id' => $replacement->resultId,
+            'route_delivery_collection_id' => $collection->id,
+            'is_active' => true,
         ]);
     }
 

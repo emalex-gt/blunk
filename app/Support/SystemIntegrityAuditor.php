@@ -717,7 +717,7 @@ class SystemIntegrityAuditor
                 }
             }
 
-            if ((float) $movement->amount < 0 && ! in_array($movement->type, ['purchase_cash', 'expense', 'sale_cash_cancel', 'sale_refund_cash', 'credit_payment_cash_cancel', 'closing_adjustment', 'route_cash_variance_overage_returned', 'route_delivery_collection_reversal_current_session'], true)) {
+            if ((float) $movement->amount < 0 && ! in_array($movement->type, ['purchase_cash', 'expense', 'sale_cash_cancel', 'sale_refund_cash', 'credit_payment_cash_cancel', 'closing_adjustment', 'route_cash_variance_overage_returned', 'route_delivery_collection_reversal_current_session', 'route_cash_settlement_reversal_current_session'], true)) {
                 $issues[] = $this->issue($base, 'warning', 'invalid_negative_cash_movement', 'Movimiento de caja negativo con tipo que no representa una salida o reversa válida.', 'Revisar tipo, referencia y evidencia del movimiento.');
             }
 
@@ -751,9 +751,39 @@ class SystemIntegrityAuditor
             }
         }
 
+        if (Schema::hasTable('route_cash_settlement_reversals')) {
+            foreach (DB::table('cash_movements as cm')
+                ->leftJoin('route_cash_settlement_reversals as reversal', function ($join) {
+                    $join->on('reversal.compensating_cash_movement_id', '=', 'cm.id')
+                        ->where('reversal.cash_correction_type', '=', 'current_session_adjustment');
+                })
+                ->leftJoin('route_cash_settlements as settlement', 'settlement.id', '=', 'reversal.route_cash_settlement_id')
+                ->where('cm.business_id', $businessId)
+                ->where('cm.type', 'route_cash_settlement_reversal_current_session')
+                ->where(function ($q) {
+                    $q->whereNull('reversal.id')
+                        ->orWhere('cm.amount', '>=', 0)
+                        ->orWhere('cm.reference_type', '<>', 'route_cash_settlement_reversal')
+                        ->orWhereColumn('cm.reference_id', '<>', 'reversal.id')
+                        ->orWhereColumn('cm.cash_register_session_id', '<>', 'settlement.cash_register_session_id')
+                        ->orWhereRaw('ROUND(cm.amount::numeric, 2) <> -ROUND(settlement.received_amount::numeric, 2)');
+                })
+                ->select('cm.id', 'cm.cash_register_session_id', 'cm.reference_type', 'cm.reference_id', 'cm.amount', 'cm.type')
+                ->cursor() as $movement) {
+                $issues[] = $this->issue([
+                    'cash_register_id' => $movement->cash_register_session_id,
+                    'cash_movement_id' => $movement->id,
+                    'reference_type' => $movement->reference_type,
+                    'reference_id' => $movement->reference_id,
+                    'amount' => (float) $movement->amount,
+                    'movement_type' => $movement->type,
+                ], 'critical', 'route_cash_settlement_reversal_cash_movement_mismatch', 'El ajuste de caja de reversa de liquidación no conserva ledger, signo, monto, referencia o sesión original válidos.', 'No mover efectivo entre sesiones; restaurar exclusivamente el vínculo auditado.');
+            }
+        }
+
         foreach (DB::table('cash_movements')
             ->where('business_id', $businessId)
-            ->whereIn('type', ['sale_cash', 'sale_refund_cash', 'purchase_cash', 'credit_payment_cash', 'route_cash_settlement', 'route_delivery_collection_reversal_current_session'])
+            ->whereIn('type', ['sale_cash', 'sale_refund_cash', 'purchase_cash', 'credit_payment_cash', 'route_cash_settlement', 'route_delivery_collection_reversal_current_session', 'route_cash_settlement_reversal_current_session'])
             ->whereNotNull('reference_type')
             ->whereNotNull('reference_id')
             ->when($context['branch_id'], fn (Builder $q, $branch) => $q->where('branch_id', $branch))
@@ -825,7 +855,7 @@ class SystemIntegrityAuditor
 
         foreach ($settlements as $settlement) {
             $base = ['cash_register_id' => $settlement->cash_register_session_id, 'cash_movement_id' => $settlement->cash_movement_id, 'reference_type' => 'route_cash_settlement', 'reference_id' => $settlement->id, 'amount' => (float) $settlement->expected_amount, 'movement_type' => 'route_cash_settlement'];
-            if (round((float) $settlement->expected_amount, 2) !== round((float) $settlement->expected_items, 2)) {
+            if ($settlement->status !== 'reversed' && round((float) $settlement->expected_amount, 2) !== round((float) $settlement->expected_items, 2)) {
                 $issues[] = $this->issue($base, 'critical', 'route_cash_settlement_expected_mismatch', 'El importe esperado no coincide con la suma de sus items activos.', 'Revisar los items reservados sin modificar cobros históricos.');
             }
             if ($settlement->status === 'confirmed') {
@@ -842,7 +872,7 @@ class SystemIntegrityAuditor
                 if (! $validMovement) {
                     $issues[] = $this->issue($base, 'critical', 'confirmed_route_cash_settlement_invalid_movement', 'Liquidación confirmada sin su único movimiento consolidado válido en la caja actual.', 'Revisar la cadena liquidación → movimiento de caja sin crear movimientos por cobro.');
                 }
-            } elseif ($settlement->cash_movement_id !== null) {
+            } elseif ($settlement->status !== 'reversed' && $settlement->cash_movement_id !== null) {
                 $issues[] = $this->issue($base, 'critical', 'unconfirmed_route_cash_settlement_with_movement', 'Un borrador o una liquidación cancelada tiene movimiento de caja.', 'La liquidación debe confirmar antes de afectar caja.');
             }
         }
@@ -894,7 +924,90 @@ class SystemIntegrityAuditor
             }
         }
 
-        $issues = [...$issues, ...$this->auditRouteCashSettlementVariances($context)];
+        $issues = [...$issues, ...$this->auditRouteCashSettlementVariances($context), ...$this->auditRouteCashSettlementReversals($context)];
+
+        return $issues;
+    }
+
+    private function auditRouteCashSettlementReversals(array $context): array
+    {
+        if (! Schema::hasTable('route_cash_settlement_reversals')) {
+            return [];
+        }
+
+        $issues = [];
+        $businessId = $context['business_id'];
+        $base = static fn ($row): array => [
+            'cash_register_id' => $row->cash_register_session_id ?? null,
+            'cash_movement_id' => $row->cash_movement_id ?? null,
+            'reference_type' => 'route_cash_settlement',
+            'reference_id' => $row->settlement_id ?? null,
+            'amount' => isset($row->received_amount) ? (float) $row->received_amount : null,
+            'movement_type' => 'route_cash_settlement',
+        ];
+        $add = function ($row, string $type, string $message, string $recommendation) use (&$issues, $base): void {
+            $issues[] = $this->issue($base($row), 'critical', $type, $message, $recommendation);
+        };
+
+        foreach (DB::table('route_cash_settlements as s')
+            ->leftJoin('route_cash_settlement_reversals as r', 'r.route_cash_settlement_id', '=', 's.id')
+            ->where('s.business_id', $businessId)
+            ->where('s.status', 'reversed')
+            ->whereNull('r.id')
+            ->select('s.id as settlement_id', 's.cash_register_session_id', 's.cash_movement_id', 's.received_amount')
+            ->cursor() as $row) {
+            $add($row, 'reversed_route_cash_settlement_without_ledger', 'Liquidación reversada sin ledger append-only de reversa.', 'Restaurar el ledger causal; no reescribir los importes históricos.');
+        }
+
+        foreach (DB::table('route_cash_settlement_reversals as r')
+            ->join('route_cash_settlements as s', 's.id', '=', 'r.route_cash_settlement_id')
+            ->where('r.business_id', $businessId)
+            ->select('s.id as settlement_id', 's.cash_register_session_id', 's.cash_movement_id', 's.received_amount', DB::raw('COUNT(r.id) as reversal_count'))
+            ->groupBy('s.id', 's.cash_register_session_id', 's.cash_movement_id', 's.received_amount')
+            ->havingRaw('COUNT(r.id) > 1')
+            ->cursor() as $row) {
+            $add($row, 'duplicate_route_cash_settlement_reversal', 'Una liquidación conserva más de un ledger de reversa efectivo.', 'Conservar un único ledger causal y revisar las referencias de caja sin borrar historia.');
+        }
+
+        foreach (DB::table('route_cash_settlement_reversals as r')
+            ->join('route_cash_settlements as s', 's.id', '=', 'r.route_cash_settlement_id')
+            ->leftJoin('cash_movements as original', 'original.id', '=', 's.cash_movement_id')
+            ->leftJoin('cash_register_sessions as original_session', 'original_session.id', '=', 's.cash_register_session_id')
+            ->leftJoin('cash_movements as compensating', 'compensating.id', '=', 'r.compensating_cash_movement_id')
+            ->leftJoin('route_cash_settlement_items as active_item', function ($join) {
+                $join->on('active_item.route_cash_settlement_id', '=', 's.id')->where('active_item.is_active', '=', true);
+            })
+            ->where('r.business_id', $businessId)
+            ->groupBy('r.id', 'r.business_id', 'r.branch_id', 'r.route_cash_settlement_id', 'r.cash_correction_type', 'r.compensating_cash_movement_id', 's.id', 's.business_id', 's.branch_id', 's.status', 's.cash_register_session_id', 's.cash_movement_id', 's.received_amount', 'original.id', 'original.business_id', 'original.branch_id', 'original.cash_register_session_id', 'original.type', 'original.reference_type', 'original.reference_id', 'original.amount', 'original_session.id', 'original_session.business_id', 'original_session.branch_id', 'original_session.status', 'compensating.id', 'compensating.business_id', 'compensating.branch_id', 'compensating.cash_register_session_id', 'compensating.type', 'compensating.reference_type', 'compensating.reference_id', 'compensating.amount')
+            ->havingRaw("s.status <> 'reversed' OR s.business_id <> r.business_id OR s.branch_id <> r.branch_id OR COUNT(active_item.id) <> 0 OR original.id IS NULL OR original.business_id <> s.business_id OR original.branch_id <> s.branch_id OR original.cash_register_session_id <> s.cash_register_session_id OR original.type <> 'route_cash_settlement' OR original.reference_type <> 'route_cash_settlement' OR original.reference_id <> s.id OR ROUND(original.amount::numeric, 2) <> ROUND(s.received_amount::numeric, 2) OR original_session.business_id <> s.business_id OR original_session.branch_id <> s.branch_id OR (r.cash_correction_type = 'ledger_only' AND (r.compensating_cash_movement_id IS NOT NULL OR original_session.status <> 'closed')) OR (r.cash_correction_type = 'current_session_adjustment' AND (compensating.id IS NULL OR compensating.business_id <> s.business_id OR compensating.branch_id <> s.branch_id OR compensating.cash_register_session_id <> s.cash_register_session_id OR compensating.type <> 'route_cash_settlement_reversal_current_session' OR compensating.reference_type <> 'route_cash_settlement_reversal' OR compensating.reference_id <> r.id OR ROUND(compensating.amount::numeric, 2) <> -ROUND(s.received_amount::numeric, 2)))")
+            ->select('s.id as settlement_id', 's.cash_register_session_id', 's.cash_movement_id', 's.received_amount')
+            ->cursor() as $row) {
+            $add($row, 'route_cash_settlement_reversal_integrity_mismatch', 'La reversa no coincide con la liquidación, sus items liberados, movimiento original o corrección de caja.', 'Revisar el ledger y preservar el historial de la liquidación antes de reparar.');
+        }
+
+        foreach (DB::table('route_cash_settlement_items as item')
+            ->join('route_cash_settlements as s', 's.id', '=', 'item.route_cash_settlement_id')
+            ->leftJoin('route_cash_settlement_reversals as r', 'r.id', '=', 'item.reversed_by_route_cash_settlement_reversal_id')
+            ->where('s.business_id', $businessId)
+            ->where('s.status', 'reversed')
+            ->where(function ($q) {
+                $q->where('item.is_active', true)
+                    ->orWhereNull('item.reversed_by_route_cash_settlement_reversal_id')
+                    ->orWhereColumn('r.route_cash_settlement_id', '<>', 's.id');
+            })
+            ->select('s.id as settlement_id', 's.cash_register_session_id', 's.cash_movement_id', 's.received_amount')
+            ->cursor() as $row) {
+            $add($row, 'route_cash_settlement_reversal_item_release_mismatch', 'Una liquidación reversada conserva items activos o sin liberación causal válida.', 'Liberar únicamente los items de esta liquidación mediante el ledger de reversa.');
+        }
+
+        foreach (DB::table('route_cash_settlement_items as item')
+            ->join('route_cash_settlements as s', 's.id', '=', 'item.route_cash_settlement_id')
+            ->where('s.business_id', $businessId)
+            ->whereRaw("((CASE WHEN item.route_pre_sale_collection_id IS NULL THEN 0 ELSE 1 END) + (CASE WHEN item.route_delivery_collection_id IS NULL THEN 0 ELSE 1 END) + (CASE WHEN item.route_post_conversion_collection_id IS NULL THEN 0 ELSE 1 END)) <> 1")
+            ->select('s.id as settlement_id', 's.cash_register_session_id', 's.cash_movement_id', 's.received_amount')
+            ->cursor() as $row) {
+            $add($row, 'route_cash_settlement_item_source_xor_mismatch', 'Un item de liquidación no conserva exactamente un origen de cobro.', 'Restaurar una única fuente causal sin convertir el vínculo en polimórfico.');
+        }
 
         return $issues;
     }
