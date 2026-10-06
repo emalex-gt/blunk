@@ -213,7 +213,6 @@ class RouteCashSettlementDraftService
                 ->when($source['origin'] === 'pre_sale_collection', fn ($query) => $query->where('route_pre_sale_collection_id', $collection->id))
                 ->when($source['origin'] === 'delivery_collection', fn ($query) => $query->where('route_delivery_collection_id', $collection->id))
                 ->when($source['origin'] === 'post_conversion_collection', fn ($query) => $query->where('route_post_conversion_collection_id', $collection->id))
-                ->lockForUpdate()
                 ->exists();
             if ($reserved) {
                 throw ValidationException::withMessages(['sources' => 'Uno de los cobros ya está reservado en otra liquidación activa.']);
