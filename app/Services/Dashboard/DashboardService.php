@@ -10,8 +10,9 @@ final class DashboardService
     }
 
     /** @return array<string, mixed> */
-    public function resolve(DashboardContext $context, string $profile = 'owner_simple'): array
+    public function resolve(DashboardContext $context, ?string $profile = null): array
     {
+        $profile ??= app(DashboardProfileResolver::class)->resolve($context);
         $registry = $this->registry ?? DashboardWidgetRegistry::all();
         $widgets = [];
 
@@ -33,6 +34,7 @@ final class DashboardService
 
         return [
             'profile' => $profile,
+            'profile_meta' => DashboardProfiles::metadata($profile),
             'context' => $context->payload(),
             'widgets' => $widgets,
         ];

@@ -3,10 +3,13 @@
 namespace App\Services\Dashboard;
 
 use App\Services\Dashboard\Metrics\CashCurrentMetricQuery;
+use App\Services\Dashboard\Metrics\AccountsReceivableMetricQuery;
+use App\Services\Dashboard\Metrics\ActiveReservationsMetricQuery;
 use App\Services\Dashboard\Metrics\EstimatedMarginMetricQuery;
 use App\Services\Dashboard\Metrics\SalesSummaryMetricQuery;
 use App\Services\Dashboard\Metrics\StockAlertsMetricQuery;
 use App\Services\Dashboard\Metrics\TopProductMetricQuery;
+use App\Services\Dashboard\Metrics\RouteOperationsMetricQuery;
 use App\Support\Permissions;
 use LogicException;
 
@@ -23,7 +26,7 @@ final class DashboardWidgetRegistry
                 period: DashboardPeriod::TODAY,
                 query: new SalesSummaryMetricQuery(),
                 requiredModules: ['pos'],
-                requiredPermissions: [Permissions::POS_VIEW],
+                requiredAnyPermissions: [Permissions::POS_VIEW, Permissions::REPORTS_SALES_VIEW],
             ),
             new DashboardWidgetDefinition(
                 key: 'sales.this_month',
@@ -32,7 +35,7 @@ final class DashboardWidgetRegistry
                 period: DashboardPeriod::THIS_MONTH,
                 query: new SalesSummaryMetricQuery(),
                 requiredModules: ['pos'],
-                requiredPermissions: [Permissions::POS_VIEW],
+                requiredAnyPermissions: [Permissions::POS_VIEW, Permissions::REPORTS_SALES_VIEW],
             ),
             new DashboardWidgetDefinition(
                 key: 'cash.current',
@@ -59,7 +62,7 @@ final class DashboardWidgetRegistry
                 period: DashboardPeriod::TODAY,
                 query: new TopProductMetricQuery(),
                 requiredModules: ['pos'],
-                requiredPermissions: [Permissions::POS_VIEW],
+                requiredAnyPermissions: [Permissions::POS_VIEW, Permissions::REPORTS_TOP_PRODUCTS_VIEW],
             ),
             new DashboardWidgetDefinition(
                 key: 'sales.estimated_margin',
@@ -69,6 +72,44 @@ final class DashboardWidgetRegistry
                 query: new EstimatedMarginMetricQuery(),
                 requiredModules: ['pos'],
                 requiredPermissions: [Permissions::REPORTS_PROFIT_VIEW],
+            ),
+            new DashboardWidgetDefinition(
+                key: 'credits.receivable',
+                title: 'Cuentas por cobrar',
+                type: 'money',
+                period: DashboardPeriod::CURRENT,
+                query: new AccountsReceivableMetricQuery(),
+                requiredModules: ['credits'],
+                requiredPermissions: [Permissions::CREDITS_ACCOUNTS_VIEW],
+            ),
+            new DashboardWidgetDefinition(
+                key: 'stock.active_reservations',
+                title: 'Reservas activas',
+                type: 'count',
+                period: DashboardPeriod::CURRENT,
+                query: new ActiveReservationsMetricQuery(),
+                requiredModules: ['inventory'],
+                requiredPermissions: [Permissions::INVENTORY_VIEW],
+            ),
+            new DashboardWidgetDefinition(
+                key: 'routes.open_work_days', title: 'Jornadas abiertas', type: 'count', period: DashboardPeriod::CURRENT,
+                query: new RouteOperationsMetricQuery('open_work_days'), requiredModules: ['routes'], requiredPermissions: [Permissions::ROUTES_VIEW, Permissions::ROUTES_PRE_SALES_ADMIN_VIEW, Permissions::ROUTES_DELIVERY_RUNS_VIEW],
+            ),
+            new DashboardWidgetDefinition(
+                key: 'routes.pending_visits', title: 'Visitas pendientes', type: 'count', period: DashboardPeriod::CURRENT,
+                query: new RouteOperationsMetricQuery('pending_visits'), requiredModules: ['routes'], requiredPermissions: [Permissions::ROUTES_VIEW, Permissions::ROUTES_PRE_SALES_ADMIN_VIEW, Permissions::ROUTES_DELIVERY_RUNS_VIEW],
+            ),
+            new DashboardWidgetDefinition(
+                key: 'routes.operational_pre_sales', title: 'Preventas operativas', type: 'count', period: DashboardPeriod::CURRENT,
+                query: new RouteOperationsMetricQuery('operational_pre_sales'), requiredModules: ['routes'], requiredPermissions: [Permissions::ROUTES_VIEW, Permissions::ROUTES_PRE_SALES_ADMIN_VIEW, Permissions::ROUTES_DELIVERY_RUNS_VIEW],
+            ),
+            new DashboardWidgetDefinition(
+                key: 'routes.pending_delivery_stops', title: 'Entregas pendientes', type: 'count', period: DashboardPeriod::CURRENT,
+                query: new RouteOperationsMetricQuery('pending_delivery_stops'), requiredModules: ['routes'], requiredPermissions: [Permissions::ROUTES_VIEW, Permissions::ROUTES_PRE_SALES_ADMIN_VIEW, Permissions::ROUTES_DELIVERY_RUNS_VIEW],
+            ),
+            new DashboardWidgetDefinition(
+                key: 'routes.effective_settlements', title: 'Efectivo liquidado hoy', type: 'money', period: DashboardPeriod::TODAY,
+                query: new RouteOperationsMetricQuery('effective_settlements'), requiredModules: ['routes'], requiredPermissions: [Permissions::ROUTES_VIEW, Permissions::ROUTES_PRE_SALES_ADMIN_VIEW, Permissions::ROUTES_DELIVERY_RUNS_VIEW],
             ),
         ];
 

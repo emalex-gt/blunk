@@ -9,6 +9,7 @@ final class DashboardPeriod
 {
     public const TODAY = 'today';
     public const THIS_MONTH = 'this_month';
+    public const CURRENT = 'current';
 
     private function __construct(
         public readonly string $key,
@@ -24,6 +25,7 @@ final class DashboardPeriod
         return match ($key) {
             self::TODAY => new self($key, $now->copy()->startOfDay()->utc(), $now->copy()->endOfDay()->utc()),
             self::THIS_MONTH => new self($key, $now->copy()->startOfMonth()->utc(), $now->copy()->endOfMonth()->utc()),
+            self::CURRENT => new self($key, $now->copy()->startOfDay()->utc(), $now->copy()->endOfDay()->utc()),
             default => throw new InvalidArgumentException("Unsupported dashboard period [{$key}]."),
         };
     }

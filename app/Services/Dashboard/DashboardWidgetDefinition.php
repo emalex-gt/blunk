@@ -7,6 +7,7 @@ final class DashboardWidgetDefinition
     /**
      * @param array<int, string> $requiredModules
      * @param array<int, string> $requiredPermissions
+     * @param array<int, string> $requiredAnyPermissions
      */
     public function __construct(
         public readonly string $key,
@@ -16,12 +17,14 @@ final class DashboardWidgetDefinition
         public readonly DashboardMetricQuery $query,
         public readonly array $requiredModules = [],
         public readonly array $requiredPermissions = [],
+        public readonly array $requiredAnyPermissions = [],
     ) {
     }
 
     public function isVisibleTo(DashboardContext $context): bool
     {
         return collect($this->requiredModules)->every(fn (string $module) => $context->hasModule($module))
-            && collect($this->requiredPermissions)->every(fn (string $permission) => $context->hasPermission($permission));
+            && collect($this->requiredPermissions)->every(fn (string $permission) => $context->hasPermission($permission))
+            && ($this->requiredAnyPermissions === [] || collect($this->requiredAnyPermissions)->contains(fn (string $permission) => $context->hasPermission($permission)));
     }
 }

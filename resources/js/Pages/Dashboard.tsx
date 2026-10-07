@@ -5,13 +5,14 @@ import { Head, usePage } from '@inertiajs/react';
 type Widget = {
     key: string;
     title: string;
-    type: 'sales_summary' | 'cash_status' | 'stock_alerts' | 'top_product' | 'money';
-    period: 'today' | 'this_month';
+    type: 'sales_summary' | 'cash_status' | 'stock_alerts' | 'top_product' | 'money' | 'count';
+    period: 'today' | 'this_month' | 'current';
     data: Record<string, string | number | null>;
 };
 
 type DashboardData = {
-    profile: 'owner_simple';
+    profile: 'owner_simple' | 'executive' | 'warehouse' | 'route_supervisor';
+    profile_meta: { title: string; description: string };
     context: {
         timezone: string;
         branch: { id: number; name: string; code: string | null } | null;
@@ -21,7 +22,7 @@ type DashboardData = {
 };
 
 function periodLabel(period: Widget['period']): string {
-    return period === 'this_month' ? 'Este mes' : 'Hoy';
+    return period === 'this_month' ? 'Este mes' : period === 'current' ? 'Actual' : 'Hoy';
 }
 
 export default function Dashboard({ dashboard }: { dashboard: DashboardData }) {
@@ -38,12 +39,12 @@ export default function Dashboard({ dashboard }: { dashboard: DashboardData }) {
             <div className="py-5">
                 <div className="mx-auto max-w-[1800px] space-y-5 px-5 sm:px-6">
                     <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
-                        <p className="text-sm font-semibold text-indigo-700">Resumen del negocio</p>
+                        <p className="text-sm font-semibold text-indigo-700">Dashboard</p>
                         <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
                             <div>
-                                <h1 className="text-2xl font-bold tracking-tight text-slate-950">Información operativa</h1>
+                                <h1 className="text-2xl font-bold tracking-tight text-slate-950">{dashboard.profile_meta.title}</h1>
                                 <p className="mt-1 text-sm text-slate-500">
-                                    {branchLabel} · Cálculo según la zona horaria del negocio.
+                                    {dashboard.profile_meta.description} {branchLabel} · Cálculo según la zona horaria del negocio.
                                 </p>
                             </div>
                             <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
@@ -137,7 +138,21 @@ function widgetContent(widget: Widget, country: string) {
         );
     }
 
-    return <p className="mt-6 text-3xl font-bold tracking-tight text-slate-950">{formatCurrency(data.amount, country)}</p>;
+    if (widget.type === 'count') {
+        return (
+            <>
+                <p className="mt-6 text-3xl font-bold tracking-tight text-slate-950">{data.count ?? 0}</p>
+                {data.detail !== undefined && <p className="mt-2 text-sm text-slate-500">{data.detail} unidades reservadas</p>}
+            </>
+        );
+    }
+
+    return (
+        <>
+            <p className="mt-6 text-3xl font-bold tracking-tight text-slate-950">{formatCurrency(data.amount, country)}</p>
+            {data.count !== undefined && <p className="mt-2 text-sm text-slate-500">{data.count} registros</p>}
+        </>
+    );
 }
 
 function Metric({ label, value, tone }: { label: string; value: string | number | null; tone: string }) {

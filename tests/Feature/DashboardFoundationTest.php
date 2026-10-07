@@ -5,16 +5,26 @@ namespace Tests\Feature;
 use App\Models\Branch;
 use App\Models\Business;
 use App\Models\CashRegisterSession;
+use App\Models\CashMovement;
+use App\Models\CustomerCreditAccount;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
 use App\Models\Sale;
 use App\Models\SaleItem;
+use App\Models\StockReservation;
+use App\Models\PreSale;
+use App\Models\RouteCashSettlement;
+use App\Models\RouteCashSettlementReversal;
+use App\Models\RouteVisit;
+use App\Models\RouteWorkDay;
+use App\Models\RouteZone;
 use App\Models\TenantModule;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Services\Dashboard\DashboardContext;
 use App\Services\Dashboard\DashboardMetricQuery;
 use App\Services\Dashboard\DashboardPeriod;
+use App\Services\Dashboard\DashboardProfileResolver;
 use App\Services\Dashboard\DashboardProfiles;
 use App\Services\Dashboard\DashboardService;
 use App\Services\Dashboard\DashboardWidgetDefinition;
@@ -214,6 +224,145 @@ class DashboardFoundationTest extends TestCase
         DashboardProfiles::widgetKeys('unknown_profile');
     }
 
+    public function test_profile_resolver_uses_capabilities_for_custom_roles_and_standard_roles_only_as_preferences(): void
+    {
+        [$business, $user, $branch] = $this->tenant('cashier', modules: ['pos', 'reports', 'inventory', 'routes']);
+        $user->roles()->detach();
+        $user->update(['role' => 'custom_operations']);
+
+        $warehouse = new DashboardContext($business, $user, $branch, false, [Permissions::INVENTORY_VIEW], ['inventory'], 'America/Guatemala');
+        $executive = new DashboardContext($business, $user, $branch, false, [Permissions::REPORTS_SALES_VIEW], ['pos', 'reports'], 'America/Guatemala');
+        $routes = new DashboardContext($business, $user, $branch, false, [
+            Permissions::ROUTES_VIEW,
+            Permissions::ROUTES_PRE_SALES_ADMIN_VIEW,
+            Permissions::ROUTES_DELIVERY_RUNS_VIEW,
+        ], ['routes'], 'America/Guatemala');
+        $incompleteRouteRole = new DashboardContext($business, $user, $branch, false, [Permissions::ROUTES_VIEW], ['routes'], 'America/Guatemala');
+
+        $resolver = new DashboardProfileResolver();
+
+        $this->assertSame('warehouse', $resolver->resolve($warehouse));
+        $this->assertSame('executive', $resolver->resolve($executive));
+        $this->assertSame('route_supervisor', $resolver->resolve($routes));
+        $this->assertSame('owner_simple', $resolver->resolve($incompleteRouteRole));
+    }
+
+    public function test_standard_role_preferences_apply_only_after_their_capability_sets_validate(): void
+    {
+        [$warehouseBusiness, $stockManager] = $this->tenant('stock_manager', modules: ['inventory']);
+        [$executiveBusiness, $reportsUser] = $this->tenant('reports', modules: ['pos', 'reports']);
+        [$limitedBusiness, $limitedStockManager] = $this->tenant('stock_manager', modules: ['pos', 'reports']);
+        $resolver = new DashboardProfileResolver();
+
+        $this->assertSame('warehouse', $resolver->resolve(DashboardContext::forUser($warehouseBusiness, $stockManager)));
+        $this->assertSame('executive', $resolver->resolve(DashboardContext::forUser($executiveBusiness, $reportsUser)));
+        $this->assertSame('owner_simple', $resolver->resolve(DashboardContext::forUser($limitedBusiness, $limitedStockManager)));
+    }
+
+    public function test_professional_widgets_use_authoritative_sources_and_exclude_reversed_route_settlements(): void
+    {
+        [$business, $owner, $branch, $other] = $this->tenant('owner', branches: true, modules: ['pos', 'reports', 'inventory', 'credits', 'routes']);
+        $customer = $this->customer($business, 'CxC principal');
+        CustomerCreditAccount::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'credit_limit' => 1000,
+            'current_balance' => 125,
+            'is_blocked' => false,
+        ]);
+        CustomerCreditAccount::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $other->id,
+            'customer_id' => $this->customer($business, 'CxC otra sucursal')->id,
+            'credit_limit' => 1000,
+            'current_balance' => 75,
+            'is_blocked' => false,
+        ]);
+        StockReservation::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'product_id' => $this->product($business, $branch, 'Reservado', 8, 2)->id,
+            'source_type' => 'test',
+            'source_id' => 1,
+            'quantity' => 3,
+            'status' => 'active',
+            'created_by' => $owner->id,
+        ]);
+
+        $context = new DashboardContext($business, $owner, $branch, true, [
+            Permissions::INVENTORY_VIEW,
+            Permissions::CREDITS_ACCOUNTS_VIEW,
+            Permissions::ROUTES_VIEW,
+            Permissions::ROUTES_PRE_SALES_ADMIN_VIEW,
+            Permissions::ROUTES_DELIVERY_RUNS_VIEW,
+        ], ['inventory', 'credits', 'routes'], 'America/Guatemala');
+        $dashboard = app(DashboardService::class)->resolve($context, 'warehouse');
+
+        $this->assertSame(['stock.alerts', 'stock.active_reservations'], collect($dashboard['widgets'])->pluck('key')->all());
+        $this->assertSame(1, $dashboard['widgets'][1]['data']['count']);
+
+        $executive = app(DashboardService::class)->resolve($context, 'executive');
+        $receivable = collect($executive['widgets'])->firstWhere('key', 'credits.receivable');
+        $this->assertSame('200.00', $receivable['data']['amount']);
+    }
+
+    public function test_route_supervisor_uses_current_domain_states_and_excludes_reversed_settlement_cash(): void
+    {
+        [$business, $owner, $branch] = $this->tenant('owner', branches: true, modules: ['routes']);
+        $zone = RouteZone::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'name' => 'Centro', 'is_active' => true]);
+        $workDay = RouteWorkDay::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'route_zone_id' => $zone->id,
+            'seller_id' => $owner->id,
+            'work_date' => today(),
+            'status' => 'open',
+            'started_at' => now(),
+        ]);
+        $customer = $this->customer($business, 'Cliente de ruta');
+        RouteVisit::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'route_work_day_id' => $workDay->id,
+            'route_zone_id' => $zone->id,
+            'customer_id' => $customer->id,
+            'seller_id' => $owner->id,
+            'status' => 'pending',
+        ]);
+        foreach ([PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING, PreSale::STATUS_PICKED, PreSale::STATUS_CANCELLED] as $status) {
+            PreSale::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'route_work_day_id' => $workDay->id,
+                'route_zone_id' => $zone->id,
+                'customer_id' => $customer->id,
+                'seller_id' => $owner->id,
+                'status' => $status,
+                'subtotal' => 10,
+                'discount_total' => 0,
+                'total' => 10,
+            ]);
+        }
+        $this->settlement($business, $branch, $owner, 'confirmed', 40);
+        $this->settlement($business, $branch, $owner, 'reversed', 60);
+
+        $context = new DashboardContext($business, $owner, $branch, true, [
+            Permissions::ROUTES_VIEW,
+            Permissions::ROUTES_PRE_SALES_ADMIN_VIEW,
+            Permissions::ROUTES_DELIVERY_RUNS_VIEW,
+        ], ['routes'], 'America/Guatemala');
+        $dashboard = app(DashboardService::class)->resolve($context);
+        $widgets = collect($dashboard['widgets'])->keyBy('key');
+
+        $this->assertSame('route_supervisor', $dashboard['profile']);
+        $this->assertSame(1, $widgets['routes.open_work_days']['data']['count']);
+        $this->assertSame(1, $widgets['routes.pending_visits']['data']['count']);
+        $this->assertSame(3, $widgets['routes.operational_pre_sales']['data']['count']);
+        $this->assertSame('40.00', $widgets['routes.effective_settlements']['data']['amount']);
+        $this->assertSame(1, $widgets['routes.effective_settlements']['data']['count']);
+    }
+
     private function tenant(string $role, bool $branches = false, array $modules = ['pos', 'inventory', 'cash_register']): array
     {
         $business = Business::query()->create([
@@ -264,6 +413,72 @@ class DashboardFoundationTest extends TestCase
         ProductBranchStock::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id, 'stock' => $stock]);
 
         return $product;
+    }
+
+    private function customer(Business $business, string $name): \App\Models\Customer
+    {
+        return \App\Models\Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => $name,
+            'country' => 'GT',
+        ]);
+    }
+
+    private function settlement(Business $business, Branch $branch, User $actor, string $status, int $amount): RouteCashSettlement
+    {
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($business, $branch, $actor, $status, $amount) {
+            $session = CashRegisterSession::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'opened_by' => $actor->id,
+                'status' => 'open',
+                'opening_amount' => 0,
+                'expected_cash' => 0,
+                'opened_at' => now(),
+            ]);
+            $movement = CashMovement::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'cash_register_session_id' => $session->id,
+                'type' => 'route_cash_settlement',
+                'amount' => $amount,
+                'reference_type' => 'route_cash_settlement',
+                'reference_id' => 0,
+                'description' => 'Dashboard fixture',
+                'created_by' => $actor->id,
+            ]);
+            $settlement = RouteCashSettlement::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'collector_user_id' => $actor->id,
+                'received_by' => $actor->id,
+                'recorded_by' => $actor->id,
+                'confirmed_by' => $actor->id,
+                'cash_register_session_id' => $session->id,
+                'cash_movement_id' => $movement->id,
+                'expected_amount' => $amount,
+                'received_amount' => $amount,
+                'difference_amount' => 0,
+                'status' => $status,
+                'confirmed_at' => now(),
+            ]);
+            $movement->update(['reference_id' => $settlement->id]);
+
+            if ($status === 'reversed') {
+                RouteCashSettlementReversal::query()->create([
+                    'business_id' => $business->id,
+                    'branch_id' => $branch->id,
+                    'route_cash_settlement_id' => $settlement->id,
+                    'reason_code' => 'cash_not_received_by_branch',
+                    'explanation' => 'Fixture de reversa',
+                    'reversed_by' => $actor->id,
+                    'reversed_at' => now(),
+                    'cash_correction_type' => 'ledger_only',
+                ]);
+            }
+
+            return $settlement;
+        });
     }
 
     private function sale(Business $business, Branch $branch, User $user, Product $product, int $total, int $quantity, string $localDate = '2026-10-07 10:00:00', string $status = 'completed', string $timezone = 'America/Guatemala'): Sale
