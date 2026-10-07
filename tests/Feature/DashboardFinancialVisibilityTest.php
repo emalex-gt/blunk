@@ -36,11 +36,12 @@ class DashboardFinancialVisibilityTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Dashboard')
-                ->where('stats.sales_total', 100)
-                ->where('stats.sales_count', 1)
-                ->missing('stats.cash_register_expected')
-                ->missing('stats.cash_register_status')
-                ->missing('stats.estimated_margin'));
+                ->where('dashboard.widgets', fn ($widgets) => collect($widgets)->pluck('key')->all() === [
+                    'sales.today',
+                    'sales.this_month',
+                    'sales.top_product',
+                ])
+                ->missing('dashboard.widgets.3'));
     }
 
     public function test_user_with_profit_permission_receives_estimated_margin(): void
@@ -54,7 +55,8 @@ class DashboardFinancialVisibilityTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Dashboard')
-                ->where('stats.estimated_margin', 60));
+                ->where('dashboard.widgets.3.key', 'sales.estimated_margin')
+                ->where('dashboard.widgets.3.data.amount', '60.00'));
     }
 
     public function test_admin_dashboard_receives_estimated_margin_by_default_role_permission(): void
@@ -67,12 +69,13 @@ class DashboardFinancialVisibilityTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Dashboard')
-                ->where('stats.estimated_margin', 75));
+                ->where('dashboard.widgets.3.key', 'sales.estimated_margin')
+                ->where('dashboard.widgets.3.data.amount', '75.00'));
     }
 
     public function test_cash_register_totals_require_cash_register_view_permission(): void
     {
-        [$business, $user] = $this->tenantUser('cashier');
+        [$business, $user] = $this->tenantUser('cashier', ['pos', 'cash_register']);
         Permissions::assignDirectPermissions($user, [Permissions::CASH_REGISTER_VIEW]);
         $this->saleWithProfit($business, $user, total: 100, cost: 40, profit: 60);
 
@@ -81,9 +84,9 @@ class DashboardFinancialVisibilityTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Dashboard')
-                ->where('stats.cash_register_status', 'closed')
-                ->where('stats.cash_register_expected', null)
-                ->missing('stats.estimated_margin'));
+                ->where('dashboard.widgets.2.key', 'cash.current')
+                ->where('dashboard.widgets.2.data.status', 'closed')
+                ->missing('dashboard.widgets.4'));
     }
 
     public function test_profit_permission_has_financial_visibility_metadata(): void
@@ -105,16 +108,17 @@ class DashboardFinancialVisibilityTest extends TestCase
         $this->assertFalse($user->hasPermission(Permissions::REPORTS_PROFIT_VIEW));
     }
 
-    public function test_dashboard_source_renders_margin_only_when_prop_exists(): void
+    public function test_dashboard_source_renders_capability_filtered_widget_collection(): void
     {
         $source = file_get_contents(resource_path('js/Pages/Dashboard.tsx'));
 
-        $this->assertStringContainsString("const hasEstimatedMargin = typeof stats.estimated_margin === 'number';", $source);
-        $this->assertStringContainsString('{hasEstimatedMargin && (', $source);
-        $this->assertStringContainsString('Margen estimado de hoy', $source);
+        $this->assertStringContainsString('dashboard.widgets.map', $source);
+        $this->assertStringContainsString('data-dashboard-widget', $source);
+        $this->assertStringContainsString('widget.title', $source);
+        $this->assertStringContainsString('data.expected_cash', $source);
     }
 
-    private function tenantUser(string $role): array
+    private function tenantUser(string $role, array $modules = ['pos']): array
     {
         $business = Business::query()->create([
             'name' => 'Dashboard Tenant',
@@ -134,12 +138,14 @@ class DashboardFinancialVisibilityTest extends TestCase
             'allow_invoices' => false,
         ]);
 
-        TenantModule::query()->create([
-            'business_id' => $business->id,
-            'module' => 'pos',
-            'is_enabled' => true,
-            'enabled_at' => now(),
-        ]);
+        foreach ($modules as $module) {
+            TenantModule::query()->create([
+                'business_id' => $business->id,
+                'module' => $module,
+                'is_enabled' => true,
+                'enabled_at' => now(),
+            ]);
+        }
 
         $user = User::factory()->create([
             'business_id' => $business->id,

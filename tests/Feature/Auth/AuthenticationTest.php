@@ -114,7 +114,7 @@ class AuthenticationTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Dashboard')
-                ->has('stats')
+                ->has('dashboard')
             );
     }
 

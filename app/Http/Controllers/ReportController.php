@@ -21,6 +21,8 @@ use App\Support\PriceLists;
 use App\Support\Reports\BranchReportScope;
 use App\Support\Reports\ReportDateRange;
 use App\Support\StockAvailability;
+use App\Services\Dashboard\DashboardContext;
+use App\Services\Dashboard\DashboardService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -59,80 +61,11 @@ class ReportController extends Controller
         }
 
         $businessId = currentBusinessId();
-        $business = Business::query()->select('id', 'country')->find($businessId);
-        $timezone = tenantTimezone($business);
-        $today = now($timezone)->toDateString();
-        [$start, $end] = $this->dateRange($today, $today, $timezone);
-
-        $todaySales = Sale::query()
-            ->where('business_id', $businessId)
-            ->when(BranchInventory::branchesEnabled($businessId), fn ($query) => $query->where('branch_id', BranchInventory::activeBranch($businessId)->id))
-            ->where(fn ($query) => $query->where('status', 'completed')->orWhereNull('status'))
-            ->whereBetween('created_at', [$start, $end]);
-
-        $topProduct = DB::table('sale_items')
-            ->join('sales', 'sale_items.sale_id', '=', 'sales.id')
-            ->where('sale_items.business_id', $businessId)
-            ->where('sales.business_id', $businessId)
-            ->when(BranchInventory::branchesEnabled($businessId), fn ($query) => $query->where('sales.branch_id', BranchInventory::activeBranch($businessId)->id))
-            ->where(fn ($query) => $query->where('sales.status', 'completed')->orWhereNull('sales.status'))
-            ->whereBetween('sales.created_at', [$start, $end])
-            ->groupBy('sale_items.product_id', 'sale_items.product_name')
-            ->orderByDesc(DB::raw('SUM(sale_items.quantity)'))
-            ->selectRaw('sale_items.product_id, sale_items.product_name, SUM(sale_items.quantity) as quantity')
-            ->first();
-
-        $salesCount = (clone $todaySales)->count();
-        $salesTotal = (float) (clone $todaySales)->sum('total');
-        $canViewProfit = Permissions::userHas($request->user(), Permissions::REPORTS_PROFIT_VIEW);
-        $canViewCashRegister = Permissions::userHas($request->user(), Permissions::CASH_REGISTER_VIEW);
-        $cancelledSalesCount = Sale::query()
-            ->where('business_id', $businessId)
-            ->where('status', 'cancelled')
-            ->whereBetween('cancelled_at', [$start, $end])
-            ->count();
-        $lastSale = Sale::query()
-            ->where('business_id', $businessId)
-            ->when(BranchInventory::branchesEnabled($businessId), fn ($query) => $query->where('branch_id', BranchInventory::activeBranch($businessId)->id))
-            ->where(fn ($query) => $query->where('status', 'completed')->orWhereNull('status'))
-            ->whereBetween('created_at', [$start, $end])
-            ->latest()
-            ->first(['id', 'created_at']);
-        $openCashSession = $canViewCashRegister ? CashRegister::currentOpenSession($businessId) : null;
-        $stats = [
-            'sales_count' => $salesCount,
-            'sales_total' => $salesTotal,
-            'average_ticket' => $salesCount > 0 ? round($salesTotal / $salesCount, 2) : 0,
-            'low_stock_count' => Product::query()
-                ->where('business_id', $businessId)
-                ->where('stock', '>', 0)
-                ->whereColumn('stock', '<=', 'min_stock')
-                ->count(),
-            'out_of_stock_count' => Product::query()
-                ->where('business_id', $businessId)
-                ->where('stock', '<=', 0)
-                ->count(),
-            'top_product' => $topProduct?->product_name,
-            'cancelled_sales_count' => $cancelledSalesCount,
-            'last_sale_time' => $lastSale?->created_at
-                ? $lastSale->created_at->copy()->timezone($timezone)->format('H:i')
-                : null,
-            'timezone' => $timezone,
-        ];
-
-        if ($canViewProfit) {
-            $stats['estimated_margin'] = $this->marginQuery($businessId, $start, $end);
-        }
-
-        if ($canViewCashRegister) {
-            $stats['cash_register_status'] = $openCashSession ? 'open' : 'closed';
-            $stats['cash_register_expected'] = $openCashSession
-                ? CashRegister::summary($openCashSession)['expected_cash']
-                : null;
-        }
+        $business = Business::query()->findOrFail($businessId);
+        $context = DashboardContext::forUser($business, $request->user());
 
         return Inertia::render('Dashboard', [
-            'stats' => $stats,
+            'dashboard' => app(DashboardService::class)->resolve($context),
         ]);
     }
 
@@ -1305,15 +1238,4 @@ class ReportController extends Controller
         ];
     }
 
-    private function marginQuery(int $businessId, Carbon $start, Carbon $end): float
-    {
-        return (float) DB::table('sale_items')
-            ->join('sales', 'sale_items.sale_id', '=', 'sales.id')
-            ->where('sale_items.business_id', $businessId)
-            ->where('sales.business_id', $businessId)
-            ->where(fn ($query) => $query->where('sales.status', 'completed')->orWhereNull('sales.status'))
-            ->whereBetween('sales.created_at', [$start, $end])
-            ->selectRaw('COALESCE(SUM((sale_items.unit_price - sale_items.unit_cost) * sale_items.quantity), 0) as margin')
-            ->value('margin');
-    }
 }
