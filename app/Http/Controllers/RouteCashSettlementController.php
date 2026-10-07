@@ -8,6 +8,8 @@ use App\Models\User;
 use App\Services\Routes\RouteCashSettlementDraftService;
 use App\Services\Routes\RouteCashSettlementEligibility;
 use App\Services\Routes\RouteCashSettlementService;
+use App\Services\Routes\RouteCashSettlementReversalEligibility;
+use App\Services\Routes\RouteCashSettlementReversalService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
@@ -69,7 +71,7 @@ class RouteCashSettlementController extends Controller
         ]);
     }
 
-    public function show(Request $request, RouteCashSettlement $settlement, RouteCashSettlementEligibility $eligibility): Response
+    public function show(Request $request, RouteCashSettlement $settlement, RouteCashSettlementEligibility $eligibility, RouteCashSettlementReversalEligibility $reversalEligibility): Response
     {
         $this->authorizeSettlement($request, $settlement, [
             Permissions::ROUTES_CASH_SETTLEMENTS_VIEW,
@@ -79,6 +81,8 @@ class RouteCashSettlementController extends Controller
         $actor = $request->user();
         $settlement->load([
             'collector:id,name',
+            'reversal.reversedBy:id,name',
+            'reversal.compensatingCashMovement:id,type,amount,reference_type,reference_id',
             'items' => fn ($query) => $query->with([
                 'preSaleCollection.preSale.customer:id,name',
                 'preSaleCollection.collectedBy:id,name',
@@ -115,6 +119,14 @@ class RouteCashSettlementController extends Controller
                 'confirmed_at' => $settlement->confirmed_at?->toIso8601String(),
                 'cancelled_at' => $settlement->cancelled_at?->toIso8601String(),
                 'items' => $settlement->items->map(fn (RouteCashSettlementItem $item) => $this->itemPayload($item))->values(),
+                'reversal' => $settlement->reversal ? [
+                    'reversed_at' => $settlement->reversal->reversed_at?->toIso8601String(),
+                    'reversed_by' => $settlement->reversal->reversedBy ? ['id' => $settlement->reversal->reversedBy->id, 'name' => $settlement->reversal->reversedBy->name] : null,
+                    'reason_code' => $settlement->reversal->reason_code,
+                    'explanation' => $settlement->reversal->explanation,
+                    'cash_correction_type' => $settlement->reversal->cash_correction_type,
+                    'compensating_cash_movement_id' => $settlement->reversal->compensating_cash_movement_id,
+                ] : null,
             ],
             'eligible_collections' => $settlement->status === 'draft'
                 ? $this->eligiblePayload($eligibility->forCollector(currentBusinessId(), (int) $actor->current_branch_id, (int) $settlement->collector_user_id))
@@ -131,6 +143,8 @@ class RouteCashSettlementController extends Controller
             'can_confirm' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM),
             'can_confirm_variance' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM_VARIANCE),
             'can_review' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_REVIEW),
+            'can_reverse' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_REVERSE),
+            'reversal_eligibility' => $reversalEligibility->for($settlement),
         ]);
     }
 
@@ -207,6 +221,23 @@ class RouteCashSettlementController extends Controller
         $settlements->confirm($settlement, $request->user(), (int) $data['received_by'], $data['received_amount'], $data['notes'] ?? null, $data['idempotency_key'], ['reason_code' => $data['variance_reason_code'] ?? null, 'explanation' => $data['variance_explanation'] ?? null, 'confirmed' => (bool) ($data['confirm_variance'] ?? false)]);
 
         return redirect()->route('routes.cash-settlements.show', $settlement)->with('success', 'Efectivo recibido y liquidación confirmada.');
+    }
+
+    public function reverse(Request $request, RouteCashSettlement $settlement, RouteCashSettlementReversalService $reversals): RedirectResponse
+    {
+        $this->authorizeSettlement($request, $settlement, [Permissions::ROUTES_CASH_SETTLEMENTS_REVERSE]);
+        $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
+            'explanation' => ['required', 'string', 'max:4000'],
+            'confirm_cash_adjustment' => ['nullable', 'boolean'],
+        ]);
+        $reversals->reverse($settlement, [
+            'reason_code' => 'cash_not_received_by_branch',
+            'explanation' => trim($data['explanation']),
+            'confirm_cash_adjustment' => (bool) ($data['confirm_cash_adjustment'] ?? false),
+        ], $request->user(), $data['idempotency_key']);
+
+        return redirect()->route('routes.cash-settlements.show', $settlement)->with('success', 'Liquidación revertida. Esta corrección no representa un reembolso al cliente.');
     }
 
     private function authorizeSettlement(Request $request, RouteCashSettlement $settlement, array $permissions): void

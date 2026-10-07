@@ -18,6 +18,7 @@ class RouteCashSettlementHttpRoutesTest extends TestCase
             'routes.cash-settlements.items.destroy',
             'routes.cash-settlements.cancel',
             'routes.cash-settlements.confirm',
+            'routes.cash-settlements.reverse',
             'routes.cash-settlement-variances.index',
             'routes.cash-settlement-variances.show',
             'routes.cash-settlement-variances.events.store',

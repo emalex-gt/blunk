@@ -109,6 +109,7 @@ class Permissions
     public const ROUTES_CASH_SETTLEMENTS_CONFIRM = 'routes.cash_settlements.confirm';
     public const ROUTES_CASH_SETTLEMENTS_REVIEW = 'routes.cash_settlements.review';
     public const ROUTES_CASH_SETTLEMENTS_CONFIRM_VARIANCE = 'routes.cash_settlements.confirm_variance';
+    public const ROUTES_CASH_SETTLEMENTS_REVERSE = 'routes.cash_settlements.reverse';
     public const ROUTES_CASH_VARIANCES_VIEW = 'routes.cash_variances.view';
     public const ROUTES_CASH_VARIANCES_MANAGE = 'routes.cash_variances.manage';
     public const ROUTES_CASH_VARIANCES_RESOLVE = 'routes.cash_variances.resolve';
@@ -248,6 +249,7 @@ class Permissions
             self::ROUTES_CASH_SETTLEMENTS_CONFIRM => ['name' => 'Confirmar liquidaciones de efectivo de rutas', 'group' => 'Rutas'],
             self::ROUTES_CASH_SETTLEMENTS_REVIEW => ['name' => 'Revisar historial de liquidaciones de rutas', 'group' => 'Rutas'],
             self::ROUTES_CASH_SETTLEMENTS_CONFIRM_VARIANCE => ['name' => 'Confirmar diferencias de liquidación', 'group' => 'Rutas'],
+            self::ROUTES_CASH_SETTLEMENTS_REVERSE => ['name' => 'Revertir liquidaciones de efectivo de rutas', 'group' => 'Rutas'],
             self::ROUTES_CASH_VARIANCES_VIEW => ['name' => 'Ver diferencias de liquidación', 'group' => 'Rutas'],
             self::ROUTES_CASH_VARIANCES_MANAGE => ['name' => 'Gestionar diferencias de liquidación', 'group' => 'Rutas'],
             self::ROUTES_CASH_VARIANCES_RESOLVE => ['name' => 'Resolver diferencias de liquidación', 'group' => 'Rutas'],

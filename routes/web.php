@@ -335,6 +335,7 @@ Route::middleware('auth')->group(function () {
             Route::delete('/cash-settlements/{settlement}/items/{item}', [RouteCashSettlementController::class, 'removeItem'])->name('cash-settlements.items.destroy');
             Route::post('/cash-settlements/{settlement}/cancel', [RouteCashSettlementController::class, 'cancel'])->name('cash-settlements.cancel');
             Route::post('/cash-settlements/{settlement}/confirm', [RouteCashSettlementController::class, 'confirm'])->name('cash-settlements.confirm');
+            Route::post('/cash-settlements/{settlement}/reverse', [RouteCashSettlementController::class, 'reverse'])->middleware('permission:routes.cash_settlements.reverse')->name('cash-settlements.reverse');
             Route::get('/pending-collections', [RoutePendingCollectionController::class, 'index'])->middleware('permission:routes.pending_collections.view')->name('pending-collections.index');
             Route::get('/pending-collections/sales/{sale}', [RoutePendingCollectionController::class, 'showSale'])->middleware('permission:routes.pending_collections.view')->name('pending-collections.sales.show');
             Route::post('/pending-collections/sales/{sale}/events', [RoutePendingCollectionController::class, 'eventForSale'])->middleware('permission:routes.pending_collections.manage')->name('pending-collections.sales.events.store');

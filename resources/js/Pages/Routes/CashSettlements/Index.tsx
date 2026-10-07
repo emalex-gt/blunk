@@ -5,7 +5,7 @@ import { FormEvent, useMemo, useState } from 'react';
 type Collector = { id: number; name: string };
 type SettlementOrigin = 'pre_sale_collection' | 'delivery_collection' | 'post_conversion_collection';
 type Eligible = { origin: SettlementOrigin; collection_id: number; amount: number; collected_at?: string | null; customer_name?: string | null; reference?: string | null };
-type Settlement = { id: number; status: 'draft' | 'confirmed' | 'cancelled'; collector?: Collector | null; expected_amount: number; received_amount?: number | null; difference_amount?: number | null; received_by_name?: string | null; cash_register_session_id?: number | null; created_at?: string | null };
+type Settlement = { id: number; status: 'draft' | 'confirmed' | 'cancelled' | 'reversed'; collector?: Collector | null; expected_amount: number; received_amount?: number | null; difference_amount?: number | null; received_by_name?: string | null; cash_register_session_id?: number | null; created_at?: string | null };
 type Props = { settlements: { data: Settlement[] }; collectors: Collector[]; selected_collector_id?: number | null; eligible_collections: Eligible[]; can_create: boolean; can_confirm: boolean; can_review: boolean; can_view_variances: boolean };
 
 const money = (amount: number) => `Q ${Number(amount || 0).toFixed(2)}`;
@@ -60,4 +60,4 @@ export default function Index({ settlements, collectors, selected_collector_id, 
     </main></AuthenticatedLayout>;
 }
 
-function Status({ status }: { status: Settlement['status'] }) { const label = { draft: 'Borrador', confirmed: 'Confirmada', cancelled: 'Cancelada' }[status]; const color = { draft: 'bg-amber-100 text-amber-800', confirmed: 'bg-emerald-100 text-emerald-800', cancelled: 'bg-slate-100 text-slate-700' }[status]; return <span className={`rounded-full px-2 py-1 text-xs font-semibold ${color}`}>{label}</span>; }
+function Status({ status }: { status: Settlement['status'] }) { const label = { draft: 'Borrador', confirmed: 'Confirmada', cancelled: 'Cancelada', reversed: 'Revertida' }[status]; const color = { draft: 'bg-amber-100 text-amber-800', confirmed: 'bg-emerald-100 text-emerald-800', cancelled: 'bg-slate-100 text-slate-700', reversed: 'bg-rose-100 text-rose-800' }[status]; return <span className={`rounded-full px-2 py-1 text-xs font-semibold ${color}`}>{label}</span>; }
