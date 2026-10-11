@@ -47,6 +47,18 @@ class Customer extends Model
     protected static function booted(): void
     {
         static::saving(function (self $customer): void {
+            $docType = CustomerIdentity::normalizeGuatemalaDocType($customer->doc_type);
+
+            if (strtoupper((string) $customer->country) === 'GT' && $docType !== null) {
+                $customer->doc_type = $docType;
+
+                // NIT keeps its existing display formatting; its canonical value lives in
+                // normalized_tax_id. CUI is stored as its required 13-digit identity.
+                if ($docType === CustomerIdentity::CUI) {
+                    $customer->doc_number = CustomerIdentity::normalizeDocument($docType, $customer->doc_number);
+                }
+            }
+
             $customer->normalized_tax_id = CustomerIdentity::normalizeTaxId($customer->doc_number);
         });
     }
@@ -100,20 +112,43 @@ class Customer extends Model
 
     public static function findOrCreateByNormalizedTaxId(Business|int $business, array $attributes): self
     {
-        $businessId = $business instanceof Business ? $business->id : $business;
-        $normalizedTaxId = CustomerIdentity::normalizeTaxId($attributes['doc_number'] ?? null);
+        return self::findOrCreateByFiscalIdentity($business, $attributes);
+    }
 
-        if (! CustomerIdentity::isRealTaxId($normalizedTaxId)) {
+    public static function findOrCreateByFiscalIdentity(Business|int $business, array $attributes): self
+    {
+        $businessId = $business instanceof Business ? $business->id : $business;
+        $docType = CustomerIdentity::normalizeGuatemalaDocType($attributes['doc_type'] ?? null);
+
+        if (! in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)) {
             throw ValidationException::withMessages([
-                'customer.doc_number' => 'Debes ingresar un NIT válido.',
+                'customer.doc_type' => 'El tipo de documento debe ser NIT, CUI o CF.',
             ]);
         }
 
+        $normalizedTaxId = CustomerIdentity::normalizeDocument($docType, $attributes['doc_number'] ?? null);
+
+        if (! CustomerIdentity::isRealTaxId($normalizedTaxId)) {
+            throw ValidationException::withMessages([
+                'customer.doc_number' => $docType === CustomerIdentity::CUI
+                    ? 'El CUI/DPI debe tener 13 dígitos.'
+                    : 'Debes ingresar un NIT válido.',
+            ]);
+        }
+
+        if ($docType === CustomerIdentity::CUI && ! CustomerIdentity::isValidCui($normalizedTaxId)) {
+            throw ValidationException::withMessages([
+                'customer.doc_number' => 'El CUI/DPI debe tener 13 dígitos.',
+            ]);
+        }
+
+        $attributes['doc_type'] = $docType;
+
         try {
-            return DB::transaction(function () use ($businessId, $normalizedTaxId, $attributes): self {
+            return DB::transaction(function () use ($businessId, $docType, $normalizedTaxId, $attributes): self {
                 Business::query()->lockForUpdate()->findOrFail($businessId);
 
-                if ($customer = self::findByNormalizedTaxIdForUpdate($businessId, $normalizedTaxId)) {
+                if ($customer = self::findByFiscalIdentityForUpdate($businessId, $docType, $normalizedTaxId)) {
                     return $customer;
                 }
 
@@ -129,24 +164,31 @@ class Customer extends Model
                 throw $exception;
             }
 
-            $customer = DB::transaction(fn (): ?self => self::findByNormalizedTaxIdForUpdate($businessId, $normalizedTaxId));
+            $customer = DB::transaction(fn (): ?self => self::findByFiscalIdentityForUpdate($businessId, $docType, $normalizedTaxId));
 
             if ($customer) {
                 return $customer;
             }
 
             throw ValidationException::withMessages([
-                'customer.doc_number' => 'Ya existe un cliente con este NIT.',
+                'customer.doc_number' => "Ya existe un cliente con este {$docType}.",
             ]);
         }
     }
 
-    private static function findByNormalizedTaxIdForUpdate(int $businessId, string $normalizedTaxId): ?self
+    private static function findByFiscalIdentityForUpdate(int $businessId, string $docType, string $normalizedTaxId): ?self
     {
         $customer = self::query()
             ->where('business_id', $businessId)
             ->whereNull('merged_into_customer_id')
             ->where('normalized_tax_id', $normalizedTaxId)
+            ->where(function ($query) use ($docType): void {
+                $query->where('doc_type', $docType);
+
+                if ($docType === CustomerIdentity::NIT) {
+                    $query->orWhereNull('doc_type');
+                }
+            })
             ->lockForUpdate()
             ->first();
 
@@ -160,10 +202,14 @@ class Customer extends Model
             ->whereNull('normalized_tax_id')
             ->lockForUpdate()
             ->get()
-            ->first(fn (self $candidate) => CustomerIdentity::normalizeTaxId($candidate->doc_number) === $normalizedTaxId);
+            ->first(fn (self $candidate) => CustomerIdentity::normalizeTaxId($candidate->doc_number) === $normalizedTaxId
+                && ($candidate->doc_type === $docType || ($docType === CustomerIdentity::NIT && blank($candidate->doc_type))));
 
         if ($legacyCustomer) {
-            $legacyCustomer->forceFill(['normalized_tax_id' => $normalizedTaxId])->save();
+            $legacyCustomer->forceFill([
+                'doc_type' => $docType,
+                'normalized_tax_id' => $normalizedTaxId,
+            ])->save();
         }
 
         return $legacyCustomer;

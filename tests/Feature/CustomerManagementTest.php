@@ -415,6 +415,57 @@ class CustomerManagementTest extends TestCase
         $this->assertSame('CF', $cf->refresh()->doc_number);
     }
 
+    public function test_assign_nit_allows_same_digits_as_existing_cui_identity(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+        Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Identidad CUI',
+            'doc_type' => 'CUI',
+            'doc_number' => '1234567890123',
+            'country' => 'GT',
+        ]);
+        $cf = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente CF',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'is_final_consumer' => true,
+            'country' => 'GT',
+        ]);
+        $this->taxLookup($business, '1234567890123', 'Identidad NIT');
+
+        $this->actingAs($user)
+            ->post(route('customers.assign-nit', $cf), ['nit' => '1234567890123'])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('NIT', $cf->refresh()->doc_type);
+        $this->assertSame(2, Customer::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_cui_customer_is_not_treated_as_nit_by_customer_management(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Identidad CUI',
+            'doc_type' => 'CUI',
+            'doc_number' => '1234567890123',
+            'country' => 'GT',
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('customers.index'))
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('customers.data.0.has_real_nit', false)
+                ->where('customers.data.0.fiscal_status', 'CUI sin validar')
+            );
+
+        $this->actingAs($user)
+            ->post(route('customers.refresh-tax-data', $customer))
+            ->assertSessionHasErrors(['nit']);
+    }
+
     public function test_cf_customer_is_not_modified_when_assigned_nit_is_invalid(): void
     {
         [$business, $user] = $this->tenantUser('owner');

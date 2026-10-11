@@ -4,6 +4,40 @@ namespace App\Support;
 
 final class CustomerIdentity
 {
+    public const NIT = 'NIT';
+    public const CUI = 'CUI';
+    public const CF = 'CF';
+
+    public static function normalizeGuatemalaDocType(mixed $value): ?string
+    {
+        $normalized = mb_strtoupper(trim((string) $value));
+        $normalized = in_array($normalized, ['C/F', 'CONSUMIDOR FINAL'], true) ? self::CF : $normalized;
+
+        return in_array($normalized, [self::NIT, self::CUI, self::CF], true) ? $normalized : null;
+    }
+
+    public static function normalizeDocument(string $docType, mixed $value): ?string
+    {
+        return match (self::normalizeGuatemalaDocType($docType)) {
+            self::CUI => self::normalizeCui($value),
+            self::CF => self::CF,
+            self::NIT => self::normalizeTaxId($value),
+            default => null,
+        };
+    }
+
+    public static function normalizeCui(mixed $value): string
+    {
+        $normalized = trim((string) $value);
+
+        return preg_replace('/[\s\-\/]+/u', '', $normalized) ?? '';
+    }
+
+    public static function isValidCui(mixed $value): bool
+    {
+        return preg_match('/^\d{13}$/', self::normalizeCui($value)) === 1;
+    }
+
     public static function normalizeTaxId(mixed $value): ?string
     {
         $normalized = mb_strtoupper(trim((string) $value));

@@ -338,6 +338,15 @@ class RoutePreSaleInvoiceTest extends TestCase
         $this->assertSame('invalid_tax_id', $eligibility->evaluate($preSale->fresh('customer'))['reason_code']);
 
         $preSale->customer->update([
+            'doc_type' => 'CUI',
+            'doc_number' => '1234567890123',
+            'is_final_consumer' => false,
+            'tax_lookup_verified_at' => now(),
+            'name_locked' => true,
+        ]);
+        $this->assertSame('invalid_tax_id', $eligibility->evaluate($preSale->fresh('customer'))['reason_code']);
+
+        $preSale->customer->update([
             'doc_type' => 'NIT',
             'doc_number' => '1234-567',
             'is_final_consumer' => false,

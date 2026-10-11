@@ -283,18 +283,28 @@ class FinalConsumerAuditor
             ->whereNotNull('normalized_tax_id')
             ->where('normalized_tax_id', '!=', 'CF')
             ->select('normalized_tax_id')
+            ->selectRaw("COALESCE(NULLIF(UPPER(BTRIM(doc_type)), ''), 'NIT') as identity_type")
             ->selectRaw('COUNT(*) as customer_count')
             ->groupBy('normalized_tax_id')
+            ->groupByRaw("COALESCE(NULLIF(UPPER(BTRIM(doc_type)), ''), 'NIT')")
             ->havingRaw('COUNT(*) > 1')
             ->get()
             ->map(function (Customer $row) use ($businessId): array {
                 $customers = Customer::query()
                     ->where('business_id', $businessId)
                     ->where('normalized_tax_id', $row->normalized_tax_id)
+                    ->where(function ($query) use ($row): void {
+                        $query->whereRaw("UPPER(BTRIM(doc_type)) = ?", [$row->identity_type]);
+
+                        if ($row->identity_type === CustomerIdentity::NIT) {
+                            $query->orWhereNull('doc_type')->orWhere('doc_type', '');
+                        }
+                    })
                     ->orderBy('id')
-                    ->get(['id', 'name', 'doc_number']);
+                    ->get(['id', 'name', 'doc_type', 'doc_number']);
 
                 return [
+                    'doc_type' => $row->identity_type,
                     'normalized_tax_id' => $row->normalized_tax_id,
                     'customer_ids' => $customers->pluck('id')->all(),
                     'customer_names' => $customers->pluck('name')->all(),

@@ -448,6 +448,9 @@ class CustomerController extends Controller
             ->where('business_id', $businessId)
             ->when($ignoreCustomerId, fn ($query) => $query->whereKeyNot($ignoreCustomerId))
             ->where('normalized_tax_id', $nit)
+            ->where(function ($query): void {
+                $query->where('doc_type', CustomerIdentity::NIT)->orWhereNull('doc_type');
+            })
             ->exists();
     }
 
@@ -469,6 +472,10 @@ class CustomerController extends Controller
     {
         if ($this->isCfCustomer($customer)) {
             return 'CF';
+        }
+
+        if (CustomerIdentity::normalizeGuatemalaDocType($customer->doc_type) === CustomerIdentity::CUI) {
+            return $customer->tax_lookup_verified_at ? 'CUI validado' : 'CUI sin validar';
         }
 
         if ($this->hasRealNit($customer) && $customer->tax_lookup_verified_at) {
@@ -494,7 +501,10 @@ class CustomerController extends Controller
 
     private function hasRealNit(Customer $customer): bool
     {
-        return CustomerIdentity::isRealTaxId($customer->doc_number);
+        $docType = CustomerIdentity::normalizeGuatemalaDocType($customer->doc_type);
+
+        return ($docType === CustomerIdentity::NIT || ($docType === null && blank($customer->doc_type)))
+            && CustomerIdentity::isRealTaxId($customer->doc_number);
     }
 
     private function isCfCustomer(Customer $customer): bool

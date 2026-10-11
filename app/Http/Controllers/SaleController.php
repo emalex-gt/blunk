@@ -1923,12 +1923,15 @@ class SaleController extends Controller
         $customerData ??= [];
         $customerCountry = $customerData['country'] ?? $customer?->country ?? 'GT';
         $document = $customerData['doc_number'] ?? $customer?->doc_number;
+        $documentType = $customerData['doc_type'] ?? $customer?->doc_type;
 
         return [
             'customer_name' => trim((string) ($customerData['name'] ?? '')) ?: $customer?->name,
-            'customer_doc_type' => $customerData['doc_type'] ?? $customer?->doc_type,
+            'customer_doc_type' => $documentType,
             'customer_doc_number' => $customerCountry === 'GT'
-                ? (CustomerIdentity::normalizeTaxId($document) ?? '')
+                ? (CustomerIdentity::normalizeDocument((string) $documentType, $document)
+                    ?? CustomerIdentity::normalizeTaxId($document)
+                    ?? '')
                 : $this->normalizeDocument($document),
             'customer_address' => trim((string) ($customerData['address'] ?? '')) ?: $customer?->address,
             'customer_postal_code' => $customer?->postal_code,
@@ -1945,7 +1948,8 @@ class SaleController extends Controller
         $country = \App\Models\Business::query()->whereKey($businessId)->value('country') ?: 'GT';
         $customerData ??= [];
         $customerCountry = $customerData['country'] ?? $country;
-        $docType = $customerData['doc_type'] ?? null;
+        $submittedDocType = trim((string) ($customerData['doc_type'] ?? ''));
+        $docType = $submittedDocType !== '' ? $submittedDocType : null;
         $docNumber = CustomerIdentity::normalizeTaxId($customerData['doc_number'] ?? null) ?? '';
         $name = trim((string) ($customerData['name'] ?? ''));
         $commercialName = trim((string) ($customerData['commercial_name'] ?? ''));
@@ -1954,8 +1958,24 @@ class SaleController extends Controller
 
         $this->validateCustomerLocation($customerCountry, $department, $municipality);
 
+        if ($customerCountry === 'GT') {
+            $canonicalDocType = CustomerIdentity::normalizeGuatemalaDocType($docType);
+
+            if ($submittedDocType !== '' && $canonicalDocType === null) {
+                throw ValidationException::withMessages([
+                    'customer.doc_type' => 'El tipo de documento debe ser NIT, CUI o CF.',
+                ]);
+            }
+
+            $docType = $canonicalDocType;
+
+            if ($docType !== null) {
+                $docNumber = CustomerIdentity::normalizeDocument($docType, $customerData['doc_number'] ?? null) ?? '';
+            }
+        }
+
         $isFinalConsumerRequest = $customerCountry === 'GT'
-            && ((bool) ($customerData['consumidor_final'] ?? false) || $docNumber === 'CF');
+            && ((bool) ($customerData['consumidor_final'] ?? false) || $docType === 'CF' || $docNumber === 'CF');
 
         if ($isFinalConsumerRequest) {
             $name = $name !== '' ? $name : ($commercialName !== '' ? $commercialName : 'Consumidor Final');

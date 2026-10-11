@@ -4262,6 +4262,71 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('Guatemala', $sale->customer_municipality);
     }
 
+    public function test_pos_receipt_persists_cui_customer_and_sale_snapshot_without_enabling_fel(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 100, customer: [
+                'name' => 'Persona CUI sintética',
+                'doc_type' => 'CUI',
+                'doc_number' => '1234-5678-9012-3',
+                'address' => 'Dirección declarada',
+            ]))
+            ->assertSessionHasNoErrors();
+
+        $customer = Customer::query()->where('business_id', $business->id)->where('doc_type', 'CUI')->sole();
+        $sale = Sale::query()->where('business_id', $business->id)->sole();
+        $this->assertSame('1234567890123', $customer->doc_number);
+        $this->assertSame('CUI', $sale->customer_doc_type);
+        $this->assertSame('1234567890123', $sale->customer_doc_number);
+        $this->assertNull($sale->fel_uuid);
+    }
+
+    public function test_pos_invoice_with_cui_remains_blocked(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'fel_gt'], allowInvoices: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $this->felSettings($business);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                documentType: 'invoice',
+                customer: [
+                    'name' => 'Persona CUI sintética',
+                    'doc_type' => 'CUI',
+                    'doc_number' => '1234567890123',
+                    'address' => 'Dirección declarada',
+                ],
+            ))
+            ->assertSessionHasErrors(['customer.doc_number' => 'CUI/DPI aún no está habilitado.']);
+
+        $this->assertDatabaseCount('sales', 0);
+    }
+
+    public function test_pos_rejects_unknown_guatemala_customer_document_type(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 100, customer: [
+                'name' => 'Persona inválida',
+                'doc_type' => 'DPI-LEGACY',
+                'doc_number' => '1234567890123',
+            ]))
+            ->assertSessionHasErrors(['customer.doc_type']);
+
+        $this->assertDatabaseCount('sales', 0);
+    }
+
     public function test_pos_customer_update_does_not_clear_existing_commercial_name_when_payload_is_empty(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);

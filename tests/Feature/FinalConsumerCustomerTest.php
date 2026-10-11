@@ -140,6 +140,30 @@ class FinalConsumerCustomerTest extends TestCase
         $this->assertSame(2, Customer::query()->where('business_id', $business->id)->count());
     }
 
+    public function test_audit_does_not_report_same_number_under_nit_and_cui_as_duplicate(): void
+    {
+        $business = $this->business();
+        Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Identidad NIT',
+            'doc_type' => 'NIT',
+            'doc_number' => '1234567890123',
+            'country' => 'GT',
+        ]);
+        Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Identidad CUI',
+            'doc_type' => 'CUI',
+            'doc_number' => '1234567890123',
+            'country' => 'GT',
+        ]);
+
+        $result = app(FinalConsumerAuditor::class)->audit(['business' => $business->id]);
+
+        $this->assertSame(0, $result['real_tax_id_duplicate_groups']);
+        $this->assertSame(0, $result['real_tax_id_duplicates']);
+    }
+
     public function test_final_consumer_commands_are_registered_and_audit_is_read_only(): void
     {
         $business = $this->business();
