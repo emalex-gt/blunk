@@ -59,7 +59,9 @@ export default function Sales({
     branches_enabled?: boolean;
     branches?: BranchOption[];
 }) {
-    const business = usePage().props.business as { country?: string | null } | null;
+    const page = usePage();
+    const business = page.props.business as { country?: string | null } | null;
+    const errors = page.props.errors as Record<string, string | undefined>;
     const country = business?.country ?? 'GT';
     const [startDate, setStartDate] = useState(filters.start_date);
     const [endDate, setEndDate] = useState(filters.end_date);
@@ -87,8 +89,8 @@ export default function Sales({
             <div className="py-5">
                 <div className="mx-auto max-w-[1800px] space-y-5 px-5 sm:px-6">
                     <FilterCard onSubmit={submit} onClear={clear}>
-                        <DateField label="Desde" value={startDate} onChange={setStartDate} />
-                        <DateField label="Hasta" value={endDate} onChange={setEndDate} />
+                        <DateField label="Desde" value={startDate} onChange={setStartDate} error={errors.date_from} />
+                        <DateField label="Hasta" value={endDate} onChange={setEndDate} error={errors.date_to} />
                         <StatusField value={status} onChange={setStatus} />
                         {branches_enabled && <BranchField value={branchId} onChange={setBranchId} branches={branches} />}
                     </FilterCard>
@@ -209,11 +211,20 @@ function FilterCard({ children, onSubmit, onClear }: { children: ReactNode; onSu
     );
 }
 
-function DateField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function DateField({ label, value, onChange, error }: { label: string; value: string; onChange: (value: string) => void; error?: string }) {
     return (
         <label className="block">
             <span className="text-sm font-medium text-slate-700">{label}</span>
-            <input type="date" value={value} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100" />
+            <input
+                type="date"
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                aria-invalid={Boolean(error)}
+                className={`mt-1 w-full rounded-xl bg-white text-slate-900 shadow-sm focus:ring-4 ${error
+                    ? 'border-red-300 focus:border-red-500 focus:ring-red-100'
+                    : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`}
+            />
+            {error && <p className="mt-1 text-sm text-red-600">{error}</p>}
         </label>
     );
 }
