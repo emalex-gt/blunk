@@ -1010,7 +1010,13 @@ export default function POS({
                 .map((id) => productsById.get(id))
                 .filter((product): product is Product => Boolean(product))
                 .filter((product) => !product.business_id || String(product.business_id) === String(businessId))
-                .slice(0, 8),
+                .slice(0, 8)
+                .sort((a, b) =>
+                    (a.name ?? '').localeCompare(b.name ?? '', 'es', {
+                        sensitivity: 'base',
+                        numeric: true,
+                    }),
+                ),
         [businessId, productsById, recentProductIds],
     );
 
@@ -2738,12 +2744,12 @@ export default function POS({
             <Head title={t('nav.sales')} />
             <Toast toasts={toast.toasts} onClose={toast.removeToast} />
 
-            <div className="min-h-[calc(100vh-4rem)] overflow-x-hidden bg-[#f4f6fb]">
+            <div className="min-h-[calc(100vh-4rem)] overflow-x-hidden bg-[#f3f4f6]">
                 <div className="mx-auto grid w-full max-w-[1800px] min-w-0 items-start gap-3 p-3 sm:p-4 min-[900px]:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] lg:grid-cols-[minmax(0,1fr)_minmax(340px,420px)] xl:grid-cols-[minmax(0,1fr)_minmax(380px,460px)] 2xl:min-h-[calc(100vh-4rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(480px,560px)] 2xl:gap-5 2xl:p-5">
                     <section className="flex min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)] 2xl:max-h-[calc(100vh-6.5rem)]">
                         <div className="border-b border-slate-200 p-4">
                             {credit_invoice && (
-                                <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700">
+                                <div className="mb-4 rounded-xl border border-orange-100 bg-orange-50 px-4 py-3 text-sm font-semibold text-orange-700">
                                     Facturando productos a crédito.
                                 </div>
                             )}
@@ -2783,7 +2789,7 @@ export default function POS({
                                         Cliente
                                     </h2>
                                     {data.customer.id && (
-                                        <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                                        <span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700">
                                             Cliente guardado
                                         </span>
                                     )}
@@ -2814,7 +2820,7 @@ export default function POS({
                                         <button
                                             type="button"
                                             onClick={() => setCustomerEditing(true)}
-                                            className="h-9 w-full shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-indigo-700 shadow-sm hover:border-indigo-200 hover:bg-indigo-50 sm:w-auto"
+                                            className="h-9 w-full shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-orange-700 shadow-sm hover:border-orange-200 hover:bg-orange-50 sm:w-auto"
                                         >
                                             Editar cliente
                                         </button>
@@ -2834,8 +2840,8 @@ export default function POS({
                                                 className={[
                                                     'rounded-full border px-4 py-2 text-sm font-semibold transition',
                                                     data.customer.consumidor_final
-                                                        ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm'
-                                                        : 'border-slate-200 bg-white text-slate-700 hover:bg-indigo-50',
+                                                        ? 'border-orange-600 bg-orange-600 text-white shadow-sm'
+                                                        : 'border-slate-200 bg-white text-slate-700 hover:bg-orange-50',
                                                 ].join(' ')}
                                             >
                                                 Consumidor Final
@@ -2858,8 +2864,8 @@ export default function POS({
                                                 className={[
                                                     'rounded-full border px-4 py-2 text-sm font-semibold transition',
                                                     !data.customer.consumidor_final && data.customer.doc_type === 'NIT'
-                                                        ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm'
-                                                        : 'border-slate-200 bg-white text-slate-700 hover:bg-indigo-50',
+                                                        ? 'border-orange-600 bg-orange-600 text-white shadow-sm'
+                                                        : 'border-slate-200 bg-white text-slate-700 hover:bg-orange-50',
                                                 ].join(' ')}
                                             >
                                                 NIT
@@ -2873,19 +2879,19 @@ export default function POS({
                                                     value={data.customer.name}
                                                     onChange={(event) => setCustomerField('name', event.target.value)}
                                                     placeholder="Nombre"
-                                                    className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                    className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                 />
                                                 <input
                                                     value={data.customer.address}
                                                     onChange={(event) => setCustomerField('address', event.target.value)}
                                                     placeholder="Dirección"
-                                                    className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                    className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                 />
                                                 <input
                                                     value={data.customer.phone}
                                                     onChange={(event) => setCustomerField('phone', event.target.value)}
                                                     placeholder="Teléfono"
-                                                    className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                    className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                 />
                                             </div>
                                             <div className="grid gap-3 md:grid-cols-2">
@@ -2924,7 +2930,7 @@ export default function POS({
                                                             }}
                                                             onKeyDown={handleCustomerKeyDown}
                                                             placeholder="NIT"
-                                                            className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                            className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                         />
                                                     </div>
                                                     <div className="flex items-end">
@@ -2932,7 +2938,7 @@ export default function POS({
                                                             type="button"
                                                             onClick={lookupNit}
                                                             disabled={nitLookupLoading || !data.customer.doc_number}
-                                                            className="h-10 rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                            className="h-10 rounded-xl bg-orange-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
                                                         >
                                                             {nitLookupLoading ? 'Consultando...' : 'Consultar NIT'}
                                                         </button>
@@ -2959,13 +2965,13 @@ export default function POS({
                                                         value={data.customer.address}
                                                         onChange={(event) => setCustomerField('address', event.target.value)}
                                                         placeholder="Dirección"
-                                                        className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                        className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                     />
                                                     <input
                                                         value={data.customer.phone}
                                                         onChange={(event) => setCustomerField('phone', event.target.value)}
                                                         placeholder="Teléfono"
-                                                        className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                        className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                     />
                                                 </div>
                                                 <div className="grid gap-3 md:grid-cols-2">
@@ -3003,7 +3009,7 @@ export default function POS({
                                                         });
                                                     }}
                                                     onKeyDown={handleCustomerKeyDown}
-                                                    className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                    className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                 >
                                                     {arDocTypes.map((type) => (
                                                         <option key={type} value={type}>
@@ -3021,7 +3027,7 @@ export default function POS({
                                                     disabled={data.customer.doc_type === 'Consumidor Final'}
                                                     onChange={(event) => setCustomerDocument(event.target.value)}
                                                     onKeyDown={handleCustomerKeyDown}
-                                                    className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:bg-slate-100"
+                                                    className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100 disabled:bg-slate-100"
                                                 />
                                             </div>
                                             <div className="md:col-span-2">
@@ -3032,7 +3038,7 @@ export default function POS({
                                                     value={data.customer.name}
                                                     onChange={(event) => setCustomerField('name', event.target.value)}
                                                     onKeyDown={handleCustomerKeyDown}
-                                                    className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                    className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                 />
                                             </div>
                                         </div>
@@ -3041,7 +3047,7 @@ export default function POS({
                                             <select
                                                 value={data.customer.tax_condition}
                                                 onChange={(event) => setCustomerField('tax_condition', event.target.value)}
-                                                className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                             >
                                                 {arTaxConditions.map((condition) => (
                                                     <option key={condition} value={condition}>
@@ -3053,13 +3059,13 @@ export default function POS({
                                                 value={data.customer.address}
                                                 onChange={(event) => setCustomerField('address', event.target.value)}
                                                 placeholder="Dirección"
-                                                className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                             />
                                             <input
                                                 value={data.customer.phone}
                                                 onChange={(event) => setCustomerField('phone', event.target.value)}
                                                 placeholder="Teléfono"
-                                                className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                             />
                                         </div>
                                     </div>
@@ -3068,7 +3074,7 @@ export default function POS({
                                             <button
                                                 type="button"
                                                 onClick={() => setCustomerEditing(false)}
-                                                className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                                                className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700"
                                             >
                                                 Listo
                                             </button>
@@ -3083,7 +3089,7 @@ export default function POS({
                                                 key={customer.id}
                                                 type="button"
                                                 onClick={() => selectCustomer(customer)}
-                                                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                                                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700"
                                             >
                                                 {customer.commercial_name || customer.name}
                                                 {customer.doc_number ? ` · ${customer.doc_number}` : ''}
@@ -3109,7 +3115,7 @@ export default function POS({
                                 }}
                                 onKeyDown={handleSearchKeyDown}
                                 placeholder={t('pos.search_placeholder')}
-                                className="mt-3 h-14 w-full rounded-2xl border border-slate-200 bg-white px-5 text-lg font-medium text-slate-900 shadow-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                className="mt-3 h-14 w-full rounded-2xl border border-slate-200 bg-white px-5 text-lg font-medium text-slate-900 shadow-sm outline-none transition focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                             />
 
                             <div className="relative mt-3 flex max-w-full flex-nowrap gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
@@ -3122,8 +3128,8 @@ export default function POS({
                                     }}
                                     className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
                                         selectedCategoryId === null
-                                            ? 'border-indigo-600 bg-indigo-600 text-white shadow-md shadow-indigo-200'
-                                            : 'border-slate-200 bg-white text-slate-600 shadow-sm hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700'
+                                            ? 'border-orange-600 bg-orange-600 text-white shadow-md shadow-orange-200'
+                                            : 'border-slate-200 bg-white text-slate-600 shadow-sm hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700'
                                     }`}
                                 >
                                     {t('categories.all')}
@@ -3139,8 +3145,8 @@ export default function POS({
                                         }}
                                         className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
                                             selectedCategoryId === category.id
-                                                ? 'border-indigo-600 bg-indigo-600 text-white shadow-md shadow-indigo-200'
-                                                : 'border-slate-200 bg-white text-slate-600 shadow-sm hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700'
+                                                ? 'border-orange-600 bg-orange-600 text-white shadow-md shadow-orange-200'
+                                                : 'border-slate-200 bg-white text-slate-600 shadow-sm hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700'
                                         }`}
                                     >
                                         {category.name}
@@ -3150,7 +3156,7 @@ export default function POS({
                                     <button
                                         type="button"
                                         onClick={() => setShowCategoryPicker((current) => !current)}
-                                        className="shrink-0 whitespace-nowrap rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                                        className="shrink-0 whitespace-nowrap rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700"
                                     >
                                         Más categorías
                                     </button>
@@ -3162,7 +3168,7 @@ export default function POS({
                                             value={categorySearch}
                                             onChange={(event) => setCategorySearch(event.target.value)}
                                             placeholder="Buscar categoría"
-                                            className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm font-medium text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                            className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm font-medium text-slate-900 outline-none transition focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                             autoFocus
                                         />
                                         <div className="mt-2 max-h-64 overflow-y-auto">
@@ -3180,7 +3186,7 @@ export default function POS({
                                                         }}
                                                         className={`block w-full rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${
                                                             selectedCategoryId === category.id
-                                                                ? 'bg-indigo-50 text-indigo-700'
+                                                                ? 'bg-orange-50 text-orange-700'
                                                                 : 'text-slate-700 hover:bg-slate-50'
                                                         }`}
                                                     >
@@ -3220,7 +3226,7 @@ export default function POS({
                             )}
 
                             {productSearchLoading && (
-                                <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-center text-sm font-semibold text-indigo-700">
+                                <div className="rounded-xl border border-orange-100 bg-orange-50 p-4 text-center text-sm font-semibold text-orange-700">
                                     Buscando productos...
                                 </div>
                             )}
@@ -3247,7 +3253,7 @@ export default function POS({
                                             type="button"
                                             disabled={disabledByStock || processing}
                                             onClick={() => handleProductResultClick(product)}
-                                            className="flex items-stretch gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-70"
+                                            className="flex items-stretch gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-70"
                                         >
                                             {use_product_images && product.image_url ? (
                                                 <img
@@ -3302,9 +3308,11 @@ export default function POS({
                                                     )}
                                                 </div>
                                                 {otherBranchesSummary && (
-                                                    <div className="mt-1 truncate text-[11px] font-medium text-indigo-600" title={otherBranchesSummary}>
-                                                        También en: {otherBranchesSummary}
-                                                    </div>
+                                                    <><div className="mt-1 truncate text-[11px] font-medium text-orange-900" title="Disponibilidad Sucursales">
+                                                        Disponibilidad Sucursales:
+                                                    </div><div className="mt-1 truncate text-[11px] font-medium text-orange-600" title={otherBranchesSummary}>
+                                                            {otherBranchesSummary}
+                                                        </div></>
                                                 )}
                                             </div>
                                         </button>
@@ -3318,17 +3326,17 @@ export default function POS({
                         onSubmit={(event) => event.preventDefault()}
                         className="flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.08)] 2xl:max-h-[calc(100vh-6.5rem)]"
                     >
-                        <header className="border-b border-slate-200 p-4">
+                        <header className="rounded-t-2xl border-b border-slate-800 bg-slate-950 p-4">
                             <div className="flex items-start justify-between gap-3">
                                 <div>
-                                    <h2 className="text-xl font-semibold text-slate-900">
+                                    <h2 className="text-xl font-semibold text-white">
                                         {t('cart.title')}
                                     </h2>
-                                    <p className="text-sm text-slate-500">
+                                    <p className="text-sm text-slate-400">
                                         {cartItemsCount} {t('unit.units')} | {cart.length} {t('unit.products')}
                                     </p>
                                     {pageProps.branches_enabled && pageProps.active_branch && (
-                                        <p className="mt-1 text-xs font-semibold text-indigo-600">
+                                        <p className="mt-1 text-xs font-semibold text-orange-400">
                                             Sucursal activa: {pageProps.active_branch.name}
                                         </p>
                                     )}
@@ -3338,7 +3346,7 @@ export default function POS({
                                         <button
                                             type="button"
                                             onClick={openDiscountModal}
-                                            className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
+                                            className="rounded-lg border border-orange-500/40 bg-orange-500/15 px-3 py-2 text-sm font-semibold text-orange-300 hover:bg-orange-500/25"
                                         >
                                             Aplicar descuento
                                         </button>
@@ -3346,7 +3354,7 @@ export default function POS({
                                     <button
                                         type="button"
                                         onClick={requestClearSale}
-                                        className="rounded-lg px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
+                                        className="rounded-lg px-3 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/15 hover:text-red-200"
                                     >
                                         Limpiar venta
                                     </button>
@@ -3377,7 +3385,7 @@ export default function POS({
                                                 </div>
                                             </div>
                                             {item.credit_receipt_number && (
-                                                <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                                                <span className="shrink-0 rounded-full bg-orange-50 px-2 py-0.5 text-xs font-semibold text-orange-700">
                                                     {item.credit_receipt_number}
                                                 </span>
                                             )}
@@ -3409,7 +3417,7 @@ export default function POS({
                                                             )
                                                         }
                                                         onWheel={(event) => event.currentTarget.blur()}
-                                                        className={`h-9 w-20 border-y bg-white text-center text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 ${
+                                                        className={`h-9 w-20 border-y bg-white text-center text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-orange-500 ${
                                                             quantityError(item.quantity) ? 'border-red-300 text-red-700' : 'border-slate-300'
                                                         }`}
                                                     />
@@ -3434,7 +3442,7 @@ export default function POS({
                                                     <select
                                                         value={item.price_type_id ?? ''}
                                                         onChange={(event) => changeLinePriceType(item.product.id, Number(event.target.value))}
-                                                        className="h-8 rounded-lg border-slate-200 bg-white text-xs font-semibold text-slate-700 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                                                        className="h-8 rounded-lg border-slate-200 bg-white text-xs font-semibold text-slate-700 focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
                                                     >
                                                         {price_types.map((priceType) => (
                                                             <option key={priceType.id} value={priceType.id}>
@@ -3451,7 +3459,7 @@ export default function POS({
                                                             step="0.01"
                                                             value={item.unit_price}
                                                             onChange={(event) => updateManualPrice(item.product.id, event.target.value)}
-                                                            className="h-8 w-24 rounded-lg border-slate-200 bg-white text-right text-xs font-semibold text-slate-900 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                                                            className="h-8 w-24 rounded-lg border-slate-200 bg-white text-right text-xs font-semibold text-slate-900 focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
                                                         />
                                                     ) : (
                                                         <span className="whitespace-nowrap text-xs font-semibold text-slate-700">
@@ -3474,7 +3482,7 @@ export default function POS({
                                                     <button
                                                         type="button"
                                                         onClick={() => openManualPriceModal(item.product.id)}
-                                                        className="self-start text-[11px] font-semibold text-indigo-600 hover:text-indigo-700"
+                                                        className="self-start text-[11px] font-semibold text-orange-600 hover:text-orange-700"
                                                     >
                                                         {item.manual_price ? 'Editar precio manual' : 'Cambiar precio'}
                                                     </button>
@@ -3545,14 +3553,14 @@ export default function POS({
                                 </span>
                             </div>
                             {discount && (
-                                <div className="mt-3 space-y-1 rounded-xl border border-indigo-100 bg-white px-4 py-3 text-sm">
+                                <div className="mt-3 space-y-1 rounded-xl border border-orange-100 bg-white px-4 py-3 text-sm">
                                     <div className="flex justify-between gap-3 text-slate-600">
                                         <span>Total antes</span>
                                         <strong className="whitespace-nowrap text-slate-900">
                                             {formatCurrency(subtotalBeforeDiscount, country)}
                                         </strong>
                                     </div>
-                                    <div className="flex justify-between gap-3 text-indigo-700">
+                                    <div className="flex justify-between gap-3 text-orange-700">
                                         <span>Descuento</span>
                                         <strong className="whitespace-nowrap">
                                             -{formatCurrency(discountAmount, country)}
@@ -3586,7 +3594,7 @@ export default function POS({
                                 type="button"
                                 onClick={openCheckout}
                                 disabled={cart.length === 0 || processing || (!hasOpenCashRegister && !credit_available && !credit_sales_available) || hasInvalidCartQuantities || noAvailableDocumentTypes}
-                                className="mt-4 h-14 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-lg font-semibold text-white shadow-lg shadow-indigo-200 transition-all duration-200 hover:-translate-y-0.5 hover:from-indigo-700 hover:to-violet-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
+                                className="mt-4 h-14 w-full rounded-xl bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 text-lg font-semibold text-white shadow-lg shadow-orange-200 transition-all duration-200 hover:-translate-y-0.5 hover:from-orange-700 hover:via-orange-600 hover:to-amber-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : (processing ? t('pos.finalizing') : t('pos.finalize_sale'))}
                             </button>
@@ -3647,7 +3655,7 @@ export default function POS({
                                                     type="button"
                                                     disabled={processing}
                                                     onClick={() => previewManualPercentage(item, percent)}
-                                                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:border-orange-200 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50"
                                                 >
                                                     {manualPricePolicy.mode === 'price_discount' ? '-' : '+'}{percent}%
                                                 </button>
@@ -3668,7 +3676,7 @@ export default function POS({
 
                                                     previewManualPercentage(item, Number(event.target.value));
                                                 }}
-                                                className="h-10 w-28 rounded-xl border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                                                className="h-10 w-28 rounded-xl border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
                                             />
                                         </div>
                                     </div>
@@ -3687,7 +3695,7 @@ export default function POS({
                                             percentage: current?.productId === item.product.id ? current.percentage : '',
                                             unitPrice: event.target.value,
                                         }))}
-                                        className="mt-1 h-12 w-full rounded-xl border-slate-200 text-lg font-semibold text-slate-950 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                        className="mt-1 h-12 w-full rounded-xl border-slate-200 text-lg font-semibold text-slate-950 focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                     />
                                 </label>
 
@@ -3716,7 +3724,7 @@ export default function POS({
                                         type="button"
                                         disabled={Boolean(activeManualPriceError)}
                                         onClick={applyManualPriceDraft}
-                                        className="h-12 rounded-xl bg-indigo-600 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                        className="h-12 rounded-xl bg-orange-600 text-sm font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                                     >
                                         Aplicar
                                     </button>
@@ -3729,8 +3737,8 @@ export default function POS({
 
             {(isFelProcessing || openingFelPrint) && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
-                    <div className="w-full max-w-sm rounded-2xl border border-indigo-100 bg-white px-6 py-7 text-center shadow-2xl">
-                        <div className="mx-auto h-9 w-9 animate-spin rounded-full border-4 border-indigo-100 border-t-indigo-600" />
+                    <div className="w-full max-w-sm rounded-2xl border border-orange-100 bg-white px-6 py-7 text-center shadow-2xl">
+                        <div className="mx-auto h-9 w-9 animate-spin rounded-full border-4 border-orange-100 border-t-orange-600" />
                         <div className="mt-4 text-lg font-semibold text-slate-950">
                             {openingFelPrint ? 'Factura certificada. Abriendo impresión...' : 'Certificando factura FEL...'}
                         </div>
@@ -3762,7 +3770,7 @@ export default function POS({
                             )}
 
                             {isFelProcessing && (
-                                <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+                                <div className="rounded-xl border border-orange-100 bg-orange-50 px-4 py-3 text-sm text-orange-800">
                                     <div className="font-semibold">Certificando factura FEL...</div>
                                     <div className="mt-1">No cierres esta ventana.</div>
                                 </div>
@@ -3785,15 +3793,15 @@ export default function POS({
                                         Condición de pago
                                     </h3>
                                     <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
-                                        <button type="button" onClick={() => setPaymentCondition('paid')} className={`rounded-lg px-4 py-2 text-sm font-semibold ${paymentCondition === 'paid' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600'}`}>
+                                        <button type="button" onClick={() => setPaymentCondition('paid')} className={`rounded-lg px-4 py-2 text-sm font-semibold ${paymentCondition === 'paid' ? 'bg-white text-orange-700 shadow-sm' : 'text-slate-600'}`}>
                                             Contado
                                         </button>
-                                        <button type="button" onClick={() => setPaymentCondition('credit')} className={`rounded-lg px-4 py-2 text-sm font-semibold ${paymentCondition === 'credit' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600'}`}>
+                                        <button type="button" onClick={() => setPaymentCondition('credit')} className={`rounded-lg px-4 py-2 text-sm font-semibold ${paymentCondition === 'credit' ? 'bg-white text-orange-700 shadow-sm' : 'text-slate-600'}`}>
                                             Crédito
                                         </button>
                                     </div>
                                     {paymentCondition === 'credit' && (
-                                        <div className={`mt-3 grid gap-2 rounded-xl border p-3 text-sm sm:grid-cols-3 ${selectedCreditAccount?.is_blocked ? 'border-red-200 bg-red-50' : 'border-indigo-100 bg-indigo-50'}`}>
+                                        <div className={`mt-3 grid gap-2 rounded-xl border p-3 text-sm sm:grid-cols-3 ${selectedCreditAccount?.is_blocked ? 'border-red-200 bg-red-50' : 'border-orange-100 bg-orange-50'}`}>
                                             <div><span className="block text-xs font-semibold uppercase text-slate-500">Saldo actual</span><strong>{formatCurrency(selectedCreditAccount?.current_balance ?? 0, country)}</strong></div>
                                             <div><span className="block text-xs font-semibold uppercase text-slate-500">Límite</span><strong>{selectedCreditAccount?.credit_limit === null || selectedCreditAccount?.credit_limit === undefined ? 'Sin límite' : formatCurrency(selectedCreditAccount.credit_limit, country)}</strong></div>
                                             <div><span className="block text-xs font-semibold uppercase text-slate-500">Disponible</span><strong>{selectedCreditAccount?.is_blocked ? 'Crédito bloqueado' : (selectedCreditAccount?.credit_limit === null || selectedCreditAccount?.credit_limit === undefined ? 'Sin límite' : formatCurrency(Math.max(0, Number(selectedCreditAccount.credit_limit) - Number(selectedCreditAccount.current_balance)), country))}</strong></div>
@@ -3818,7 +3826,7 @@ export default function POS({
                                                 setSplitPayment(checked);
                                                 setPayments([paymentLine(mainPaymentMethod, total.toFixed(2))]);
                                             }}
-                                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                            className="rounded border-slate-300 text-orange-600 focus:ring-orange-500"
                                         />
                                         Dividir pago
                                     </label>
@@ -3837,8 +3845,8 @@ export default function POS({
                                             }}
                                             className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
                                                 mainPaymentMethod === method.value
-                                                    ? 'border-indigo-600 bg-indigo-600 text-white shadow-md shadow-indigo-200'
-                                                    : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700'
+                                                    ? 'border-orange-600 bg-orange-600 text-white shadow-md shadow-orange-200'
+                                                    : 'border-slate-200 bg-white text-slate-700 hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700'
                                             }`}
                                         >
                                             {method.label}
@@ -3875,7 +3883,7 @@ export default function POS({
                                                                 value={payment.method}
                                                                 onChange={(event) => updatePayment(index, 'method', event.target.value)}
                                                                 className={[
-                                                                    'h-10 w-full rounded-xl bg-white text-sm text-slate-900 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100',
+                                                                    'h-10 w-full rounded-xl bg-white text-sm text-slate-900 focus:border-orange-400 focus:ring-4 focus:ring-orange-100',
                                                                     paymentFieldError(index, 'method') ? 'border-red-300' : 'border-slate-200',
                                                                 ].join(' ')}
                                                             >
@@ -3901,7 +3909,7 @@ export default function POS({
                                                                 value={payment.amount}
                                                                 onChange={(event) => updatePayment(index, 'amount', event.target.value)}
                                                                 className={[
-                                                                    'h-10 w-32 rounded-xl bg-white text-right text-sm font-semibold text-slate-900 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100',
+                                                                    'h-10 w-32 rounded-xl bg-white text-right text-sm font-semibold text-slate-900 focus:border-orange-400 focus:ring-4 focus:ring-orange-100',
                                                                     paymentFieldError(index, 'amount') ? 'border-red-300' : 'border-slate-200',
                                                                 ].join(' ')}
                                                             />
@@ -3915,7 +3923,7 @@ export default function POS({
                                                             <button
                                                                 type="button"
                                                                 onClick={() => removePaymentLine(index)}
-                                                                className="rounded-lg px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
+                                                                className="rounded-lg px-3 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/15 hover:text-red-200"
                                                             >
                                                                 Eliminar
                                                             </button>
@@ -3937,7 +3945,7 @@ export default function POS({
                                         <button
                                             type="button"
                                             onClick={assignPending}
-                                            className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
+                                            className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 hover:bg-orange-100"
                                         >
                                             Asignar pendiente
                                         </button>
@@ -3959,7 +3967,7 @@ export default function POS({
                                             step="0.01"
                                             value={cashReceived}
                                             onChange={(event) => setCashReceived(event.target.value)}
-                                            className={`mt-1 h-11 w-full rounded-xl bg-white text-right text-sm font-semibold text-slate-900 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 ${
+                                            className={`mt-1 h-11 w-full rounded-xl bg-white text-right text-sm font-semibold text-slate-900 focus:border-orange-400 focus:ring-4 focus:ring-orange-100 ${
                                                 cashReceived.trim() !== '' && !cashReceivedIsValid ? 'border-red-300' : 'border-emerald-200'
                                             }`}
                                         />
@@ -3988,8 +3996,8 @@ export default function POS({
                                             onClick={() => setDocumentType('receipt')}
                                             className={`rounded-2xl border px-4 py-3 text-left transition ${
                                                 documentType === 'receipt'
-                                                    ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm'
-                                                    : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50'
+                                                    ? 'border-orange-600 bg-orange-50 text-orange-700 shadow-sm'
+                                                    : 'border-slate-200 bg-white text-slate-700 hover:border-orange-200 hover:bg-orange-50'
                                             }`}
                                         >
                                             <div className="font-semibold">Comprobante</div>
@@ -4002,8 +4010,8 @@ export default function POS({
                                             onClick={() => setDocumentType('invoice')}
                                             className={`rounded-2xl border px-4 py-3 text-left transition ${
                                                 documentType === 'invoice'
-                                                    ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm'
-                                                    : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50'
+                                                    ? 'border-orange-600 bg-orange-50 text-orange-700 shadow-sm'
+                                                    : 'border-slate-200 bg-white text-slate-700 hover:border-orange-200 hover:bg-orange-50'
                                             }`}
                                         >
                                             <div className="font-semibold">Factura</div>
@@ -4016,8 +4024,8 @@ export default function POS({
                                                 onClick={() => setDocumentType('credit')}
                                                 className={`rounded-2xl border px-4 py-3 text-left transition ${
                                                     documentType === 'credit'
-                                                        ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm'
-                                                        : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50'
+                                                        ? 'border-orange-600 bg-orange-50 text-orange-700 shadow-sm'
+                                                        : 'border-slate-200 bg-white text-slate-700 hover:border-orange-200 hover:bg-orange-50'
                                                 }`}
                                             >
                                                 <div className="font-semibold">Reserva de crédito</div>
@@ -4101,7 +4109,7 @@ export default function POS({
                                 type="button"
                                 onClick={submitSale}
                                 disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && (!paymentIsBalanced || !cashReceivedIsValid)) || invoiceNitNeedsVerification || invoiceCuiDisabled || hasInvalidCartQuantities || noAvailableDocumentTypes}
-                                className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-200 hover:from-indigo-700 hover:to-violet-700 disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
+                                className="rounded-xl bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-orange-200 hover:from-orange-700 hover:via-orange-600 hover:to-amber-600 disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : ((processing || creditProcessing) ? 'Confirmando...' : (effectiveCheckoutType === 'credit' ? 'Confirmar crédito' : 'Confirmar venta'))}
                             </button>
@@ -4141,7 +4149,7 @@ export default function POS({
                                     setDraftReady(true);
                                     focusSearch();
                                 }}
-                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
                             >
                                 Continuar
                             </button>
@@ -4187,7 +4195,7 @@ export default function POS({
                                         <button
                                             type="button"
                                             onClick={() => void restoreSavedSaleDraft(draft)}
-                                            className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                                            className="rounded-xl bg-orange-600 px-3 py-2 text-sm font-semibold text-white hover:bg-orange-700"
                                         >
                                             Continuar borrador
                                         </button>
@@ -4241,7 +4249,7 @@ export default function POS({
                                         key={product.id}
                                         type="button"
                                         onClick={() => selectDuplicateProduct(product)}
-                                        className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50/50"
+                                        className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-orange-200 hover:bg-orange-50/50"
                                     >
                                         {use_product_images && product.image_url ? (
                                             <img
@@ -4289,7 +4297,7 @@ export default function POS({
                                         ...current,
                                         type: event.target.value as SaleDiscount['type'],
                                     }))}
-                                    className="mt-1 h-11 w-full rounded-xl border-slate-300 text-sm font-semibold text-slate-900 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                    className="mt-1 h-11 w-full rounded-xl border-slate-300 text-sm font-semibold text-slate-900 focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                 >
                                     <option value="fixed">Monto fijo</option>
                                     <option value="percent">Porcentaje</option>
@@ -4307,7 +4315,7 @@ export default function POS({
                                         ...current,
                                         value: event.target.value,
                                     }))}
-                                    className="mt-1 h-11 w-full rounded-xl border-slate-300 text-right text-sm font-semibold text-slate-900 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                    className="mt-1 h-11 w-full rounded-xl border-slate-300 text-right text-sm font-semibold text-slate-900 focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                 />
                             </label>
 
@@ -4320,7 +4328,7 @@ export default function POS({
                                         reason: event.target.value,
                                     }))}
                                     rows={3}
-                                    className="mt-1 w-full rounded-xl border-slate-300 text-sm text-slate-900 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                    className="mt-1 w-full rounded-xl border-slate-300 text-sm text-slate-900 focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                 />
                             </label>
 
@@ -4331,7 +4339,7 @@ export default function POS({
                                         {formatCurrency(subtotalBeforeDiscount, country)}
                                     </strong>
                                 </div>
-                                <div className="mt-1 flex justify-between gap-3 text-indigo-700">
+                                <div className="mt-1 flex justify-between gap-3 text-orange-700">
                                     <span>Descuento</span>
                                     <strong className="whitespace-nowrap">
                                         -{formatCurrency(calculateDiscountAmount(discountForm, subtotalBeforeDiscount), country)}
@@ -4356,7 +4364,7 @@ export default function POS({
                             <button
                                 type="button"
                                 onClick={applyDiscount}
-                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
                             >
                                 Aplicar descuento
                             </button>
@@ -4388,7 +4396,7 @@ export default function POS({
                                     setShowClearSaleModal(false);
                                     clearPosDraftAndState();
                                 }}
-                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
                             >
                                 Limpiar venta
                             </button>
@@ -4443,7 +4451,7 @@ function PaymentDetailsFields({
                             onChange={(event) => onChange(index, field.key, event.target.value)}
                             placeholder={field.placeholder}
                             className={[
-                                'mt-1 h-9 w-full rounded-xl bg-white text-sm text-slate-900 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100',
+                                'mt-1 h-9 w-full rounded-xl bg-white text-sm text-slate-900 focus:border-orange-400 focus:ring-4 focus:ring-orange-100',
                                 error ? 'border-red-300' : 'border-slate-200',
                             ].join(' ')}
                         />

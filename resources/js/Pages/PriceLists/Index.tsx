@@ -42,7 +42,7 @@ export default function Index({
                         <h1 className="text-2xl font-bold text-slate-950">Listas de precios</h1>
                         <p className="mt-1 text-sm text-slate-500">Gestiona listas, predeterminados y precios por producto.</p>
                     </div>
-                    <Link href={route('price-lists.create')} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700">
+                    <Link href={route('price-lists.create')} className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700">
                         Nueva lista
                     </Link>
                 </div>
@@ -60,11 +60,11 @@ export default function Index({
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                             {priceTypes.map((priceType) => (
-                                <tr key={priceType.id} className="hover:bg-indigo-50/30">
+                                <tr key={priceType.id} className="hover:bg-orange-50/30">
                                     <td className="px-4 py-3 font-semibold text-slate-950">{priceType.name}</td>
                                     <td className="px-4 py-3">
                                         {priceType.is_default ? (
-                                            <span className="rounded-full bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700">Sí</span>
+                                            <span className="rounded-full bg-orange-50 px-2 py-1 text-xs font-semibold text-orange-700">Sí</span>
                                         ) : '-'}
                                     </td>
                                     <td className="px-4 py-3">
@@ -75,14 +75,14 @@ export default function Index({
                                     <td className="px-4 py-3 text-slate-700">{priceType.products_with_price_count}</td>
                                     <td className="px-4 py-3 text-right">
                                         <div className="flex flex-wrap justify-end gap-2">
-                                            <Link className="rounded-lg px-2 py-1 font-semibold text-indigo-600 hover:bg-indigo-50" href={route('price-lists.edit', priceType.id)}>
+                                            <Link className="rounded-lg px-2 py-1 font-semibold text-orange-600 hover:bg-orange-50" href={route('price-lists.edit', priceType.id)}>
                                                 Editar
                                             </Link>
-                                            <Link className="rounded-lg px-2 py-1 font-semibold text-indigo-600 hover:bg-indigo-50" href={route('price-lists.prices', priceType.id)}>
+                                            <Link className="rounded-lg px-2 py-1 font-semibold text-orange-600 hover:bg-orange-50" href={route('price-lists.prices', priceType.id)}>
                                                 Asignar precios
                                             </Link>
                                             {!priceType.is_default && priceType.is_active && (
-                                                <button type="button" onClick={() => router.post(route('price-lists.set-default', priceType.id), {}, { preserveScroll: true })} className="rounded-lg px-2 py-1 font-semibold text-indigo-600 hover:bg-indigo-50">
+                                                <button type="button" onClick={() => router.post(route('price-lists.set-default', priceType.id), {}, { preserveScroll: true })} className="rounded-lg px-2 py-1 font-semibold text-orange-600 hover:bg-orange-50">
                                                     Marcar predeterminada
                                                 </button>
                                             )}

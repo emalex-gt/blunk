@@ -42,7 +42,7 @@ export default function Index({ transfers, filters = {}, branches = [] }: { tran
                         <h1 className="text-2xl font-semibold text-slate-950">Traslados</h1>
                         <p className="mt-1 text-sm text-slate-500">Movimientos de inventario entre sucursales.</p>
                     </div>
-                    <Link href={route('inventory.transfers.create')} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                    <Link href={route('inventory.transfers.create')} className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700">
                         Nuevo traslado
                     </Link>
                 </div>
@@ -79,7 +79,7 @@ export default function Index({ transfers, filters = {}, branches = [] }: { tran
                             <option value="cancelled">Anulado</option>
                         </Select>
                         <div className="flex items-end gap-2">
-                            <button type="submit" className="h-10 rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700">Aplicar</button>
+                            <button type="submit" className="h-10 rounded-lg bg-orange-600 px-4 text-sm font-semibold text-white hover:bg-orange-700">Aplicar</button>
                             <Link href={route('inventory.transfers.index')} className="flex h-10 items-center rounded-lg border border-slate-200 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">Limpiar</Link>
                         </div>
                     </form>
@@ -112,7 +112,7 @@ export default function Index({ transfers, filters = {}, branches = [] }: { tran
                                         </span>
                                     </td>
                                     <td className="px-4 py-3 text-right">
-                                        <Link href={route('inventory.transfers.show', transfer.id)} className="font-semibold text-indigo-600 hover:text-indigo-700">
+                                        <Link href={route('inventory.transfers.show', transfer.id)} className="font-semibold text-orange-600 hover:text-orange-700">
                                             Ver
                                         </Link>
                                     </td>
@@ -136,7 +136,7 @@ export default function Index({ transfers, filters = {}, branches = [] }: { tran
                                 preserveState
                                 className={[
                                     'rounded-md px-3 py-1 text-sm',
-                                    link.active ? 'bg-indigo-600 text-white' : 'border border-slate-200 text-slate-600',
+                                    link.active ? 'bg-orange-600 text-white' : 'border border-slate-200 text-slate-600',
                                     !link.url ? 'pointer-events-none opacity-50' : 'hover:bg-slate-50',
                                 ].join(' ')}
                                 dangerouslySetInnerHTML={{ __html: link.label }}
@@ -157,7 +157,7 @@ function Field({ label, value, onChange, type = 'text' }: { label: string; value
     return (
         <label className="text-xs font-semibold text-slate-600">
             {label}
-            <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+            <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-orange-500 focus:ring-orange-500" />
         </label>
     );
 }
@@ -166,7 +166,7 @@ function Select({ label, value, onChange, children }: { label: string; value: st
     return (
         <label className="text-xs font-semibold text-slate-600">
             {label}
-            <select value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+            <select value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-orange-500 focus:ring-orange-500">
                 {children}
             </select>
         </label>

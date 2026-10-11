@@ -53,7 +53,7 @@ export default function Show({ session }: { session: Session }) {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <h2 className="text-xl font-semibold text-slate-950">Cierre de caja #{session.id}</h2>
                     <div className="flex gap-2">
-                        <a href={route('cash-register.closings.print', session.id)} target="_blank" className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700">
+                        <a href={route('cash-register.closings.print', session.id)} target="_blank" className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700">
                             Imprimir cierre
                         </a>
                         <Link href={route('cash-register.closings.index')} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
@@ -113,7 +113,7 @@ export default function Show({ session }: { session: Session }) {
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {session.movements.map((movement) => (
-                                        <tr key={movement.id} className="hover:bg-indigo-50/30">
+                                        <tr key={movement.id} className="hover:bg-orange-50/30">
                                             <td className="px-4 py-3 text-slate-600">{movement.created_at ?? '-'}</td>
                                             <td className="px-4 py-3 font-semibold text-slate-800">{movement.type_label}</td>
                                             <td className="px-4 py-3 text-slate-600">{movement.description ?? '-'}</td>

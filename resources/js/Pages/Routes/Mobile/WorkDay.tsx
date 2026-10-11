@@ -217,14 +217,14 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                 });
                             }
                         }}
-                        className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-base font-semibold text-white shadow-sm"
+                        className="w-full rounded-xl bg-orange-600 px-4 py-3 text-base font-semibold text-white shadow-sm"
                     >
                         Nuevo cliente
                     </button>
                 )}
 
                 {showCustomerForm && (
-                    <form onSubmit={createCustomer} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-indigo-100">
+                    <form onSubmit={createCustomer} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-orange-100">
                         <div className="mb-3">
                             <h2 className="text-lg font-semibold text-slate-950">Nuevo cliente</h2>
                             <p className="text-sm text-slate-500">Se agregará a esta zona y a la jornada actual.</p>
@@ -267,7 +267,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                     placeholder="Opcional"
                                     className="mt-1 w-full rounded-xl border-slate-200 text-base"
                                 />
-                                {nitLookupLoading && <span className="mt-1 block text-xs font-semibold text-indigo-600">Consultando NIT...</span>}
+                                {nitLookupLoading && <span className="mt-1 block text-xs font-semibold text-orange-600">Consultando NIT...</span>}
                                 {nitLookupError && <span className="mt-1 block text-xs font-semibold text-red-600">{nitLookupError}</span>}
                             </label>
                             <label className="block text-sm font-medium text-slate-700">
@@ -312,7 +312,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                             >
                                 Cancelar
                             </button>
-                            <button disabled={customerForm.processing || nitLookupLoading} className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60">
+                            <button disabled={customerForm.processing || nitLookupLoading} className="rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60">
                                 Crear cliente
                             </button>
                         </div>
@@ -333,7 +333,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                     {customerSearch.trim() !== '' && filteredVisits.length === 0 && (
                         <div className="rounded-xl bg-slate-100 px-4 py-4 text-center text-sm text-slate-600">
                             <p>No se encontraron clientes en esta jornada.</p>
-                            <button type="button" className="mt-2 font-semibold text-indigo-600" onClick={() => setCustomerSearch('')}>Limpiar búsqueda</button>
+                            <button type="button" className="mt-2 font-semibold text-orange-600" onClick={() => setCustomerSearch('')}>Limpiar búsqueda</button>
                         </div>
                     )}
                 </div>
@@ -355,7 +355,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                             </div>
                             <p className="mt-2 line-clamp-2 text-sm text-slate-600" title={visit.customer.address ?? 'Sin dirección'}>{visit.customer.address ?? 'Sin dirección'}</p>
                             {visit.pre_sale && (
-                                <p className="mt-2 rounded-lg bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700">
+                                <p className="mt-2 rounded-lg bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-700">
                                     Preventa: Q {Number(visit.pre_sale.total).toFixed(2)} · {visit.pre_sale.status}
                                 </p>
                             )}
@@ -374,7 +374,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                 <a href={mapHref(visit)} target="_blank" className="rounded-xl bg-slate-100 px-3 py-3 text-center text-sm font-semibold text-slate-700">
                                     Abrir Maps
                                 </a>
-                                <Link href={route('routes.mobile.visits.show', visit.id)} className="rounded-xl bg-indigo-600 px-3 py-3 text-center text-sm font-semibold text-white">
+                                <Link href={route('routes.mobile.visits.show', visit.id)} className="rounded-xl bg-orange-600 px-3 py-3 text-center text-sm font-semibold text-white">
                                     Crear/Editar preventa
                                 </Link>
                                 <button

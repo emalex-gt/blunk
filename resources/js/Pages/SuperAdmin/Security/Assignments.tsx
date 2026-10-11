@@ -68,7 +68,7 @@ export default function Assignments({
                             key={user.id}
                             type="button"
                             onClick={() => selectUser(user)}
-                            className={`mb-2 block w-full rounded-lg border px-3 py-2 text-left text-sm ${selectedUser?.id === user.id ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200 bg-white'}`}
+                            className={`mb-2 block w-full rounded-lg border px-3 py-2 text-left text-sm ${selectedUser?.id === user.id ? 'border-orange-300 bg-orange-50' : 'border-slate-200 bg-white'}`}
                         >
                             <strong>{user.name}</strong><br />
                             <span className="text-slate-500">{user.email}</span>
@@ -97,7 +97,7 @@ export default function Assignments({
                                     </label>
                                 ))}
                             </div>
-                            <button className="mt-5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={form.processing}>
+                            <button className="mt-5 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={form.processing}>
                                 Guardar asignación
                             </button>
                         </>

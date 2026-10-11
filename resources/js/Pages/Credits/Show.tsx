@@ -40,7 +40,7 @@ export default function Show({ receipt }: { receipt: CreditReceipt }) {
                                 <p className="text-sm text-slate-500">{new Date(receipt.created_at).toLocaleString()}</p>
                                 <p className="mt-2 text-sm text-slate-700">{receipt.customer_name} · {receipt.customer_doc_number}</p>
                             </div>
-                            <Link href={route('credits.receipts.print', receipt.id)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">
+                            <Link href={route('credits.receipts.print', receipt.id)} className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">
                                 Imprimir
                             </Link>
                         </div>

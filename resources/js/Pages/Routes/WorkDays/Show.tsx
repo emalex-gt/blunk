@@ -169,7 +169,7 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
             <div className="mx-auto max-w-[1800px] space-y-5 px-4 py-6 sm:px-6">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                        <Link href={route('routes.work-days.closed')} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800">Volver a jornadas cerradas</Link>
+                        <Link href={route('routes.work-days.closed')} className="text-sm font-semibold text-orange-600 hover:text-orange-800">Volver a jornadas cerradas</Link>
                         <h1 className="mt-2 text-2xl font-semibold text-slate-950">Jornada {workDay.work_date ?? `#${workDay.id}`}</h1>
                         <p className="text-sm text-slate-500">Detalle administrativo de visitas y preventas de la jornada.</p>
                     </div>
@@ -234,7 +234,7 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                         ) : preparation.preparable_count === 0 ? (
                             <p className="text-xs font-medium text-slate-500">No hay preventas disponibles para preparar en esta jornada.</p>
                         ) : null}
-                        {delivery.can_deliver_all && <button type="button" onClick={() => setDeliverAllOpen(true)} disabled={deliveringAll} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60">ENTREGAR TODO ({delivery.deliverable_count})</button>}
+                        {delivery.can_deliver_all && <button type="button" onClick={() => setDeliverAllOpen(true)} disabled={deliveringAll} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60">ENTREGAR TODO ({delivery.deliverable_count})</button>}
                         </div>
                         {!delivery.can_deliver_all && delivery.preview.count > 0 && delivery.preview.blocking_reason && (
                             <p className="max-w-md text-xs font-semibold text-amber-700">{delivery.preview.blocking_reason}</p>
@@ -311,7 +311,7 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                                                         type="button"
                                                         disabled={processingPreSaleId !== null || cancelForm.processing}
                                                         onClick={() => setProcessingTarget(preSale)}
-                                                        className="rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                        className="rounded-md bg-orange-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
                                                     >
                                                         Prep.
                                                     </button>
@@ -322,12 +322,12 @@ export default function Show({ workDay, preSales, canInvoice, activeBranchId, pr
                                                     </Link>
                                                 )}
                                                 {preSale.status === 'picked' && canInvoice && preSale.branch_id === activeBranchId && (
-                                                    <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-md bg-violet-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-violet-700">
+                                                    <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-md bg-amber-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-amber-600">
                                                         Generar comprobante
                                                     </Link>
                                                 )}
                                                 {preSale.status === 'converted' && preSale.converted_sale_id && (
-                                                    <Link href={route('sales.show', preSale.converted_sale_id)} className="rounded-md bg-violet-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-violet-700">
+                                                    <Link href={route('sales.show', preSale.converted_sale_id)} className="rounded-md bg-amber-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-amber-600">
                                                         Venta
                                                     </Link>
                                                 )}
@@ -463,7 +463,7 @@ function StatusBadge({ status }: { status: string }) {
         processing: 'bg-amber-50 text-amber-700',
         picked: 'bg-emerald-50 text-emerald-700',
         cancelled: 'bg-red-50 text-red-700',
-        converted: 'bg-violet-50 text-violet-700',
+        converted: 'bg-amber-50 text-amber-600',
         draft: 'bg-slate-100 text-slate-700',
     };
 
@@ -492,7 +492,7 @@ function Pagination<T>({ page }: { page: Page<T> }) {
                         preserveState
                         className={[
                             'rounded-md px-3 py-1 text-sm',
-                            link.active ? 'bg-indigo-600 text-white' : 'border border-slate-200 text-slate-600',
+                            link.active ? 'bg-orange-600 text-white' : 'border border-slate-200 text-slate-600',
                             !link.url ? 'pointer-events-none opacity-50' : 'hover:bg-slate-50',
                         ].join(' ')}
                         dangerouslySetInnerHTML={{ __html: link.label }}

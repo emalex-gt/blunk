@@ -44,7 +44,7 @@ export default function Show({ purchase }: { purchase: Purchase }) {
                             href={route('purchases.pdf', purchase.id)}
                             target="_blank"
                             rel="noreferrer"
-                            className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                            className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
                         >
                             Imprimir
                         </a>
@@ -73,7 +73,7 @@ export default function Show({ purchase }: { purchase: Purchase }) {
                             <Summary label="Total" value={formatCurrency(purchase.total, country)} />
                         </div>
                         {purchase.paid_from_cash && (
-                            <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-sm font-semibold text-indigo-700">
+                            <div className="mt-5 rounded-2xl border border-orange-100 bg-orange-50 p-4 text-sm font-semibold text-orange-700">
                                 Compra pagada desde caja
                                 {purchase.cash_register_session?.id ? ` #${purchase.cash_register_session.id}` : ''}
                             </div>
@@ -104,7 +104,7 @@ export default function Show({ purchase }: { purchase: Purchase }) {
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {purchase.items.map((item) => (
-                                        <tr key={item.id} className="transition-colors hover:bg-indigo-50/30">
+                                        <tr key={item.id} className="transition-colors hover:bg-orange-50/30">
                                             <td className="px-4 py-3 font-semibold text-slate-950">{item.product_name}</td>
                                             <td className="px-4 py-3 text-slate-600">
                                                 {item.product?.barcode || item.product?.code || '-'}

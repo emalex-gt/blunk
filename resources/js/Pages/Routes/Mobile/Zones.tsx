@@ -55,14 +55,14 @@ export default function Zones({ zones, branch, routeCash, canPostConversionColle
                             <div>
                                 <h2 className="text-lg font-semibold text-slate-950">{zone.name}</h2>
                                 <p className="mt-1 text-sm text-slate-500">{zone.description ?? 'Zona de preventa'}</p>
-                                <p className="mt-2 text-sm font-medium text-indigo-700">{zone.active_customers_count} clientes</p>
+                                <p className="mt-2 text-sm font-medium text-orange-700">{zone.active_customers_count} clientes</p>
                             </div>
                         </div>
                         <button
                             type="button"
                             disabled={form.processing || !routeCash.is_open}
                             onClick={() => openZone(zone.id)}
-                            className="mt-4 w-full rounded-xl bg-indigo-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
+                            className="mt-4 w-full rounded-xl bg-orange-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
                         >
                             {openingZoneId === zone.id ? 'Abriendo...' : 'Trabajar zona'}
                         </button>

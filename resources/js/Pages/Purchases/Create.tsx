@@ -764,7 +764,7 @@ export default function Create({
             <Head title="Registrar compra" />
             <Toast toasts={toast.toasts} onClose={toast.removeToast} />
 
-            <div className="min-h-[calc(100vh-8rem)] overflow-x-hidden bg-[#f4f6fb]">
+            <div className="min-h-[calc(100vh-8rem)] overflow-x-hidden bg-[#f3f4f6]">
                 <div className="mx-auto grid min-h-full max-w-[1800px] gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_440px] xl:grid-cols-[minmax(0,1fr)_480px] 2xl:grid-cols-[minmax(0,1fr)_600px]">
                     <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
                         <div className="border-b border-slate-200 p-4">
@@ -789,7 +789,7 @@ export default function Create({
                                         type="button"
                                         disabled={draftSaving}
                                         onClick={savePurchaseOperationDraft}
-                                        className="rounded-xl border border-indigo-200 bg-white px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm hover:bg-indigo-50 disabled:opacity-50"
+                                        className="rounded-xl border border-orange-200 bg-white px-4 py-2 text-sm font-semibold text-orange-700 shadow-sm hover:bg-orange-50 disabled:opacity-50"
                                     >
                                         Guardar borrador
                                     </button>
@@ -810,10 +810,10 @@ export default function Create({
                             </div>
 
                             {purchaseDetailsCompact ? (
-                                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3">
+                                <div className="rounded-2xl border border-orange-100 bg-orange-50/60 p-3">
                                     <div className="flex flex-wrap items-start justify-between gap-3">
                                         <div className="min-w-0">
-                                            <div className="text-[11px] font-semibold uppercase text-indigo-500">
+                                            <div className="text-[11px] font-semibold uppercase text-orange-500">
                                                 Datos de compra
                                             </div>
                                             <div className="mt-1 truncate text-sm font-semibold text-slate-950">
@@ -836,7 +836,7 @@ export default function Create({
                                         <button
                                             type="button"
                                             onClick={() => setPurchaseDetailsExpanded(true)}
-                                            className="shrink-0 rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
+                                            className="shrink-0 rounded-xl border border-orange-200 bg-white px-3 py-2 text-sm font-semibold text-orange-700 hover:bg-orange-50"
                                         >
                                             Editar datos
                                         </button>
@@ -863,7 +863,7 @@ export default function Create({
                                                 autoCorrect="off"
                                                 spellCheck={false}
                                                 placeholder="Escribe o selecciona un proveedor"
-                                                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                             />
                                             <p className="mt-1 text-xs text-slate-500">
                                                 Se creará un nuevo proveedor si no existe
@@ -878,7 +878,7 @@ export default function Create({
                                                                 setSupplierName(supplier.name);
                                                                 setSelectedSupplier(supplier);
                                                             }}
-                                                            className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
+                                                            className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-orange-50"
                                                         >
                                                             <span className="block font-semibold">{supplier.name}</span>
                                                             {(supplier.phone || supplier.email) && (
@@ -898,7 +898,7 @@ export default function Create({
                                                 value={supplierInvoiceNumber}
                                                 onChange={(event) => setSupplierInvoiceNumber(event.target.value)}
                                                 placeholder="Ej. FAC-2026-001"
-                                                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                             />
                                             <p className="mt-1 text-xs text-slate-500">
                                                 Referencia fiscal o comercial emitida por el proveedor.
@@ -911,7 +911,7 @@ export default function Create({
                                                 value={note}
                                                 onChange={(event) => setNote(event.target.value)}
                                                 placeholder="Nota opcional"
-                                                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                             />
                                         </div>
                                         <div>
@@ -919,7 +919,7 @@ export default function Create({
                                             <select
                                                 value={paymentMethod}
                                                 onChange={(event) => setPaymentMethod(event.target.value)}
-                                                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                             >
                                                 <option value="cash">Efectivo</option>
                                                 <option value="card">Tarjeta</option>
@@ -935,7 +935,7 @@ export default function Create({
                                                 <select
                                                     value={branchId ?? ''}
                                                     onChange={(event) => setBranchId(Number(event.target.value))}
-                                                    className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                    className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                 >
                                                     {branches.map((branch) => (
                                                         <option key={branch.id} value={branch.id}>
@@ -953,7 +953,7 @@ export default function Create({
                                             checked={paidFromCash}
                                             disabled={!hasOpenCashRegister || paymentMethod !== 'cash'}
                                             onChange={(event) => setPaidFromCash(event.target.checked)}
-                                            className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
+                                            className="mt-1 rounded border-slate-300 text-orange-600 focus:ring-orange-500 disabled:opacity-50"
                                         />
                                         <span>
                                             <span className="block font-semibold text-slate-800">¿Pagar desde caja?</span>
@@ -986,7 +986,7 @@ export default function Create({
                                 onChange={(event) => setSearch(event.target.value)}
                                 onKeyDown={handleSearchKeyDown}
                                 placeholder="Buscar producto por nombre, código o código de barras"
-                                className="mt-3 h-14 w-full rounded-2xl border border-slate-200 bg-white px-5 text-lg font-medium text-slate-900 shadow-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                className="mt-3 h-14 w-full rounded-2xl border border-slate-200 bg-white px-5 text-lg font-medium text-slate-900 shadow-sm outline-none transition focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                             />
                             {productSearchLoading && (
                                 <p className="mt-2 text-sm font-medium text-slate-500">Buscando productos...</p>
@@ -1012,7 +1012,7 @@ export default function Create({
                                         tabIndex={0}
                                         onClick={() => addProduct(product)}
                                         onKeyDown={(event) => handleProductCardKeyDown(event, product)}
-                                        className="relative flex min-h-[148px] cursor-pointer gap-4 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                                        className="relative flex min-h-[148px] cursor-pointer gap-4 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] focus:outline-none focus:ring-4 focus:ring-orange-100"
                                     >
                                         <button
                                             type="button"
@@ -1021,7 +1021,7 @@ export default function Create({
                                                 event.stopPropagation();
                                                 setCostHistoryProduct(product);
                                             }}
-                                            className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-xs font-bold text-slate-500 shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                                            className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-xs font-bold text-slate-500 shadow-sm transition hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700"
                                         >
                                             i
                                         </button>
@@ -1077,7 +1077,7 @@ export default function Create({
                                                         event.stopPropagation();
                                                         addProduct(product);
                                                     }}
-                                                    className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                                                    className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
                                                 >
                                                     Agregar
                                                 </button>
@@ -1189,7 +1189,7 @@ export default function Create({
                                                         step="0.01"
                                                         value={item.unit_cost}
                                                         onChange={(event) => updateItem(item.product.id, 'unit_cost', event.target.value)}
-                                                        className="h-10 w-full rounded-xl border-slate-200 text-right text-sm font-semibold text-slate-900 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                                        className="h-10 w-full rounded-xl border-slate-200 text-right text-sm font-semibold text-slate-900 focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                     />
                                                 </div>
                                                 <div className="rounded-xl bg-slate-50 px-3 py-2 text-right sm:col-span-2 lg:col-span-2 xl:col-span-1">
@@ -1218,7 +1218,7 @@ export default function Create({
                                 type="button"
                                 onClick={() => submit()}
                                 disabled={cart.length === 0 || processing}
-                                className="mt-4 h-14 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-base font-semibold text-white shadow-lg shadow-indigo-200 transition-all duration-200 hover:-translate-y-0.5 hover:from-indigo-700 hover:to-violet-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
+                                className="mt-4 h-14 w-full rounded-xl bg-gradient-to-r from-orange-600 to-amber-500 text-base font-semibold text-white shadow-lg shadow-orange-200 transition-all duration-200 hover:-translate-y-0.5 hover:from-orange-700 hover:to-amber-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {processing ? 'Registrando...' : 'Registrar compra'}
                             </button>
@@ -1277,7 +1277,7 @@ export default function Create({
                                         fromSupplierModal: confirmation.fromSupplierModal,
                                     });
                                 }}
-                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700 disabled:opacity-50"
                             >
                                 Sí, guardar compra
                             </button>
@@ -1316,7 +1316,7 @@ export default function Create({
                                     setDraftReady(true);
                                     requestAnimationFrame(() => searchInputRef.current?.focus());
                                 }}
-                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
                             >
                                 Continuar
                             </button>
@@ -1350,7 +1350,7 @@ export default function Create({
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <button type="button" onClick={() => restoreSavedPurchaseDraft(draft)} className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                                        <button type="button" onClick={() => restoreSavedPurchaseDraft(draft)} className="rounded-xl bg-orange-600 px-3 py-2 text-sm font-semibold text-white hover:bg-orange-700">
                                             Continuar borrador
                                         </button>
                                         <button type="button" onClick={() => discardPurchaseDraft(draft)} className="rounded-xl px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">
@@ -1387,7 +1387,7 @@ export default function Create({
                                     setShowClearPurchaseModal(false);
                                     clearPurchaseDraftAndState();
                                 }}
-                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
                             >
                                 Limpiar compra
                             </button>
@@ -1513,7 +1513,7 @@ function NewSupplierModal({
                         <input
                             value={draft.address}
                             onChange={(event) => update('address', event.target.value)}
-                            className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                            className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                         />
                     </label>
                 </div>
@@ -1535,7 +1535,7 @@ function NewSupplierModal({
                     <button
                         type="submit"
                         disabled={processing}
-                        className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         Guardar proveedor
                     </button>
@@ -1566,7 +1566,7 @@ function SupplierField({
                 required={required}
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
-                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
             />
         </label>
     );

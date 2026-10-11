@@ -52,13 +52,13 @@ export default function LowStock({
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 placeholder="Buscar por producto, código o código de barras"
-                                className="min-w-80 rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                className="min-w-80 rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                             />
                             {branches_enabled && (
                                 <select
                                     value={branchId}
                                     onChange={(event) => setBranchId(event.target.value)}
-                                    className="rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                    className="rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                 >
                                     <option value="">Sucursal activa</option>
                                     {branches.map((branch) => (
@@ -68,7 +68,7 @@ export default function LowStock({
                                     ))}
                                 </select>
                             )}
-                            <button type="submit" className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                            <button type="submit" className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700">
                                 Filtrar
                             </button>
                             <button type="button" onClick={clear} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
@@ -106,7 +106,7 @@ export default function LowStock({
                                         </tr>
                                     ) : (
                                         products.map((product) => (
-                                            <tr key={product.id} className="transition-colors hover:bg-indigo-50/30">
+                                            <tr key={product.id} className="transition-colors hover:bg-orange-50/30">
                                                 <td className="px-4 py-3 font-semibold text-slate-950">{product.name}</td>
                                                 <td className="px-4 py-3 text-slate-600">{product.barcode || product.code || '-'}</td>
                                                 <td className="px-4 py-3 text-slate-700">{product.stock}</td>

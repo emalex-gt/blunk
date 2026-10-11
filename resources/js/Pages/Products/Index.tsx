@@ -538,7 +538,7 @@ export default function ProductIndex({
                     <div className="relative">
                         <div className="flex items-center justify-between gap-3">
                             <InputLabel htmlFor="category_name" value={t('products.category')} />
-                            <Link href={route('categories.index')} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+                            <Link href={route('categories.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
                                 Gestionar categorías
                             </Link>
                         </div>
@@ -577,7 +577,7 @@ export default function ProductIndex({
                                     <button
                                         key={category.id}
                                         type="button"
-                                        className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
+                                        className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-orange-50"
                                         onMouseDown={(event) => {
                                             event.preventDefault();
                                             setData('category_name', category.name);
@@ -595,7 +595,7 @@ export default function ProductIndex({
                     <div className="relative">
                         <div className="flex items-center justify-between gap-3">
                             <InputLabel htmlFor="brand_name" value="Marca" />
-                            <Link href={route('brands.index')} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+                            <Link href={route('brands.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
                                 Gestionar marcas
                             </Link>
                         </div>
@@ -625,7 +625,7 @@ export default function ProductIndex({
                                     <button
                                         key={brand.id}
                                         type="button"
-                                        className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
+                                        className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-orange-50"
                                         onMouseDown={(event) => {
                                             event.preventDefault();
                                             setData('brand_name', brand.name);
@@ -687,7 +687,7 @@ export default function ProductIndex({
                                     <label key={priceType.id} className="grid grid-cols-[1fr_140px] items-center gap-3 text-sm">
                                         <span className="font-medium text-slate-700">
                                             {priceType.name}
-                                            {priceType.is_default && <span className="ml-2 text-xs text-indigo-600">Predeterminada</span>}
+                                            {priceType.is_default && <span className="ml-2 text-xs text-orange-600">Predeterminada</span>}
                                         </span>
                                         <TextInput
                                             type="number"
@@ -721,7 +721,7 @@ export default function ProductIndex({
                     <div className="relative">
                         <div className="flex items-center justify-between gap-3">
                             <InputLabel htmlFor="location_name" value={t('common.location')} />
-                            <Link href={route('product-locations.index')} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+                            <Link href={route('product-locations.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
                                 Gestionar ubicaciones
                             </Link>
                         </div>
@@ -755,7 +755,7 @@ export default function ProductIndex({
                                     <button
                                         key={location.id}
                                         type="button"
-                                        className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
+                                        className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-orange-50"
                                         onMouseDown={(event) => {
                                             event.preventDefault();
                                             setData({
@@ -775,7 +775,7 @@ export default function ProductIndex({
                     </div>
 
                     <label className="flex items-center gap-2 text-sm text-slate-700">
-                        <input type="checkbox" checked={data.is_active} onChange={(e) => setData('is_active', e.target.checked)} className="rounded border-slate-300 text-indigo-600 shadow-sm focus:ring-indigo-500" />
+                        <input type="checkbox" checked={data.is_active} onChange={(e) => setData('is_active', e.target.checked)} className="rounded border-slate-300 text-orange-600 shadow-sm focus:ring-orange-500" />
                         {t('common.active')}
                     </label>
 
@@ -804,7 +804,7 @@ export default function ProductIndex({
                         <select
                             value={filterState.category_id}
                             onChange={(event) => updateFilter('category_id', event.target.value)}
-                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
                         >
                             <option value="">Categoría</option>
                             {categories.map((category) => (
@@ -814,7 +814,7 @@ export default function ProductIndex({
                         <select
                             value={filterState.brand_id}
                             onChange={(event) => updateFilter('brand_id', event.target.value)}
-                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
                         >
                             <option value="">Marca</option>
                             {brands.map((brand) => (
@@ -824,7 +824,7 @@ export default function ProductIndex({
                         <select
                             value={filterState.location_id}
                             onChange={(event) => updateFilter('location_id', event.target.value)}
-                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
                         >
                             <option value="">Ubicación</option>
                             {locations.map((location) => (
@@ -834,7 +834,7 @@ export default function ProductIndex({
                         <select
                             value={filterState.status}
                             onChange={(event) => updateFilter('status', event.target.value)}
-                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
                         >
                             <option value="">Estado</option>
                             <option value="active">Activos</option>
@@ -843,7 +843,7 @@ export default function ProductIndex({
                         <select
                             value={filterState.per_page}
                             onChange={(event) => updateFilter('per_page', event.target.value)}
-                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
                             aria-label="Productos por página"
                         >
                             <option value="25">25 por página</option>
@@ -892,7 +892,7 @@ export default function ProductIndex({
                                                 <div className="mt-3 flex gap-2">
                                                     <button
                                                         type="button"
-                                                        className="rounded-lg px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                                                        className="rounded-lg px-2 py-1 text-xs font-semibold text-orange-600 hover:bg-orange-50 disabled:cursor-not-allowed disabled:text-slate-400"
                                                         disabled={!visibleProduct}
                                                         onClick={() => visibleProduct && edit(visibleProduct)}
                                                     >
@@ -900,7 +900,7 @@ export default function ProductIndex({
                                                     </button>
                                                     <Link
                                                         href={route('products.stock-history', match.id)}
-                                                        className="rounded-lg px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-50"
+                                                        className="rounded-lg px-2 py-1 text-xs font-semibold text-orange-600 hover:bg-orange-50"
                                                     >
                                                         Ver historial
                                                     </Link>
@@ -933,7 +933,7 @@ export default function ProductIndex({
                                 {currentProducts.map((product) => (
                                     <tr
                                         key={product.id}
-                                        className={`transition-colors ${identityMatchIds.has(product.id) ? 'bg-amber-50 ring-1 ring-inset ring-amber-200' : 'hover:bg-indigo-50/30'}`}
+                                        className={`transition-colors ${identityMatchIds.has(product.id) ? 'bg-amber-50 ring-1 ring-inset ring-amber-200' : 'hover:bg-orange-50/30'}`}
                                     >
                                         {use_product_images && (
                                             <td className="hidden py-3 pr-3 2xl:table-cell">
@@ -985,11 +985,11 @@ export default function ProductIndex({
                                         <td className="whitespace-nowrap py-2.5 pl-1.5 text-right 2xl:py-3 2xl:pl-3">
                                             <Link
                                                 href={route('products.stock-history', product.id)}
-                                                className="mr-1 rounded-lg px-1 py-1 font-medium text-indigo-600 hover:bg-indigo-50 xl:mr-2 xl:px-2"
+                                                className="mr-1 rounded-lg px-1 py-1 font-medium text-orange-600 hover:bg-orange-50 xl:mr-2 xl:px-2"
                                             >
                                                 Historial
                                             </Link>
-                                            <button type="button" onClick={() => edit(product)} className="rounded-lg px-1 py-1 font-medium text-indigo-600 hover:bg-indigo-50 xl:px-2">
+                                            <button type="button" onClick={() => edit(product)} className="rounded-lg px-1 py-1 font-medium text-orange-600 hover:bg-orange-50 xl:px-2">
                                                 {t('actions.edit')}
                                             </button>
                                         </td>

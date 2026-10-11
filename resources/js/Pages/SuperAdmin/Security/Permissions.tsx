@@ -61,7 +61,7 @@ export default function Permissions({ permissions }: { permissions: Permission[]
                         <textarea className={inputClass} placeholder="Descripción" value={form.data.description} onChange={(event) => form.setData('description', event.target.value)} />
                     </div>
                     <div className="mt-4 flex gap-2">
-                        <button className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={form.processing}>
+                        <button className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={form.processing}>
                             Guardar
                         </button>
                         {editing && (
@@ -106,4 +106,4 @@ export default function Permissions({ permissions }: { permissions: Permission[]
     );
 }
 
-const inputClass = 'w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500';
+const inputClass = 'w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-orange-500 focus:ring-orange-500';

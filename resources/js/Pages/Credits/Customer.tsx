@@ -148,9 +148,9 @@ export default function CustomerCredit({
                                 <p className="text-sm text-slate-500">NIT: {customer.doc_number ?? '-'}</p>
                                 {customer.address && <p className="text-sm text-slate-500">Dirección: {customer.address}</p>}
                             </div>
-                            <div className="rounded-lg bg-indigo-50 px-4 py-3 text-right">
-                                <div className="text-xs font-semibold uppercase text-indigo-600">Saldo pendiente</div>
-                                <div className="text-2xl font-bold text-indigo-900">{formatCurrency(Number(pending_total), country)}</div>
+                            <div className="rounded-lg bg-orange-50 px-4 py-3 text-right">
+                                <div className="text-xs font-semibold uppercase text-orange-600">Saldo pendiente</div>
+                                <div className="text-2xl font-bold text-orange-900">{formatCurrency(Number(pending_total), country)}</div>
                             </div>
                         </div>
                     </section>
@@ -180,7 +180,7 @@ export default function CustomerCredit({
                                             <td className="px-4 py-3 text-right font-semibold">{formatCurrency(Number(receipt.pending_total), country)}</td>
                                             <td className="px-4 py-3">{receipt.status}</td>
                                             <td className="px-4 py-3 text-right">
-                                                <Link href={route('credits.receipts.print', receipt.id)} className="font-semibold text-indigo-600">
+                                                <Link href={route('credits.receipts.print', receipt.id)} className="font-semibold text-orange-600">
                                                     Imprimir
                                                 </Link>
                                             </td>
@@ -214,7 +214,7 @@ export default function CustomerCredit({
                                         type="button"
                                         onClick={invoiceSelection}
                                         disabled={selected.length === 0}
-                                        className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-300"
+                                        className="rounded-lg bg-orange-600 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-300"
                                     >
                                         Facturar selección
                                     </button>
@@ -282,7 +282,7 @@ export default function CustomerCredit({
                                         className="w-full rounded-lg border-slate-300 text-sm"
                                     />
                                     {transferLookupLoading && (
-                                        <p className="mt-1 text-xs font-semibold text-indigo-600">Consultando NIT...</p>
+                                        <p className="mt-1 text-xs font-semibold text-orange-600">Consultando NIT...</p>
                                     )}
                                     {transferLookupError && (
                                         <p className="mt-1 text-xs font-semibold text-red-600">{transferLookupError}</p>

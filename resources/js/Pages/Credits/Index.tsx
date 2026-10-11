@@ -48,7 +48,7 @@ export default function Index({
                                     placeholder="Buscar NIT o nombre"
                                     className="h-10 rounded-lg border-slate-300 text-sm"
                                 />
-                                <button className="h-10 rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white">
+                                <button className="h-10 rounded-lg bg-orange-600 px-4 text-sm font-semibold text-white">
                                     Buscar
                                 </button>
                             </form>
@@ -81,7 +81,7 @@ export default function Index({
                                             <td className="px-4 py-3 text-right">
                                                 <Link
                                                     href={route('credits.customers.show', customer.customer_id)}
-                                                    className="font-semibold text-indigo-600 hover:text-indigo-700"
+                                                    className="font-semibold text-orange-600 hover:text-orange-700"
                                                 >
                                                     Ver
                                                 </Link>

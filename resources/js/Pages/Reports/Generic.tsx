@@ -284,7 +284,7 @@ export default function GenericReport({
                             <div className="flex items-end gap-2">
                                 <button
                                     type="submit"
-                                    className="h-10 rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
+                                    className="h-10 rounded-lg bg-orange-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700"
                                 >
                                     Aplicar
                                 </button>
@@ -359,7 +359,7 @@ export default function GenericReport({
                                         preserveState
                                         className={[
                                             'rounded-md px-3 py-1 text-sm',
-                                            link.active ? 'bg-indigo-600 text-white' : 'border border-slate-200 text-slate-600',
+                                            link.active ? 'bg-orange-600 text-white' : 'border border-slate-200 text-slate-600',
                                             !link.url ? 'pointer-events-none opacity-50' : 'hover:bg-slate-50',
                                         ].join(' ')}
                                         dangerouslySetInnerHTML={{ __html: link.label }}
@@ -415,7 +415,7 @@ function renderCell(
 
     if (column.type === 'link') {
         return value ? (
-            <Link href={String(value)} className="font-semibold text-indigo-600 hover:text-indigo-800">
+            <Link href={String(value)} className="font-semibold text-orange-600 hover:text-orange-800">
                 {column.link_label ?? 'Ver'}
             </Link>
         ) : '-';
@@ -432,7 +432,7 @@ function renderCell(
             <button
                 type="button"
                 onClick={() => onExplainReservations(row)}
-                className="font-semibold text-indigo-600 underline-offset-2 hover:text-indigo-800 hover:underline"
+                className="font-semibold text-orange-600 underline-offset-2 hover:text-orange-800 hover:underline"
             >
                 {formatCell(value, { ...column, type: 'number' }, country)}
             </button>
@@ -470,7 +470,7 @@ function DateField({ label, value, onChange }: { label: string; value: string; o
                 type="date"
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
-                className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
             />
         </label>
     );
@@ -484,7 +484,7 @@ function TextField({ label, value, onChange }: { label: string; value: string; o
                 type="text"
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
-                className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
             />
         </label>
     );
@@ -507,7 +507,7 @@ function SelectField({
             <select
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
-                className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
             >
                 {children}
             </select>

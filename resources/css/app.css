@@ -1,3 +1,32 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+
+@layer base {
+    :root {
+        --blunk-primary: #f97316;
+        --blunk-primary-hover: #ea580c;
+        --blunk-primary-soft: #fff7ed;
+        --blunk-accent: #f59e0b;
+        --blunk-graphite: #0f172a;
+        --blunk-canvas: #f3f4f6;
+        --blunk-surface: #ffffff;
+        --blunk-text: #0f172a;
+        --blunk-muted: #64748b;
+        --blunk-info: #0284c7;
+        --blunk-success: #16a34a;
+        --blunk-warning: #d97706;
+        --blunk-danger: #dc2626;
+    }
+
+    body {
+        background: var(--blunk-canvas);
+        color: var(--blunk-text);
+    }
+
+    ::selection {
+        background: #fed7aa;
+        color: #7c2d12;
+    }
+}

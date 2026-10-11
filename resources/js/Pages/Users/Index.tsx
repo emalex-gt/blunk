@@ -273,7 +273,7 @@ export default function Index({
                                         type="checkbox"
                                         checked={form.data.is_active}
                                         onChange={(e) => form.setData('is_active', e.target.checked)}
-                                        className="rounded border-slate-300 text-indigo-600 shadow-sm focus:ring-indigo-500"
+                                        className="rounded border-slate-300 text-orange-600 shadow-sm focus:ring-orange-500"
                                     />
                                     Usuario activo
                                 </label>
@@ -345,7 +345,7 @@ export default function Index({
                             <button
                                 type="submit"
                                 disabled={form.processing}
-                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-50"
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:opacity-50"
                             >
                                 Guardar
                             </button>
@@ -368,7 +368,7 @@ export default function Index({
                         <button
                             type="button"
                             onClick={startCreate}
-                            className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
+                            className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700"
                         >
                             Crear usuario
                         </button>
@@ -388,11 +388,11 @@ export default function Index({
                             </thead>
                             <tbody>
                                 {users.map((user) => (
-                                    <tr key={user.id} className="border-t border-slate-100 transition hover:bg-indigo-50/30">
+                                    <tr key={user.id} className="border-t border-slate-100 transition hover:bg-orange-50/30">
                                         <td className="px-5 py-3 font-semibold text-slate-950">{user.name}</td>
                                         <td className="px-5 py-3 text-slate-600">{user.email}</td>
                                         <td className="px-5 py-3">
-                                            <Badge className="border-indigo-100 bg-indigo-50 text-indigo-700">
+                                            <Badge className="border-orange-100 bg-orange-50 text-orange-700">
                                                 {roleName(user.role)}
                                             </Badge>
                                         </td>
@@ -464,7 +464,7 @@ export default function Index({
                             <button
                                 type="submit"
                                 disabled={passwordForm.processing}
-                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-50"
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:opacity-50"
                             >
                                 Guardar contraseña
                             </button>
@@ -487,7 +487,7 @@ export default function Index({
 }
 
 const inputClass =
-    'w-full rounded-xl border-slate-200 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:bg-slate-100 disabled:text-slate-500';
+    'w-full rounded-xl border-slate-200 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100 disabled:bg-slate-100 disabled:text-slate-500';
 
 function Field({ label, error, children }: { label: string; error?: string; children: ReactNode }) {
     return (

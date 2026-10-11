@@ -82,7 +82,7 @@ export default function Index({ incidents }: { incidents: Paginated<Incident> })
                                                     <button
                                                         type="button"
                                                         onClick={() => markReviewed(incident.id)}
-                                                        className="rounded-md border border-indigo-200 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
+                                                        className="rounded-md border border-orange-200 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-50"
                                                     >
                                                         Marcar revisada
                                                     </button>
@@ -91,7 +91,7 @@ export default function Index({ incidents }: { incidents: Paginated<Incident> })
                                                     <button
                                                         type="button"
                                                         onClick={() => resolve(incident.id)}
-                                                        className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
+                                                        className="rounded-md bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-700"
                                                     >
                                                         Resolver
                                                     </button>

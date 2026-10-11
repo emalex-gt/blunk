@@ -129,7 +129,7 @@ export default function Sales({
                                             <tr
                                                 key={sale.id}
                                                 className={[
-                                                    'transition-colors hover:bg-indigo-50/30',
+                                                    'transition-colors hover:bg-orange-50/30',
                                                     sale.status === 'cancelled' ? 'bg-red-50/30' : '',
                                                 ].join(' ')}
                                             >
@@ -173,7 +173,7 @@ export default function Sales({
                                                 <td className="px-4 py-3 text-right">
                                                     <Link
                                                         href={route('sales.show', sale.id)}
-                                                        className="inline-flex rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-indigo-50 hover:text-indigo-700"
+                                                        className="inline-flex rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-orange-50 hover:text-orange-700"
                                                     >
                                                         Ver detalle
                                                     </Link>
@@ -197,7 +197,7 @@ function FilterCard({ children, onSubmit, onClear }: { children: ReactNode; onSu
             <div className="grid gap-4 md:grid-cols-[1fr_1fr_1fr_auto]">
                 {children}
                 <div className="flex items-end gap-2">
-                    <button type="submit" className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                    <button type="submit" className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700">
                         Filtrar
                     </button>
                     <button type="button" onClick={onClear} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-all duration-200 hover:bg-slate-50">
@@ -213,7 +213,7 @@ function DateField({ label, value, onChange }: { label: string; value: string; o
     return (
         <label className="block">
             <span className="text-sm font-medium text-slate-700">{label}</span>
-            <input type="date" value={value} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+            <input type="date" value={value} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100" />
         </label>
     );
 }
@@ -222,7 +222,7 @@ function StatusField({ value, onChange }: { value: string; onChange: (value: str
     return (
         <label className="block">
             <span className="text-sm font-medium text-slate-700">Estado</span>
-            <select value={value} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100">
+            <select value={value} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100">
                 <option value="completed">Completadas</option>
                 <option value="cancelled">Anuladas</option>
                 <option value="all">Todas</option>
@@ -235,7 +235,7 @@ function BranchField({ value, onChange, branches }: { value: string; onChange: (
     return (
         <label className="block">
             <span className="text-sm font-medium text-slate-700">Sucursal</span>
-            <select value={value} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100">
+            <select value={value} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100">
                 <option value="">Todas</option>
                 {branches.map((branch) => (
                     <option key={branch.id} value={branch.id}>
@@ -291,10 +291,10 @@ function getSummaryCards(summary: Summary, status: string, country: string): { l
 
 function SummaryCard({ label, value, tone = 'default' }: { label: string; value: string; tone?: SummaryTone }) {
     const dotClass = {
-        default: 'bg-indigo-500 shadow-indigo-200',
+        default: 'bg-orange-500 shadow-orange-200',
         success: 'bg-emerald-500 shadow-emerald-200',
         danger: 'bg-red-500 shadow-red-200',
-    }[tone] ?? 'bg-indigo-500 shadow-indigo-200';
+    }[tone] ?? 'bg-orange-500 shadow-orange-200';
 
     return (
         <div className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">

@@ -47,7 +47,7 @@ export default function Index({
             actions={
                 <Link
                     href={route('super-admin.tenants.create')}
-                    className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                    className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700"
                 >
                     Crear negocio
                 </Link>
@@ -60,11 +60,11 @@ export default function Index({
                             value={search}
                             onChange={(event) => setSearch(event.target.value)}
                             placeholder="Buscar por nombre o email"
-                            className="min-w-72 rounded-md border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500"
+                            className="min-w-72 rounded-md border-gray-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500"
                         />
                         <button
                             type="submit"
-                            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                            className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700"
                         >
                             Buscar
                         </button>
@@ -80,7 +80,7 @@ export default function Index({
                             </p>
                             <Link
                                 href={route('super-admin.tenants.create')}
-                                className="mt-5 inline-flex rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                                className="mt-5 inline-flex rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700"
                             >
                                 Crear negocio
                             </Link>
@@ -123,7 +123,7 @@ export default function Index({
                                                 </Badge>
                                             </td>
                                             <td className="px-4 py-3">
-                                                <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                                                <span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700">
                                                     {tenant.active_users_count} / {tenant.tenant_setting?.max_users ?? 1}
                                                 </span>
                                             </td>

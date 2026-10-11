@@ -147,7 +147,7 @@ export default function Subscription({
                     <button
                         type="submit"
                         disabled={processing}
-                        className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                        className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50"
                     >
                         Guardar
                     </button>
@@ -170,7 +170,7 @@ export default function Subscription({
 }
 
 const inputClass =
-    'w-full rounded-md border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500';
+    'w-full rounded-md border-gray-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500';
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
     return (
@@ -221,7 +221,7 @@ function actionClass(status: string) {
     }
 
     if (status === 'active') {
-        return 'rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700';
+        return 'rounded-md bg-orange-600 px-3 py-2 text-sm font-semibold text-white hover:bg-orange-700';
     }
 
     return 'rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100';

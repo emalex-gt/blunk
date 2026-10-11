@@ -210,10 +210,10 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 text-right">
-                                            <Link href={route('super-admin.tenants.branches.route-settings.index', [tenant.id, branch.id])} className="mr-3 font-semibold text-indigo-600 hover:text-indigo-700">
+                                            <Link href={route('super-admin.tenants.branches.route-settings.index', [tenant.id, branch.id])} className="mr-3 font-semibold text-orange-600 hover:text-orange-700">
                                                 Configuración de rutas
                                             </Link>
-                                            <button type="button" onClick={() => editBranch(branch)} className="font-semibold text-indigo-600 hover:text-indigo-700">
+                                            <button type="button" onClick={() => editBranch(branch)} className="font-semibold text-orange-600 hover:text-orange-700">
                                                 Editar
                                             </button>
                                             <button type="button" onClick={() => deleteBranch(branch)} className="ml-3 font-semibold text-red-600 hover:text-red-700">
@@ -319,7 +319,7 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
                                     type="checkbox"
                                     checked={form.data.is_active}
                                     onChange={(event) => form.setData('is_active', event.target.checked)}
-                                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                    className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
                                 />
                                 Activa
                             </label>
@@ -344,7 +344,7 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
                                                 form.setData('remove_logo', false);
                                                 setPreview(file ? URL.createObjectURL(file) : null);
                                             }}
-                                            className="block text-xs text-gray-600 file:mr-2 file:rounded-md file:border-0 file:bg-indigo-600 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-indigo-700"
+                                            className="block text-xs text-gray-600 file:mr-2 file:rounded-md file:border-0 file:bg-orange-600 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-orange-700"
                                         />
                                         {editingPreview && (
                                             <button
@@ -367,7 +367,7 @@ export default function Branches({ tenant, branches }: { tenant: Tenant; branche
                             <button
                                 type="submit"
                                 disabled={form.processing}
-                                className="w-full rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                                className="w-full rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50"
                             >
                                 {editing ? 'Guardar cambios' : 'Crear sucursal'}
                             </button>
@@ -389,4 +389,4 @@ function Field({ label, error, children }: { label: string; error?: string; chil
     );
 }
 
-const inputClass = 'w-full rounded-md border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500';
+const inputClass = 'w-full rounded-md border-gray-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500';

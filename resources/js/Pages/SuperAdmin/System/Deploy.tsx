@@ -105,7 +105,7 @@ export default function Deploy({ status, statusError, queueConnection, queueWork
                             type="button"
                             disabled={!canDeploy}
                             onClick={() => setShowConfirmation(true)}
-                            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                            className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
                         >
                             Actualizar producción
                         </button>
@@ -176,7 +176,7 @@ export default function Deploy({ status, statusError, queueConnection, queueWork
                                         <td className="px-4 py-3 text-slate-700">{run.user?.name || '-'}</td>
                                         <td className="px-4 py-3 font-mono text-xs text-slate-600">{run.local_commit_before || '-'} / {run.remote_commit_target || '-'} / {run.local_commit_after || '-'}</td>
                                         <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-xs font-semibold ${statusClass[run.status] || statusClass.cancelled}`}>{run.status}</span></td>
-                                        <td className="px-4 py-3"><div className="flex gap-3"><Link href={run.show_url} className="font-semibold text-indigo-700">Ver</Link>{run.log_url ? <a href={run.log_url} className="font-semibold text-indigo-700" target="_blank" rel="noreferrer">Log</a> : null}</div></td>
+                                        <td className="px-4 py-3"><div className="flex gap-3"><Link href={run.show_url} className="font-semibold text-orange-700">Ver</Link>{run.log_url ? <a href={run.log_url} className="font-semibold text-orange-700" target="_blank" rel="noreferrer">Log</a> : null}</div></td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -188,7 +188,7 @@ export default function Deploy({ status, statusError, queueConnection, queueWork
                     <section className="border border-slate-200 bg-white p-5 shadow-sm">
                         <h2 className="font-bold text-slate-900">Deploy #{selectedRun.id}</h2>
                         {selectedRun.error_message ? <p className="mt-3 whitespace-pre-wrap font-mono text-sm text-rose-700">{selectedRun.error_message}</p> : <p className="mt-3 text-sm text-slate-600">Sin error registrado.</p>}
-                        {selectedRun.log_url ? <a href={selectedRun.log_url} target="_blank" rel="noreferrer" className="mt-3 inline-block font-semibold text-indigo-700">Abrir log completo</a> : null}
+                        {selectedRun.log_url ? <a href={selectedRun.log_url} target="_blank" rel="noreferrer" className="mt-3 inline-block font-semibold text-orange-700">Abrir log completo</a> : null}
                     </section>
                 ) : null}
             </div>
@@ -201,7 +201,7 @@ export default function Deploy({ status, statusError, queueConnection, queueWork
                         <label className="mt-4 block text-sm font-semibold text-slate-700">Escribe ACTUALIZAR</label>
                         <input value={form.data.confirmation} onChange={(event) => form.setData('confirmation', event.target.value)} className="mt-1 w-full border border-slate-300 px-3 py-2" autoFocus />
                         {form.errors.confirmation || deployError ? <p className="mt-2 text-sm text-rose-700">{form.errors.confirmation || deployError}</p> : null}
-                        <div className="mt-5 flex justify-end gap-3"><button type="button" onClick={() => setShowConfirmation(false)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700">Cancelar</button><button type="submit" disabled={form.processing || form.data.confirmation !== 'ACTUALIZAR'} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-300">Actualizar</button></div>
+                        <div className="mt-5 flex justify-end gap-3"><button type="button" onClick={() => setShowConfirmation(false)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700">Cancelar</button><button type="submit" disabled={form.processing || form.data.confirmation !== 'ACTUALIZAR'} className="rounded-lg bg-orange-600 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-300">Actualizar</button></div>
                     </form>
                 </div>
             ) : null}

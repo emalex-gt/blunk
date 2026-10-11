@@ -22,7 +22,7 @@ export default function Dashboard({ stats }: { stats: Stats }) {
             actions={
                 <Link
                     href={route('super-admin.tenants.create')}
-                    className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                    className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700"
                 >
                     Crear negocio
                 </Link>
@@ -61,7 +61,7 @@ export default function Dashboard({ stats }: { stats: Stats }) {
                 <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                     <Link
                         href={route('super-admin.tenants.index')}
-                        className="inline-flex rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                        className="inline-flex rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700"
                     >
                         Administrar negocios
                     </Link>

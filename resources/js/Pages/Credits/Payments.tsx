@@ -130,7 +130,7 @@ export default function Payments({
                 </div>
 
                 {permissions.includes('credits.payments.create') && (
-                    <form onSubmit={submitPayment} className="grid gap-3 rounded-xl border border-indigo-100 bg-white p-4 shadow-sm md:grid-cols-3">
+                    <form onSubmit={submitPayment} className="grid gap-3 rounded-xl border border-orange-100 bg-white p-4 shadow-sm md:grid-cols-3">
                         <h3 className="text-base font-semibold text-slate-900 md:col-span-3">Registrar abono · {branch.name}</h3>
                         <select value={form.data.customer_id} onChange={(event) => form.setData('customer_id', event.target.value)} className="rounded-lg border-slate-300 text-sm">
                             <option value="">Seleccionar cliente</option>
@@ -150,7 +150,7 @@ export default function Payments({
                         </select>
                         <input value={form.data.reference} onChange={(event) => form.setData('reference', event.target.value)} placeholder="Referencia" className="rounded-lg border-slate-300 text-sm" />
                         <input value={form.data.notes} onChange={(event) => form.setData('notes', event.target.value)} placeholder="Notas" className="rounded-lg border-slate-300 text-sm" />
-                        <button disabled={form.processing || submitLockedRef.current} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">
+                        <button disabled={form.processing || submitLockedRef.current} className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">
                             {form.processing ? 'Registrando...' : 'Registrar abono'}
                         </button>
                         {Object.values(form.errors).length > 0 && <p className="text-sm font-semibold text-red-600 md:col-span-3">{Object.values(form.errors)[0]}</p>}
@@ -199,7 +199,7 @@ export default function Payments({
                                                 <td className="px-4 py-3 text-right font-semibold">{formatCurrency(payment.amount, country)}</td>
                                                 <td className="px-4 py-3">{payment.status}</td>
                                                 <td className="space-x-3 px-4 py-3 text-right">
-                                                    <a href={route('credits.payments.print', payment.id)} target="_blank" className="font-semibold text-indigo-600">
+                                                    <a href={route('credits.payments.print', payment.id)} target="_blank" className="font-semibold text-orange-600">
                                                         Imprimir
                                                     </a>
                                                     {payment.status === 'completed' && permissions.includes('credits.payments.cancel') && (
@@ -220,7 +220,7 @@ export default function Payments({
                             </div>
                             <div className="flex flex-wrap gap-2 border-t border-slate-200 p-4">
                                 {payments.links.map((link, index) => link.url ? (
-                                    <Link key={index} href={link.url} preserveState className={`rounded-lg px-3 py-1.5 text-sm ${link.active ? 'bg-indigo-600 text-white' : 'border border-slate-200 text-slate-700'}`} dangerouslySetInnerHTML={{ __html: link.label }} />
+                                    <Link key={index} href={link.url} preserveState className={`rounded-lg px-3 py-1.5 text-sm ${link.active ? 'bg-orange-600 text-white' : 'border border-slate-200 text-slate-700'}`} dangerouslySetInnerHTML={{ __html: link.label }} />
                                 ) : null)}
                             </div>
                         </section>

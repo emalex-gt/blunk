@@ -155,8 +155,8 @@ export default function Company({
                                     onClick={() => form.setData('receipt_format', 'ticket')}
                                     className={`rounded-2xl border px-4 py-3 text-left transition ${
                                         form.data.receipt_format === 'ticket'
-                                            ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm'
-                                            : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50'
+                                            ? 'border-orange-600 bg-orange-50 text-orange-700 shadow-sm'
+                                            : 'border-slate-200 bg-white text-slate-700 hover:border-orange-200 hover:bg-orange-50'
                                     }`}
                                 >
                                     <div className="font-semibold">Ticket</div>
@@ -167,8 +167,8 @@ export default function Company({
                                     onClick={() => form.setData('receipt_format', 'document')}
                                     className={`rounded-2xl border px-4 py-3 text-left transition ${
                                         form.data.receipt_format === 'document'
-                                            ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm'
-                                            : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50'
+                                            ? 'border-orange-600 bg-orange-50 text-orange-700 shadow-sm'
+                                            : 'border-slate-200 bg-white text-slate-700 hover:border-orange-200 hover:bg-orange-50'
                                     }`}
                                 >
                                     <div className="font-semibold">Documento</div>
@@ -186,7 +186,7 @@ export default function Company({
                                         type="checkbox"
                                         checked={form.data.allow_manual_price}
                                         onChange={(event) => form.setData('allow_manual_price', event.target.checked)}
-                                        className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                        className="mt-1 rounded border-slate-300 text-orange-600 focus:ring-orange-500"
                                     />
                                     <span>
                                         <span className="block font-semibold text-slate-800">Permitir precio manual</span>
@@ -198,7 +198,7 @@ export default function Company({
                                         type="checkbox"
                                         checked={form.data.remember_last_customer_product_price}
                                         onChange={(event) => form.setData('remember_last_customer_product_price', event.target.checked)}
-                                        className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                        className="mt-1 rounded border-slate-300 text-orange-600 focus:ring-orange-500"
                                     />
                                     <span>
                                         <span className="block font-semibold text-slate-800">Recordar último precio por cliente y producto</span>
@@ -224,7 +224,7 @@ export default function Company({
                                             type="checkbox"
                                             checked={form.data.fel.enabled}
                                             onChange={(event) => setFelField('enabled', event.target.checked)}
-                                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                            className="rounded border-slate-300 text-orange-600 focus:ring-orange-500"
                                         />
                                         Habilitar FEL
                                     </label>
@@ -236,7 +236,7 @@ export default function Company({
                                         <select
                                             value={form.data.fel.provider}
                                             onChange={(event) => setFelField('provider', event.target.value)}
-                                            className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                            className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                         >
                                             <option value="digifact">Digifact</option>
                                         </select>
@@ -246,7 +246,7 @@ export default function Company({
                                         <select
                                             value={form.data.fel.environment}
                                             onChange={(event) => setFelField('environment', event.target.value as 'test' | 'production')}
-                                            className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                            className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                         >
                                             <option value="test">Test</option>
                                             <option value="production">Producción</option>
@@ -283,7 +283,7 @@ export default function Company({
                                     <button
                                         type="button"
                                         onClick={testConnection}
-                                        className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
+                                        className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 hover:bg-orange-100"
                                     >
                                         Probar conexión
                                     </button>
@@ -298,7 +298,7 @@ export default function Company({
                                     type="file"
                                     accept="image/*"
                                     onChange={(event) => selectLogo(event.target.files?.[0] ?? null)}
-                                    className="mt-2 block w-full text-sm text-slate-700 file:mr-4 file:rounded-xl file:border-0 file:bg-indigo-600 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-indigo-700"
+                                    className="mt-2 block w-full text-sm text-slate-700 file:mr-4 file:rounded-xl file:border-0 file:bg-orange-600 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-orange-700"
                                 />
                             </label>
                             {form.errors.logo && <p className="mt-2 text-sm text-red-600">{form.errors.logo}</p>}
@@ -314,7 +314,7 @@ export default function Company({
                             <button
                                 type="submit"
                                 disabled={form.processing}
-                                className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                className="rounded-xl bg-orange-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                                 Guardar
                             </button>
@@ -346,7 +346,7 @@ function TextField({
                 type={type}
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
-                className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
             />
             {error && <span className="mt-1 block text-sm text-red-600">{error}</span>}
         </label>

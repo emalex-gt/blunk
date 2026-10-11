@@ -200,7 +200,7 @@ export default function StockQuick({
         <AuthenticatedLayout>
             <Head title={t('nav.stock')} />
 
-            <div className="h-[calc(100vh-4rem)] bg-[#f4f6fb]">
+            <div className="h-[calc(100vh-4rem)] bg-[#f3f4f6]">
                 <div className="mx-auto grid h-full max-w-[1800px] gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_420px]">
                     <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
                         <div className="border-b border-gray-200 p-4">
@@ -212,7 +212,7 @@ export default function StockQuick({
                                 onChange={(event) => setSearch(event.target.value)}
                                 onKeyDown={handleSearchKeyDown}
                                 placeholder="Buscar producto por nombre, código o código de barras"
-                                className="mt-3 h-14 w-full rounded-2xl border border-slate-200 bg-white px-5 text-lg font-medium text-slate-900 shadow-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                className="mt-3 h-14 w-full rounded-2xl border border-slate-200 bg-white px-5 text-lg font-medium text-slate-900 shadow-sm outline-none transition focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                             />
                         </div>
 
@@ -243,9 +243,9 @@ export default function StockQuick({
                                             key={product.id}
                                             type="button"
                                             onClick={() => selectProduct(product)}
-                                            className={`flex items-stretch gap-3 rounded-2xl border bg-white p-3 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] ${
+                                            className={`flex items-stretch gap-3 rounded-2xl border bg-white p-3 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] ${
                                                 isSelected
-                                                    ? 'border-indigo-400 ring-4 ring-indigo-100'
+                                                    ? 'border-orange-400 ring-4 ring-orange-100'
                                                     : 'border-slate-200'
                                             }`}
                                         >
@@ -369,7 +369,7 @@ export default function StockQuick({
                                             min={mode === 'adjustment' ? 0 : 1}
                                             value={quantity}
                                             onChange={(event) => setQuantity(event.target.value)}
-                                            className="mt-1 h-16 w-full rounded-2xl border-slate-200 text-center text-3xl font-bold text-slate-950 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                            className="mt-1 h-16 w-full rounded-2xl border-slate-200 text-center text-3xl font-bold text-slate-950 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                         />
                                     </div>
 
@@ -390,7 +390,7 @@ export default function StockQuick({
                                                     ? 'Nota opcional'
                                                     : 'Nota obligatoria'
                                             }
-                                            className="mt-1 w-full rounded-2xl border-slate-200 text-sm text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                            className="mt-1 w-full rounded-2xl border-slate-200 text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                         />
                                     </div>
                                 </div>
@@ -399,7 +399,7 @@ export default function StockQuick({
                                     <button
                                         type="submit"
                                         disabled={saving}
-                                        className="h-14 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 text-base font-semibold text-white shadow-lg shadow-indigo-200 transition-all duration-200 hover:-translate-y-0.5 hover:from-indigo-700 hover:to-violet-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+                                        className="h-14 w-full rounded-xl bg-gradient-to-r from-orange-600 to-amber-500 px-4 text-base font-semibold text-white shadow-lg shadow-orange-200 transition-all duration-200 hover:-translate-y-0.5 hover:from-orange-700 hover:to-amber-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
                                     >
                                         {saving ? 'Guardando...' : 'Guardar movimiento'}
                                     </button>

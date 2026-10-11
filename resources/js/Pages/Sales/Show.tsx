@@ -269,7 +269,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                     <button
                                         type="button"
                                         onClick={printSale}
-                                        className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
+                                        className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700"
                                     >
                                         Imprimir
                                     </button>
@@ -297,19 +297,19 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                         )}
 
                         {sale.discount_amount > 0 && (
-                            <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-900">
+                            <div className="mt-5 rounded-2xl border border-orange-100 bg-orange-50 p-4 text-sm text-orange-900">
                                 <div className="font-semibold">Descuento aplicado</div>
                                 <div className="mt-2 grid gap-2 sm:grid-cols-4">
                                     <div>
-                                        <span className="block text-xs font-semibold uppercase text-indigo-500">Total antes</span>
+                                        <span className="block text-xs font-semibold uppercase text-orange-500">Total antes</span>
                                         <strong>{formatCurrency(sale.subtotal_before_discount, country)}</strong>
                                     </div>
                                     <div>
-                                        <span className="block text-xs font-semibold uppercase text-indigo-500">Tipo</span>
+                                        <span className="block text-xs font-semibold uppercase text-orange-500">Tipo</span>
                                         <strong>{sale.discount_type === 'percent' ? 'Porcentaje' : 'Monto fijo'}</strong>
                                     </div>
                                     <div>
-                                        <span className="block text-xs font-semibold uppercase text-indigo-500">Valor</span>
+                                        <span className="block text-xs font-semibold uppercase text-orange-500">Valor</span>
                                         <strong>
                                             {sale.discount_type === 'percent'
                                                 ? `${sale.discount_value}%`
@@ -317,7 +317,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                         </strong>
                                     </div>
                                     <div>
-                                        <span className="block text-xs font-semibold uppercase text-indigo-500">Descuento</span>
+                                        <span className="block text-xs font-semibold uppercase text-orange-500">Descuento</span>
                                         <strong>{formatCurrency(sale.discount_amount, country)}</strong>
                                     </div>
                                 </div>
@@ -340,7 +340,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                     type="button"
                                     disabled={retryForm.processing}
                                     onClick={retryFelCertification}
-                                    className="mt-3 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                    className="mt-3 rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                     {retryForm.processing ? 'Reintentando...' : 'Reintentar certificación'}
                                 </button>
@@ -348,7 +348,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                         )}
 
                         {canViewFelDocuments && sale.electronic_document && (
-                            <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-900">
+                            <div className="mt-5 rounded-2xl border border-orange-100 bg-orange-50 p-4 text-sm text-orange-900">
                                 <div className="flex flex-wrap items-center justify-between gap-3">
                                     <div className="font-semibold">Factura electrónica FEL</div>
                                     {sale.fel_uuid && (
@@ -356,7 +356,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                             <button
                                                 type="button"
                                                 onClick={printSale}
-                                                className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700"
+                                                className="rounded-xl bg-orange-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-orange-700"
                                             >
                                                 Ver / imprimir factura FEL
                                             </button>
@@ -364,7 +364,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                                 <button
                                                     type="button"
                                                     onClick={() => window.open(route('sales.fel-download', [sale.id, 'xml']), '_blank')}
-                                                    className="rounded-xl border border-indigo-200 bg-white px-3 py-2 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50"
+                                                    className="rounded-xl border border-orange-200 bg-white px-3 py-2 text-xs font-semibold text-orange-700 transition hover:bg-orange-50"
                                                 >
                                                     Descargar XML
                                                 </button>
@@ -372,7 +372,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                             <button
                                                 type="button"
                                                 onClick={() => window.open(route('sales.fel-download', [sale.id, 'pdf']), '_blank')}
-                                                className="rounded-xl border border-indigo-200 bg-white px-3 py-2 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50"
+                                                className="rounded-xl border border-orange-200 bg-white px-3 py-2 text-xs font-semibold text-orange-700 transition hover:bg-orange-50"
                                             >
                                                 Descargar PDF
                                             </button>
@@ -407,14 +407,14 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                     <button
                                         type="button"
                                         onClick={() => setShowTechnicalModal(true)}
-                                        className="mt-3 rounded-xl border border-indigo-200 bg-white px-3 py-2 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50"
+                                        className="mt-3 rounded-xl border border-orange-200 bg-white px-3 py-2 text-xs font-semibold text-orange-700 transition hover:bg-orange-50"
                                     >
                                         Ver respuesta técnica
                                     </button>
                                 )}
                                 {auth.user?.is_super_admin && (sale.fel_attempts.length > 0 || sale.fel_incidents.length > 0) && (
                                     <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                                        <div className="rounded-xl border border-indigo-100 bg-white p-3">
+                                        <div className="rounded-xl border border-orange-100 bg-white p-3">
                                             <div className="font-semibold">Intentos FEL</div>
                                             <div className="mt-2 space-y-2 text-xs">
                                                 {sale.fel_attempts.length === 0 ? (
@@ -429,7 +429,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                                 ))}
                                             </div>
                                         </div>
-                                        <div className="rounded-xl border border-indigo-100 bg-white p-3">
+                                        <div className="rounded-xl border border-orange-100 bg-white p-3">
                                             <div className="font-semibold">Incidencias internas</div>
                                             <div className="mt-2 space-y-2 text-xs">
                                                 {sale.fel_incidents.length === 0 ? (
@@ -470,7 +470,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {sale.items.map((item) => (
-                                        <tr key={item.id} className="transition-colors hover:bg-indigo-50/30">
+                                        <tr key={item.id} className="transition-colors hover:bg-orange-50/30">
                                             <td className="px-4 py-3 font-semibold text-slate-950">{item.product_name}</td>
                                             <td className="px-4 py-3 text-slate-600">{item.code ?? '-'}</td>
                                             <td className="px-4 py-3 text-right text-slate-700">{item.quantity}</td>
@@ -482,7 +482,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                                 <div className="mt-1 text-xs text-slate-500">{priceSourceLabel(item.price_source)}</div>
                                             </td>
                                             {sale.discount_amount > 0 && (
-                                                <td className="whitespace-nowrap px-4 py-3 text-right text-indigo-700">
+                                                <td className="whitespace-nowrap px-4 py-3 text-right text-orange-700">
                                                     {formatCurrency(item.discount_amount, country)}
                                                 </td>
                                             )}
@@ -512,7 +512,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {sale.payments.map((payment) => (
-                                        <tr key={payment.id} className="transition-colors hover:bg-indigo-50/30">
+                                        <tr key={payment.id} className="transition-colors hover:bg-orange-50/30">
                                             <td className="px-4 py-3 font-semibold text-slate-950">
                                                 {paymentLabels[payment.method] ?? payment.method}
                                             </td>
@@ -546,7 +546,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                 value={cancelForm.data.reason}
                                 onChange={(event) => cancelForm.setData('reason', event.target.value)}
                                 rows={4}
-                                className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                 placeholder="Escribe el motivo"
                             />
                         </label>

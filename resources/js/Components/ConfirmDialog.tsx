@@ -52,7 +52,7 @@ export default function ConfirmDialog({
                         type="button"
                         disabled={processing}
                         onClick={onConfirm}
-                        className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                        className="rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
                     >
                         {processing ? 'Procesando...' : confirmLabel}
                     </button>

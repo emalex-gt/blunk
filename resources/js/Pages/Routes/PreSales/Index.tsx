@@ -267,7 +267,7 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
                                                         type="button"
                                                         disabled={processingPreSaleId !== null || cancelForm.processing}
                                                         onClick={() => setProcessingTarget(preSale)}
-                                                        className="rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                        className="rounded-md bg-orange-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
                                                     >
                                                         Prep.
                                                     </button>
@@ -278,12 +278,12 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
                                                     </Link>
                                                 )}
                                                 {preSale.status === 'picked' && canInvoice && preSale.branch_id === activeBranchId && (
-                                                    <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-md bg-violet-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-violet-700">
+                                                    <Link href={route('routes.pre-sales.show', preSale.id)} className="rounded-md bg-amber-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-amber-600">
                                                         Generar comprobante
                                                     </Link>
                                                 )}
                                                 {preSale.status === 'converted' && preSale.converted_sale_id && (
-                                                    <Link href={route('sales.show', preSale.converted_sale_id)} className="rounded-md bg-violet-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-violet-700">
+                                                    <Link href={route('sales.show', preSale.converted_sale_id)} className="rounded-md bg-amber-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-amber-600">
                                                         Venta
                                                     </Link>
                                                 )}
@@ -315,7 +315,7 @@ export default function Index({ preSales, filters, branches, sellers, zones, can
                                     preserveState
                                     className={[
                                         'rounded-md px-3 py-1 text-sm',
-                                        link.active ? 'bg-indigo-600 text-white' : 'border border-slate-200 text-slate-600',
+                                        link.active ? 'bg-orange-600 text-white' : 'border border-slate-200 text-slate-600',
                                         !link.url ? 'pointer-events-none opacity-50' : 'hover:bg-slate-50',
                                     ].join(' ')}
                                     dangerouslySetInnerHTML={{ __html: link.label }}

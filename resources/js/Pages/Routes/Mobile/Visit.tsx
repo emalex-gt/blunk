@@ -418,7 +418,7 @@ export default function Visit({
                         href={route('routes.mobile.work-days.show', visit.route_work_day_id)}
                         preserveState={false}
                         preserveScroll={false}
-                        className="text-sm font-semibold text-indigo-700"
+                        className="text-sm font-semibold text-orange-700"
                     >
                         Volver
                     </Link>
@@ -431,7 +431,7 @@ export default function Visit({
                         Editar cliente
                     </button>
                     {existingDraftCanBeEdited && !editingPreSale && (
-                        <button type="button" onClick={requestEditPreSale} className="ml-2 mt-3 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm">
+                        <button type="button" onClick={requestEditPreSale} className="ml-2 mt-3 rounded-xl bg-orange-600 px-3 py-2 text-sm font-semibold text-white shadow-sm">
                             Editar orden
                         </button>
                     )}
@@ -487,7 +487,7 @@ export default function Visit({
                         </div>
                         <div className="mt-4 grid grid-cols-2 gap-2">
                             <button type="button" onClick={() => setEditingCustomer(false)} className="rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-700 ring-1 ring-slate-200">Cancelar</button>
-                            <button disabled={customerForm.processing} className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white">Guardar</button>
+                            <button disabled={customerForm.processing} className="rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white">Guardar</button>
                         </div>
                     </form>
                 )}
@@ -502,7 +502,7 @@ export default function Visit({
                         className="w-full rounded-lg border-slate-200 text-sm"
                     />
                     {searchLoading && (
-                        <p className="mt-2 text-sm font-semibold text-indigo-700">Buscando productos...</p>
+                        <p className="mt-2 text-sm font-semibold text-orange-700">Buscando productos...</p>
                     )}
                     {searchTouched && !searchLoading && productResults.length === 0 && (
                         <p className="mt-2 text-sm text-slate-500">Sin resultados</p>
@@ -526,7 +526,7 @@ export default function Visit({
                                         <p className="truncate text-xs text-slate-500" title={product.code ?? product.barcode ?? ''}>{product.code ?? product.barcode ?? '-'}</p>
                                         <p className="mt-1 text-xs text-slate-500">Existencia: {product.stock} · Reservado: {product.reserved_stock} · Disponible: {product.available_stock}</p>
                                     </div>
-                                    <span className="shrink-0 text-sm font-semibold text-indigo-700">Q {Number(product.sale_price).toFixed(2)}</span>
+                                    <span className="shrink-0 text-sm font-semibold text-orange-700">Q {Number(product.sale_price).toFixed(2)}</span>
                                 </div>
                                 {allowNegativeStock && product.available_stock <= 0 && (
                                     <p className="mt-2 text-xs font-semibold text-amber-700">Stock negativo permitido</p>
@@ -552,7 +552,7 @@ export default function Visit({
                         {form.errors.payment_method && <p className="mt-1 text-xs font-semibold text-red-600">{form.errors.payment_method}</p>}
                     </label>
                     {canCollectNow && canModifyPreSale && (
-                        <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50 p-3">
+                        <div className="mt-4 rounded-xl border border-orange-100 bg-orange-50 p-3">
                             <label className="flex items-center gap-2 text-sm font-semibold text-slate-800">
                                 <input
                                     type="checkbox"
@@ -658,7 +658,7 @@ export default function Visit({
                         <button
                             disabled={form.processing || form.data.items.length === 0 || !canModifyPreSale}
                             onClick={requestSavePreSale}
-                            className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
+                            className="w-full rounded-xl bg-orange-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
                         >
                             {form.data.collect_now ? 'Confirmar pedido y cobrar' : 'Guardar preventa'}
                         </button>

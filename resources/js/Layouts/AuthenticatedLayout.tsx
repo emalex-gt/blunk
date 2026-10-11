@@ -1,4 +1,3 @@
-import ApplicationLogo from '@/Components/ApplicationLogo';
 import Dropdown from '@/Components/Dropdown';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink';
 import { t } from '@/lib/i18n';
@@ -17,6 +16,13 @@ type BranchOption = {
     id: number;
     name: string;
     code: string | null;
+};
+
+type NavigationBrand = {
+    business_name: string | null;
+    branch_name: string | null;
+    logo_url: string | null;
+    subtitle: string;
 };
 
 type TenantFeatures = {
@@ -47,6 +53,12 @@ export default function Authenticated({
     const branchCanSwitch = Boolean(usePage().props.branch_can_switch);
     const activeBranch = usePage().props.active_branch as BranchOption | null;
     const branches = (usePage().props.branches as BranchOption[] | undefined) ?? [];
+    const navigationBrand = (usePage().props.navigation_brand as NavigationBrand | null) ?? {
+        business_name: null,
+        branch_name: activeBranch?.name ?? null,
+        logo_url: null,
+        subtitle: 'Blunk v2.0',
+    };
     const [showingNavigationDropdown, setShowingNavigationDropdown] = useState(false);
     const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
     // Disabled while session expiry recovery is handled by valid Inertia redirects.
@@ -141,25 +153,47 @@ export default function Authenticated({
     }, []);
 
     return (
-        <div className="min-h-screen bg-[#f4f6fb] text-slate-900">
-            <nav className="sticky top-0 z-50 border-b border-slate-200/70 bg-white/85 shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-xl">
-                <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="min-h-screen bg-[#f3f4f6] text-slate-900">
+            <nav className="sticky top-0 z-50 border-b border-slate-800 bg-slate-950/95 shadow-lg shadow-slate-950/10 backdrop-blur-xl">
+                <div className="w-full px-4 sm:px-6 lg:px-8">
                     <div className="flex h-16 justify-between">
                         <div className="flex min-w-0">
                             <div className="flex shrink-0 items-center">
-                                <Link href={route('dashboard')} className="flex items-center gap-3">
-                                    <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 shadow-lg shadow-indigo-200">
-                                        <ApplicationLogo className="block h-5 w-5 fill-current text-white" />
-                                    </span>
-                                    <span className="hidden text-base font-bold tracking-tight text-slate-950 sm:inline">
-                                        POS SaaS
+                                <Link href={route('dashboard')} className="flex min-w-0 items-center gap-3">
+                                    {navigationBrand.logo_url && (
+                                        <span className="flex h-10 shrink-0 items-center overflow-hidden rounded-xl bg-white/95 px-2 shadow-lg shadow-slate-950/20 ring-1 ring-white/10">
+                                            <img
+                                                src={navigationBrand.logo_url}
+                                                alt={navigationBrand.business_name ?? 'Logo'}
+                                                className="h-8 w-auto max-w-40 object-contain"
+                                            />
+                                        </span>
+                                    )}
+                                    <span className="hidden min-w-0 sm:block">
+                                        {navigationBrand.business_name && (
+                                            <span
+                                                className="block max-w-64 truncate text-sm font-bold leading-tight tracking-tight text-white xl:max-w-80"
+                                                title={[
+                                                    navigationBrand.business_name,
+                                                    navigationBrand.branch_name,
+                                                ].filter(Boolean).join(' - ')}
+                                            >
+                                                {navigationBrand.business_name}
+                                                {navigationBrand.branch_name
+                                                    ? ` - ${navigationBrand.branch_name}`
+                                                    : ''}
+                                            </span>
+                                        )}
+                                        <span className="mt-0.5 block text-[11px] font-semibold uppercase tracking-[0.12em] text-orange-400">
+                                            {navigationBrand.subtitle}
+                                        </span>
                                     </span>
                                 </Link>
                             </div>
 
                             <div
                                 ref={navRef}
-                                className="hidden min-w-0 flex-1 flex-wrap items-center gap-2 lg:-my-px lg:ms-6 lg:flex"
+                                className="hidden min-w-0 flex-1 flex-wrap items-center gap-2 lg:-my-px lg:ms-6 xl:flex"
                             >
                                 <HomeNavLink active={route().current('dashboard')} />
                                 {hasModule('pos') && (
@@ -214,9 +248,9 @@ export default function Authenticated({
                             </div>
                         </div>
 
-                        <div className="hidden min-w-0 gap-2 lg:ms-4 lg:flex lg:items-center 2xl:gap-3 2xl:ms-6">
+                        <div className="hidden min-w-0 gap-2 lg:ms-4 xl:flex lg:items-center 2xl:gap-3 2xl:ms-6">
                             {user?.id === 1 && availableBusinesses && (
-                                <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                                <label className="flex items-center gap-2 text-xs font-semibold text-slate-400">
                                     Negocio actual
                                     <select
                                         value={currentBusinessId ?? ''}
@@ -227,7 +261,7 @@ export default function Authenticated({
                                                 { preserveScroll: true },
                                             )
                                         }
-                                        className="h-10 max-w-36 rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 xl:max-w-44 2xl:max-w-56"
+                                        className="h-10 max-w-36 rounded-xl border-slate-700 bg-slate-900 text-sm font-semibold text-slate-100 shadow-sm focus:border-orange-500 focus:ring-4 focus:ring-orange-500/20 xl:max-w-44 2xl:max-w-56"
                                     >
                                         <option value="" disabled>
                                             Cambiar negocio
@@ -241,7 +275,7 @@ export default function Authenticated({
                                 </label>
                             )}
                             {branchesEnabled && branches.length > 0 && (
-                                <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                                <label className="flex items-center gap-2 text-xs font-semibold text-slate-400">
                                     Sucursal activa
                                     <select
                                         value={activeBranch?.id ?? ''}
@@ -253,7 +287,7 @@ export default function Authenticated({
                                                 { preserveScroll: true },
                                             )
                                         }
-                                        className="h-10 max-w-36 rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 xl:max-w-40 2xl:max-w-48"
+                                        className="h-10 max-w-36 rounded-xl border-slate-700 bg-slate-900 text-sm font-semibold text-slate-100 shadow-sm focus:border-orange-500 focus:ring-4 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-500 xl:max-w-40 2xl:max-w-48"
                                     >
                                         {branches.map((branch) => (
                                             <option key={branch.id} value={branch.id}>
@@ -267,9 +301,9 @@ export default function Authenticated({
                                 <Dropdown.Trigger>
                                     <button
                                         type="button"
-                                        className="inline-flex items-center gap-2 rounded-2xl bg-slate-50 px-3 py-2 text-sm font-medium leading-4 text-slate-700 transition-all duration-200 hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                                        className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-3 py-2 text-sm font-medium leading-4 text-slate-200 transition-all duration-200 hover:bg-slate-800 hover:text-white focus:outline-none focus:ring-4 focus:ring-orange-500/20"
                                     >
-                                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-xs font-bold text-white">
+                                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-amber-500 text-xs font-bold text-white">
                                             {user?.name?.slice(0, 1).toUpperCase()}
                                         </span>
                                         {user?.name}
@@ -290,10 +324,10 @@ export default function Authenticated({
                             </Dropdown>
                         </div>
 
-                        <div className="-me-2 flex items-center lg:hidden">
+                        <div className="-me-2 flex items-center xl:hidden">
                             <button
                                 onClick={() => setShowingNavigationDropdown((current) => !current)}
-                                className="inline-flex items-center justify-center rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 focus:bg-slate-100 focus:text-slate-700 focus:outline-none"
+                                className="inline-flex items-center justify-center rounded-lg p-2 text-slate-300 transition hover:bg-slate-800 hover:text-white focus:bg-slate-800 focus:text-white focus:outline-none"
                             >
                                 <svg className="h-6 w-6" stroke="currentColor" fill="none" viewBox="0 0 24 24">
                                     <path
@@ -316,7 +350,7 @@ export default function Authenticated({
                     </div>
                 </div>
 
-                <div className={(showingNavigationDropdown ? 'block' : 'hidden') + ' border-t border-slate-200 bg-white lg:hidden'}>
+                <div className={(showingNavigationDropdown ? 'block' : 'hidden') + ' border-t border-slate-800 bg-slate-950 xl:hidden'}>
                     <div className="space-y-1 pb-3 pt-2">
                         <ResponsiveNavLink href={route('dashboard')} active={route().current('dashboard')}>
                             Inicio
@@ -372,10 +406,10 @@ export default function Authenticated({
                         ))}
                     </div>
 
-                    <div className="border-t border-slate-200 pb-1 pt-4">
+                    <div className="border-t border-slate-800 pb-1 pt-4">
                         <div className="px-4">
-                            <div className="text-base font-medium text-slate-900">{user?.name}</div>
-                            <div className="text-sm font-medium text-slate-500">{user?.email}</div>
+                            <div className="text-base font-medium text-white">{user?.name}</div>
+                            <div className="text-sm font-medium text-slate-400">{user?.email}</div>
                         </div>
 
                         {user?.id === 1 && availableBusinesses && (
@@ -392,7 +426,7 @@ export default function Authenticated({
                                             { preserveScroll: true },
                                         )
                                     }
-                                    className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                                    className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                 >
                                     <option value="" disabled>
                                         Cambiar negocio
@@ -421,7 +455,7 @@ export default function Authenticated({
                                             { preserveScroll: true },
                                         )
                                     }
-                                    className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
+                                    className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
                                 >
                                     {branches.map((branch) => (
                                         <option key={branch.id} value={branch.id}>
@@ -452,7 +486,7 @@ export default function Authenticated({
                 </header>
             )}
 
-            <main className="min-h-[calc(100vh-4rem)] bg-[#f4f6fb]">{children}</main>
+            <main className="min-h-[calc(100vh-4rem)] bg-[#f3f4f6]">{children}</main>
 
             {sessionExpired && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 px-4">
@@ -462,7 +496,7 @@ export default function Authenticated({
                             Por seguridad, tu sesión expiró. Inicia sesión nuevamente para continuar.
                         </p>
                         {sessionExpiredInPos && (
-                            <p className="mt-3 rounded-xl bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700">
+                            <p className="mt-3 rounded-xl bg-orange-50 px-3 py-2 text-sm font-medium text-orange-700">
                                 Tu venta quedó guardada como borrador.
                             </p>
                         )}
@@ -472,7 +506,7 @@ export default function Authenticated({
                                 onClick={() => {
                                     window.location.href = route('login');
                                 }}
-                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700"
                             >
                                 Iniciar sesión
                             </button>
@@ -492,8 +526,8 @@ function TopNavLink({ item }: { item: NavItem }) {
                 'inline-flex items-center rounded-xl px-4 py-2 text-sm leading-5 transition-all duration-200 focus:outline-none',
                 'shrink-0',
                 item.active
-                    ? 'bg-indigo-50 font-semibold text-indigo-700 shadow-sm'
-                    : 'font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950',
+                    ? 'bg-orange-500/15 font-semibold text-orange-300 shadow-sm ring-1 ring-orange-500/20'
+                    : 'font-medium text-slate-300 hover:bg-slate-800 hover:text-white',
             ].join(' ')}
         >
             {item.label}
@@ -510,8 +544,8 @@ function HomeNavLink({ active }: { active: boolean }) {
             className={[
                 'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-all duration-200 focus:outline-none',
                 active
-                    ? 'bg-indigo-50 text-indigo-700 shadow-sm'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950',
+                    ? 'bg-orange-500/15 text-orange-300 shadow-sm ring-1 ring-orange-500/20'
+                    : 'text-slate-300 hover:bg-slate-800 hover:text-white',
             ].join(' ')}
         >
             <svg
@@ -557,8 +591,8 @@ function TopNavDropdown({
                 className={[
                     'inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm leading-5 transition-all duration-200 focus:outline-none',
                     active || isOpen
-                        ? 'bg-indigo-50 font-semibold text-indigo-700 shadow-sm'
-                        : 'font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950',
+                        ? 'bg-orange-500/15 font-semibold text-orange-300 shadow-sm ring-1 ring-orange-500/20'
+                        : 'font-medium text-slate-300 hover:bg-slate-800 hover:text-white',
                 ].join(' ')}
                 aria-expanded={isOpen}
             >
@@ -589,8 +623,8 @@ function TopNavDropdown({
                             href={item.href}
                             onClick={() => setOpenDropdown(null)}
                             className={[
-                                'block px-4 py-2 text-sm transition-colors duration-150 hover:bg-indigo-50 hover:text-indigo-700',
-                                item.active ? 'font-semibold text-indigo-700' : 'text-slate-700',
+                                'block px-4 py-2 text-sm transition-colors duration-150 hover:bg-orange-50 hover:text-orange-700',
+                                item.active ? 'font-semibold text-orange-700' : 'text-slate-700',
                             ].join(' ')}
                         >
                             {item.label}

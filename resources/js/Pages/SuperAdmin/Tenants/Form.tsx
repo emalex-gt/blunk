@@ -323,7 +323,7 @@ export default function Form({
                                         setData('remove_logo', false);
                                         setLogoPreview(file ? URL.createObjectURL(file) : tenant?.logo_url ?? null);
                                     }}
-                                    className="block text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-indigo-700"
+                                    className="block text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-orange-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-orange-700"
                                 />
                                 {logoPreview && (
                                     <button
@@ -386,11 +386,11 @@ export default function Form({
                                     type="checkbox"
                                     checked={data.modules.includes(module.key)}
                                     onChange={(event) => toggleModule(module.key, event.target.checked)}
-                                    className="mt-1 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                    className="mt-1 rounded border-gray-300 text-orange-600 focus:ring-orange-500"
                                 />
                                 <span>
                                     <span className="block font-semibold text-gray-900">{module.name}</span>
-                                    <span className="mt-0.5 block text-xs font-semibold uppercase tracking-wide text-indigo-600">{module.group}</span>
+                                    <span className="mt-0.5 block text-xs font-semibold uppercase tracking-wide text-orange-600">{module.group}</span>
                                     <span className="mt-1 block text-gray-500">{module.description}</span>
                                 </span>
                             </label>
@@ -399,7 +399,7 @@ export default function Form({
                     <InputError message={formErrors.modules} className="mt-2" />
 
                     {data.modules.includes('credits') && (
-                        <div className="mt-6 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+                        <div className="mt-6 rounded-xl border border-orange-100 bg-orange-50/60 p-4">
                             <div className="mb-4">
                                 <h3 className="text-base font-semibold text-gray-900">Créditos</h3>
                                 <p className="mt-1 text-sm text-gray-500">
@@ -434,7 +434,7 @@ export default function Form({
                     )}
 
                     {data.modules.includes('routes') && (
-                        <div className="mt-6 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+                        <div className="mt-6 rounded-xl border border-orange-100 bg-orange-50/60 p-4">
                             <div className="mb-4">
                                 <h3 className="text-base font-semibold text-gray-900">Rutas</h3>
                                 <p className="mt-1 text-sm text-gray-500">
@@ -499,7 +499,7 @@ export default function Form({
                     )}
 
                     {data.modules.includes('branches') && (
-                        <div className="mt-6 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+                        <div className="mt-6 rounded-xl border border-orange-100 bg-orange-50/60 p-4">
                             <div className="mb-4">
                                 <h3 className="text-base font-semibold text-gray-900">Configuración de sucursales</h3>
                                 <p className="mt-1 text-sm text-gray-500">
@@ -798,14 +798,14 @@ export default function Form({
                                 <button
                                     type="submit"
                                     disabled={processing}
-                                    className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                                    className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50"
                                 >
                                     Guardar configuración FEL
                                 </button>
                                 <button
                                     type="button"
                                     onClick={testFelConnection}
-                                    className="rounded-md border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
+                                    className="rounded-md border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 hover:bg-orange-100"
                                 >
                                     Probar conexión
                                 </button>
@@ -854,7 +854,7 @@ export default function Form({
                     <button
                         type="submit"
                         disabled={processing}
-                        className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                        className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50"
                     >
                         Guardar
                     </button>
@@ -867,7 +867,7 @@ export default function Form({
                     {tenant && (
                         <Link
                             href={route('super-admin.tenants.branches', tenant.id)}
-                            className="rounded-md border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
+                            className="rounded-md border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 hover:bg-orange-100"
                         >
                             Gestionar sucursales
                         </Link>
@@ -879,7 +879,7 @@ export default function Form({
 }
 
 const inputClass =
-    'w-full rounded-md border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500';
+    'w-full rounded-md border-gray-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500';
 
 function defaultPhrase(): FelPhrase {
     return {
@@ -921,7 +921,7 @@ function Toggle({
                 checked={checked}
                 disabled={disabled}
                 onChange={(e) => onChange(e.target.checked)}
-                className="mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                className="mt-0.5 rounded border-gray-300 text-orange-600 focus:ring-orange-500"
             />
             <span>
                 <span className="block">{label}</span>
@@ -939,7 +939,7 @@ function FelEnabledSwitch({
     onChange: (checked: boolean) => void;
 }) {
     return (
-        <div className="flex min-w-56 items-center justify-between gap-4 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+        <div className="flex min-w-56 items-center justify-between gap-4 rounded-xl border border-orange-100 bg-orange-50/60 px-4 py-3">
             <span>
                 <span className="block text-sm font-semibold text-gray-900">Habilitar FEL</span>
                 <span className="block text-xs text-gray-500">
@@ -953,8 +953,8 @@ function FelEnabledSwitch({
                 aria-label="Habilitar FEL"
                 onClick={() => onChange(!checked)}
                 className={[
-                    'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2',
-                    checked ? 'bg-indigo-600' : 'bg-gray-300',
+                    'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2',
+                    checked ? 'bg-orange-600' : 'bg-gray-300',
                 ].join(' ')}
             >
                 <span

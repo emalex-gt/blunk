@@ -52,7 +52,7 @@ export default function TopProducts({
                             {branches_enabled && (
                                 <label className="block">
                                     <span className="text-sm font-medium text-slate-700">Sucursal</span>
-                                    <select value={branchId} onChange={(e) => setBranchId(e.target.value)} className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100">
+                                    <select value={branchId} onChange={(e) => setBranchId(e.target.value)} className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100">
                                         <option value="">Todas</option>
                                         {branches.map((branch) => (
                                             <option key={branch.id} value={branch.id}>{branch.name}</option>
@@ -61,7 +61,7 @@ export default function TopProducts({
                                 </label>
                             )}
                             <div className="flex items-end gap-2">
-                                <button type="submit" className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                                <button type="submit" className="rounded-md bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700">
                                     Filtrar
                                 </button>
                                 <button type="button" onClick={clear} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
@@ -98,7 +98,7 @@ export default function TopProducts({
                                         </tr>
                                     ) : (
                                         products.map((product) => (
-                                            <tr key={`${product.product_id}-${product.product_name}`} className="transition-colors hover:bg-indigo-50/30">
+                                            <tr key={`${product.product_id}-${product.product_name}`} className="transition-colors hover:bg-orange-50/30">
                                                 <td className="px-4 py-3 font-semibold text-slate-950">{product.product_name}</td>
                                                 <td className="px-4 py-3 text-right text-slate-700">{Number(product.quantity_sold)}</td>
                                                 <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-950">
@@ -127,7 +127,7 @@ function DateField({ label, value, onChange }: { label: string; value: string; o
     return (
         <label className="block">
             <span className="text-sm font-medium text-slate-700">{label}</span>
-            <input type="date" value={value} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+            <input type="date" value={value} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100" />
         </label>
     );
 }

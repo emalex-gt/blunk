@@ -89,7 +89,7 @@ export default function BranchRouteSettings({ tenant, branch, policy, payment_me
                     {form.errors.primary_payment_method && <p className="mt-2 text-sm text-red-600">{form.errors.primary_payment_method}</p>}
                 </fieldset>
 
-                <button type="submit" disabled={!canSave || form.processing} className="rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300">{form.processing ? 'Guardando...' : 'Guardar configuración'}</button>
+                <button type="submit" disabled={!canSave || form.processing} className="rounded-lg bg-orange-600 px-4 py-2 font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-slate-300">{form.processing ? 'Guardando...' : 'Guardar configuración'}</button>
             </form>
         </div>
     </SuperAdminLayout>;

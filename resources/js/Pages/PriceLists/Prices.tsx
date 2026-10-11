@@ -88,7 +88,7 @@ export default function Prices({
                         <h1 className="text-2xl font-bold text-slate-950">Asignar precios</h1>
                         <p className="mt-1 text-sm text-slate-500">Lista: {priceType.name}</p>
                         {pricingScope === 'branch' && activeBranch && (
-                            <p className="mt-1 text-sm font-semibold text-indigo-700">
+                            <p className="mt-1 text-sm font-semibold text-orange-700">
                                 Precios de sucursal: {activeBranch.name}
                             </p>
                         )}
@@ -118,7 +118,7 @@ export default function Prices({
                                 const row = form.data.prices.find((price) => price.product_id === product.id);
 
                                 return (
-                                    <tr key={product.id} className="hover:bg-indigo-50/30">
+                                    <tr key={product.id} className="hover:bg-orange-50/30">
                                         <td className="px-4 py-3 font-semibold text-slate-950">{product.name}</td>
                                         <td className="px-4 py-3 text-slate-600">{product.code ?? product.barcode ?? '-'}</td>
                                         <td className="px-4 py-3 text-right text-slate-700">{formatCurrency(product.prices?.[0]?.price ?? product.sale_price, country)}</td>
@@ -152,7 +152,7 @@ export default function Prices({
                                 type="button"
                                 disabled={!link.url}
                                 onClick={() => link.url && router.get(link.url, {}, { preserveState: true })}
-                                className={['rounded-lg border px-3 py-1 text-sm', link.active ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-700 disabled:opacity-40'].join(' ')}
+                                className={['rounded-lg border px-3 py-1 text-sm', link.active ? 'border-orange-600 bg-orange-600 text-white' : 'border-slate-200 bg-white text-slate-700 disabled:opacity-40'].join(' ')}
                                 dangerouslySetInnerHTML={{ __html: link.label }}
                             />
                         ))}

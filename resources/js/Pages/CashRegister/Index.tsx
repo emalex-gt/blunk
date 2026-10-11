@@ -158,7 +158,7 @@ export default function Index({
                                     <button
                                         type="button"
                                         onClick={() => setOpeningModalOpen(true)}
-                                        className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                                        className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
                                     >
                                         Abrir caja
                                     </button>
@@ -174,7 +174,7 @@ export default function Index({
                             <button
                                 type="button"
                                 onClick={() => setOpeningModalOpen(true)}
-                                className="mt-5 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                                className="mt-5 rounded-xl bg-orange-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
                             >
                                 Abrir caja
                             </button>
@@ -184,7 +184,7 @@ export default function Index({
                             <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                                 <Metric label="Estado" value="Abierta" tone="text-emerald-700" />
                                 <Metric label="Monto inicial" value={formatCurrency(openSession.opening_amount, country)} />
-                                <Metric label="Efectivo esperado" value={formatCurrency(openSession.expected_cash, country)} tone="text-indigo-700" />
+                                <Metric label="Efectivo esperado" value={formatCurrency(openSession.expected_cash, country)} tone="text-orange-700" />
                                 <Metric label="Abierta por" value={openSession.opened_by ?? '-'} />
                             </section>
 
@@ -202,7 +202,7 @@ export default function Index({
                                         type="button"
                                         onClick={() => setExpenseModalOpen(true)}
                                         disabled={!openSession}
-                                        className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                                        className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
                                     >
                                         Registrar gasto
                                     </button>
@@ -338,7 +338,7 @@ function MovementsTable({ movements, country }: { movements: Movement[]; country
                                 <td colSpan={5} className="px-4 py-10 text-center text-slate-500">Sin movimientos</td>
                             </tr>
                         ) : movements.map((movement) => (
-                            <tr key={movement.id} className="hover:bg-indigo-50/30">
+                            <tr key={movement.id} className="hover:bg-orange-50/30">
                                 <td className="px-4 py-3 text-slate-600">{movement.created_at ?? '-'}</td>
                                 <td className="px-4 py-3 font-semibold text-slate-800">{movement.type_label}</td>
                                 <td className="px-4 py-3 text-slate-600">{movement.description ?? '-'}</td>
@@ -378,7 +378,7 @@ function Field({ label, value, onChange, error, type = 'text', step }: { label: 
                 step={step}
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
-                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
             />
             {error && <span className="mt-1 block text-xs font-medium text-red-600">{error}</span>}
         </label>
@@ -393,7 +393,7 @@ function TextArea({ label, value, onChange, error }: { label: string; value: str
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
                 rows={3}
-                className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
             />
             {error && <span className="mt-1 block text-xs font-medium text-red-600">{error}</span>}
         </label>
@@ -428,7 +428,7 @@ function CategoryAutocomplete({
                     autoCorrect="off"
                     spellCheck={false}
                     placeholder="Escribe o selecciona una categoría"
-                    className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                    className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                 />
             </label>
             <p className="mt-1 text-xs text-slate-500">
@@ -442,7 +442,7 @@ function CategoryAutocomplete({
                             key={category.id}
                             type="button"
                             onClick={() => onSelect(category)}
-                            className="block w-full px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700"
+                            className="block w-full px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-orange-50 hover:text-orange-700"
                         >
                             {category.name}
                         </button>
@@ -462,7 +462,7 @@ function ModalActions({ processing, submitLabel, danger = false, onCancel }: { p
             <button
                 type="submit"
                 disabled={processing}
-                className={`rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 ${danger ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+                className={`rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 ${danger ? 'bg-red-600 hover:bg-red-700' : 'bg-orange-600 hover:bg-orange-700'}`}
             >
                 {submitLabel}
             </button>

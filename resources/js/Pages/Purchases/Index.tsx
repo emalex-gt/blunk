@@ -60,7 +60,7 @@ export default function Index({ purchases, filters = {} }: { purchases: Paginate
                             </div>
                             <Link
                                 href={route('purchases.create')}
-                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
                             >
                                 Registrar compra
                             </Link>
@@ -103,7 +103,7 @@ export default function Index({ purchases, filters = {} }: { purchases: Paginate
                                 <option value="cancelled">Anulado</option>
                             </Select>
                             <div className="flex items-end gap-2">
-                                <button type="submit" className="h-10 rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700">Aplicar</button>
+                                <button type="submit" className="h-10 rounded-lg bg-orange-600 px-4 text-sm font-semibold text-white hover:bg-orange-700">Aplicar</button>
                                 <Link href={route('purchases.index')} className="flex h-10 items-center rounded-lg border border-slate-200 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">Limpiar</Link>
                             </div>
                         </form>
@@ -134,7 +134,7 @@ export default function Index({ purchases, filters = {} }: { purchases: Paginate
                                         </tr>
                                     ) : (
                                         purchases.data.map((purchase) => (
-                                            <tr key={purchase.id} className="transition-colors hover:bg-indigo-50/30">
+                                            <tr key={purchase.id} className="transition-colors hover:bg-orange-50/30">
                                                 <td className="px-4 py-3 text-slate-600">
                                                     {formatDate(purchase.created_at)}
                                                 </td>
@@ -155,7 +155,7 @@ export default function Index({ purchases, filters = {} }: { purchases: Paginate
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     {purchase.paid_from_cash ? (
-                                                        <span className="rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                                                        <span className="rounded-full border border-orange-100 bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700">
                                                             Desde caja
                                                         </span>
                                                     ) : (
@@ -168,7 +168,7 @@ export default function Index({ purchases, filters = {} }: { purchases: Paginate
                                                 <td className="px-4 py-3 text-right">
                                                     <Link
                                                         href={route('purchases.show', purchase.id)}
-                                                        className="rounded-lg px-3 py-1.5 text-sm font-semibold text-indigo-600 hover:bg-indigo-50"
+                                                        className="rounded-lg px-3 py-1.5 text-sm font-semibold text-orange-600 hover:bg-orange-50"
                                                     >
                                                         Ver
                                                     </Link>
@@ -188,7 +188,7 @@ export default function Index({ purchases, filters = {} }: { purchases: Paginate
                                     preserveState
                                     className={[
                                         'rounded-md px-3 py-1 text-sm',
-                                        link.active ? 'bg-indigo-600 text-white' : 'border border-slate-200 text-slate-600',
+                                        link.active ? 'bg-orange-600 text-white' : 'border border-slate-200 text-slate-600',
                                         !link.url ? 'pointer-events-none opacity-50' : 'hover:bg-slate-50',
                                     ].join(' ')}
                                     dangerouslySetInnerHTML={{ __html: link.label }}
@@ -221,7 +221,7 @@ function Field({ label, value, onChange, type = 'text' }: { label: string; value
     return (
         <label className="text-xs font-semibold text-slate-600">
             {label}
-            <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+            <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-orange-500 focus:ring-orange-500" />
         </label>
     );
 }
@@ -230,7 +230,7 @@ function Select({ label, value, onChange, children }: { label: string; value: st
     return (
         <label className="text-xs font-semibold text-slate-600">
             {label}
-            <select value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+            <select value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-orange-500 focus:ring-orange-500">
                 {children}
             </select>
         </label>

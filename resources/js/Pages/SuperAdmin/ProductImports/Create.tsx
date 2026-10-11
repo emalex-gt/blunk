@@ -104,7 +104,7 @@ export default function Create({
                                 Carga inicial o incremental para {business.name}. Esta herramienta es solo para Super Admin.
                             </p>
                         </div>
-                        <a href={route('super-admin.product-imports.template')} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                        <a href={route('super-admin.product-imports.template')} className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700">
                             Descargar plantilla
                         </a>
                     </div>
@@ -126,7 +126,7 @@ export default function Create({
                             <select
                                 value={form.data.branch_id}
                                 onChange={(event) => form.setData('branch_id', event.target.value)}
-                                className="mt-1 h-11 w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                className="mt-1 h-11 w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-500 focus:ring-orange-500"
                             >
                                 {branches.map((branch) => (
                                     <option key={branch.id} value={branch.id}>
@@ -190,7 +190,7 @@ export default function Create({
                                     type="button"
                                     disabled={!preview.can_confirm}
                                     onClick={confirmImport}
-                                    className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                    className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                                 >
                                     Confirmar importación
                                 </button>

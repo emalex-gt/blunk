@@ -51,13 +51,13 @@ export default function Form({ priceType }: { priceType: PriceType | null }) {
                     </div>
 
                     <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                        <input type="checkbox" checked={form.data.is_active} onChange={(event) => form.setData('is_active', event.target.checked)} className="rounded border-slate-300 text-indigo-600 shadow-sm focus:ring-indigo-500" />
+                        <input type="checkbox" checked={form.data.is_active} onChange={(event) => form.setData('is_active', event.target.checked)} className="rounded border-slate-300 text-orange-600 shadow-sm focus:ring-orange-500" />
                         Activa
                     </label>
                     <InputError message={form.errors.is_active} />
 
                     <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                        <input type="checkbox" checked={form.data.is_default} onChange={(event) => form.setData('is_default', event.target.checked)} className="rounded border-slate-300 text-indigo-600 shadow-sm focus:ring-indigo-500" />
+                        <input type="checkbox" checked={form.data.is_default} onChange={(event) => form.setData('is_default', event.target.checked)} className="rounded border-slate-300 text-orange-600 shadow-sm focus:ring-orange-500" />
                         Predeterminada
                     </label>
                     <InputError message={form.errors.is_default} />

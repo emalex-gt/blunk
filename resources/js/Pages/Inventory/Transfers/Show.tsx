@@ -34,7 +34,7 @@ export default function Show({ transfer }: { transfer: Transfer }) {
                                 href={route('inventory.transfers.pdf', transfer.id)}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
                             >
                                 Imprimir
                             </a>

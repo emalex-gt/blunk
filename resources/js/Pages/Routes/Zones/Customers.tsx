@@ -144,7 +144,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                     });
                                 }
                             }}
-                            className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm"
+                            className="rounded-lg bg-orange-600 px-3 py-2 text-sm font-semibold text-white shadow-sm"
                         >
                             Nuevo cliente
                         </button>
@@ -170,12 +170,12 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                         ))}
                     </select>
                     <input value={form.data.visit_order} onChange={(event) => form.setData('visit_order', event.target.value)} placeholder="Orden" className="rounded-lg border-slate-200 text-sm" />
-                    <button disabled={form.processing} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Asignar</button>
+                    <button disabled={form.processing} className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">Asignar</button>
                     {form.errors.customer_id && <div className="text-sm text-red-600 md:col-span-4">{form.errors.customer_id}</div>}
                 </form>
 
                 {creatingCustomer && (
-                    <form onSubmit={createCustomer} className="rounded-lg border border-indigo-100 bg-white p-4 shadow-sm">
+                    <form onSubmit={createCustomer} className="rounded-lg border border-orange-100 bg-white p-4 shadow-sm">
                         <div className="mb-4">
                             <h2 className="text-lg font-semibold text-slate-950">Nuevo cliente</h2>
                             <p className="text-sm text-slate-500">Se creará el cliente y quedará asignado al final de la zona.</p>
@@ -215,7 +215,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                     placeholder="CF si queda vacío"
                                     className="mt-1 w-full rounded-lg border-slate-200 text-sm"
                                 />
-                                {nitLookupLoading && <span className="mt-1 block text-xs font-semibold text-indigo-600">Consultando NIT...</span>}
+                                {nitLookupLoading && <span className="mt-1 block text-xs font-semibold text-orange-600">Consultando NIT...</span>}
                                 {nitLookupError && <span className="mt-1 block text-xs font-semibold text-red-600">{nitLookupError}</span>}
                                 {customerForm.errors.doc_number && <span className="mt-1 block text-xs text-red-600">{customerForm.errors.doc_number}</span>}
                             </label>
@@ -262,7 +262,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                             >
                                 Cancelar
                             </button>
-                            <button disabled={customerForm.processing || nitLookupLoading} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                            <button disabled={customerForm.processing || nitLookupLoading} className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
                                 Crear y asignar
                             </button>
                         </div>
@@ -307,7 +307,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                     <td className="px-4 py-3">{assignment.customer.phone ?? '-'}</td>
                                     <td className="px-4 py-3">{assignment.is_active ? 'Activo' : 'Inactivo'}</td>
                                     <td className="space-x-2 px-4 py-3">
-                                        <button type="button" onClick={() => startEditCustomer(assignment)} className="rounded-lg bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700">
+                                        <button type="button" onClick={() => startEditCustomer(assignment)} className="rounded-lg bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-700">
                                             Editar
                                         </button>
                                         <button onClick={() => router.delete(route('routes.zones.customers.destroy', [zone.id, assignment.id]), { preserveScroll: true })} className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
@@ -364,7 +364,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                                     <button type="button" onClick={() => setEditingAssignmentId(null)} className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-200">
                                                         Cancelar
                                                     </button>
-                                                    <button disabled={editCustomerForm.processing} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">
+                                                    <button disabled={editCustomerForm.processing} className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">
                                                         Guardar cliente
                                                     </button>
                                                 </div>

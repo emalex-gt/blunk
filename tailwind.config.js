@@ -15,6 +15,22 @@ export default {
             fontFamily: {
                 sans: ['Figtree', ...defaultTheme.fontFamily.sans],
             },
+            colors: {
+                blunk: {
+                    primary: '#F97316',
+                    hover: '#EA580C',
+                    soft: '#FFF7ED',
+                    accent: '#F59E0B',
+                    graphite: '#0F172A',
+                    canvas: '#F3F4F6',
+                    surface: '#FFFFFF',
+                    muted: '#64748B',
+                    info: '#0284C7',
+                    success: '#16A34A',
+                    warning: '#D97706',
+                    danger: '#DC2626',
+                },
+            },
         },
     },
 

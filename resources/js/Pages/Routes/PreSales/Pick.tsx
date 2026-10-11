@@ -81,7 +81,7 @@ export default function Pick({ preSale }: Props) {
             <form onSubmit={submit} className="mx-auto max-w-[1800px] space-y-5 px-4 py-6 sm:px-6">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                        <Link href={route('routes.pre-sales.show', preSale.id)} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800">
+                        <Link href={route('routes.pre-sales.show', preSale.id)} className="text-sm font-semibold text-orange-600 hover:text-orange-800">
                             Volver al detalle
                         </Link>
                         <h1 className="mt-2 text-2xl font-semibold text-slate-950">Preparar pedido #{preSale.id}</h1>

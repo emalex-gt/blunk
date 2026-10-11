@@ -69,7 +69,7 @@ export default function Index({ sessions }: { sessions: Paginated<Session> }) {
                                             <td colSpan={9} className="px-4 py-12 text-center text-slate-500">Sin cierres de caja</td>
                                         </tr>
                                     ) : sessions.data.map((session) => (
-                                        <tr key={session.id} className="hover:bg-indigo-50/30">
+                                        <tr key={session.id} className="hover:bg-orange-50/30">
                                             <td className="px-4 py-3 text-slate-600">{session.opened_at ?? '-'}</td>
                                             <td className="px-4 py-3 text-slate-600">{session.closed_at ?? '-'}</td>
                                             <td className="px-4 py-3 text-slate-600">{session.opened_by ?? '-'}</td>
@@ -82,7 +82,7 @@ export default function Index({ sessions }: { sessions: Paginated<Session> }) {
                                             </td>
                                             <td className="px-4 py-3 text-right">
                                                 <div className="flex justify-end gap-2">
-                                                    <Link href={route('cash-register.closings.show', session.id)} className="rounded-lg px-3 py-1.5 text-sm font-semibold text-indigo-600 hover:bg-indigo-50">Ver</Link>
+                                                    <Link href={route('cash-register.closings.show', session.id)} className="rounded-lg px-3 py-1.5 text-sm font-semibold text-orange-600 hover:bg-orange-50">Ver</Link>
                                                     <a href={route('cash-register.closings.print', session.id)} target="_blank" className="rounded-lg px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100">Imprimir</a>
                                                 </div>
                                             </td>

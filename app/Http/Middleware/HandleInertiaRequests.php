@@ -58,6 +58,11 @@ class HandleInertiaRequests extends Middleware
                 'branch_can_switch' => false,
                 'active_branch' => null,
                 'branches' => [],
+                'navigation_brand' => [
+                    'name' => null,
+                    'logo_url' => null,
+                    'subtitle' => 'Blunk v2.0',
+                ],
                 'use_product_images' => true,
                 'flash' => [
                     'success' => fn () => $request->session()->get('success'),
@@ -93,7 +98,7 @@ class HandleInertiaRequests extends Middleware
                 }
 
                 return Business::query()
-                    ->select('id', 'name', 'country', 'is_active')
+                    ->select('id', 'name', 'country', 'is_active', 'logo_url')
                     ->find($businessId);
             },
 
@@ -114,7 +119,7 @@ class HandleInertiaRequests extends Middleware
                 }
 
                 return Business::query()
-                    ->select('id', 'name', 'country', 'is_active')
+                    ->select('id', 'name', 'country', 'is_active', 'logo_url')
                     ->find($businessId);
             },
 
@@ -187,6 +192,7 @@ class HandleInertiaRequests extends Middleware
                     'id' => $branch->id,
                     'name' => $branch->name,
                     'code' => $branch->code,
+                    'logo_url' => $branch->logo_url,
                 ];
             },
             'branches' => function () use ($businessId, $user) {
@@ -202,6 +208,47 @@ class HandleInertiaRequests extends Middleware
                         'code' => $branch->code,
                     ])
                     ->values();
+            },
+            'navigation_brand' => function () use ($businessId, $user) {
+                if (! $user || ! $businessId) {
+                    return [
+                        'business_name' => null,
+                        'branch_name' => null,
+                        'logo_url' => null,
+                        'subtitle' => 'Blunk v2.0',
+                    ];
+                }
+
+                $business = Business::query()
+                    ->select('id', 'name', 'logo_url')
+                    ->find($businessId);
+
+                if (! $business) {
+                    return [
+                        'business_name' => null,
+                        'branch_name' => null,
+                        'logo_url' => null,
+                        'subtitle' => 'Blunk v2.0',
+                    ];
+                }
+
+                $tenantLogo = $business->logo_url
+                    ?: TenantSetting::query()
+                        ->where('business_id', $businessId)
+                        ->value('company_logo_url');
+
+                $branch = BranchInventory::branchesEnabled($businessId)
+                    ? BranchInventory::activeBranch($businessId)
+                    : null;
+
+                return [
+                    'business_name' => $business->name,
+                    'branch_name' => $branch?->name,
+                    'logo_url' => $branch?->logo_url
+                                    ?: $tenantLogo
+                                    ?: asset('images/blunk-logo.png'),
+                    'subtitle' => 'Blunk v2.0',
+                ];
             },
             'use_product_images' => fn () => $user && $businessId ? tenantSetting('use_product_images', true) : true,
             'flash' => [

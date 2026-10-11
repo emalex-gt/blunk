@@ -24,7 +24,7 @@ export default function Index({ batches }: { batches: Page<Batch> }) {
             <Head title="Preparaciones" />
             <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6 lg:px-8">
                 <div>
-                    <Link href={route('routes.pre-sales.index')} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800">Volver a preventas</Link>
+                    <Link href={route('routes.pre-sales.index')} className="text-sm font-semibold text-orange-600 hover:text-orange-800">Volver a preventas</Link>
                     <h1 className="mt-2 text-2xl font-semibold text-slate-950">Preparaciones</h1>
                     <p className="mt-1 text-sm text-slate-500">Historial de lotes preparados por jornada.</p>
                 </div>
@@ -52,7 +52,7 @@ export default function Index({ batches }: { batches: Page<Batch> }) {
                     </div>
                     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-sm text-slate-500">
                         <span>{batches.from && batches.to ? `${batches.from}-${batches.to} de ${batches.total}` : `${batches.total} resultados`}</span>
-                        <div className="flex gap-1">{batches.links.map((link, index) => <Link key={`${link.label}-${index}`} href={link.url ?? '#'} preserveScroll className={`rounded-md px-3 py-1 ${link.active ? 'bg-indigo-600 text-white' : 'border border-slate-200 text-slate-600'} ${!link.url ? 'pointer-events-none opacity-50' : 'hover:bg-slate-50'}`} dangerouslySetInnerHTML={{ __html: link.label }} />)}</div>
+                        <div className="flex gap-1">{batches.links.map((link, index) => <Link key={`${link.label}-${index}`} href={link.url ?? '#'} preserveScroll className={`rounded-md px-3 py-1 ${link.active ? 'bg-orange-600 text-white' : 'border border-slate-200 text-slate-600'} ${!link.url ? 'pointer-events-none opacity-50' : 'hover:bg-slate-50'}`} dangerouslySetInnerHTML={{ __html: link.label }} />)}</div>
                     </div>
                 </section>
             </div>

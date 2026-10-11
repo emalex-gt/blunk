@@ -39,7 +39,7 @@ export default function Dashboard({ dashboard }: { dashboard: DashboardData }) {
             <div className="py-5">
                 <div className="mx-auto max-w-[1800px] space-y-5 px-5 sm:px-6">
                     <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
-                        <p className="text-sm font-semibold text-indigo-700">Dashboard</p>
+                        <p className="text-sm font-semibold text-orange-700">Dashboard</p>
                         <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
                             <div>
                                 <h1 className="text-2xl font-bold tracking-tight text-slate-950">{dashboard.profile_meta.title}</h1>

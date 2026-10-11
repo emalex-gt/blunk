@@ -25,7 +25,7 @@ export default function GuatemalaLocationSelects({
 }: Props) {
     const municipalities = municipalitiesByDepartment[department] ?? [];
     const inputClass = [
-        'w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:bg-slate-100',
+        'w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100 disabled:bg-slate-100',
         compact ? 'h-10 text-sm' : 'text-base',
     ].join(' ');
 

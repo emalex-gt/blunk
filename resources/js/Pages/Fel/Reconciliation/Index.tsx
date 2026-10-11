@@ -83,7 +83,7 @@ export default function Index({ requests }: { requests: PageData }) {
                                                 <button
                                                     type="button"
                                                     onClick={() => router.post(route('fel.reconciliation.check', item.id), {}, { preserveScroll: true })}
-                                                    className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
+                                                    className="rounded-lg bg-orange-600 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-700"
                                                 >
                                                     Consultar Digifact
                                                 </button>
@@ -108,7 +108,7 @@ export default function Index({ requests }: { requests: PageData }) {
                                     key={index}
                                     href={link.url}
                                     preserveState
-                                    className={`rounded-lg px-3 py-1.5 text-sm ${link.active ? 'bg-indigo-600 text-white' : 'border border-slate-200 text-slate-700'}`}
+                                    className={`rounded-lg px-3 py-1.5 text-sm ${link.active ? 'bg-orange-600 text-white' : 'border border-slate-200 text-slate-700'}`}
                                     dangerouslySetInnerHTML={{ __html: link.label }}
                                 />
                             ) : null,

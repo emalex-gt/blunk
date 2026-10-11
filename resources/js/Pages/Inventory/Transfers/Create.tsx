@@ -420,7 +420,7 @@ export default function Create({
                                         key={product.id}
                                         type="button"
                                         onClick={() => addProduct(product)}
-                                        className="block w-full px-3 py-2 text-left text-sm hover:bg-indigo-50"
+                                        className="block w-full px-3 py-2 text-left text-sm hover:bg-orange-50"
                                     >
                                         <span className="block font-semibold text-slate-900">{product.name}</span>
                                         <span className="block text-xs text-slate-500">
@@ -472,13 +472,13 @@ export default function Create({
                     <button type="button" onClick={openTransferDrafts} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                         Recuperar borrador
                     </button>
-                    <button type="button" disabled={draftSaving} onClick={saveTransferDraft} className="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-50">
+                    <button type="button" disabled={draftSaving} onClick={saveTransferDraft} className="rounded-xl border border-orange-200 px-4 py-2 text-sm font-semibold text-orange-700 hover:bg-orange-50 disabled:opacity-50">
                         Guardar borrador
                     </button>
                     <Link href={route('inventory.transfers.index')} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                         Cancelar
                     </Link>
-                    <button type="button" onClick={requestTransferConfirmation} disabled={processing} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+                    <button type="button" onClick={requestTransferConfirmation} disabled={processing} className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50">
                         Registrar traslado
                     </button>
                 </div>
@@ -506,7 +506,7 @@ export default function Create({
                                 type="button"
                                 disabled={processing}
                                 onClick={submit}
-                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50"
                             >
                                 Sí, guardar traslado
                             </button>
@@ -534,7 +534,7 @@ export default function Create({
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <button type="button" onClick={() => void restoreTransferDraft(draft)} className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Continuar borrador</button>
+                                        <button type="button" onClick={() => void restoreTransferDraft(draft)} className="rounded-xl bg-orange-600 px-3 py-2 text-sm font-semibold text-white hover:bg-orange-700">Continuar borrador</button>
                                         <button type="button" onClick={() => discardTransferDraft(draft)} className="rounded-xl px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">Descartar</button>
                                     </div>
                                 </div>
@@ -556,4 +556,4 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     );
 }
 
-const inputClass = 'h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100';
+const inputClass = 'h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100';

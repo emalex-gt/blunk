@@ -71,7 +71,7 @@ export default function Edit({ customer }: { customer: Customer }) {
             <div className="mx-auto max-w-5xl space-y-5 px-4 py-5 sm:px-6">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                        <Link href={route('customers.index')} className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">
+                        <Link href={route('customers.index')} className="text-sm font-semibold text-orange-600 hover:text-orange-700">
                             Volver a clientes
                         </Link>
                         <h1 className="mt-2 text-2xl font-semibold text-slate-950">{customer.commercial_name || customer.name}</h1>
@@ -97,7 +97,7 @@ export default function Edit({ customer }: { customer: Customer }) {
                                 type="button"
                                 onClick={refreshTaxData}
                                 disabled={refreshForm.processing}
-                                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                             >
                                 {refreshForm.processing ? 'Actualizando...' : 'Actualizar datos fiscales'}
                             </button>
@@ -129,7 +129,7 @@ export default function Edit({ customer }: { customer: Customer }) {
                                 value={form.data.name}
                                 readOnly={!canEditFiscalName}
                                 onChange={(event) => form.setData('name', event.target.value)}
-                                className={`mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100 ${canEditFiscalName ? 'bg-white' : 'bg-slate-100 text-slate-700'}`}
+                                className={`mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100 ${canEditFiscalName ? 'bg-white' : 'bg-slate-100 text-slate-700'}`}
                             />
                             <span className="mt-1 block text-xs font-medium text-slate-500">
                                 {canEditFiscalName ? 'Cliente CF: el nombre fiscal puede editarse.' : 'Nombre fiscal bloqueado'}
@@ -158,7 +158,7 @@ export default function Edit({ customer }: { customer: Customer }) {
                                     value={assignForm.data.nit}
                                     onChange={(event) => assignForm.setData('nit', event.target.value)}
                                     placeholder="Ingresar NIT"
-                                    className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                                    className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
                                 />
                                 {assignForm.errors.nit && <span className="mt-1 block text-xs text-red-600">{assignForm.errors.nit}</span>}
                             </label>
@@ -186,7 +186,7 @@ export default function Edit({ customer }: { customer: Customer }) {
                             <input
                                 value={form.data.commercial_name}
                                 onChange={(event) => form.setData('commercial_name', event.target.value)}
-                                className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                                className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
                             />
                             {form.errors.commercial_name && <span className="mt-1 block text-xs text-red-600">{form.errors.commercial_name}</span>}
                         </label>
@@ -195,7 +195,7 @@ export default function Edit({ customer }: { customer: Customer }) {
                             <input
                                 value={form.data.contact_name}
                                 onChange={(event) => form.setData('contact_name', event.target.value)}
-                                className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                                className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
                             />
                             {form.errors.contact_name && <span className="mt-1 block text-xs text-red-600">{form.errors.contact_name}</span>}
                         </label>
@@ -204,7 +204,7 @@ export default function Edit({ customer }: { customer: Customer }) {
                             <input
                                 value={form.data.phone}
                                 onChange={(event) => form.setData('phone', event.target.value)}
-                                className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                                className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
                             />
                             {form.errors.phone && <span className="mt-1 block text-xs text-red-600">{form.errors.phone}</span>}
                         </label>
@@ -220,7 +220,7 @@ export default function Edit({ customer }: { customer: Customer }) {
                             <input
                                 value={form.data.address}
                                 onChange={(event) => form.setData('address', event.target.value)}
-                                className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                                className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
                             />
                             {form.errors.address && <span className="mt-1 block text-xs text-red-600">{form.errors.address}</span>}
                         </label>
@@ -229,7 +229,7 @@ export default function Edit({ customer }: { customer: Customer }) {
                             <input
                                 value={form.data.postal_code}
                                 onChange={(event) => form.setData('postal_code', event.target.value)}
-                                className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-indigo-400 focus:ring-indigo-100"
+                                className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
                             />
                             {form.errors.postal_code && <span className="mt-1 block text-xs text-red-600">{form.errors.postal_code}</span>}
                         </label>
@@ -248,7 +248,7 @@ export default function Edit({ customer }: { customer: Customer }) {
                         <Link href={route('customers.index')} className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700">
                             Cancelar
                         </Link>
-                        <button disabled={form.processing} className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">
+                        <button disabled={form.processing} className="rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">
                             Guardar cambios
                         </button>
                     </div>

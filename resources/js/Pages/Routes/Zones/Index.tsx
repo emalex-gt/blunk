@@ -90,7 +90,7 @@ export default function Index({ zones, branches, sellers }: { zones: Zone[]; bra
                         placeholder="Descripción"
                         className="rounded-lg border-slate-200 text-sm"
                     />
-                    <button className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={form.processing}>
+                    <button className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={form.processing}>
                         Crear zona
                     </button>
                     {(form.errors.name || form.errors.branch_id) && (
@@ -159,7 +159,7 @@ export default function Index({ zones, branches, sellers }: { zones: Zone[]; bra
                                             </td>
                                             <td className="space-x-2 px-4 py-3">
                                                 <button onClick={() => updateZone(zone)} className="rounded-lg bg-slate-900 px-3 py-2 font-semibold text-white">Guardar</button>
-                                                <Link href={route('routes.zones.customers', zone.id)} className="rounded-lg bg-indigo-50 px-3 py-2 font-semibold text-indigo-700">
+                                                <Link href={route('routes.zones.customers', zone.id)} className="rounded-lg bg-orange-50 px-3 py-2 font-semibold text-orange-700">
                                                     Clientes
                                                 </Link>
                                             </td>

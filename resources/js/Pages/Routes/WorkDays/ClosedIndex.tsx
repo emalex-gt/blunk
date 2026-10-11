@@ -186,7 +186,7 @@ function Pagination<T>({ page }: { page: Page<T> }) {
                         preserveState
                         className={[
                             'rounded-md px-3 py-1 text-sm',
-                            link.active ? 'bg-indigo-600 text-white' : 'border border-slate-200 text-slate-600',
+                            link.active ? 'bg-orange-600 text-white' : 'border border-slate-200 text-slate-600',
                             !link.url ? 'pointer-events-none opacity-50' : 'hover:bg-slate-50',
                         ].join(' ')}
                         dangerouslySetInnerHTML={{ __html: link.label }}

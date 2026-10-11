@@ -39,7 +39,7 @@ export default function SupplierInfoPopover({ supplier }: { supplier: SupplierIn
             <button
                 type="button"
                 onClick={() => setOpen((current) => !current)}
-                className="font-semibold text-indigo-600 underline decoration-dotted underline-offset-4 transition hover:text-indigo-700"
+                className="font-semibold text-orange-600 underline decoration-dotted underline-offset-4 transition hover:text-orange-700"
             >
                 {supplier.supplier_name}
             </button>
