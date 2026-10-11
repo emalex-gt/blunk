@@ -527,6 +527,7 @@ class ListFilterExportsTest extends TestCase
             'role' => $role,
             'is_active' => true,
             'current_branch_id' => $branch->id,
+            'all_branches_access' => true,
         ]);
         Permissions::assignRole($user, $role);
 

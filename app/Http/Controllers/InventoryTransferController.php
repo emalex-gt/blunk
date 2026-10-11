@@ -7,6 +7,7 @@ use App\Models\Business;
 use App\Models\InventoryTransfer;
 use App\Models\Product;
 use App\Models\StockMovement;
+use App\Services\BranchAccessService;
 use App\Support\BranchInventory;
 use App\Support\DocumentCompanyHeader;
 use App\Support\Exports\TableExporter;
@@ -44,7 +45,7 @@ class InventoryTransferController extends Controller
                 ->paginate(25)
                 ->withQueryString(),
             'filters' => $this->transferFilters($request, $range),
-            'branches' => BranchInventory::canSwitchBranches($request->user()) ? BranchInventory::branchOptions($businessId) : [],
+            'branches' => app(BranchAccessService::class)->authorizedBranches($request->user(), $businessId),
         ]);
     }
 
@@ -102,7 +103,7 @@ class InventoryTransferController extends Controller
         $activeBranch = BranchInventory::activeBranch($businessId);
 
         return Inertia::render('Inventory/Transfers/Create', [
-            'branches' => BranchInventory::branchOptions($businessId),
+            'branches' => app(BranchAccessService::class)->authorizedBranches($request->user(), $businessId),
             'activeBranch' => $activeBranch,
             'products' => [],
             'allow_negative_stock' => StockPolicy::allowsNegativeStockForBusinessId($businessId),
@@ -118,9 +119,7 @@ class InventoryTransferController extends Controller
         $sourceBranchId = $request->integer('source_branch_id') ?: $activeBranch->id;
         $sourceBranch = $this->branchForBusiness($sourceBranchId, $businessId);
 
-        if (! BranchInventory::canSwitchBranches($request->user()) && (int) $sourceBranch->id !== (int) $activeBranch->id) {
-            abort(403);
-        }
+        app(BranchAccessService::class)->assertCanAccessBranch($request->user(), $sourceBranch, $businessId);
 
         $search = trim((string) $request->query('q', ''));
         $ids = $this->productIdsFromRequest($request);
@@ -156,6 +155,8 @@ class InventoryTransferController extends Controller
         $businessId = currentBusinessId();
         $from = $this->branchForBusiness((int) $data['from_branch_id'], $businessId);
         $to = $this->branchForBusiness((int) $data['to_branch_id'], $businessId);
+        app(BranchAccessService::class)->assertCanAccessBranch($request->user(), $from, $businessId);
+        app(BranchAccessService::class)->assertCanAccessBranch($request->user(), $to, $businessId);
 
         $idempotencyResult = app(IdempotencyService::class)->run(
             $businessId,
@@ -167,12 +168,6 @@ class InventoryTransferController extends Controller
             function () use ($request, $data, $businessId, $from, $to) {
                 $transfer = DB::transaction(function () use ($request, $data, $businessId, $from, $to) {
                     $activeBranch = BranchInventory::activeBranch($businessId);
-
-            if (! BranchInventory::canSwitchBranches($request->user()) && (int) $from->id !== (int) $activeBranch->id) {
-                throw ValidationException::withMessages([
-                    'from_branch_id' => 'No tienes permiso para trasladar desde otra sucursal.',
-                ]);
-            }
 
             if ($from->id === $to->id) {
                 throw ValidationException::withMessages([
@@ -263,11 +258,7 @@ class InventoryTransferController extends Controller
     {
         $this->authorizePermission($request, Permissions::INVENTORY_TRANSFERS_VIEW);
         abort_unless((int) $transfer->business_id === (int) currentBusinessId(), 403);
-        abort_unless(
-            BranchInventory::canSwitchBranches($request->user())
-            || in_array(BranchInventory::activeBranch(currentBusinessId())->id, [(int) $transfer->from_branch_id, (int) $transfer->to_branch_id], true),
-            403,
-        );
+        $this->authorizeTransferBranches($request, $transfer);
 
         return Inertia::render('Inventory/Transfers/Show', [
             'transfer' => $transfer->load(['fromBranch:id,name', 'toBranch:id,name', 'createdBy:id,name', 'lines.product:id,name,code,barcode']),
@@ -278,11 +269,7 @@ class InventoryTransferController extends Controller
     {
         $this->authorizePermission($request, Permissions::INVENTORY_TRANSFERS_VIEW);
         abort_unless((int) $transfer->business_id === (int) currentBusinessId(), 403);
-        abort_unless(
-            BranchInventory::canSwitchBranches($request->user())
-            || in_array(BranchInventory::activeBranch(currentBusinessId())->id, [(int) $transfer->from_branch_id, (int) $transfer->to_branch_id], true),
-            403,
-        );
+        $this->authorizeTransferBranches($request, $transfer);
 
         $transfer->load([
             'business.tenantSetting',
@@ -306,8 +293,10 @@ class InventoryTransferController extends Controller
     private function transferListQuery(Request $request, ReportDateRange $range)
     {
         $businessId = currentBusinessId();
-        $activeBranchId = BranchInventory::activeBranch($businessId)->id;
-        $canSwitch = BranchInventory::canSwitchBranches($request->user());
+        $authorizedBranchIds = app(BranchAccessService::class)
+            ->authorizedBranches($request->user(), $businessId)
+            ->pluck('id')
+            ->all();
         $originBranchId = $request->integer('origin_branch_id') ?: null;
         $destinationBranchId = $request->integer('destination_branch_id') ?: null;
         $transferNumber = trim((string) $request->query('transfer_number', ''));
@@ -317,28 +306,10 @@ class InventoryTransferController extends Controller
         return InventoryTransfer::query()
             ->where('business_id', $businessId)
             ->whereBetween('created_at', [$range->start, $range->end])
-            ->when($canSwitch, function ($query) use ($activeBranchId, $originBranchId, $destinationBranchId) {
-                if ($originBranchId) {
-                    $query->where('from_branch_id', $originBranchId);
-                }
-
-                if ($destinationBranchId) {
-                    $query->where('to_branch_id', $destinationBranchId);
-                }
-
-                if (! $originBranchId && ! $destinationBranchId) {
-                    $query->where(function ($query) use ($activeBranchId) {
-                        $query->where('from_branch_id', $activeBranchId)
-                            ->orWhere('to_branch_id', $activeBranchId);
-                    });
-                }
-            })
-            ->when(! $canSwitch, function ($query) use ($activeBranchId) {
-                $query->where(function ($query) use ($activeBranchId) {
-                    $query->where('from_branch_id', $activeBranchId)
-                        ->orWhere('to_branch_id', $activeBranchId);
-                });
-            })
+            ->whereIn('from_branch_id', $authorizedBranchIds)
+            ->whereIn('to_branch_id', $authorizedBranchIds)
+            ->when($originBranchId, fn ($query) => $query->where('from_branch_id', $originBranchId))
+            ->when($destinationBranchId, fn ($query) => $query->where('to_branch_id', $destinationBranchId))
             ->when($transferNumber !== '', function ($query) use ($transferNumber) {
                 $number = preg_replace('/\D+/', '', $transferNumber);
                 $query->when($number !== '', fn ($query) => $query->where('id', (int) $number));
@@ -478,6 +449,15 @@ class InventoryTransferController extends Controller
             ->where('business_id', $businessId)
             ->where('is_active', true)
             ->findOrFail($branchId);
+    }
+
+    private function authorizeTransferBranches(Request $request, InventoryTransfer $transfer): void
+    {
+        $access = app(BranchAccessService::class);
+        $businessId = currentBusinessId();
+
+        $access->assertCanAccessBranch($request->user(), (int) $transfer->from_branch_id, $businessId);
+        $access->assertCanAccessBranch($request->user(), (int) $transfer->to_branch_id, $businessId);
     }
 
     private function authorizePermission(Request $request, string $permission): void

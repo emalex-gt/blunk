@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\RouteWorkDay;
 use App\Models\RouteDeliveryBatch;
 use App\Models\User;
+use App\Services\BranchAccessService;
 use App\Services\Routes\RouteDeliveryBatchService;
 use App\Services\Routes\ExternalDeliveryEligibility;
 use App\Services\Routes\RouteOperationReturnService;
@@ -107,6 +108,7 @@ class RouteDeliveryBatchController extends Controller
     {
         abort_unless((int) $workDay->business_id === currentBusinessId(), 403);
         abort_unless(Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_PICK), 403);
+        $this->assertAuthorizedBranch($request, (int) $workDay->branch_id);
         abort_unless((int) BranchInventory::activeBranch((int) $workDay->business_id)->id === (int) $workDay->branch_id, 403);
         $data = $request->validate(['idempotency_key' => ['required', 'string', 'min:8', 'max:120']]);
         $result = $deliveries->deliverAll($workDay, $request->user(), $data['idempotency_key']);
@@ -119,7 +121,16 @@ class RouteDeliveryBatchController extends Controller
     {
         abort_unless((int) $batch->business_id === currentBusinessId(), 403);
         abort_unless(Permissions::userHas(request()->user(), Permissions::ROUTES_PRE_SALES_ADMIN_VIEW), 403);
+        $this->assertAuthorizedBranch(request(), (int) $batch->branch_id);
         abort_unless((int) BranchInventory::activeBranch((int) $batch->business_id)->id === (int) $batch->branch_id, 403);
+    }
+
+    private function assertAuthorizedBranch(Request $request, int $branchId): void
+    {
+        $businessId = currentBusinessId();
+        if (BranchInventory::branchesEnabled($businessId)) {
+            app(BranchAccessService::class)->assertCanAccessBranch($request->user(), $branchId, $businessId);
+        }
     }
 
     private function payload(RouteDeliveryBatch $batch): array

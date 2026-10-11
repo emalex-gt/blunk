@@ -431,6 +431,7 @@ class CriticalOperationIdempotencyTest extends TestCase
             'role' => $role,
             'is_active' => true,
             'current_branch_id' => $branch->id,
+            'all_branches_access' => $useBranches,
         ]);
         Permissions::assignRole($user, $role);
 

@@ -5,11 +5,13 @@ namespace App\Http\Controllers;
 use App\Models\RouteDeliveryBatchPreSale;
 use App\Models\RoutePostConversionCollection;
 use App\Models\User;
+use App\Services\BranchAccessService;
 use App\Services\Routes\RoutePostConversionCollectionReader;
 use App\Services\Routes\RoutePostConversionCollectionReversalService;
 use App\Services\Routes\RoutePostConversionCollectionService;
 use App\Services\Routes\RouteBranchCollectionSettingsService;
 use App\Support\Permissions;
+use App\Support\BranchInventory;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -21,9 +23,10 @@ class RoutePostConversionCollectionController extends Controller
     public function index(Request $request, RoutePostConversionCollectionReader $reader): Response
     {
         $actor = $this->actor($request, Permissions::ROUTES_POST_CONVERSION_COLLECTIONS_COLLECT);
+        $branchId = $this->activeBranchId();
         return Inertia::render('Routes/Mobile/PostConversionCollections/Index', [
             'collections' => $reader->pendingForSeller($actor),
-            'payment_policy' => $reader->displayPolicy((int) $actor->business_id, (int) $actor->current_branch_id),
+            'payment_policy' => $reader->displayPolicy((int) $actor->business_id, $branchId),
         ]);
     }
 
@@ -62,7 +65,8 @@ class RoutePostConversionCollectionController extends Controller
     public function reverse(Request $request, RoutePostConversionCollection $collection, RoutePostConversionCollectionReversalService $reversals): RedirectResponse
     {
         $actor = $this->actor($request, Permissions::ROUTES_POST_CONVERSION_COLLECTIONS_REVERSE);
-        abort_unless((int) $collection->business_id === (int) $actor->business_id && (int) $collection->branch_id === (int) $actor->current_branch_id, 403);
+        abort_unless((int) $collection->business_id === (int) $actor->business_id, 403);
+        $this->assertAuthorizedBranch($actor, (int) $collection->branch_id);
         $data = $request->validate([
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'reason_code' => ['required', Rule::in(['payment_recorded_by_mistake', 'wrong_customer', 'duplicate_collection', 'wrong_amount', 'other'])],
@@ -78,15 +82,32 @@ class RoutePostConversionCollectionController extends Controller
     {
         $actor = $request->user();
         abort_unless($actor && $actor->is_active && (int) $actor->business_id === currentBusinessId() && $actor->current_branch_id && Permissions::userHas($actor, $permission), 403);
-        return $actor;
+        if (BranchInventory::branchesEnabled(currentBusinessId())) {
+            $this->activeBranchId();
+        }
+
+        return $actor->refresh();
     }
 
     private function authorizeEntry(RouteDeliveryBatchPreSale $entry, User $actor, bool $isAdmin): void
     {
         $batch = $entry->batch;
-        abort_unless($batch && (int) $batch->business_id === (int) $actor->business_id && (int) $batch->branch_id === (int) $actor->current_branch_id, 403);
+        abort_unless($batch && (int) $batch->business_id === (int) $actor->business_id, 403);
+        $this->assertAuthorizedBranch($actor, (int) $batch->branch_id);
         if (! $isAdmin) {
             abort_unless((int) $entry->preSale?->seller_id === (int) $actor->id && (int) $batch->workDay?->seller_id === (int) $actor->id, 403);
+        }
+    }
+
+    private function activeBranchId(): int
+    {
+        return (int) BranchInventory::activeBranch(currentBusinessId())->id;
+    }
+
+    private function assertAuthorizedBranch(User $actor, int $branchId): void
+    {
+        if (BranchInventory::branchesEnabled(currentBusinessId())) {
+            app(BranchAccessService::class)->assertCanAccessBranch($actor, $branchId, currentBusinessId());
         }
     }
 }

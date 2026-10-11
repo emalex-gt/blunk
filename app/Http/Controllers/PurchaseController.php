@@ -7,6 +7,7 @@ use App\Models\Product;
 use App\Models\Purchase;
 use App\Models\StockMovement;
 use App\Models\Supplier;
+use App\Services\BranchAccessService;
 use App\Support\CashRegister;
 use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
@@ -108,7 +109,9 @@ class PurchaseController extends Controller
                 ->get(['id', 'name', 'phone', 'email', 'address', 'contact_person']),
             'hasOpenCashRegister' => CashRegister::currentOpenSession($businessId) !== null,
             'branches_enabled' => $branchesEnabled,
-            'branches' => $branchesEnabled ? BranchInventory::branchOptions($businessId) : [],
+            'branches' => $branchesEnabled
+                ? app(BranchAccessService::class)->authorizedBranches($request->user(), $businessId)
+                : [],
             'active_branch' => $branchesEnabled ? $activeBranch : null,
         ]);
     }
@@ -218,10 +221,8 @@ class PurchaseController extends Controller
             function () use ($request, $data, $businessId, $branch) {
                 $purchase = DB::transaction(function () use ($request, $data, $businessId, $branch) {
 
-            if (! BranchInventory::canSwitchBranches($request->user()) && (int) $branch->id !== (int) BranchInventory::activeBranch($businessId)->id) {
-                throw ValidationException::withMessages([
-                    'branch_id' => 'No tienes permiso para comprar en otra sucursal.',
-                ]);
+            if (BranchInventory::branchesEnabled($businessId)) {
+                app(BranchAccessService::class)->assertCanAccessBranch($request->user(), $branch, $businessId);
             }
             $paymentMethod = $data['payment_method'];
             $paidFromCash = $paymentMethod === 'cash' && (bool) ($data['paid_from_cash'] ?? false);
@@ -349,12 +350,7 @@ class PurchaseController extends Controller
     public function show(Request $request, Purchase $purchase): Response
     {
         abort_unless($purchase->business_id === currentBusinessId(), 403);
-        abort_unless(
-            ! BranchInventory::branchesEnabled(currentBusinessId())
-            || BranchInventory::canSwitchBranches($request->user())
-            || (int) $purchase->branch_id === (int) BranchInventory::activeBranch(currentBusinessId())->id,
-            403,
-        );
+        $this->authorizePurchaseBranch($request, $purchase);
 
         return Inertia::render('Purchases/Show', [
             'purchase' => $purchase->load([
@@ -370,12 +366,7 @@ class PurchaseController extends Controller
     public function pdf(Request $request, Purchase $purchase): SymfonyResponse
     {
         abort_unless($purchase->business_id === currentBusinessId(), 403);
-        abort_unless(
-            ! BranchInventory::branchesEnabled(currentBusinessId())
-            || BranchInventory::canSwitchBranches($request->user())
-            || (int) $purchase->branch_id === (int) BranchInventory::activeBranch(currentBusinessId())->id,
-            403,
-        );
+        $this->authorizePurchaseBranch($request, $purchase);
 
         $purchase->load([
             'business.tenantSetting',
@@ -577,6 +568,15 @@ class PurchaseController extends Controller
     private function normalizedSql(string $column): string
     {
         return "UPPER(regexp_replace(TRIM(COALESCE({$column}, '')), '\\s+', ' ', 'g'))";
+    }
+
+    private function authorizePurchaseBranch(Request $request, Purchase $purchase): void
+    {
+        $businessId = currentBusinessId();
+
+        if (BranchInventory::branchesEnabled($businessId) && $purchase->branch_id) {
+            app(BranchAccessService::class)->assertCanAccessBranch($request->user(), (int) $purchase->branch_id, $businessId);
+        }
     }
 
     private function resolveSupplier(int $businessId, mixed $supplierId, ?string $supplierName, ?array $supplierData): ?Supplier

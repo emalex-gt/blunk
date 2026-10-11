@@ -14,6 +14,7 @@ use App\Models\Sale;
 use App\Models\User;
 use App\Support\CashRegister;
 use App\Support\BranchInventory;
+use App\Services\BranchAccessService;
 use App\Support\Credits;
 use App\Support\Exports\TableExporter;
 use App\Support\Permissions;
@@ -1051,19 +1052,13 @@ class ReportController extends Controller
 
         $branchId = $request->integer('branch_id');
 
-        if (! BranchInventory::canSwitchBranches($request->user())) {
-            return BranchInventory::activeBranch($businessId)->id;
-        }
-
         if (! $branchId) {
             return BranchInventory::activeBranch($businessId)->id;
         }
 
-        return \App\Models\Branch::query()
-            ->where('business_id', $businessId)
-            ->where('is_active', true)
-            ->whereKey($branchId)
-            ->value('id');
+        return app(BranchAccessService::class)
+            ->assertCanAccessBranch($request->user(), $branchId, $businessId)
+            ->id;
     }
 
     public function export(Request $request, string $report, string $format): SymfonyResponse

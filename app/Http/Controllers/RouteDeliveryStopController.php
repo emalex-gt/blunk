@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\RouteDeliveryStop;
+use App\Services\BranchAccessService;
 use App\Services\Routes\RouteDeliveryStopCorrectionService;
 use App\Services\Routes\RouteDeliveryStopService;
 use App\Services\Routes\RouteOperationReturnService;
@@ -57,7 +58,10 @@ class RouteDeliveryStopController extends Controller
     {
         $actor = $request->user();
         abort_unless($actor->is_active && (int) $actor->business_id === currentBusinessId() && Permissions::userHas($actor, $permission), 403);
-        abort_unless((int) $stop->business_id === currentBusinessId() && (int) $stop->branch_id === (int) $actor->current_branch_id, 403);
+        abort_unless((int) $stop->business_id === currentBusinessId(), 403);
+        if (BranchInventory::branchesEnabled(currentBusinessId())) {
+            app(BranchAccessService::class)->assertCanAccessBranch($actor, (int) $stop->branch_id, currentBusinessId());
+        }
         abort_unless((int) BranchInventory::activeBranch(currentBusinessId())->id === (int) $stop->branch_id, 403);
         $stop->loadMissing('run');
         // Execution is always restricted to the assigned deliverer. A user with

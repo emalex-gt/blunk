@@ -19,6 +19,7 @@ use App\Models\TenantSetting;
 use App\Models\TenantFelSetting;
 use App\Services\Fel\FelException;
 use App\Services\SaleStockCancellationService;
+use App\Services\BranchAccessService;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Fel\Providers\Digifact\DigifactNit;
@@ -967,14 +968,9 @@ class SaleController extends Controller
     public function show(Request $request, Sale $sale): Response
     {
         $this->ensureSaleBelongsToCurrentBusiness($sale);
+        $this->authorizeSaleBranch($request, $sale);
 
         $businessId = currentBusinessId();
-        abort_unless(
-            ! BranchInventory::branchesEnabled($businessId)
-            || BranchInventory::canSwitchBranches($request->user())
-            || (int) $sale->branch_id === (int) BranchInventory::activeBranch($businessId)->id,
-            403,
-        );
         $timezone = tenantTimezone($businessId);
 
         $sale->load([
@@ -1117,6 +1113,7 @@ class SaleController extends Controller
     public function retryFelCertification(Request $request, Sale $sale): RedirectResponse
     {
         $this->ensureSaleBelongsToCurrentBusiness($sale);
+        $this->authorizeSaleBranch($request, $sale);
         abort_unless($sale->document_type === 'invoice', 404);
 
         $sale->load('electronicDocument');
@@ -1151,6 +1148,8 @@ class SaleController extends Controller
 
     public function cancel(Request $request, Sale $sale): RedirectResponse
     {
+        $this->ensureSaleBelongsToCurrentBusiness($sale);
+        $this->authorizeSaleBranch($request, $sale);
         abort_unless($this->userCanCancelSale($request, $sale), 403);
 
         $data = $request->validate([
@@ -1269,14 +1268,9 @@ class SaleController extends Controller
     public function receipt(Sale $sale)
     {
         $this->ensureSaleBelongsToCurrentBusiness($sale);
+        $this->authorizeSaleBranch(request(), $sale);
 
         $businessId = currentBusinessId();
-        abort_unless(
-            ! BranchInventory::branchesEnabled($businessId)
-            || BranchInventory::canSwitchBranches(request()->user())
-            || (int) $sale->branch_id === (int) BranchInventory::activeBranch($businessId)->id,
-            403,
-        );
         $business = \App\Models\Business::query()->select('id', 'name', 'country', 'phone', 'logo_url')->find($businessId);
         $timezone = tenantTimezone($business);
         $settings = TenantSetting::query()->where('business_id', $businessId)->first();
@@ -1341,6 +1335,7 @@ class SaleController extends Controller
     public function felDocument(Request $request, Sale $sale)
     {
         $this->ensureSaleBelongsToCurrentBusiness($sale);
+        $this->authorizeSaleBranch($request, $sale);
         $this->authorizeFelDocumentAccess($request, allowSignedUrl: true);
 
         abort_unless($this->hasCertifiedFelDocument($sale), 404);
@@ -1453,6 +1448,7 @@ class SaleController extends Controller
     public function felDownload(Request $request, Sale $sale, string $format)
     {
         $this->ensureSaleBelongsToCurrentBusiness($sale);
+        $this->authorizeSaleBranch($request, $sale);
         $this->authorizeFelDocumentAccess($request);
 
         abort_unless($this->hasCertifiedFelDocument($sale), 404);
@@ -2132,6 +2128,15 @@ class SaleController extends Controller
     private function ensureSaleBelongsToCurrentBusiness(Sale $sale): void
     {
         abort_unless((int) $sale->business_id === (int) currentBusinessId(), 403);
+    }
+
+    private function authorizeSaleBranch(Request $request, Sale $sale): void
+    {
+        $businessId = currentBusinessId();
+
+        if (BranchInventory::branchesEnabled($businessId) && $sale->branch_id) {
+            app(BranchAccessService::class)->assertCanAccessBranch($request->user(), (int) $sale->branch_id, $businessId);
+        }
     }
 
     private function validateCustomerLocation(string $country, ?string $department, ?string $municipality): void

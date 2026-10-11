@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\Business;
+use App\Services\BranchAccessService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use App\Models\TenantFelSetting;
@@ -193,21 +194,14 @@ class HandleInertiaRequests extends Middleware
                     return [];
                 }
 
-                if (! BranchInventory::canSwitchBranches($user)) {
-                    $branch = $user?->currentBranch;
-
-                    $branch = $branch && (int) $branch->business_id === (int) $businessId && $branch->is_active
-                        ? $branch
-                        : BranchInventory::activeBranch($businessId);
-
-                    return collect([[
+                return app(BranchAccessService::class)
+                    ->authorizedBranches($user, $businessId)
+                    ->map(fn ($branch) => [
                         'id' => $branch->id,
                         'name' => $branch->name,
                         'code' => $branch->code,
-                    ]]);
-                }
-
-                return BranchInventory::branchOptions($businessId);
+                    ])
+                    ->values();
             },
             'use_product_images' => fn () => $user && $businessId ? tenantSetting('use_product_images', true) : true,
             'flash' => [

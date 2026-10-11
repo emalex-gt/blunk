@@ -9,6 +9,8 @@ use App\Models\Product;
 use App\Models\ProductBranch;
 use App\Models\ProductBranchStock;
 use App\Models\TenantFelSetting;
+use App\Models\User;
+use App\Services\BranchAccessService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -97,59 +99,18 @@ class BranchInventory
         }
 
         $user ??= auth()->user();
-        $branchId = null;
-
-        if ($user && self::canSwitchBranches($user) && session('active_branch_id')) {
-            $branchId = (int) session('active_branch_id');
-        } elseif ($user?->current_branch_id) {
-            $branchId = (int) $user->current_branch_id;
-        }
-
-        if ($branchId) {
-            $branch = Branch::query()
-                ->where('business_id', $business->id)
-                ->where('is_active', true)
-                ->find($branchId);
-
-            if ($branch) {
-                self::backfillFelDataFromLegacySettings($branch);
-
-                return $branch->refresh();
-            }
-        }
-
-        return self::ensureDefaultBranch($business);
+        if (! $user instanceof User) return self::ensureDefaultBranch($business);
+        $branch = app(BranchAccessService::class)->resolveActiveBranch($user, (int) $business->id);
+        self::backfillFelDataFromLegacySettings($branch);
+        return $branch->refresh();
     }
 
     public static function activeBranch(int $businessId): Branch
     {
+        if (! self::branchesEnabled($businessId)) return self::defaultBranch($businessId);
         $user = auth()->user();
-        $branchId = null;
-
-        if ($user && self::canSwitchBranches($user) && session('active_branch_id')) {
-            $branchId = (int) session('active_branch_id');
-        } elseif ($user?->current_branch_id) {
-            $branchId = (int) $user->current_branch_id;
-        }
-
-        if ($branchId) {
-            $branch = Branch::query()
-                ->where('business_id', $businessId)
-                ->where('is_active', true)
-                ->find($branchId);
-
-            if ($branch) {
-                return $branch;
-            }
-        }
-
-        $default = self::defaultBranch($businessId);
-
-        if ($user && ! $user->is_super_admin && ! $user->current_branch_id && (int) $user->business_id === $businessId) {
-            $user->forceFill(['current_branch_id' => $default->id])->save();
-        }
-
-        return $default;
+        if (! $user instanceof User) return self::defaultBranch($businessId);
+        return app(BranchAccessService::class)->resolveActiveBranch($user, $businessId);
     }
 
     public static function setActiveBranch(int $businessId, int $branchId): Branch
@@ -161,15 +122,10 @@ class BranchInventory
 
         $user = auth()->user();
 
-        if ($user && self::canSwitchBranches($user)) {
-            session(['active_branch_id' => $branch->id]);
-        } elseif ($user) {
-            if ((int) $user->current_branch_id !== (int) $branch->id) {
-                throw ValidationException::withMessages([
-                    'branch_id' => 'No tienes permiso para cambiar de sucursal.',
-                ]);
-            }
-
+        if ($user instanceof User) {
+            abort_unless(self::canSwitchBranches($user), 403);
+            app(BranchAccessService::class)->assertCanAccessBranch($user, $branch, $businessId);
+            $user->forceFill(['current_branch_id' => $branch->id])->save();
             session(['active_branch_id' => $branch->id]);
         }
 

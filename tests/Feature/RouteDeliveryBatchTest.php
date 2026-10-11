@@ -830,8 +830,8 @@ class RouteDeliveryBatchTest extends TestCase
     public function test_automatic_all_dispatches_only_eligible_sales_when_the_operational_gate_is_enabled(): void
     {
         [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'card');
-        $this->openCashRegister($business, $branch, $user);
         $this->configureFelAvailability($business, $branch);
+        $this->openCashRegister($business, $branch, $user);
         TenantSetting::query()->where('business_id', $business->id)->update(['route_pre_sale_invoicing_mode' => 'automatic_all']);
         config(['fel.route_automation_enabled' => true]);
         Queue::fake();
@@ -917,8 +917,8 @@ class RouteDeliveryBatchTest extends TestCase
     public function test_automatic_fel_job_certifies_the_existing_receipt_without_creating_operational_effects(): void
     {
         [$business, $branch, $user, $preSale, $product] = $this->pickedPreSale('invoice', 'cash');
-        $this->openCashRegister($business, $branch, $user);
         $this->configureFelAvailability($business, $branch);
+        $this->openCashRegister($business, $branch, $user);
         config(['fel.route_automation_enabled' => true]);
         $delivery = app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-auto-fel-certified-delivery-key');
         $sale = $preSale->refresh()->convertedSale()->firstOrFail();
@@ -949,8 +949,8 @@ class RouteDeliveryBatchTest extends TestCase
     public function test_automatic_fel_job_marks_failed_without_repeating_receipt_effects(): void
     {
         [$business, $branch, $user, $preSale, $product] = $this->pickedPreSale('invoice', 'cash');
-        $this->openCashRegister($business, $branch, $user);
         $this->configureFelAvailability($business, $branch);
+        $this->openCashRegister($business, $branch, $user);
         config(['fel.route_automation_enabled' => true]);
         app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-auto-fel-failed-delivery-key');
         $sale = $preSale->refresh()->convertedSale()->firstOrFail();
@@ -980,8 +980,8 @@ class RouteDeliveryBatchTest extends TestCase
     public function test_automatic_fel_job_marks_unknown_creates_reconciliation_and_does_not_retry_it(): void
     {
         [$business, $branch, $user, $preSale] = $this->pickedPreSale('invoice', 'card');
-        $this->openCashRegister($business, $branch, $user);
         $this->configureFelAvailability($business, $branch);
+        $this->openCashRegister($business, $branch, $user);
         config(['fel.route_automation_enabled' => true]);
         app(RouteDeliveryBatchService::class)->deliverAll($preSale->workDay, $user, 'route-auto-fel-unknown-delivery-key');
         $sale = $preSale->refresh()->convertedSale()->firstOrFail();
@@ -1150,6 +1150,7 @@ class RouteDeliveryBatchTest extends TestCase
         $branch = BranchInventory::defaultBranchForBusiness($business);
         $user = User::factory()->create(['business_id' => $business->id, 'current_branch_id' => $branch->id, 'is_active' => true]);
         Permissions::assignRole($user, 'owner');
+        $user->branchAccesses()->create(['business_id' => $business->id, 'branch_id' => $branch->id]);
         TenantSetting::query()->create(['business_id' => $business->id, 'use_branches' => true, 'allow_receipts' => true, 'allow_invoices' => true, 'route_pre_sale_stock_deduction_timing' => $timing]);
         TenantModule::query()->create(['business_id' => $business->id, 'module' => 'routes', 'is_enabled' => true, 'enabled_at' => now()]);
         TenantModule::query()->create(['business_id' => $business->id, 'module' => 'cash_register', 'is_enabled' => true, 'enabled_at' => now()]);

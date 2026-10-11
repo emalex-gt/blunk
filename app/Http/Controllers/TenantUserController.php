@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\TenantSetting;
 use App\Models\User;
+use App\Services\BranchAccessService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
@@ -27,10 +28,10 @@ class TenantUserController extends Controller
         $users = User::query()
             ->where('business_id', $businessId)
             ->where('is_super_admin', false)
-            ->with('currentBranch:id,name,code')
+            ->with(['currentBranch:id,name,code', 'branchAccesses:business_id,user_id,branch_id'])
             ->orderByRaw("CASE WHEN role = 'owner' THEN 0 ELSE 1 END")
             ->orderBy('name')
-            ->get(['id', 'name', 'email', 'role', 'is_active', 'current_branch_id']);
+            ->get(['id', 'name', 'email', 'role', 'is_active', 'current_branch_id', 'all_branches_access']);
 
         return Inertia::render('Users/Index', [
             'users' => $users,
@@ -56,20 +57,7 @@ class TenantUserController extends Controller
         $branchesEnabled = BranchInventory::branchesEnabled($businessId);
         $this->ensureUserLimitAllowsCreate($businessId);
 
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', 'max:255', 'unique:users,email'],
-            'role' => ['required', Rule::in(Permissions::assignableTenantRoles())],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
-            'current_branch_id' => [
-                'nullable',
-                Rule::prohibitedIf(! $branchesEnabled),
-                'integer',
-                Rule::exists('branches', 'id')
-                    ->where('business_id', $businessId)
-                    ->where('is_active', true),
-            ],
-        ]);
+        $data = $request->validate($this->rules($request, $businessId, $branchesEnabled));
 
         $user = User::create([
             'business_id' => $businessId,
@@ -83,6 +71,8 @@ class TenantUserController extends Controller
         ]);
         Permissions::assignRole($user, $data['role']);
 
+        $this->persistBranchAccess($user, $data, $branchesEnabled);
+
         return back()->with('success', 'Usuario creado.');
     }
 
@@ -95,19 +85,7 @@ class TenantUserController extends Controller
         $businessId = currentBusinessId();
         $branchesEnabled = BranchInventory::branchesEnabled($businessId);
 
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'role' => ['required', Rule::in($user->role === 'owner' ? ['owner'] : Permissions::assignableTenantRoles())],
-            'is_active' => ['required', 'boolean'],
-            'current_branch_id' => [
-                'nullable',
-                Rule::prohibitedIf(! $branchesEnabled),
-                'integer',
-                Rule::exists('branches', 'id')
-                    ->where('business_id', $businessId)
-                    ->where('is_active', true),
-            ],
-        ]);
+        $data = $request->validate($this->rules($request, $businessId, $branchesEnabled, $user));
 
         if ($user->id === $request->user()->id && ! $data['is_active']) {
             throw ValidationException::withMessages([
@@ -131,11 +109,72 @@ class TenantUserController extends Controller
             'name' => $data['name'],
             'role' => $data['role'],
             'is_active' => $data['is_active'],
-            'current_branch_id' => $branchesEnabled ? ($data['current_branch_id'] ?? BranchInventory::defaultBranch($businessId)->id) : null,
+            'current_branch_id' => $branchesEnabled ? $user->current_branch_id : null,
         ]);
         Permissions::assignRole($user, $data['role']);
+        $this->persistBranchAccess($user, $data, $branchesEnabled);
 
         return back()->with('success', 'Usuario actualizado.');
+    }
+
+    private function rules(Request $request, int $businessId, bool $branchesEnabled, ?User $user = null): array
+    {
+        $creating = $user === null;
+
+        return [
+            'name' => ['required', 'string', 'max:255'],
+            'email' => $creating ? ['required', 'email', 'max:255', 'unique:users,email'] : ['nullable', 'email', 'max:255'],
+            'role' => ['required', Rule::in($user?->role === 'owner' ? ['owner'] : Permissions::assignableTenantRoles())],
+            'password' => $creating ? ['required', 'string', 'min:8', 'confirmed'] : ['nullable', 'string', 'min:8'],
+            'password_confirmation' => $creating ? ['required'] : ['nullable'],
+            'is_active' => $creating ? ['nullable', 'boolean'] : ['required', 'boolean'],
+            'current_branch_id' => [
+                'nullable',
+                Rule::excludeIf(! $branchesEnabled),
+                'integer',
+                Rule::exists('branches', 'id')
+                    ->where('business_id', $businessId)
+                    ->where('is_active', true),
+            ],
+            'branch_access_mode' => [
+                Rule::excludeIf(! $branchesEnabled),
+                Rule::requiredIf($branchesEnabled),
+                Rule::in(['all', 'selected']),
+            ],
+            'branch_ids' => [
+                Rule::excludeIf(! $branchesEnabled),
+                Rule::requiredIf($branchesEnabled && $request->input('branch_access_mode') === 'selected'),
+                'array',
+                'min:1',
+            ],
+            'branch_ids.*' => [
+                Rule::excludeIf(! $branchesEnabled),
+                'integer',
+                'distinct',
+                Rule::exists('branches', 'id')
+                    ->where('business_id', $businessId)
+                    ->where('is_active', true),
+            ],
+        ];
+    }
+
+    private function persistBranchAccess(User $user, array $data, bool $branchesEnabled): void
+    {
+        if (! $branchesEnabled) {
+            return;
+        }
+
+        $selected = ($data['branch_access_mode'] ?? null) === 'selected';
+        $branchIds = collect($data['branch_ids'] ?? [])->map(fn ($id) => (int) $id)->values()->all();
+        $preferredBranchId = isset($data['current_branch_id']) ? (int) $data['current_branch_id'] : null;
+
+        if ($selected && $preferredBranchId && ! in_array($preferredBranchId, $branchIds, true)) {
+            throw ValidationException::withMessages([
+                'current_branch_id' => 'La sucursal asignada debe estar dentro de las sucursales seleccionadas.',
+            ]);
+        }
+
+        app(BranchAccessService::class)->replaceAccess($user, ! $selected, $branchIds, $preferredBranchId);
     }
 
     public function toggleActive(Request $request, User $user): RedirectResponse
@@ -234,4 +273,5 @@ class TenantUserController extends Controller
             ->values()
             ->all();
     }
+
 }

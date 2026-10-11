@@ -395,6 +395,13 @@ class DashboardFoundationTest extends TestCase
         ]);
         Permissions::assignRole($user, $role);
 
+        if ($branches) {
+            $user->branchAccesses()->create([
+                'business_id' => $business->id,
+                'branch_id' => $main->id,
+            ]);
+        }
+
         return $branches ? [$business, $user, $main, $other] : [$business, $user, $main];
     }
 

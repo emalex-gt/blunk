@@ -9,6 +9,7 @@ use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
 use App\Models\Customer;
 use App\Models\Product;
+use App\Services\BranchAccessService;
 use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\BusinessLogo;
@@ -40,7 +41,7 @@ class CreditReceiptController extends Controller
         $customers = CreditReceipt::query()
             ->selectRaw('customer_id, customer_name, customer_doc_number, SUM(pending_total) as pending_total, COUNT(*) as receipts_count, MAX(updated_at) as last_movement_at')
             ->where('business_id', $businessId)
-            ->when(! BranchInventory::canSwitchBranches($request->user()), fn ($query) => $query->where('branch_id', BranchInventory::activeBranch($businessId)->id))
+            ->when(BranchInventory::branchesEnabled($businessId), fn ($query) => $query->where('branch_id', BranchInventory::activeBranch($businessId)->id))
             ->whereIn('status', ['pending', 'partially_invoiced'])
             ->when($search !== '', fn ($query) => $query->where(function ($query) use ($search) {
                 $query->where('customer_name', 'like', "%{$search}%")
@@ -64,7 +65,7 @@ class CreditReceiptController extends Controller
         $receipts = CreditReceipt::query()
             ->where('business_id', currentBusinessId())
             ->where('customer_id', $customer->id)
-            ->when(! BranchInventory::canSwitchBranches(request()->user()), fn ($query) => $query->where('branch_id', BranchInventory::activeBranch(currentBusinessId())->id))
+            ->when(BranchInventory::branchesEnabled(currentBusinessId()), fn ($query) => $query->where('branch_id', BranchInventory::activeBranch(currentBusinessId())->id))
             ->whereIn('status', ['pending', 'partially_invoiced'])
             ->with('lines')
             ->latest()
@@ -481,6 +482,11 @@ class CreditReceiptController extends Controller
     private function authorizeReceipt(CreditReceipt $receipt): void
     {
         abort_unless((int) $receipt->business_id === (int) currentBusinessId(), 403);
+
+        $businessId = currentBusinessId();
+        if (BranchInventory::branchesEnabled($businessId)) {
+            app(BranchAccessService::class)->assertCanAccessBranch(request()->user(), (int) $receipt->branch_id, $businessId);
+        }
     }
 
     private function creditReceiptIdempotencyPayload(array $data, int $businessId, int $branchId, int $userId): array

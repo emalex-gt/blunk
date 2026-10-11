@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\RouteDeliveryCollection;
+use App\Services\BranchAccessService;
 use App\Services\Routes\RouteDeliveryCollectionReversalService;
+use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -14,7 +16,10 @@ class RouteDeliveryCollectionReversalController extends Controller
     public function store(Request $request, RouteDeliveryCollection $collection, RouteDeliveryCollectionReversalService $reversals): RedirectResponse
     {
         $actor = $request->user();
-        abort_unless($actor && $actor->is_active && (int) $actor->business_id === currentBusinessId() && (int) $actor->current_branch_id === (int) $collection->branch_id && (int) $collection->business_id === currentBusinessId() && Permissions::userHas($actor, Permissions::ROUTES_DELIVERY_COLLECTIONS_REVERSE), 403);
+        abort_unless($actor && $actor->is_active && (int) $actor->business_id === currentBusinessId() && (int) $collection->business_id === currentBusinessId() && Permissions::userHas($actor, Permissions::ROUTES_DELIVERY_COLLECTIONS_REVERSE), 403);
+        if (BranchInventory::branchesEnabled(currentBusinessId())) {
+            app(BranchAccessService::class)->assertCanAccessBranch($actor, (int) $collection->branch_id, currentBusinessId());
+        }
         $data = $request->validate([
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'reason_code' => ['required', Rule::in(['payment_recorded_by_mistake', 'wrong_customer', 'duplicate_collection', 'wrong_amount', 'other'])],

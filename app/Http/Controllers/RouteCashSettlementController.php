@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\RouteCashSettlement;
 use App\Models\RouteCashSettlementItem;
 use App\Models\User;
+use App\Services\BranchAccessService;
 use App\Services\Routes\RouteCashSettlementDraftService;
 use App\Services\Routes\RouteCashSettlementEligibility;
 use App\Services\Routes\RouteCashSettlementService;
@@ -34,10 +35,11 @@ class RouteCashSettlementController extends Controller
         ]);
 
         $actor = $request->user();
+        $branchId = $this->activeBranchId($request);
         $collectorId = $request->integer('collector_id') ?: null;
         $collectors = User::query()
             ->where('business_id', currentBusinessId())
-            ->where('current_branch_id', $actor->current_branch_id)
+            ->where('current_branch_id', $branchId)
             ->where('is_active', true)
             ->orderBy('name')
             ->get(['id', 'name'])
@@ -50,7 +52,7 @@ class RouteCashSettlementController extends Controller
 
         $settlements = RouteCashSettlement::query()
             ->where('business_id', currentBusinessId())
-            ->where('branch_id', $actor->current_branch_id)
+            ->where('branch_id', $branchId)
             ->with(['collector:id,name', 'receivedBy:id,name', 'cashSession:id,branch_id,status'])
             ->latest('id')
             ->paginate(30)
@@ -61,7 +63,7 @@ class RouteCashSettlementController extends Controller
             'collectors' => $collectors,
             'selected_collector_id' => $collectorId,
             'eligible_collections' => $collectorId
-                ? $this->eligiblePayload($eligibility->forCollector(currentBusinessId(), (int) $actor->current_branch_id, $collectorId))
+                ? $this->eligiblePayload($eligibility->forCollector(currentBusinessId(), $branchId, $collectorId))
                 : [],
             'can_create' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CREATE),
             'can_confirm' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM),
@@ -79,6 +81,7 @@ class RouteCashSettlementController extends Controller
         ]);
 
         $actor = $request->user();
+        $branchId = $this->activeBranchId($request);
         $settlement->load([
             'collector:id,name',
             'reversal.reversedBy:id,name',
@@ -129,11 +132,11 @@ class RouteCashSettlementController extends Controller
                 ] : null,
             ],
             'eligible_collections' => $settlement->status === 'draft'
-                ? $this->eligiblePayload($eligibility->forCollector(currentBusinessId(), (int) $actor->current_branch_id, (int) $settlement->collector_user_id))
+                ? $this->eligiblePayload($eligibility->forCollector(currentBusinessId(), $branchId, (int) $settlement->collector_user_id))
                 : [],
             'receivers' => User::query()
                 ->where('business_id', currentBusinessId())
-                ->where('current_branch_id', $actor->current_branch_id)
+                ->where('current_branch_id', $branchId)
                 ->where('is_active', true)
                 ->orderBy('name')
                 ->get(['id', 'name'])
@@ -246,7 +249,8 @@ class RouteCashSettlementController extends Controller
         $actor = $request->user();
         abort_unless(
             (int) $settlement->business_id === currentBusinessId()
-            && (int) $settlement->branch_id === (int) $actor->current_branch_id,
+            && (! BranchInventory::branchesEnabled(currentBusinessId())
+                || app(BranchAccessService::class)->canAccessBranch($actor, (int) $settlement->branch_id, currentBusinessId())),
             403,
         );
     }
@@ -266,7 +270,7 @@ class RouteCashSettlementController extends Controller
             && collect($permissions)->contains(fn (string $permission) => Permissions::userHas($actor, $permission)),
             403,
         );
-        BranchInventory::activeBranch(currentBusinessId());
+        $this->activeBranchId($request);
     }
 
     private function collector(int $collectorId, User $actor): User
@@ -274,7 +278,7 @@ class RouteCashSettlementController extends Controller
         return User::query()
             ->whereKey($collectorId)
             ->where('business_id', currentBusinessId())
-            ->where('current_branch_id', $actor->current_branch_id)
+            ->where('current_branch_id', $this->activeBranchId(request()))
             ->where('is_active', true)
             ->firstOrFail();
     }
@@ -282,6 +286,11 @@ class RouteCashSettlementController extends Controller
     private function receivedBy(int $receivedBy, User $actor): User
     {
         return $this->collector($receivedBy, $actor);
+    }
+
+    private function activeBranchId(Request $request): int
+    {
+        return (int) BranchInventory::activeBranch(currentBusinessId())->id;
     }
 
     private function summary(RouteCashSettlement $settlement): array

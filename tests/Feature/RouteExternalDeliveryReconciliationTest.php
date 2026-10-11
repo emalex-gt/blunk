@@ -641,7 +641,7 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
 
     public function test_delivered_immediate_paid_cash_is_refunded_from_the_current_open_session_without_reversing_original_payment(): void
     {
-        [$business, $entry] = $this->routeEntry('delivery_agent', true, 'invoice', 'immediate_paid');
+        [$business, $entry] = $this->routeEntry('delivery_agent', true, 'invoice', 'immediate_paid', reports: true);
         $actor = User::query()->findOrFail($entry->batch->delivered_by);
         $delivery = app(RouteExternalDeliveryReconciliationService::class)->reconcileItem($entry->batch, $entry, [
             'idempotency_key' => 'phase2b1-delivered-immediate', 'delivery_status' => 'delivered', 'collected' => false,
@@ -708,10 +708,6 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         ])['results']['sales'])->pluck('issue_type');
         $this->assertNotContains('cancelled_sale_cash_not_reversed', $salesIssues);
 
-        TenantModule::query()->updateOrCreate(
-            ['business_id' => $business->id, 'module' => 'reports'],
-            ['is_enabled' => true, 'enabled_at' => now()],
-        );
         $this->as($actor, $business)
             ->get(route('reports.daily', ['date' => now()->toDateString(), 'payment_method' => 'cash']))
             ->assertOk()
@@ -1082,18 +1078,22 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         return $this->routeEntry('delivery_agent');
     }
 
-    private function routeEntry(string $responsibility, bool $policyAware = false, string $timing = 'invoice', string $workflow = 'per_order_collection', bool $twoLines = false): array
+    private function routeEntry(string $responsibility, bool $policyAware = false, string $timing = 'invoice', string $workflow = 'per_order_collection', bool $twoLines = false, bool $reports = false): array
     {
         $business = Business::query()->create(['name' => 'External '.uniqid(), 'slug' => 'external-'.uniqid(), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
         $branch = BranchInventory::defaultBranchForBusiness($business);
         $user = User::factory()->create(['business_id' => $business->id, 'current_branch_id' => $branch->id, 'is_active' => true]);
         Permissions::assignRole($user, 'owner');
+        $user->branchAccesses()->create(['business_id' => $business->id, 'branch_id' => $branch->id]);
         TenantSetting::query()->create(['business_id' => $business->id, 'use_branches' => true, 'allow_receipts' => true, 'allow_invoices' => true, 'route_collection_responsibility' => $responsibility, 'route_delivery_tracking' => 'external', 'route_pre_sale_stock_deduction_timing' => $timing]);
         if ($policyAware) {
             RouteBranchCollectionSetting::query()->create(['branch_id' => $branch->id, 'collection_workflow_mode' => $workflow, 'allowed_payment_methods' => ['cash', 'card', 'transfer', 'check'], 'primary_payment_method' => 'cash']);
         }
         TenantModule::query()->create(['business_id' => $business->id, 'module' => 'routes', 'is_enabled' => true, 'enabled_at' => now()]);
         TenantModule::query()->create(['business_id' => $business->id, 'module' => 'cash_register', 'is_enabled' => true, 'enabled_at' => now()]);
+        if ($reports) {
+            TenantModule::query()->create(['business_id' => $business->id, 'module' => 'reports', 'is_enabled' => true, 'enabled_at' => now()]);
+        }
         $zone = RouteZone::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'assigned_user_id' => $user->id, 'name' => 'Zona '.uniqid(), 'is_active' => true]);
         $workDay = RouteWorkDay::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_zone_id' => $zone->id, 'seller_id' => $user->id, 'work_date' => today(), 'status' => 'closed', 'started_at' => now()->subHour(), 'closed_at' => now()]);
         $customer = Customer::query()->create(['business_id' => $business->id, 'name' => 'Cliente '.uniqid(), 'doc_type' => 'CF', 'doc_number' => 'CF', 'country' => 'GT']);

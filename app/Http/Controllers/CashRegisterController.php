@@ -6,6 +6,7 @@ use App\Models\Business;
 use App\Models\CashExpense;
 use App\Models\CashExpenseCategory;
 use App\Models\CashRegisterSession;
+use App\Services\BranchAccessService;
 use App\Models\TenantSetting;
 use App\Support\BranchInventory;
 use App\Support\CashRegister;
@@ -332,11 +333,10 @@ class CashRegisterController extends Controller
 
     private function ensureSessionBelongsToActiveBranch(Request $request, CashRegisterSession $session): void
     {
-        abort_unless(
-            ! BranchInventory::branchesEnabled(currentBusinessId())
-            || BranchInventory::canSwitchBranches($request->user())
-            || (int) $session->branch_id === (int) BranchInventory::activeBranch(currentBusinessId())->id,
-            403,
-        );
+        $businessId = currentBusinessId();
+
+        if (BranchInventory::branchesEnabled($businessId)) {
+            app(BranchAccessService::class)->assertCanAccessBranch($request->user(), (int) $session->branch_id, $businessId);
+        }
     }
 }

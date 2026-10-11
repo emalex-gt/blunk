@@ -277,7 +277,12 @@ class RoutePreSaleInvoiceTest extends TestCase
             'code' => 'OTHER-'.uniqid(),
             'is_active' => true,
         ]);
-        $admin->update(['current_branch_id' => $otherBranch->id]);
+        app(\App\Services\BranchAccessService::class)->replaceAccess(
+            $admin,
+            false,
+            [$otherBranch->id],
+            $otherBranch->id,
+        );
 
         $this->actingAs($admin)
             ->post(route('routes.pre-sales.fel.certify', $preSale), ['idempotency_key' => 'route-pre-sale-other-branch-key'])
@@ -750,6 +755,10 @@ class RoutePreSaleInvoiceTest extends TestCase
             'is_super_admin' => false,
         ]);
         Permissions::assignRole($admin, 'owner');
+        $admin->branchAccesses()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+        ]);
 
         return [$business, $admin, $branch];
     }

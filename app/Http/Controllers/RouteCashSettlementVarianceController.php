@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\RouteCashSettlementVariance;
 use App\Models\User;
+use App\Services\BranchAccessService;
 use App\Services\Routes\RouteCashSettlementVarianceService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
@@ -17,9 +18,10 @@ class RouteCashSettlementVarianceController extends Controller
     {
         $this->guard($request, Permissions::ROUTES_CASH_VARIANCES_VIEW);
         $actor = $request->user();
+        $branchId = $this->activeBranchId();
         $scope = RouteCashSettlementVariance::query()
             ->where('business_id', currentBusinessId())
-            ->where('branch_id', $actor->current_branch_id);
+            ->where('branch_id', $branchId);
         $summary = (clone $scope)
             ->where('status', 'open')
             ->selectRaw("COALESCE(SUM(CASE WHEN difference_amount < 0 THEN 1 ELSE 0 END), 0) AS open_shortages_count")
@@ -63,7 +65,7 @@ class RouteCashSettlementVarianceController extends Controller
             'variance' => $this->payload($variance, true),
             'can_manage' => Permissions::userHas($actor, Permissions::ROUTES_CASH_VARIANCES_MANAGE),
             'can_resolve' => Permissions::userHas($actor, Permissions::ROUTES_CASH_VARIANCES_RESOLVE),
-            'assignees' => User::query()->where('business_id', currentBusinessId())->where('current_branch_id', $actor->current_branch_id)->where('is_active', true)->orderBy('name')->get(['id', 'name']),
+            'assignees' => User::query()->where('business_id', currentBusinessId())->where('current_branch_id', $this->activeBranchId())->where('is_active', true)->orderBy('name')->get(['id', 'name']),
         ]);
     }
 
@@ -114,14 +116,27 @@ class RouteCashSettlementVarianceController extends Controller
     {
         $actor = $request->user();
         abort_unless($actor && $actor->is_active && (int) $actor->business_id === currentBusinessId() && Permissions::userHas($actor, $permission), 403);
-        BranchInventory::activeBranch(currentBusinessId());
+        $this->activeBranchId();
     }
 
     private function scope(Request $request, RouteCashSettlementVariance $variance): void
     {
         $actor = $request->user();
-        abort_unless($actor && $actor->is_active && (int) $actor->business_id === currentBusinessId() && (int) $variance->business_id === currentBusinessId() && (int) $variance->branch_id === (int) $actor->current_branch_id, 403);
-        BranchInventory::activeBranch(currentBusinessId());
+        abort_unless(
+            $actor
+            && $actor->is_active
+            && (int) $actor->business_id === currentBusinessId()
+            && (int) $variance->business_id === currentBusinessId()
+            && (! BranchInventory::branchesEnabled(currentBusinessId())
+                || app(BranchAccessService::class)->canAccessBranch($actor, (int) $variance->branch_id, currentBusinessId())),
+            403,
+        );
+        $this->activeBranchId();
+    }
+
+    private function activeBranchId(): int
+    {
+        return (int) BranchInventory::activeBranch(currentBusinessId())->id;
     }
 
     private function payload(RouteCashSettlementVariance $variance, bool $detail = false): array

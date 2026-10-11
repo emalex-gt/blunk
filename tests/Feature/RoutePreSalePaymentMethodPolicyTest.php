@@ -261,6 +261,7 @@ class RoutePreSalePaymentMethodPolicyTest extends TestCase
     {
         $seller = User::factory()->create(['business_id' => $business->id, 'current_branch_id' => $branch->id, 'role' => 'pre_seller', 'is_active' => true]);
         Permissions::assignRole($seller, 'pre_seller');
+        $seller->branchAccesses()->create(['business_id' => $business->id, 'branch_id' => $branch->id]);
         CashRegisterSession::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'opened_by' => $seller->id, 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now(), 'status' => 'open']);
 
         return $seller->fresh();

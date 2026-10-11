@@ -589,7 +589,12 @@ class RoutePostConversionCollectionHttpTest extends TestCase
     {
         [$business, $branch, $seller] = $this->entry('pre_seller');
         $owner = $this->user($business, $branch, 'owner');
+        TenantSetting::query()->where('business_id', $business->id)->update(['use_branches' => true]);
+        TenantModule::query()->create(['business_id' => $business->id, 'module' => 'branches', 'is_enabled' => true, 'enabled_at' => now()]);
+        $owner->branchAccesses()->create(['business_id' => $business->id, 'branch_id' => $branch->id]);
+        $seller->branchAccesses()->create(['business_id' => $business->id, 'branch_id' => $branch->id]);
         $otherSeller = $this->user($business, $branch, 'pre_seller');
+        $otherSeller->branchAccesses()->create(['business_id' => $business->id, 'branch_id' => $branch->id]);
         [, , , $otherCollectorEntry] = $this->entry('pre_seller', $business, $branch, 'per_order_collection', $otherSeller);
         app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
             'collection_workflow_mode' => 'per_order_collection',
@@ -616,6 +621,7 @@ class RoutePostConversionCollectionHttpTest extends TestCase
             'is_active' => true,
         ]);
         $branchSeller = $this->user($business, $otherBranch, 'pre_seller');
+        $branchSeller->branchAccesses()->create(['business_id' => $business->id, 'branch_id' => $otherBranch->id]);
         [, , , $otherBranchEntry] = $this->entry('pre_seller', $business, $otherBranch, 'per_order_collection', $branchSeller);
         app(RouteBranchCollectionSettingsService::class)->save($business->id, $otherBranch, [
             'collection_workflow_mode' => 'per_order_collection',

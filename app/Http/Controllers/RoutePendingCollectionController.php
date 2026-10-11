@@ -7,10 +7,12 @@ use App\Models\Sale;
 use App\Models\CashRegisterSession;
 use App\Models\TenantSetting;
 use App\Models\User;
+use App\Services\BranchAccessService;
 use App\Services\Routes\RoutePendingCollectionCaseService;
 use App\Services\Routes\RoutePendingCollectionEligibility;
 use App\Services\Routes\RoutePendingCollectionService;
 use App\Support\Permissions;
+use App\Support\BranchInventory;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -87,7 +89,7 @@ class RoutePendingCollectionController extends Controller
     public function showSale(Request $request, Sale $sale, RoutePendingCollectionEligibility $eligibility): Response
     {
         $actor = $this->actor($request, Permissions::ROUTES_PENDING_COLLECTIONS_VIEW);
-        abort_unless((int) $sale->business_id === currentBusinessId() && (int) $sale->branch_id === (int) $actor->current_branch_id, 403);
+        $this->authorizeSale($sale, $actor);
         $case = RoutePendingCollectionCase::query()->where('sale_id', $sale->id)->first();
         if ($case) {
             return $this->show($request, $case);
@@ -212,19 +214,32 @@ class RoutePendingCollectionController extends Controller
 
     private function authorizeSale(Sale $sale, User $actor): void
     {
-        abort_unless((int) $sale->business_id === currentBusinessId() && (int) $sale->branch_id === (int) $actor->current_branch_id, 403);
+        abort_unless((int) $sale->business_id === currentBusinessId(), 403);
+        $this->assertAuthorizedBranch($actor, (int) $sale->branch_id);
     }
 
     private function actor(Request $request, string $permission): User
     {
         $actor = $request->user();
         abort_unless($actor && $actor->is_active && (int) $actor->business_id === currentBusinessId() && Permissions::userHas($actor, $permission), 403);
-        return $actor;
+        if (BranchInventory::branchesEnabled(currentBusinessId())) {
+            BranchInventory::activeBranch(currentBusinessId());
+        }
+
+        return $actor->refresh();
     }
 
     private function authorizeCase(Request $request, RoutePendingCollectionCase $case, string $permission): void
     {
         $actor = $this->actor($request, $permission);
-        abort_unless((int) $case->business_id === currentBusinessId() && (int) $case->branch_id === (int) $actor->current_branch_id, 403);
+        abort_unless((int) $case->business_id === currentBusinessId(), 403);
+        $this->assertAuthorizedBranch($actor, (int) $case->branch_id);
+    }
+
+    private function assertAuthorizedBranch(User $actor, int $branchId): void
+    {
+        if (BranchInventory::branchesEnabled(currentBusinessId())) {
+            app(BranchAccessService::class)->assertCanAccessBranch($actor, $branchId, currentBusinessId());
+        }
     }
 }

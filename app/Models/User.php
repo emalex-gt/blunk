@@ -28,6 +28,7 @@ class User extends Authenticatable
         'is_super_admin',
         'is_active',
         'current_branch_id',
+        'all_branches_access',
         'email_verified_at',
     ];
 
@@ -49,6 +50,11 @@ class User extends Authenticatable
     public function currentBranch(): BelongsTo
     {
         return $this->belongsTo(Branch::class, 'current_branch_id');
+    }
+
+    public function branchAccesses(): HasMany
+    {
+        return $this->hasMany(UserBranchAccess::class);
     }
 
     public function roles(): MorphToMany
@@ -83,6 +89,7 @@ class User extends Authenticatable
             'password' => 'hashed',
             'is_super_admin' => 'boolean',
             'is_active' => 'boolean',
+            'all_branches_access' => 'boolean',
         ];
     }
 }

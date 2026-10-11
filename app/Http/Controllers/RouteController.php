@@ -38,6 +38,7 @@ use App\Services\Routes\RouteCashOperationGuard;
 use App\Services\Routes\RoutePostConversionCollectionReader;
 use App\Services\Routes\RouteBranchCollectionSettingsService;
 use App\Services\Routes\RoutePreSaleCollectionService;
+use App\Services\BranchAccessService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -51,9 +52,11 @@ class RouteController extends Controller
     public function zones(Request $request): Response
     {
         $businessId = currentBusinessId();
+        $authorizedBranchIds = $this->authorizedBranchIds($request, $businessId);
 
         $zones = RouteZone::query()
             ->where('business_id', $businessId)
+            ->whereIn('branch_id', $authorizedBranchIds)
             ->with(['branch:id,name', 'assignedUser:id,name'])
             ->withCount(['zoneCustomers as active_customers_count' => fn ($query) => $query->where('is_active', true)])
             ->orderBy('name')
@@ -61,7 +64,7 @@ class RouteController extends Controller
 
         return Inertia::render('Routes/Zones/Index', [
             'zones' => $zones,
-            'branches' => BranchInventory::branchOptions($businessId),
+            'branches' => app(BranchAccessService::class)->authorizedBranches($request->user(), $businessId),
             'sellers' => User::query()
                 ->where('business_id', $businessId)
                 ->where('is_active', true)
@@ -236,6 +239,7 @@ class RouteController extends Controller
 
         $query = RouteWorkDay::query()
             ->where('business_id', $businessId)
+            ->whereIn('branch_id', $this->authorizedBranchIds($request, $businessId))
             ->where('status', 'closed')
             ->with(['branch:id,name', 'zone:id,name', 'seller:id,name'])
             ->select('route_work_days.*')
@@ -301,7 +305,7 @@ class RouteController extends Controller
                 'status' => $status,
                 'search' => $search,
             ],
-            'branches' => Branch::query()->where('business_id', $businessId)->where('is_active', true)->orderBy('name')->get(['id', 'name']),
+            'branches' => app(BranchAccessService::class)->authorizedBranches($request->user(), $businessId)->map->only(['id', 'name'])->values(),
             'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
             'zones' => RouteZone::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
         ]);
@@ -310,6 +314,7 @@ class RouteController extends Controller
     public function showWorkDay(Request $request, RouteWorkDay $workDay): Response
     {
         abort_unless((int) $workDay->business_id === currentBusinessId(), 403);
+        $this->authorizeBranch($request, (int) $workDay->branch_id);
 
         $businessId = currentBusinessId();
         $invoiceOptions = $this->routePreSaleInvoiceOptions($businessId, $request->user());
@@ -517,8 +522,10 @@ class RouteController extends Controller
         $felEligibility = $request->string('fel_eligibility')->toString();
         $felEligibility = in_array($felEligibility, ['eligible', 'not_eligible'], true) ? $felEligibility : null;
 
+        $authorizedBranchIds = $this->authorizedBranchIds($request, $businessId);
         $query = PreSale::query()
             ->where('business_id', $businessId)
+            ->whereIn('branch_id', $authorizedBranchIds)
             ->with([
                 'customer:id,name,commercial_name,contact_name,doc_number',
                 'seller:id,name',
@@ -607,7 +614,7 @@ class RouteController extends Controller
                 'fel_status' => $felStatus ?? '',
                 'fel_eligibility' => $felEligibility ?? '',
             ],
-            'branches' => Branch::query()->where('business_id', $businessId)->where('is_active', true)->orderBy('name')->get(['id', 'name']),
+            'branches' => app(BranchAccessService::class)->authorizedBranches($request->user(), $businessId)->map->only(['id', 'name'])->values(),
             'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
             'zones' => RouteZone::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
             'canInvoice' => $routeCash['is_open'] && $this->canInvoiceRoutePreSales($request->user(), $invoiceOptions),
@@ -619,6 +626,7 @@ class RouteController extends Controller
     public function showPreSale(PreSale $preSale): Response
     {
         abort_unless((int) $preSale->business_id === currentBusinessId(), 403);
+        $this->authorizeBranch(request(), (int) $preSale->branch_id);
         abort_unless(Permissions::userHas(request()->user(), Permissions::ROUTES_PRE_SALES_ADMIN_VIEW), 403);
 
         $preSale->load([
@@ -1857,9 +1865,11 @@ class RouteController extends Controller
             'is_active' => ['boolean'],
         ]);
 
-        Branch::query()
+        $branch = Branch::query()
             ->where('business_id', currentBusinessId())
+            ->where('is_active', true)
             ->findOrFail($data['branch_id']);
+        $this->authorizeBranch($request, (int) $branch->id);
 
         if (! empty($data['assigned_user_id'])) {
             User::query()
@@ -2353,20 +2363,49 @@ class RouteController extends Controller
     private function authorizeBusiness(RouteZone $zone): void
     {
         abort_unless((int) $zone->business_id === currentBusinessId(), 403);
+        $this->authorizeBranch(request(), (int) $zone->branch_id);
+    }
+
+    private function authorizeBranch(Request $request, int $branchId): void
+    {
+        $businessId = currentBusinessId();
+
+        if (BranchInventory::branchesEnabled($businessId)) {
+            app(BranchAccessService::class)->assertCanAccessBranch($request->user(), $branchId, $businessId);
+        }
+    }
+
+    private function authorizedBranchIds(Request $request, int $businessId): array
+    {
+        if (! BranchInventory::branchesEnabled($businessId)) {
+            return Branch::query()->where('business_id', $businessId)->where('is_active', true)->pluck('id')->all();
+        }
+
+        return app(BranchAccessService::class)->authorizedBranches($request->user(), $businessId)->pluck('id')->all();
     }
 
     private function sellerBranch(Request $request): ?Branch
     {
-        $branchId = $request->user()?->current_branch_id;
+        $user = $request->user();
+        $branchId = $user?->current_branch_id;
 
         if (! $branchId) {
             return null;
         }
 
-        return Branch::query()
+        $branch = Branch::query()
             ->where('business_id', currentBusinessId())
             ->where('is_active', true)
             ->find($branchId);
+
+        if (! $branch) {
+            return null;
+        }
+
+        return ! BranchInventory::branchesEnabled(currentBusinessId())
+            || app(BranchAccessService::class)->canAccessBranch($user, $branch, currentBusinessId())
+            ? $branch
+            : null;
     }
 
     private function authorizeSellerZone(Request $request, RouteZone $zone): void

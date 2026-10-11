@@ -6,6 +6,7 @@ use App\Models\RouteDeliveryRun;
 use App\Models\RouteDeliveryBatch;
 use App\Models\RouteDeliveryStop;
 use App\Models\User;
+use App\Services\BranchAccessService;
 use App\Services\Routes\RouteDeliveryRunAssignmentService;
 use App\Services\Routes\RouteDeliveryRunService;
 use App\Support\BranchInventory;
@@ -23,7 +24,8 @@ class RouteDeliveryRunController extends Controller
     {
         $this->requirePermission($request, Permissions::ROUTES_DELIVERY_RUNS_VIEW);
         $actor = $request->user();
-        $query = RouteDeliveryRun::query()->where('business_id', currentBusinessId())->where('branch_id', $actor->current_branch_id)
+        $branchId = $this->activeBranchId();
+        $query = RouteDeliveryRun::query()->where('business_id', currentBusinessId())->where('branch_id', $branchId)
             ->with('deliveryUser:id,name')->withCount('stops');
         if (! Permissions::userHas($actor, Permissions::ROUTES_DELIVERY_RUNS_MANAGE)) $query->where('delivery_user_id', $actor->id);
         $runs = $query->latest('id')->paginate(30)->through(fn (RouteDeliveryRun $run) => $this->runSummary($run));
@@ -106,7 +108,9 @@ class RouteDeliveryRunController extends Controller
     {
         $this->requirePermission($request, $permission);
         $actor = $request->user();
-        abort_unless((int) $run->business_id === currentBusinessId() && (int) $run->branch_id === (int) $actor->current_branch_id, 403);
+        abort_unless((int) $run->business_id === currentBusinessId(), 403);
+        $this->assertAuthorizedBranch($actor, (int) $run->branch_id);
+        abort_unless((int) $run->branch_id === $this->activeBranchId(), 403);
         if ($assignedOnly || ! Permissions::userHas($actor, Permissions::ROUTES_DELIVERY_RUNS_MANAGE)) abort_unless((int) $run->delivery_user_id === (int) $actor->id, 403);
     }
 
@@ -114,13 +118,25 @@ class RouteDeliveryRunController extends Controller
     {
         $actor = $request->user();
         abort_unless($actor->is_active && (int) $actor->business_id === currentBusinessId() && Permissions::userHas($actor, $permission), 403);
-        BranchInventory::activeBranch(currentBusinessId());
+        $this->activeBranchId();
     }
 
     private function idempotent(Request $request, string $operation, array $payload, callable $action)
     {
         $actor = $request->user();
-        return app(IdempotencyService::class)->run((int) $actor->business_id, (int) $actor->current_branch_id, $actor->id, $operation, $payload['idempotency_key'], $payload, function () use ($action) { $result = $action(); return is_array($result) && array_key_exists('result_id', $result) ? $result : ['result_id' => $result, 'response_payload' => []]; }, 'route_delivery_run');
+        return app(IdempotencyService::class)->run((int) $actor->business_id, $this->activeBranchId(), $actor->id, $operation, $payload['idempotency_key'], $payload, function () use ($action) { $result = $action(); return is_array($result) && array_key_exists('result_id', $result) ? $result : ['result_id' => $result, 'response_payload' => []]; }, 'route_delivery_run');
+    }
+
+    private function activeBranchId(): int
+    {
+        return (int) BranchInventory::activeBranch(currentBusinessId())->id;
+    }
+
+    private function assertAuthorizedBranch(User $user, int $branchId): void
+    {
+        if (BranchInventory::branchesEnabled(currentBusinessId())) {
+            app(BranchAccessService::class)->assertCanAccessBranch($user, $branchId, currentBusinessId());
+        }
     }
 
     private function runSummary(RouteDeliveryRun $run): array { return ['id' => $run->id, 'status' => $run->status, 'delivery_user' => $run->deliveryUser ? ['id' => $run->deliveryUser->id, 'name' => $run->deliveryUser->name] : null, 'stops_count' => $run->stops_count ?? $run->stops()->count(), 'started_at' => $run->started_at?->toIso8601String(), 'closed_at' => $run->closed_at?->toIso8601String(), 'created_at' => $run->created_at?->toIso8601String()]; }

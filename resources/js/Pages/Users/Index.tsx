@@ -12,6 +12,8 @@ type User = {
     is_active: boolean;
     current_branch_id: number | null;
     current_branch: Branch | null;
+    all_branches_access: boolean;
+    branch_accesses: { branch_id: number }[];
 };
 
 type Branch = {
@@ -60,6 +62,8 @@ export default function Index({
         password: '',
         password_confirmation: '',
         current_branch_id: '',
+        branch_access_mode: 'all' as 'all' | 'selected',
+        branch_ids: [] as number[],
     });
 
     const passwordForm = useForm({
@@ -74,6 +78,8 @@ export default function Index({
         form.setData('role', 'cashier');
         form.setData('is_active', true);
         form.setData('current_branch_id', '');
+        form.setData('branch_access_mode', 'all');
+        form.setData('branch_ids', []);
     }
 
     function startEdit(user: User) {
@@ -87,7 +93,30 @@ export default function Index({
             password: '',
             password_confirmation: '',
             current_branch_id: user.current_branch_id ? String(user.current_branch_id) : '',
+            branch_access_mode: user.all_branches_access ? 'all' : 'selected',
+            branch_ids: user.branch_accesses.map((access) => access.branch_id),
         });
+    }
+
+    function setBranchAccessMode(mode: 'all' | 'selected') {
+        form.setData('branch_access_mode', mode);
+
+        if (mode === 'selected' && form.data.branch_ids.length === 0 && branches[0]) {
+            form.setData('branch_ids', [branches[0].id]);
+            form.setData('current_branch_id', String(branches[0].id));
+        }
+    }
+
+    function toggleBranch(branchId: number) {
+        const selected = form.data.branch_ids.includes(branchId)
+            ? form.data.branch_ids.filter((id) => id !== branchId)
+            : [...form.data.branch_ids, branchId];
+
+        form.setData('branch_ids', selected);
+
+        if (! selected.includes(Number(form.data.current_branch_id))) {
+            form.setData('current_branch_id', selected[0] ? String(selected[0]) : '');
+        }
     }
 
     function submit(event: FormEvent) {
@@ -218,23 +247,6 @@ export default function Index({
                                     ))}
                                 </select>
                             </Field>
-                            {branches_enabled && (
-                                <Field label="Sucursal asignada" error={form.errors.current_branch_id}>
-                                    <select
-                                        className={inputClass}
-                                        value={form.data.current_branch_id}
-                                        onChange={(e) => form.setData('current_branch_id', e.target.value)}
-                                    >
-                                        <option value="">Sucursal predeterminada</option>
-                                        {branches.map((branch) => (
-                                            <option key={branch.id} value={branch.id}>
-                                                {branch.name}
-                                                {branch.code ? ` (${branch.code})` : ''}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </Field>
-                            )}
                             {!editing && (
                                 <>
                                     <Field label="Contraseña" error={form.errors.password}>
@@ -267,6 +279,67 @@ export default function Index({
                                 </label>
                             )}
                         </div>
+
+                        {branches_enabled && (
+                            <div className="mt-5 rounded-xl border border-slate-200 p-4">
+                                <p className="text-sm font-medium text-slate-700">Acceso a sucursales</p>
+                                <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-700">
+                                    <label className="flex items-center gap-2">
+                                        <input
+                                            type="radio"
+                                            name="branch_access_mode"
+                                            checked={form.data.branch_access_mode === 'all'}
+                                            onChange={() => setBranchAccessMode('all')}
+                                        />
+                                        Todas las sucursales
+                                    </label>
+                                    <label className="flex items-center gap-2">
+                                        <input
+                                            type="radio"
+                                            name="branch_access_mode"
+                                            checked={form.data.branch_access_mode === 'selected'}
+                                            onChange={() => setBranchAccessMode('selected')}
+                                        />
+                                        Sucursales seleccionadas
+                                    </label>
+                                </div>
+                                <InputError message={form.errors.branch_access_mode ?? form.errors.branch_ids} className="mt-2" />
+
+                                {form.data.branch_access_mode === 'selected' && (
+                                    <div className="mt-4 space-y-3">
+                                        <div className="grid gap-2 sm:grid-cols-2">
+                                            {branches.map((branch) => (
+                                                <label key={branch.id} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={form.data.branch_ids.includes(branch.id)}
+                                                        onChange={() => toggleBranch(branch.id)}
+                                                    />
+                                                    {branch.name}{branch.code ? ` (${branch.code})` : ''}
+                                                </label>
+                                            ))}
+                                        </div>
+                                        <Field label="Sucursal activa inicial" error={form.errors.current_branch_id}>
+                                            <select
+                                                className={inputClass}
+                                                value={form.data.current_branch_id}
+                                                onChange={(e) => form.setData('current_branch_id', e.target.value)}
+                                            >
+                                                {form.data.branch_ids.map((branchId) => {
+                                                    const branch = branches.find((item) => item.id === branchId);
+
+                                                    return branch ? (
+                                                        <option key={branch.id} value={branch.id}>
+                                                            {branch.name}{branch.code ? ` (${branch.code})` : ''}
+                                                        </option>
+                                                    ) : null;
+                                                })}
+                                            </select>
+                                        </Field>
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         <div className="mt-5 flex gap-3">
                             <button

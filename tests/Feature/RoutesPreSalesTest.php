@@ -386,7 +386,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.zones.work-day.start', $otherBranchZone))
-            ->assertSessionHasErrors('branch_id');
+            ->assertForbidden();
     }
 
     public function test_work_zone_button_start_route_creates_work_day_visits_and_redirects_to_work_day(): void
@@ -587,7 +587,7 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.zones.work-day.start', $zone))
-            ->assertSessionHasErrors('branch_id');
+            ->assertForbidden();
     }
 
     public function test_seller_can_create_customer_from_open_work_day_and_visit_is_created(): void
@@ -3305,6 +3305,10 @@ class RoutesPreSalesTest extends TestCase
         ]);
         Permissions::assignRole($user, $role);
         if ($branch) {
+            $user->branchAccesses()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+            ]);
             CashRegisterSession::query()->firstOrCreate(
                 ['business_id' => $business->id, 'branch_id' => $branch->id, 'status' => 'open'],
                 [

@@ -1325,6 +1325,7 @@ class CriticalPosFelFlowTest extends TestCase
             role: 'owner',
             pricingScope: 'branch',
         );
+        TenantSetting::query()->where('business_id', $business->id)->update(['use_branches' => true]);
         $product = $this->product($business, stock: 10, salePrice: 80);
         $default = PriceType::query()->where('business_id', $business->id)->where('is_default', true)->firstOrFail();
         $branchA = BranchInventory::defaultBranch($business->id);
@@ -2558,12 +2559,14 @@ class CriticalPosFelFlowTest extends TestCase
             'is_active' => true,
         ]);
         $user->forceFill(['current_branch_id' => $main->id])->save();
+        $user->branchAccesses()->create(['business_id' => $business->id, 'branch_id' => $main->id]);
 
         $this->actingAs($user)
             ->post(route('branches.active'), ['branch_id' => $other->id])
             ->assertForbidden();
 
         Permissions::assignDirectPermissions($user->refresh(), [Permissions::BRANCHES_SWITCH]);
+        $user->branchAccesses()->create(['business_id' => $business->id, 'branch_id' => $other->id]);
 
         $this->actingAs($user)
             ->post(route('branches.active'), ['branch_id' => $other->id])
@@ -4353,6 +4356,9 @@ class CriticalPosFelFlowTest extends TestCase
             'role' => $role,
             'is_active' => true,
             'is_super_admin' => false,
+            // This shared fixture exercises existing cross-branch flows; SEC-1
+            // makes that authority explicit rather than relying on a role name.
+            'all_branches_access' => true,
         ]);
         Permissions::assignRole($user, $role);
 

@@ -43,6 +43,11 @@ class Branch extends Model
         return $this->hasMany(ProductBranchStock::class);
     }
 
+    public function userAccesses(): HasMany
+    {
+        return $this->hasMany(UserBranchAccess::class);
+    }
+
     public function collectionSetting(): HasOne
     {
         return $this->hasOne(RouteBranchCollectionSetting::class);

@@ -23,9 +23,7 @@ class BranchController extends Controller
             ],
         ]);
 
-        if (! BranchInventory::canSwitchBranches($request->user())) {
-            abort_unless((int) $request->user()?->current_branch_id === (int) $data['branch_id'], 403);
-        }
+        abort_unless(BranchInventory::canSwitchBranches($request->user()), 403);
 
         BranchInventory::setActiveBranch(currentBusinessId(), (int) $data['branch_id']);
 
