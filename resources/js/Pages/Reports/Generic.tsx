@@ -104,7 +104,9 @@ export default function GenericReport({
     branch = null,
     maxRangeLabel = 'Rango máximo: 3 meses',
 }: Props) {
-    const business = usePage().props.business as { country?: string | null } | null;
+    const page = usePage();
+    const business = page.props.business as { country?: string | null } | null;
+    const errors = page.props.errors as Record<string, string | undefined>;
     const country = business?.country ?? 'GT';
     const [form, setForm] = useState<Record<string, string>>(() => stringifyFilters(filters));
     const [reservationExplanation, setReservationExplanation] = useState<ReservationExplanation | null>(null);
@@ -197,10 +199,10 @@ export default function GenericReport({
                                 <DateField label="Fecha" value={form.date ?? ''} onChange={(value) => setField('date', value)} />
                             )}
                             {filterKeys.includes('date_from') && (
-                                <DateField label="Desde" value={form.date_from ?? ''} onChange={(value) => setField('date_from', value)} />
+                                <DateField label="Desde" value={form.date_from ?? ''} onChange={(value) => setField('date_from', value)} error={errors.date_from} />
                             )}
                             {filterKeys.includes('date_to') && (
-                                <DateField label="Hasta" value={form.date_to ?? ''} onChange={(value) => setField('date_to', value)} />
+                                <DateField label="Hasta" value={form.date_to ?? ''} onChange={(value) => setField('date_to', value)} error={errors.date_to} />
                             )}
                             {filterKeys.includes('payment_method') && (
                                 <SelectField label="Forma de pago" value={form.payment_method ?? 'all'} onChange={(value) => setField('payment_method', value)}>
@@ -462,7 +464,7 @@ function formatValue(value: unknown): string {
     return String(value);
 }
 
-function DateField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function DateField({ label, value, onChange, error }: { label: string; value: string; onChange: (value: string) => void; error?: string }) {
     return (
         <label className="block">
             <span className="text-xs font-semibold text-slate-500">{label}</span>
@@ -470,8 +472,12 @@ function DateField({ label, value, onChange }: { label: string; value: string; o
                 type="date"
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
-                className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
+                aria-invalid={Boolean(error)}
+                className={`mt-1 h-10 w-full rounded-lg text-sm shadow-sm ${error
+                    ? 'border-red-300 focus:border-red-500 focus:ring-red-100'
+                    : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`}
             />
+            {error && <p className="mt-1 text-sm text-red-600">{error}</p>}
         </label>
     );
 }
