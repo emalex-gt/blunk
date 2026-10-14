@@ -10,7 +10,7 @@ type NavItem = {
     active: boolean;
 };
 
-type DropdownKey = 'management' | 'reports' | 'settings' | 'administration';
+type DropdownKey = 'management' | 'reports' | 'settings';
 
 type BranchOption = {
     id: number;
@@ -80,7 +80,6 @@ export default function Authenticated({
     const creditSalesEnabled = featureEnabled('enable_credit_sales', 'credits');
     const creditReservationsEnabled = featureEnabled('enable_credit_reservations', 'credits');
     const settingsVisible = false;
-    const administrationVisible = canManageUsers;
     const can = (permission: string) => Boolean(user?.is_super_admin) || permissions.includes(permission);
 
     const managementActive =
@@ -89,18 +88,19 @@ export default function Authenticated({
         (hasModule('inventory') && route().current('brands.*')) ||
         (hasModule('inventory') && route().current('product-locations.*')) ||
         (hasModule('customers') && route().current('customers.*')) ||
+        (canManageUsers && route().current('users.*')) ||
         (hasModule('branches') && route().current('inventory.transfers.*')) ||
         (hasModule('purchases') && route().current('purchases.*')) ||
         (hasModule('cash_register') && route().current('cash-register.*')) ||
         ((creditSalesEnabled || creditReservationsEnabled) && route().current('credits.*')) ||
         (hasModule('routes') && route().current('routes.*'));
     const settingsActive = false;
-    const administrationActive = canManageUsers && route().current('users.*');
     const reportsActive = route().current('reports.*');
 
     const managementItems: NavItem[] = [
         hasModule('inventory') ? { label: t('nav.products'), href: route('products.index'), active: route().current('products.*') } : null,
         hasModule('customers') && can('customers.view') ? { label: 'Clientes', href: route('customers.index'), active: route().current('customers.*') } : null,
+        canManageUsers ? { label: 'Usuarios', href: route('users.index'), active: route().current('users.*') } : null,
         hasModule('inventory') && canManageUsers ? { label: 'Listas de precios', href: route('price-lists.index'), active: route().current('price-lists.*') } : null,
         hasModule('purchases') ? { label: 'Compras', href: route('purchases.index'), active: route().current('purchases.*') } : null,
         hasModule('inventory') ? { label: t('nav.stock'), href: route('stock.index'), active: route().current('stock.*') } : null,
@@ -135,10 +135,6 @@ export default function Authenticated({
     ].filter(Boolean) as NavItem[];
 
     const settingsItems: NavItem[] = [];
-
-    const administrationItems: NavItem[] = [
-        canManageUsers ? { label: 'Usuarios', href: route('users.index'), active: route().current('users.*') } : null,
-    ].filter(Boolean) as NavItem[];
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -231,16 +227,6 @@ export default function Authenticated({
                                         label="Configuración"
                                         active={Boolean(settingsActive)}
                                         items={settingsItems}
-                                        openDropdown={openDropdown}
-                                        setOpenDropdown={setOpenDropdown}
-                                    />
-                                )}
-                                {administrationVisible && administrationItems.length > 0 && (
-                                    <TopNavDropdown
-                                        id="administration"
-                                        label="Administración"
-                                        active={Boolean(administrationActive)}
-                                        items={administrationItems}
                                         openDropdown={openDropdown}
                                         setOpenDropdown={setOpenDropdown}
                                     />
@@ -394,16 +380,6 @@ export default function Authenticated({
                             </ResponsiveNavLink>
                         ))}
 
-                        {administrationVisible && administrationItems.length > 0 && (
-                            <div className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                                Administración
-                            </div>
-                        )}
-                        {administrationItems.map((item) => (
-                            <ResponsiveNavLink key={item.label} href={item.href} active={item.active}>
-                                {item.label}
-                            </ResponsiveNavLink>
-                        ))}
                     </div>
 
                     <div className="border-t border-slate-800 pb-1 pt-4">
