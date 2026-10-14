@@ -2132,6 +2132,42 @@ class RouteController extends Controller
             ];
         }
 
+        if (! $isFinalConsumer && $this->currentBusinessCountry() !== 'GT') {
+            $existing = Customer::query()
+                ->where('business_id', $businessId)
+                ->whereNull('merged_into_customer_id')
+                ->where('doc_number', $docNumber)
+                ->first();
+
+            if ($existing) {
+                return [
+                    'customer' => $existing,
+                    'created' => false,
+                ];
+            }
+
+            $customer = Customer::query()->create([
+                'business_id' => $businessId,
+                'name' => $data['name'],
+                'commercial_name' => $data['commercial_name'] !== '' ? $data['commercial_name'] : null,
+                'contact_name' => $data['contact_name'] !== '' ? $data['contact_name'] : null,
+                'doc_type' => $docType,
+                'doc_number' => $docNumber,
+                'address' => $data['address'] !== '' ? $data['address'] : null,
+                'department' => $data['department'] !== '' ? $data['department'] : null,
+                'municipality' => $data['municipality'] !== '' ? $data['municipality'] : null,
+                'phone' => $data['phone'] !== '' ? $data['phone'] : null,
+                'country' => $this->currentBusinessCountry(),
+                'is_final_consumer' => false,
+                'name_locked' => false,
+            ]);
+
+            return [
+                'customer' => $customer,
+                'created' => true,
+            ];
+        }
+
         if (! $isFinalConsumer) {
             $existing = Customer::findOrCreateByNormalizedTaxId($businessId, [
                 'name' => $data['name'],
