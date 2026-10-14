@@ -296,6 +296,12 @@ function sanitizeNit(value: string) {
     return value.replace(/[\s-]/g, '').replace(/[^A-Za-z0-9]/g, '');
 }
 
+function sanitizeGuatemalaIdentity(docType: string, value: string) {
+    const sanitized = sanitizeNit(value);
+
+    return docType === 'CUI' ? sanitized.replace(/\D/g, '') : sanitized;
+}
+
 function normalizedFiscalNit(value: string | null | undefined) {
     return sanitizeNit(String(value ?? '')).toUpperCase();
 }
@@ -324,7 +330,7 @@ async function readJsonResponse(response: globalThis.Response) {
         return JSON.parse(text);
     } catch {
         return {
-            message: 'No se pudo consultar el NIT. Intenta nuevamente.',
+            message: 'No se pudo consultar la identidad fiscal. Intenta nuevamente.',
         };
     }
 }
@@ -1543,7 +1549,8 @@ export default function POS({
     }
 
     function setCustomerDocument(value: string) {
-        const cleanValue = country === 'GT' ? sanitizeNit(value) : value.replace(/[\s-]/g, '');
+        const docType = data.customer.doc_type === 'CUI' ? 'CUI' : 'NIT';
+        const cleanValue = country === 'GT' ? sanitizeGuatemalaIdentity(docType, value) : value.replace(/[\s-]/g, '');
         const normalizedValue = normalizedFiscalNit(cleanValue);
         const verifiedValue = normalizedFiscalNit(data.customer.tax_lookup_verified_doc_number);
         const keepValidation = Boolean(data.customer.tax_lookup_verified_at) && normalizedValue !== '' && normalizedValue === verifiedValue;
@@ -1592,31 +1599,40 @@ export default function POS({
         selectCustomer(customerMatches[0]);
     }
 
-    async function lookupNit() {
-        const nit = sanitizeNit(data.customer.doc_number);
+    async function lookupGuatemalaIdentity() {
+        const docType = data.customer.doc_type;
+        const docNumber = sanitizeGuatemalaIdentity(docType, data.customer.doc_number);
 
-        if (!nit || country !== 'GT') {
+        if (!docNumber || country !== 'GT' || !['NIT', 'CUI'].includes(docType)) {
             return;
         }
 
-        setCustomerField('doc_number', nit);
+        if (docType === 'CUI' && !/^\d{13}$/.test(docNumber)) {
+            const message = 'El CUI/DPI debe tener 13 dígitos.';
+            setNitLookupMessage(message);
+            showError(message);
+
+            return;
+        }
+
+        setCustomerField('doc_number', docNumber);
         setNitLookupLoading(true);
         setNitLookupMessage('');
 
         try {
-            const response = await fetch(`${route('customers.gt.nit-lookup')}?nit=${encodeURIComponent(nit)}`);
+            const response = await fetch(`${route('customers.gt.identity-lookup')}?doc_type=${encodeURIComponent(docType)}&doc_number=${encodeURIComponent(docNumber)}`);
             const result = await readJsonResponse(response);
 
             if (!response.ok) {
-                const message = result?.errors?.nit?.[0] || result?.message || 'No se pudo consultar el NIT.';
+                const message = result?.errors?.doc_number?.[0] || result?.errors?.doc_type?.[0] || result?.message || `No se pudo consultar el ${docType}.`;
                 throw new Error(message);
             }
 
             setData('customer', {
                 ...data.customer,
                 consumidor_final: false,
-                doc_type: 'NIT',
-                doc_number: nit,
+                doc_type: result.doc_type ?? docType,
+                doc_number: result.doc_number ?? docNumber,
                 id: result.customer?.id ?? data.customer.id,
                 name: result.customer?.name || result.name || '',
                 commercial_name: data.customer.commercial_name,
@@ -1627,12 +1643,12 @@ export default function POS({
                 country: 'GT',
                 name_locked: Boolean(result.customer?.name_locked ?? result.name),
                 tax_lookup_verified_at: result.customer?.tax_lookup_verified_at ?? result.tax_lookup_verified_at ?? null,
-                tax_lookup_verified_doc_number: result.customer?.tax_lookup_verified_at || result.tax_lookup_verified_at ? normalizedFiscalNit(nit) : null,
+                tax_lookup_verified_doc_number: result.customer?.tax_lookup_verified_at || result.tax_lookup_verified_at ? normalizedFiscalNit(result.doc_number ?? docNumber) : null,
             });
-            setNitLookupMessage(result.name ? 'Nombre obtenido automáticamente' : 'No se encontró nombre para el NIT.');
+            setNitLookupMessage(result.name ? 'Nombre obtenido automáticamente' : `No se encontró nombre para el ${docType}.`);
             setCustomerEditing(false);
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'No se pudo consultar el NIT.';
+            const message = error instanceof Error ? error.message : `No se pudo consultar el ${docType}.`;
             setNitLookupMessage(message);
             showError(message);
         } finally {
@@ -2269,12 +2285,6 @@ export default function POS({
             return;
         }
 
-        if (invoiceCuiDisabled) {
-            showError('CUI/DPI aún no está habilitado.');
-            toast.error('CUI/DPI aún no está habilitado.');
-            return;
-        }
-
         const finalPayments = splitPayment
             ? payments
             : [payments[0] ?? paymentLine(mainPaymentMethod, total.toFixed(2))];
@@ -2708,19 +2718,16 @@ export default function POS({
 
         return 'El NIT debe validarse antes de emitir factura FEL.';
     })();
-    const invoiceCuiDisabled =
-        effectiveDocumentType === 'invoice' &&
-        country === 'GT' &&
-        data.customer.doc_type === 'CUI';
     const isFelProcessing = processing && effectiveDocumentType === 'invoice';
     const checkoutHasErrors =
         customerModalErrors.length > 0 ||
         paymentModalErrors.length > 0 ||
-        Boolean(documentError || cashRegisterError || errors.items || invoiceNitNeedsVerification || invoiceCuiDisabled);
+        Boolean(documentError || cashRegisterError || errors.items || invoiceNitNeedsVerification);
     const customerFormExpanded = customerEditing || hasCustomerFieldErrors || nitLookupLoading;
     const customerTypeLabel = country === 'GT'
         ? (data.customer.consumidor_final ? 'Consumidor Final' : (data.customer.doc_type || 'NIT'))
         : (data.customer.doc_type || 'Cliente');
+    const guatemalaDocumentLabel = data.customer.doc_type === 'CUI' ? 'CUI' : 'NIT';
     const customerDisplayName = data.customer.commercial_name || data.customer.name || customerTypeLabel;
     const customerLocationSummary = [data.customer.department, data.customer.municipality]
         .filter(Boolean)
@@ -2870,6 +2877,30 @@ export default function POS({
                                             >
                                                 NIT
                                             </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setData('customer', {
+                                                        ...emptyCustomer('GT', activeBranchLocationDefaults),
+                                                        consumidor_final: false,
+                                                        doc_type: 'CUI',
+                                                        doc_number: '',
+                                                        name: '',
+                                                        name_locked: false,
+                                                        tax_lookup_verified_at: null,
+                                                    });
+                                                    setNitLookupMessage('');
+                                                    setCustomerEditing(true);
+                                                }}
+                                                className={[
+                                                    'rounded-full border px-4 py-2 text-sm font-semibold transition',
+                                                    !data.customer.consumidor_final && data.customer.doc_type === 'CUI'
+                                                        ? 'border-orange-600 bg-orange-600 text-white shadow-sm'
+                                                        : 'border-slate-200 bg-white text-slate-700 hover:bg-orange-50',
+                                                ].join(' ')}
+                                            >
+                                                CUI
+                                            </button>
                                         </div>
 
                                         {data.customer.consumidor_final ? (
@@ -2912,15 +2943,15 @@ export default function POS({
                                                 <div className="grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)] 2xl:grid-cols-[180px_auto_1fr]">
                                                     <div>
                                                         <label className="block text-xs font-medium text-slate-600">
-                                                            NIT
+                                                            {guatemalaDocumentLabel}
                                                         </label>
                                                         <input
                                                             value={data.customer.doc_number}
                                                             onChange={(event) => {
-                                                                const nit = sanitizeNit(event.target.value);
+                                                                const docNumber = sanitizeGuatemalaIdentity(data.customer.doc_type, event.target.value);
                                                                 setData('customer', {
                                                                     ...data.customer,
-                                                                    doc_number: nit,
+                                                                    doc_number: docNumber,
                                                                     name: '',
                                                                     name_locked: false,
                                                                     tax_lookup_verified_at: null,
@@ -2929,18 +2960,18 @@ export default function POS({
                                                                 setNitLookupMessage('');
                                                             }}
                                                             onKeyDown={handleCustomerKeyDown}
-                                                            placeholder="NIT"
+                                                            placeholder={guatemalaDocumentLabel}
                                                             className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                         />
                                                     </div>
                                                     <div className="flex items-end">
                                                         <button
                                                             type="button"
-                                                            onClick={lookupNit}
+                                                            onClick={lookupGuatemalaIdentity}
                                                             disabled={nitLookupLoading || !data.customer.doc_number}
                                                             className="h-10 rounded-xl bg-orange-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
                                                         >
-                                                            {nitLookupLoading ? 'Consultando...' : 'Consultar NIT'}
+                                                            {nitLookupLoading ? 'Consultando...' : <>Consultar {guatemalaDocumentLabel}</>}
                                                         </button>
                                                     </div>
                                                     <div className="sm:col-span-2 2xl:col-span-1">
@@ -4054,11 +4085,6 @@ export default function POS({
                                         {invoiceNitVerificationMessage}
                                     </div>
                                 )}
-                                {invoiceCuiDisabled && (
-                                    <div className="mt-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
-                                        CUI/DPI aún no está habilitado.
-                                    </div>
-                                )}
                             </section>
 
                             <section className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-4">
@@ -4108,7 +4134,7 @@ export default function POS({
                             <button
                                 type="button"
                                 onClick={submitSale}
-                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && (!paymentIsBalanced || !cashReceivedIsValid)) || invoiceNitNeedsVerification || invoiceCuiDisabled || hasInvalidCartQuantities || noAvailableDocumentTypes}
+                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && (!paymentIsBalanced || !cashReceivedIsValid)) || invoiceNitNeedsVerification || hasInvalidCartQuantities || noAvailableDocumentTypes}
                                 className="rounded-xl bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-orange-200 hover:from-orange-700 hover:via-orange-600 hover:to-amber-600 disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : ((processing || creditProcessing) ? 'Confirmando...' : (effectiveCheckoutType === 'credit' ? 'Confirmar crédito' : 'Confirmar venta'))}

@@ -1773,7 +1773,27 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringContainsString('setCustomerEditing(true);', $source);
         $this->assertStringContainsString('setCustomerEditing(false);', $source);
         $this->assertStringContainsString('Consumidor Final', $source);
-        $this->assertStringContainsString('Consultar NIT', $source);
+        $this->assertStringContainsString('Consultar {guatemalaDocumentLabel}', $source);
+    }
+
+    public function test_pos_guatemala_customer_lookup_uses_the_explicit_typed_identity_contract(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+
+        $this->assertStringContainsString("route('customers.gt.identity-lookup')", $source);
+        $this->assertStringContainsString('doc_type=${encodeURIComponent(docType)}', $source);
+        $this->assertStringContainsString('doc_number=${encodeURIComponent(docNumber)}', $source);
+        $this->assertStringContainsString("docType === 'CUI' && !/^\\d{13}$/.test(docNumber)", $source);
+        $this->assertStringContainsString("!['NIT', 'CUI'].includes(docType)", $source);
+        $this->assertStringContainsString("doc_type: 'CUI'", $source);
+        $this->assertStringContainsString("name: result.customer?.name || result.name || ''", $source);
+        $this->assertStringContainsString('name_locked: Boolean(result.customer?.name_locked ?? result.name)', $source);
+        $this->assertStringContainsString('address: result.customer?.address || result.address || data.customer.address', $source);
+        $this->assertStringContainsString('department: result.customer?.department || data.customer.department', $source);
+        $this->assertStringContainsString('municipality: result.customer?.municipality || data.customer.municipality', $source);
+        $this->assertStringContainsString('Consultar {guatemalaDocumentLabel}', $source);
+        $this->assertStringNotContainsString("route('customers.gt.nit-lookup')", $source);
+        $this->assertStringNotContainsString('invoiceCuiDisabled', $source);
     }
 
     public function test_pos_recent_products_are_scoped_and_rehydrated_without_stale_payloads(): void
