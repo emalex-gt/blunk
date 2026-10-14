@@ -7,11 +7,15 @@ use App\Models\ElectronicDocument;
 use App\Models\Sale;
 use App\Models\TenantFelSetting;
 use App\Services\Fel\FelException;
+use App\Services\Fel\FelIdentityLookupException;
+use App\Support\CustomerIdentity;
 use App\Support\TextEncoding;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 class DigifactClient
@@ -239,6 +243,127 @@ class DigifactClient
         return [
             'nit' => $receiverNit,
             'name' => $name,
+            'raw' => $payload,
+        ];
+    }
+
+    public function lookupCui(string $cui): array
+    {
+        $normalizedCui = CustomerIdentity::normalizeCui($cui);
+
+        if (! CustomerIdentity::isValidCui($normalizedCui)) {
+            throw ValidationException::withMessages([
+                'cui' => 'El CUI/DPI debe tener 13 dígitos.',
+            ]);
+        }
+
+        $this->ensureReadyForCalls();
+        $query = $this->sharedCuiLookupQuery($normalizedCui);
+        $started = microtime(true);
+
+        try {
+            $response = $this->authorizedRequest((int) config('digifact.lookup_timeout', 10))
+                ->get($this->buildUrl($this->endpoint('shared')), $query);
+
+            if ($response->status() === 401) {
+                $this->settings->forceFill(['token' => null, 'token_expires_at' => null])->save();
+                $response = $this->authorizedRequest((int) config('digifact.lookup_timeout', 10))
+                    ->get($this->buildUrl($this->endpoint('shared')), $query);
+            }
+        } catch (ConnectionException $exception) {
+            throw new FelIdentityLookupException(
+                FelIdentityLookupException::NETWORK,
+                'No se pudo conectar con Digifact para consultar el CUI.',
+                $exception,
+            );
+        } catch (FelException $exception) {
+            throw new FelIdentityLookupException(
+                FelIdentityLookupException::UNAUTHORIZED,
+                'Digifact rechazó la autenticación para consultar el CUI.',
+                $exception,
+            );
+        }
+
+        Log::info('Digifact CUI lookup response', [
+            'business_id' => $this->business->id,
+            'status' => $response->status(),
+            'lookup_ms' => $this->recordTiming('lookup_ms', $started),
+            'token_source' => $this->lastTokenSource(),
+            'cui_masked' => $this->maskCui($normalizedCui),
+        ]);
+
+        if ($response->status() === 401) {
+            throw new FelIdentityLookupException(
+                FelIdentityLookupException::UNAUTHORIZED,
+                'Digifact rechazó la autenticación para consultar el CUI.',
+            );
+        }
+
+        if (! $response->successful()) {
+            throw new FelIdentityLookupException(
+                FelIdentityLookupException::REMOTE_FAILURE,
+                'No se pudo consultar el CUI en Digifact: '.($this->readableError($response) ?: 'respuesta no legible del proveedor'),
+            );
+        }
+
+        try {
+            $payload = $this->decodedResponse($response);
+        } catch (FelException $exception) {
+            throw new FelIdentityLookupException(
+                FelIdentityLookupException::MALFORMED_RESPONSE,
+                'Digifact devolvió una respuesta CUI no válida.',
+                $exception,
+            );
+        }
+
+        if (! is_array($payload) || ! array_key_exists('RESPONSE', $payload) || ! is_array($payload['RESPONSE'])) {
+            throw new FelIdentityLookupException(
+                FelIdentityLookupException::MALFORMED_RESPONSE,
+                'Digifact devolvió una respuesta CUI no válida.',
+            );
+        }
+
+        if (! $this->isSuccessfulBusinessResponse($payload)) {
+            throw new FelIdentityLookupException(
+                FelIdentityLookupException::REMOTE_FAILURE,
+                'Digifact rechazó la consulta CUI: '.($this->readableErrorFromArray($payload) ?: 'respuesta no legible del proveedor'),
+                responsePayload: $payload,
+            );
+        }
+
+        if ($payload['RESPONSE'] === []) {
+            throw new FelIdentityLookupException(
+                FelIdentityLookupException::NOT_FOUND,
+                'CUI no encontrado.',
+                responsePayload: $payload,
+            );
+        }
+
+        $record = $payload['RESPONSE'][0] ?? null;
+        $returnedCui = is_array($record) ? CustomerIdentity::normalizeCui($record['CUI'] ?? null) : '';
+        $name = is_array($record) ? trim((string) ($record['NOMBRE'] ?? '')) : '';
+        $status = is_array($record) ? mb_strtoupper(trim((string) ($record['STATUS'] ?? ''))) : '';
+
+        if ($returnedCui !== $normalizedCui || $name === '' || $status === '') {
+            throw new FelIdentityLookupException(
+                FelIdentityLookupException::MALFORMED_RESPONSE,
+                'Digifact devolvió una respuesta CUI incompleta o inconsistente.',
+                responsePayload: $payload,
+            );
+        }
+
+        if ($status !== 'A') {
+            throw new FelIdentityLookupException(
+                FelIdentityLookupException::INACTIVE,
+                'El CUI no está activo.',
+                responsePayload: $payload,
+            );
+        }
+
+        return [
+            'cui' => $returnedCui,
+            'name' => $name,
+            'status' => $status,
             'raw' => $payload,
         ];
     }
@@ -763,6 +888,22 @@ class DigifactClient
             'DATA2' => "NIT|{$receiverNit}",
             'USERNAME' => $this->settings->username,
         ];
+    }
+
+    private function sharedCuiLookupQuery(string $cui): array
+    {
+        return [
+            'COUNTRY' => 'GT',
+            'TAXID' => $this->issuerTaxId(),
+            'DATA1' => 'SHARED_GETINFOCUI',
+            'DATA2' => "CUI|{$cui}",
+            'USERNAME' => $this->settings->username,
+        ];
+    }
+
+    private function maskCui(string $cui): string
+    {
+        return strlen($cui) === 13 ? substr($cui, 0, 4).'*****'.substr($cui, -4) : '[invalid]';
     }
 
     private function baseUrl(): string
