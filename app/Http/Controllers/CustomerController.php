@@ -131,8 +131,9 @@ class CustomerController extends Controller
     public function refreshTaxData(Customer $customer): RedirectResponse
     {
         $customer = $this->customerForCurrentBusiness($customer);
+        $docType = $this->taxIdentityType($customer);
 
-        if (! $this->hasRealNit($customer)) {
+        if ($docType === null) {
             throw ValidationException::withMessages([
                 'nit' => self::INVALID_NIT_MESSAGE,
             ]);
@@ -141,43 +142,48 @@ class CustomerController extends Controller
         $business = Business::query()->findOrFail(currentBusinessId());
 
         try {
-            $lookup = GuatemalaNitCustomerResolver::lookupTaxData(
-                $business,
-                $this->normalizedNit($customer->doc_number),
-                allowCache: false,
-                ignoreBadCache: true,
-            );
+            $lookup = $this->lookupTaxIdentity($business, $docType, $customer->doc_number, refresh: true);
         } catch (ValidationException $exception) {
-            throw $exception;
+            if ($docType === CustomerIdentity::NIT) {
+                throw $exception;
+            }
+
+            throw $this->identityLookupValidationException($docType, $exception);
         } catch (Throwable $exception) {
             report($exception);
 
             throw ValidationException::withMessages([
-                'nit' => GuatemalaNitCustomerResolver::LOOKUP_ERROR_MESSAGE,
+                $this->identityErrorField($docType) => $this->identityLookupErrorMessage($docType),
             ]);
         }
 
-        if ($this->normalizedNitExists(currentBusinessId(), $lookup['nit'], $customer->id)) {
+        $docNumber = $this->lookupDocumentNumber($docType, $lookup);
+
+        if ($this->fiscalIdentityExists(currentBusinessId(), $docType, $docNumber, $customer->id)) {
             throw ValidationException::withMessages([
-                'nit' => self::DUPLICATE_NIT_MESSAGE,
+                $this->identityErrorField($docType) => $this->duplicateIdentityMessage($docType),
             ]);
         }
 
-        $addressParts = GuatemalaNitCustomerResolver::extractAddressParts(is_array($lookup['raw'] ?? null) ? $lookup['raw'] : null);
-
-        $customer->forceFill([
+        $payload = [
             'name' => $lookup['name'],
-            'doc_type' => 'NIT',
-            'doc_number' => $lookup['nit'],
-            'address' => $addressParts['address'] ?: $customer->address,
-            'department' => $addressParts['department'] ?: $customer->department,
-            'municipality' => $addressParts['municipality'] ?: $customer->municipality,
+            'doc_type' => $docType,
+            'doc_number' => $docNumber,
             'country' => 'GT',
             'is_final_consumer' => false,
             'name_locked' => true,
             'tax_lookup_payload' => is_array($lookup['raw'] ?? null) ? $lookup['raw'] : null,
             'tax_lookup_verified_at' => now(),
-        ])->save();
+        ];
+
+        if ($docType === CustomerIdentity::NIT) {
+            $addressParts = GuatemalaNitCustomerResolver::extractAddressParts(is_array($lookup['raw'] ?? null) ? $lookup['raw'] : null);
+            $payload['address'] = $addressParts['address'] ?: $customer->address;
+            $payload['department'] = $addressParts['department'] ?: $customer->department;
+            $payload['municipality'] = $addressParts['municipality'] ?: $customer->municipality;
+        }
+
+        $customer->forceFill($payload)->save();
 
         return back()->with('success', 'Datos fiscales actualizados correctamente.');
     }
@@ -193,46 +199,77 @@ class CustomerController extends Controller
         }
 
         $data = $request->validate([
-            'nit' => ['required', 'string', 'max:50'],
+            'doc_type' => ['nullable', 'string', 'max:10'],
+            'doc_number' => ['nullable', 'string', 'max:50'],
+            'nit' => ['nullable', 'string', 'max:50'],
         ]);
 
-        $nit = $this->normalizedNit($data['nit']);
+        $docType = CustomerIdentity::normalizeGuatemalaDocType($data['doc_type'] ?? null)
+            ?? ($request->filled('nit') ? CustomerIdentity::NIT : null);
 
-        if ($nit === '' || $this->isCfValue($nit) || ! preg_match('/^[A-Z0-9]+$/', $nit)) {
+        if (! in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)) {
+            throw ValidationException::withMessages([
+                'doc_type' => 'El tipo de documento debe ser NIT o CUI.',
+            ]);
+        }
+
+        $rawDocNumber = $data['doc_number'] ?? $data['nit'] ?? '';
+        $docNumber = CustomerIdentity::normalizeDocument($docType, $rawDocNumber) ?? '';
+
+        if ($docType === CustomerIdentity::NIT && ($docNumber === '' || $this->isCfValue($docNumber) || ! preg_match('/^[A-Z0-9]+$/', $docNumber))) {
             throw ValidationException::withMessages([
                 'nit' => self::INVALID_NIT_MESSAGE,
             ]);
         }
 
-        if ($this->normalizedNitExists(currentBusinessId(), $nit, $customer->id)) {
+        if ($docType === CustomerIdentity::CUI && ! CustomerIdentity::isValidCui($docNumber)) {
             throw ValidationException::withMessages([
-                'nit' => self::DUPLICATE_NIT_MESSAGE,
+                'doc_number' => GuatemalaCuiCustomerResolver::INVALID_CUI_MESSAGE,
+            ]);
+        }
+
+        if ($this->fiscalIdentityExists(currentBusinessId(), $docType, $docNumber, $customer->id)) {
+            throw ValidationException::withMessages([
+                $this->identityErrorField($docType) => $this->duplicateIdentityMessage($docType),
             ]);
         }
 
         try {
-            $lookup = GuatemalaNitCustomerResolver::lookupTaxData(
+            $lookup = $this->lookupTaxIdentity(
                 Business::query()->findOrFail(currentBusinessId()),
-                $nit,
+                $docType,
+                $docNumber,
             );
         } catch (ValidationException $exception) {
-            $message = $exception->errors()['nit'][0] ?? self::INVALID_NIT_MESSAGE;
+            if ($docType === CustomerIdentity::NIT) {
+                $message = $exception->errors()['nit'][0] ?? self::INVALID_NIT_MESSAGE;
+
+                throw ValidationException::withMessages([
+                    'nit' => $message === GuatemalaNitCustomerResolver::LOOKUP_ERROR_MESSAGE ? $message : self::INVALID_NIT_MESSAGE,
+                ]);
+            }
+
+            throw $this->identityLookupValidationException($docType, $exception);
+        } catch (Throwable $exception) {
+            report($exception);
 
             throw ValidationException::withMessages([
-                'nit' => $message === GuatemalaNitCustomerResolver::LOOKUP_ERROR_MESSAGE ? $message : self::INVALID_NIT_MESSAGE,
+                $this->identityErrorField($docType) => $this->identityLookupErrorMessage($docType),
             ]);
         }
 
-        if ($this->normalizedNitExists(currentBusinessId(), $lookup['nit'], $customer->id)) {
+        $docNumber = $this->lookupDocumentNumber($docType, $lookup);
+
+        if ($this->fiscalIdentityExists(currentBusinessId(), $docType, $docNumber, $customer->id)) {
             throw ValidationException::withMessages([
-                'nit' => self::DUPLICATE_NIT_MESSAGE,
+                $this->identityErrorField($docType) => $this->duplicateIdentityMessage($docType),
             ]);
         }
 
         $customer->forceFill([
             'name' => $lookup['name'],
-            'doc_type' => 'NIT',
-            'doc_number' => $lookup['nit'],
+            'doc_type' => $docType,
+            'doc_number' => $docNumber,
             'country' => 'GT',
             'is_final_consumer' => false,
             'name_locked' => true,
@@ -240,7 +277,7 @@ class CustomerController extends Controller
             'tax_lookup_verified_at' => now(),
         ])->save();
 
-        return back()->with('success', 'NIT asignado correctamente.');
+        return back()->with('success', $docType.' asignado correctamente.');
     }
 
     public function lookupNit(Request $request): JsonResponse
@@ -425,7 +462,8 @@ class CustomerController extends Controller
             'encoding_issue_fields' => $this->encodingIssueFields($customer),
             'has_encoding_issue' => $this->encodingIssueFields($customer) !== [],
             'fiscal_status' => $this->fiscalStatus($customer),
-            'has_real_nit' => $this->hasRealNit($customer),
+            'has_real_nit' => $this->hasNitIdentity($customer),
+            'has_tax_identity' => $this->hasTaxIdentity($customer),
             'is_cf' => $this->isCfCustomer($customer),
             'credit_account' => $customer->creditAccount ? [
                 'credit_limit' => $customer->creditAccount->credit_limit,
@@ -553,14 +591,24 @@ class CustomerController extends Controller
 
     private function rejectFiscalIdentityChanges(Request $request, Customer $customer): void
     {
-        if (! $this->hasRealNit($customer)) {
+        $docType = $this->taxIdentityType($customer);
+
+        if ($docType === null) {
             return;
         }
 
         $errors = [];
 
-        if ($request->has('doc_number') && $this->normalizedNit($request->input('doc_number')) !== $this->normalizedNit($customer->doc_number)) {
-            $errors['doc_number'] = self::LOCKED_NIT_MESSAGE;
+        if ($request->has('doc_type')
+            && CustomerIdentity::normalizeGuatemalaDocType($request->input('doc_type')) !== $docType) {
+            $errors['doc_type'] = 'El tipo de documento fiscal no puede editarse manualmente.';
+        }
+
+        if ($request->has('doc_number')
+            && CustomerIdentity::normalizeDocument($docType, $request->input('doc_number')) !== CustomerIdentity::normalizeDocument($docType, $customer->doc_number)) {
+            $errors['doc_number'] = $docType === CustomerIdentity::NIT
+                ? self::LOCKED_NIT_MESSAGE
+                : 'El CUI no puede editarse manualmente.';
         }
 
         if ($request->has('name') && trim((string) $request->input('name')) !== trim((string) $customer->name)) {
@@ -572,16 +620,82 @@ class CustomerController extends Controller
         }
     }
 
-    private function normalizedNitExists(int $businessId, string $nit, ?int $ignoreCustomerId = null): bool
+    private function fiscalIdentityExists(int $businessId, string $docType, string $docNumber, ?int $ignoreCustomerId = null): bool
     {
-        return Customer::query()
+        $query = Customer::query()
             ->where('business_id', $businessId)
             ->when($ignoreCustomerId, fn ($query) => $query->whereKeyNot($ignoreCustomerId))
-            ->where('normalized_tax_id', $nit)
-            ->where(function ($query): void {
+            ->where('normalized_tax_id', $docNumber);
+
+        if ($docType === CustomerIdentity::NIT) {
+            $query->where(function ($query): void {
                 $query->where('doc_type', CustomerIdentity::NIT)->orWhereNull('doc_type');
-            })
-            ->exists();
+            });
+        } else {
+            $query->where('doc_type', $docType);
+        }
+
+        return $query->exists();
+    }
+
+    private function lookupTaxIdentity(Business $business, string $docType, string $docNumber, bool $refresh = false): array
+    {
+        return match ($docType) {
+            CustomerIdentity::NIT => GuatemalaNitCustomerResolver::lookupTaxData(
+                $business,
+                $this->normalizedNit($docNumber),
+                allowCache: ! $refresh,
+                ignoreBadCache: $refresh,
+            ),
+            CustomerIdentity::CUI => GuatemalaCuiCustomerResolver::lookupTaxData(
+                $business,
+                $docNumber,
+                allowCache: ! $refresh,
+            ),
+        };
+    }
+
+    private function lookupDocumentNumber(string $docType, array $lookup): string
+    {
+        return $docType === CustomerIdentity::CUI
+            ? CustomerIdentity::normalizeCui($lookup['cui'] ?? null)
+            : $this->normalizedNit($lookup['nit'] ?? null);
+    }
+
+    private function identityErrorField(string $docType): string
+    {
+        return $docType === CustomerIdentity::NIT ? 'nit' : 'doc_number';
+    }
+
+    private function duplicateIdentityMessage(string $docType): string
+    {
+        return $docType === CustomerIdentity::NIT
+            ? self::DUPLICATE_NIT_MESSAGE
+            : 'Ya existe un cliente con este CUI.';
+    }
+
+    private function identityLookupErrorMessage(string $docType): string
+    {
+        return $docType === CustomerIdentity::NIT
+            ? GuatemalaNitCustomerResolver::LOOKUP_ERROR_MESSAGE
+            : 'No se pudo consultar el CUI. Inténtalo nuevamente.';
+    }
+
+    private function identityLookupValidationException(string $docType, ValidationException $exception): ValidationException
+    {
+        if ($docType === CustomerIdentity::NIT) {
+            $message = $exception->errors()['nit'][0] ?? self::INVALID_NIT_MESSAGE;
+
+            return ValidationException::withMessages([
+                'nit' => $message === GuatemalaNitCustomerResolver::LOOKUP_ERROR_MESSAGE ? $message : self::INVALID_NIT_MESSAGE,
+            ]);
+        }
+
+        $message = $exception->errors()['cui'][0]
+            ?? $exception->errors()['customer.doc_number'][0]
+            ?? GuatemalaCuiCustomerResolver::INVALID_CUI_MESSAGE;
+
+        return ValidationException::withMessages(['doc_number' => $message]);
     }
 
     private function genericFinalConsumerExists(int $businessId, ?int $ignoreCustomerId = null): bool
@@ -608,11 +722,11 @@ class CustomerController extends Controller
             return $customer->tax_lookup_verified_at ? 'CUI validado' : 'CUI sin validar';
         }
 
-        if ($this->hasRealNit($customer) && $customer->tax_lookup_verified_at) {
+        if ($this->hasNitIdentity($customer) && $customer->tax_lookup_verified_at) {
             return 'NIT validado';
         }
 
-        if ($this->hasRealNit($customer)) {
+        if ($this->hasNitIdentity($customer)) {
             return 'NIT sin validar';
         }
 
@@ -629,12 +743,28 @@ class CustomerController extends Controller
         ]);
     }
 
-    private function hasRealNit(Customer $customer): bool
+    private function hasTaxIdentity(Customer $customer): bool
+    {
+        return $this->taxIdentityType($customer) !== null;
+    }
+
+    private function hasNitIdentity(Customer $customer): bool
     {
         $docType = CustomerIdentity::normalizeGuatemalaDocType($customer->doc_type);
 
         return ($docType === CustomerIdentity::NIT || ($docType === null && blank($customer->doc_type)))
             && CustomerIdentity::isRealTaxId($customer->doc_number);
+    }
+
+    private function taxIdentityType(Customer $customer): ?string
+    {
+        $docType = CustomerIdentity::normalizeGuatemalaDocType($customer->doc_type);
+
+        if ($docType === CustomerIdentity::CUI && CustomerIdentity::isValidCui($customer->doc_number)) {
+            return CustomerIdentity::CUI;
+        }
+
+        return $this->hasNitIdentity($customer) ? CustomerIdentity::NIT : null;
     }
 
     private function isCfCustomer(Customer $customer): bool

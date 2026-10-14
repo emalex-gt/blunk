@@ -452,6 +452,9 @@ class CustomerManagementTest extends TestCase
             'doc_type' => 'CUI',
             'doc_number' => '1234567890123',
             'country' => 'GT',
+            'address' => 'Zona 1',
+            'department' => 'Guatemala',
+            'municipality' => 'Guatemala',
         ]);
 
         $this->actingAs($user)
@@ -461,9 +464,103 @@ class CustomerManagementTest extends TestCase
                 ->where('customers.data.0.fiscal_status', 'CUI sin validar')
             );
 
+        $this->felSettings($business);
+        $this->fakeDigifactCuiResponse('1234567890123', 'Nombre verificado CUI');
+
         $this->actingAs($user)
             ->post(route('customers.refresh-tax-data', $customer))
-            ->assertSessionHasErrors(['nit']);
+            ->assertSessionHasNoErrors();
+
+        $customer->refresh();
+        $this->assertSame('CUI', $customer->doc_type);
+        $this->assertSame('1234567890123', $customer->doc_number);
+        $this->assertSame('Nombre verificado CUI', $customer->name);
+        $this->assertSame('Zona 1', $customer->address);
+        $this->assertSame('Guatemala', $customer->department);
+        $this->assertSame('Guatemala', $customer->municipality);
+        $this->assertTrue((bool) $customer->name_locked);
+        $this->assertNotNull($customer->tax_lookup_verified_at);
+    }
+
+    public function test_cf_customer_can_assign_valid_cui_and_preserves_existing_location_when_lookup_has_none(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente CF',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'is_final_consumer' => true,
+            'country' => 'GT',
+            'address' => 'Zona 10',
+            'department' => 'Guatemala',
+            'municipality' => 'Guatemala',
+        ]);
+        $this->felSettings($business);
+        $this->fakeDigifactCuiResponse('2249256361307', 'EMANUEL ALEJANDRO LÓPEZ LÓPEZ');
+
+        $this->actingAs($user)
+            ->from(route('customers.edit', $customer))
+            ->post(route('customers.assign-nit', $customer), [
+                'doc_type' => 'CUI',
+                'doc_number' => '2249-2563-61307',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $customer->refresh();
+        $this->assertSame('CUI', $customer->doc_type);
+        $this->assertSame('2249256361307', $customer->doc_number);
+        $this->assertSame('EMANUEL ALEJANDRO LÓPEZ LÓPEZ', $customer->name);
+        $this->assertSame('Zona 10', $customer->address);
+        $this->assertSame('Guatemala', $customer->department);
+        $this->assertSame('Guatemala', $customer->municipality);
+        $this->assertFalse((bool) $customer->is_final_consumer);
+        $this->assertTrue((bool) $customer->name_locked);
+        $this->assertNotNull($customer->tax_lookup_verified_at);
+    }
+
+    public function test_cf_customer_cannot_assign_malformed_cui_or_fallback_to_nit(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente CF',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'is_final_consumer' => true,
+            'country' => 'GT',
+        ]);
+
+        $this->actingAs($user)
+            ->post(route('customers.assign-nit', $customer), [
+                'doc_type' => 'CUI',
+                'doc_number' => '123456789012',
+            ])
+            ->assertSessionHasErrors(['doc_number' => 'El CUI/DPI debe tener 13 dígitos.']);
+
+        Http::assertNothingSent();
+        $this->assertSame('CF', $customer->refresh()->doc_type);
+    }
+
+    public function test_cf_customer_does_not_refresh_through_an_external_identity_lookup(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente CF',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'is_final_consumer' => true,
+            'country' => 'GT',
+        ]);
+        Http::fake();
+
+        $this->actingAs($user)
+            ->post(route('customers.refresh-tax-data', $customer))
+            ->assertSessionHasErrors(['nit' => 'El NIT ingresado no es válido.']);
+
+        Http::assertNothingSent();
+        $this->assertSame('CF', $customer->refresh()->doc_type);
     }
 
     public function test_cf_customer_is_not_modified_when_assigned_nit_is_invalid(): void
@@ -739,6 +836,20 @@ class CustomerManagementTest extends TestCase
                         'NOMBRE' => $name,
                     ],
                 ],
+            ], 200, ['Content-Type' => 'application/json; charset=UTF-8']),
+        ]);
+    }
+
+    private function fakeDigifactCuiResponse(string $cui, string $name): void
+    {
+        Http::fake([
+            '*' => Http::response([
+                'REQUEST_DATA' => [['Respuesta' => 1, 'Codigo' => 1]],
+                'RESPONSE' => [[
+                    'CUI' => $cui,
+                    'NOMBRE' => $name,
+                    'STATUS' => 'A',
+                ]],
             ], 200, ['Content-Type' => 'application/json; charset=UTF-8']),
         ]);
     }
