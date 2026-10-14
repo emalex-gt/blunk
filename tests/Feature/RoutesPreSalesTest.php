@@ -10,6 +10,7 @@ use App\Models\CashRegisterSession;
 use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
 use App\Models\Customer;
+use App\Models\CustomerTaxLookup;
 use App\Models\CustomerAccountMovement;
 use App\Models\CustomerCreditAccount;
 use App\Models\CustomerCreditPayment;
@@ -169,6 +170,124 @@ class RoutesPreSalesTest extends TestCase
         $this->assertSame('Carlos Perez', $customer->contact_name);
         $this->assertSame('Guatemala', $customer->department);
         $this->assertSame('Guatemala', $customer->municipality);
+    }
+
+    public function test_route_customer_creation_persists_an_explicit_verified_cui_without_inventing_address_data(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $zone = $this->zone($business, $branch, $seller);
+        $cui = '2249256361307';
+
+        CustomerTaxLookup::query()->create([
+            'business_id' => $business->id,
+            'country' => 'GT',
+            'doc_type' => 'CUI',
+            'doc_number' => $cui,
+            'name' => 'EMANUEL ALEJANDRO LÓPEZ LÓPEZ',
+            'provider' => 'digifact',
+            'raw_response' => ['CUI' => $cui, 'STATUS' => 'A'],
+            'last_lookup_at' => now(),
+        ]);
+
+        $this->actingAs($admin)
+            ->post(route('routes.zones.customers.create', $zone), [
+                'doc_type' => 'CUI',
+                'doc_number' => '2249-2563-61307',
+                'department' => 'Guatemala',
+                'municipality' => 'Guatemala',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $customer = Customer::query()->where('business_id', $business->id)->where('doc_number', $cui)->sole();
+
+        $this->assertSame('CUI', $customer->doc_type);
+        $this->assertSame('EMANUEL ALEJANDRO LÓPEZ LÓPEZ', $customer->name);
+        $this->assertTrue($customer->name_locked);
+        $this->assertNotNull($customer->tax_lookup_verified_at);
+        $this->assertNull($customer->address);
+    }
+
+    public function test_route_customer_rejects_a_malformed_explicit_cui_without_falling_back_to_nit(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $zone = $this->zone($business, $branch, $seller);
+
+        $this->actingAs($admin)
+            ->post(route('routes.zones.customers.create', $zone), [
+                'doc_type' => 'CUI',
+                'doc_number' => '224925636130',
+                'name' => 'CUI inválido',
+                'department' => 'Guatemala',
+                'municipality' => 'Guatemala',
+            ])
+            ->assertSessionHasErrors(['doc_number' => 'El CUI/DPI debe tener 13 dígitos.']);
+
+        $this->assertDatabaseMissing('customers', [
+            'business_id' => $business->id,
+            'doc_number' => '224925636130',
+        ]);
+    }
+
+    public function test_route_customer_update_preserves_the_explicit_selected_cui_identity(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $zone = $this->zone($business, $branch, $seller);
+        $customer = $this->customer($business, 'Cliente editable');
+        $assignment = RouteZoneCustomer::query()->create([
+            'business_id' => $business->id,
+            'route_zone_id' => $zone->id,
+            'customer_id' => $customer->id,
+            'visit_order' => 1,
+            'is_active' => true,
+        ]);
+        $cui = '2249256361307';
+        CustomerTaxLookup::query()->create([
+            'business_id' => $business->id,
+            'country' => 'GT',
+            'doc_type' => 'CUI',
+            'doc_number' => $cui,
+            'name' => 'NOMBRE CUI VERIFICADO',
+            'provider' => 'digifact',
+            'raw_response' => ['CUI' => $cui, 'STATUS' => 'A'],
+            'last_lookup_at' => now(),
+        ]);
+
+        $this->actingAs($admin)
+            ->put(route('routes.zones.customers.details.update', [$zone, $assignment]), [
+                'doc_type' => 'CUI',
+                'doc_number' => $cui,
+                'name' => 'Nombre no verificado',
+                'department' => 'Guatemala',
+                'municipality' => 'Guatemala',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $customer->refresh();
+        $this->assertSame('CUI', $customer->doc_type);
+        $this->assertSame($cui, $customer->doc_number);
+        $this->assertSame('NOMBRE CUI VERIFICADO', $customer->name);
+        $this->assertTrue($customer->name_locked);
+        $this->assertNotNull($customer->tax_lookup_verified_at);
+    }
+
+    public function test_route_customer_forms_use_the_explicit_typed_identity_lookup_contract(): void
+    {
+        foreach ([
+            resource_path('js/Pages/Routes/Mobile/WorkDay.tsx'),
+            resource_path('js/Pages/Routes/Zones/Customers.tsx'),
+        ] as $path) {
+            $source = file_get_contents($path);
+
+            $this->assertStringContainsString("route('customers.gt.identity-lookup')", $source);
+            $this->assertStringContainsString('doc_type=${encodeURIComponent(docType)}', $source);
+            $this->assertStringContainsString('doc_number=${encodeURIComponent(docNumber)}', $source);
+            $this->assertStringContainsString("docType === 'CUI' && !/^\\d{13}$/.test(docNumber)", $source);
+            $this->assertStringContainsString("docType === 'CF'", $source);
+            $this->assertStringNotContainsString("route('routes.resolve-nit')", $source);
+        }
     }
 
     public function test_route_customer_reuses_existing_nit_and_only_fills_empty_fields(): void

@@ -55,7 +55,9 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
         name: '',
         commercial_name: '',
         contact_name: '',
+        doc_type: 'CF',
         doc_number: '',
+        tax_lookup_verified_at: null as string | null,
         phone: '',
         address: '',
         department: branchDepartment,
@@ -90,10 +92,18 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
         });
     };
 
-    async function resolveNitForCreate() {
-        const nit = customerForm.data.doc_number.trim();
+    async function resolveIdentityForCreate() {
+        const docType = customerForm.data.doc_type;
+        const docNumber = docType === 'CUI'
+            ? customerForm.data.doc_number.replace(/\D/g, '')
+            : customerForm.data.doc_number.trim();
 
-        if (!nit || nit.toUpperCase() === 'CF') {
+        if (!docNumber || docType === 'CF') {
+            return;
+        }
+
+        if (docType === 'CUI' && !/^\d{13}$/.test(docNumber)) {
+            setNitLookupError('El CUI/DPI debe tener 13 dígitos.');
             return;
         }
 
@@ -101,13 +111,13 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
         setNitLookupError('');
 
         try {
-            const response = await fetch(`${route('routes.resolve-nit')}?nit=${encodeURIComponent(nit)}`, {
+            const response = await fetch(`${route('customers.gt.identity-lookup')}?doc_type=${encodeURIComponent(docType)}&doc_number=${encodeURIComponent(docNumber)}`, {
                 headers: { Accept: 'application/json' },
             });
             const payload = await response.json();
 
             if (!response.ok) {
-                throw new Error(payload?.message ?? 'No se pudo validar el NIT.');
+                throw new Error(payload?.errors?.doc_number?.[0] ?? payload?.message ?? `No se pudo validar el ${docType}.`);
             }
 
             const customer = payload.customer ?? {};
@@ -116,14 +126,16 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                 name: customer.name ?? customerForm.data.name,
                 commercial_name: customerForm.data.commercial_name || customer.commercial_name || '',
                 contact_name: customerForm.data.contact_name || customer.contact_name || '',
-                doc_number: customer.doc_number ?? customerForm.data.doc_number,
+                doc_type: payload.doc_type ?? docType,
+                doc_number: customer.doc_number ?? payload.doc_number ?? docNumber,
                 phone: customerForm.data.phone || customer.phone || '',
                 address: customerForm.data.address || customer.address || '',
                 department: customerForm.data.department || customer.department || '',
                 municipality: customerForm.data.municipality || customer.municipality || '',
+                tax_lookup_verified_at: customer.tax_lookup_verified_at ?? payload.tax_lookup_verified_at ?? null,
             });
         } catch (error) {
-            setNitLookupError(error instanceof Error ? error.message : 'No se pudo validar el NIT.');
+            setNitLookupError(error instanceof Error ? error.message : `No se pudo validar el ${docType}.`);
         } finally {
             setNitLookupLoading(false);
         }
@@ -259,15 +271,32 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                 />
                             </label>
                             <label className="block text-sm font-medium text-slate-700">
-                                NIT
+                                Tipo de documento
+                                <select
+                                    value={customerForm.data.doc_type}
+                                    onChange={(event) => customerForm.setData({
+                                        ...customerForm.data,
+                                        doc_type: event.target.value,
+                                        doc_number: event.target.value === 'CF' ? 'CF' : '',
+                                        tax_lookup_verified_at: null,
+                                    })}
+                                    className="mt-1 w-full rounded-xl border-slate-200 text-base"
+                                >
+                                    <option value="CF">CF</option>
+                                    <option value="NIT">NIT</option>
+                                    <option value="CUI">CUI</option>
+                                </select>
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                                {customerForm.data.doc_type}
                                 <input
                                     value={customerForm.data.doc_number}
-                                    onChange={(event) => customerForm.setData('doc_number', event.target.value)}
-                                    onBlur={resolveNitForCreate}
-                                    placeholder="Opcional"
+                                    onChange={(event) => customerForm.setData('doc_number', customerForm.data.doc_type === 'CUI' ? event.target.value.replace(/\D/g, '') : event.target.value)}
+                                    onBlur={resolveIdentityForCreate}
+                                    placeholder={customerForm.data.doc_type === 'CF' ? 'CF' : 'Opcional'}
                                     className="mt-1 w-full rounded-xl border-slate-200 text-base"
                                 />
-                                {nitLookupLoading && <span className="mt-1 block text-xs font-semibold text-orange-600">Consultando NIT...</span>}
+                                {nitLookupLoading && <span className="mt-1 block text-xs font-semibold text-orange-600">Consultando {customerForm.data.doc_type}...</span>}
                                 {nitLookupError && <span className="mt-1 block text-xs font-semibold text-red-600">{nitLookupError}</span>}
                             </label>
                             <label className="block text-sm font-medium text-slate-700">

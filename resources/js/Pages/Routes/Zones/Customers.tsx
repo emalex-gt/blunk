@@ -3,7 +3,7 @@ import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
 import { Head, Link, router, useForm } from '@inertiajs/react';
 import { FormEvent, useState } from 'react';
 
-type Customer = { id: number; name: string; commercial_name: string | null; contact_name: string | null; doc_number: string | null; address: string | null; department: string | null; municipality: string | null; phone: string | null };
+type Customer = { id: number; name: string; commercial_name: string | null; contact_name: string | null; doc_type: string | null; doc_number: string | null; address: string | null; department: string | null; municipality: string | null; phone: string | null };
 type Assignment = { id: number; customer: Customer; visit_order: number | null; notes: string | null; is_active: boolean };
 type Zone = { id: number; name: string; branch?: { name: string; department: string | null; municipality: string | null }; assigned_user?: { name: string } | null };
 
@@ -17,7 +17,9 @@ export default function Customers({ zone, assignments, availableCustomers, filte
         name: '',
         commercial_name: '',
         contact_name: '',
+        doc_type: 'CF',
         doc_number: '',
+        tax_lookup_verified_at: null as string | null,
         phone: '',
         address: '',
         department: branchDepartment,
@@ -28,6 +30,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
         name: '',
         commercial_name: '',
         contact_name: '',
+        doc_type: 'CF',
         doc_number: '',
         phone: '',
         address: '',
@@ -37,6 +40,8 @@ export default function Customers({ zone, assignments, availableCustomers, filte
     });
     const [nitLookupLoading, setNitLookupLoading] = useState(false);
     const [nitLookupError, setNitLookupError] = useState('');
+    const [editIdentityLookupLoading, setEditIdentityLookupLoading] = useState(false);
+    const [editIdentityLookupError, setEditIdentityLookupError] = useState('');
 
     const submit = (event: FormEvent) => {
         event.preventDefault();
@@ -66,6 +71,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
             name: assignment.customer.name ?? '',
             commercial_name: assignment.customer.commercial_name ?? '',
             contact_name: assignment.customer.contact_name ?? '',
+            doc_type: assignment.customer.doc_type ?? 'CF',
             doc_number: assignment.customer.doc_number ?? '',
             phone: assignment.customer.phone ?? '',
             address: assignment.customer.address ?? '',
@@ -83,10 +89,18 @@ export default function Customers({ zone, assignments, availableCustomers, filte
         });
     };
 
-    async function resolveNitForCreate() {
-        const nit = customerForm.data.doc_number.trim();
+    async function resolveIdentityForCreate() {
+        const docType = customerForm.data.doc_type;
+        const docNumber = docType === 'CUI'
+            ? customerForm.data.doc_number.replace(/\D/g, '')
+            : customerForm.data.doc_number.trim();
 
-        if (!nit || nit.toUpperCase() === 'CF') {
+        if (!docNumber || docType === 'CF') {
+            return;
+        }
+
+        if (docType === 'CUI' && !/^\d{13}$/.test(docNumber)) {
+            setNitLookupError('El CUI/DPI debe tener 13 dígitos.');
             return;
         }
 
@@ -94,13 +108,13 @@ export default function Customers({ zone, assignments, availableCustomers, filte
         setNitLookupError('');
 
         try {
-            const response = await fetch(`${route('routes.resolve-nit')}?nit=${encodeURIComponent(nit)}`, {
+            const response = await fetch(`${route('customers.gt.identity-lookup')}?doc_type=${encodeURIComponent(docType)}&doc_number=${encodeURIComponent(docNumber)}`, {
                 headers: { Accept: 'application/json' },
             });
             const payload = await response.json();
 
             if (!response.ok) {
-                throw new Error(payload?.message ?? 'No se pudo validar el NIT.');
+                throw new Error(payload?.errors?.doc_number?.[0] ?? payload?.message ?? `No se pudo validar el ${docType}.`);
             }
 
             const customer = payload.customer ?? {};
@@ -109,16 +123,66 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                 name: customer.name ?? customerForm.data.name,
                 commercial_name: customerForm.data.commercial_name || customer.commercial_name || '',
                 contact_name: customerForm.data.contact_name || customer.contact_name || '',
-                doc_number: customer.doc_number ?? customerForm.data.doc_number,
+                doc_type: payload.doc_type ?? docType,
+                doc_number: customer.doc_number ?? payload.doc_number ?? docNumber,
                 phone: customerForm.data.phone || customer.phone || '',
                 address: customerForm.data.address || customer.address || '',
                 department: customerForm.data.department || customer.department || '',
                 municipality: customerForm.data.municipality || customer.municipality || '',
+                tax_lookup_verified_at: customer.tax_lookup_verified_at ?? payload.tax_lookup_verified_at ?? null,
             });
         } catch (error) {
-            setNitLookupError(error instanceof Error ? error.message : 'No se pudo validar el NIT.');
+            setNitLookupError(error instanceof Error ? error.message : `No se pudo validar el ${docType}.`);
         } finally {
             setNitLookupLoading(false);
+        }
+    }
+
+    async function resolveIdentityForEdit() {
+        const docType = editCustomerForm.data.doc_type;
+        const docNumber = docType === 'CUI'
+            ? editCustomerForm.data.doc_number.replace(/\D/g, '')
+            : editCustomerForm.data.doc_number.trim();
+
+        if (!docNumber || docType === 'CF') {
+            return;
+        }
+
+        if (docType === 'CUI' && !/^\d{13}$/.test(docNumber)) {
+            setEditIdentityLookupError('El CUI/DPI debe tener 13 dígitos.');
+            return;
+        }
+
+        setEditIdentityLookupLoading(true);
+        setEditIdentityLookupError('');
+
+        try {
+            const response = await fetch(`${route('customers.gt.identity-lookup')}?doc_type=${encodeURIComponent(docType)}&doc_number=${encodeURIComponent(docNumber)}`, {
+                headers: { Accept: 'application/json' },
+            });
+            const payload = await response.json();
+
+            if (!response.ok) {
+                throw new Error(payload?.errors?.doc_number?.[0] ?? payload?.message ?? `No se pudo validar el ${docType}.`);
+            }
+
+            const customer = payload.customer ?? {};
+            editCustomerForm.setData({
+                ...editCustomerForm.data,
+                name: customer.name ?? editCustomerForm.data.name,
+                commercial_name: editCustomerForm.data.commercial_name || customer.commercial_name || '',
+                contact_name: editCustomerForm.data.contact_name || customer.contact_name || '',
+                doc_type: payload.doc_type ?? docType,
+                doc_number: customer.doc_number ?? payload.doc_number ?? docNumber,
+                phone: editCustomerForm.data.phone || customer.phone || '',
+                address: editCustomerForm.data.address || customer.address || '',
+                department: editCustomerForm.data.department || customer.department || '',
+                municipality: editCustomerForm.data.municipality || customer.municipality || '',
+            });
+        } catch (error) {
+            setEditIdentityLookupError(error instanceof Error ? error.message : `No se pudo validar el ${docType}.`);
+        } finally {
+            setEditIdentityLookupLoading(false);
         }
     }
 
@@ -207,15 +271,32 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                 />
                             </label>
                             <label className="text-sm font-medium text-slate-700">
-                                NIT / documento
+                                Tipo de documento
+                                <select
+                                    value={customerForm.data.doc_type}
+                                    onChange={(event) => customerForm.setData({
+                                        ...customerForm.data,
+                                        doc_type: event.target.value,
+                                        doc_number: event.target.value === 'CF' ? 'CF' : '',
+                                        tax_lookup_verified_at: null,
+                                    })}
+                                    className="mt-1 w-full rounded-lg border-slate-200 text-sm"
+                                >
+                                    <option value="CF">CF</option>
+                                    <option value="NIT">NIT</option>
+                                    <option value="CUI">CUI</option>
+                                </select>
+                            </label>
+                            <label className="text-sm font-medium text-slate-700">
+                                {customerForm.data.doc_type}
                                 <input
                                     value={customerForm.data.doc_number}
-                                    onChange={(event) => customerForm.setData('doc_number', event.target.value)}
-                                    onBlur={resolveNitForCreate}
-                                    placeholder="CF si queda vacío"
+                                    onChange={(event) => customerForm.setData('doc_number', customerForm.data.doc_type === 'CUI' ? event.target.value.replace(/\D/g, '') : event.target.value)}
+                                    onBlur={resolveIdentityForCreate}
+                                    placeholder={customerForm.data.doc_type === 'CF' ? 'CF' : 'Opcional'}
                                     className="mt-1 w-full rounded-lg border-slate-200 text-sm"
                                 />
-                                {nitLookupLoading && <span className="mt-1 block text-xs font-semibold text-orange-600">Consultando NIT...</span>}
+                                {nitLookupLoading && <span className="mt-1 block text-xs font-semibold text-orange-600">Consultando {customerForm.data.doc_type}...</span>}
                                 {nitLookupError && <span className="mt-1 block text-xs font-semibold text-red-600">{nitLookupError}</span>}
                                 {customerForm.errors.doc_number && <span className="mt-1 block text-xs text-red-600">{customerForm.errors.doc_number}</span>}
                             </label>
@@ -334,8 +415,32 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                                         <input value={editCustomerForm.data.contact_name} onChange={(event) => editCustomerForm.setData('contact_name', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
                                                     </label>
                                                     <label className="text-sm font-medium text-slate-700">
-                                                        NIT / documento
-                                                        <input value={editCustomerForm.data.doc_number} onChange={(event) => editCustomerForm.setData('doc_number', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
+                                                        Tipo de documento
+                                                        <select
+                                                            value={editCustomerForm.data.doc_type}
+                                                            onChange={(event) => editCustomerForm.setData({
+                                                                ...editCustomerForm.data,
+                                                                doc_type: event.target.value,
+                                                                doc_number: event.target.value === 'CF' ? 'CF' : '',
+                                                            })}
+                                                            className="mt-1 w-full rounded-lg border-slate-200 text-sm"
+                                                        >
+                                                            <option value="CF">CF</option>
+                                                            <option value="NIT">NIT</option>
+                                                            <option value="CUI">CUI</option>
+                                                        </select>
+                                                    </label>
+                                                    <label className="text-sm font-medium text-slate-700">
+                                                        {editCustomerForm.data.doc_type}
+                                                        <input
+                                                            value={editCustomerForm.data.doc_number}
+                                                            onChange={(event) => editCustomerForm.setData('doc_number', editCustomerForm.data.doc_type === 'CUI' ? event.target.value.replace(/\D/g, '') : event.target.value)}
+                                                            onBlur={resolveIdentityForEdit}
+                                                            placeholder={editCustomerForm.data.doc_type === 'CF' ? 'CF' : 'Opcional'}
+                                                            className="mt-1 w-full rounded-lg border-slate-200 text-sm"
+                                                        />
+                                                        {editIdentityLookupLoading && <span className="mt-1 block text-xs font-semibold text-orange-600">Consultando {editCustomerForm.data.doc_type}...</span>}
+                                                        {editIdentityLookupError && <span className="mt-1 block text-xs font-semibold text-red-600">{editIdentityLookupError}</span>}
                                                         {editCustomerForm.errors.doc_number && <span className="mt-1 block text-xs text-red-600">{editCustomerForm.errors.doc_number}</span>}
                                                     </label>
                                                     <label className="text-sm font-medium text-slate-700">
