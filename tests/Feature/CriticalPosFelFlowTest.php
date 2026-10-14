@@ -1796,6 +1796,88 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringNotContainsString('invoiceCuiDisabled', $source);
     }
 
+    public function test_pos_customer_search_keeps_generic_and_named_cf_customers_distinct(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'customers'], role: 'owner');
+        $generic = Customer::getOrCreateGenericFinalConsumer($business->id);
+        $named = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Alex Lopez',
+            'contact_name' => 'Alexandra Lopez',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'phone' => '5555-1010',
+            'address' => 'Zona 1',
+            'country' => 'GT',
+            'is_final_consumer' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->getJson(route('customers.search', ['search' => 'Alex']))
+            ->assertOk()
+            ->assertJsonPath('customers.0.id', $named->id)
+            ->assertJsonPath('customers.0.doc_type', 'CF')
+            ->assertJsonPath('customers.0.doc_number', 'CF');
+
+        $this->actingAs($user)
+            ->getJson(route('customers.search', ['search' => '5555-1010']))
+            ->assertOk()
+            ->assertJsonPath('customers.0.id', $named->id);
+
+        $this->actingAs($user)
+            ->getJson(route('customers.search', ['search' => 'Consumidor Final']))
+            ->assertOk()
+            ->assertJsonPath('customers.0.id', $generic->id);
+    }
+
+    public function test_pos_named_cf_selection_preserves_customer_and_fiscal_snapshot(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Alex Lopez',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'phone' => '5555-1010',
+            'address' => 'Zona 1',
+            'country' => 'GT',
+            'is_final_consumer' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 100, customer: [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
+                'phone' => $customer->phone,
+                'address' => $customer->address,
+                'country' => 'GT',
+                'consumidor_final' => true,
+            ]))
+            ->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->where('business_id', $business->id)->sole();
+
+        $this->assertSame($customer->id, $sale->customer_id);
+        $this->assertSame('Alex Lopez', $sale->customer_name);
+        $this->assertSame('CF', $sale->customer_doc_type);
+        $this->assertSame('CF', $sale->customer_doc_number);
+    }
+
+    public function test_pos_named_cf_search_is_not_suppressed_or_sent_to_external_identity_lookup(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+
+        $this->assertStringContainsString('isPristineGenericFinalConsumer', $source);
+        $this->assertStringNotContainsString('!customerSearchTerm || data.customer.consumidor_final || data.customer.id', $source);
+        $this->assertStringContainsString('if (!docNumber || country !== \'GT\' || ![\'NIT\', \'CUI\'].includes(docType))', $source);
+        $this->assertStringContainsString('id: customer.id,', $source);
+        $this->assertStringContainsString("doc_type: customer.doc_type ?? (country === 'AR' ? 'DNI' : 'NIT')", $source);
+    }
+
     public function test_pos_recent_products_are_scoped_and_rehydrated_without_stale_payloads(): void
     {
         $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));

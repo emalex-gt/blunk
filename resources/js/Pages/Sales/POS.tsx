@@ -1098,15 +1098,33 @@ export default function POS({
     }, [activeBranchLocationDefaults, available_document_types, country, credit_invoice, productsById, setData, singleDocumentType]);
 
     const customerSearchTerm = useMemo(() => {
+        if (country === 'GT' && data.customer.consumidor_final && data.customer.doc_type === 'CF') {
+            return [
+                data.customer.commercial_name,
+                data.customer.name,
+                data.customer.phone,
+                data.customer.address,
+            ].find((value) => value.trim() !== '')?.trim() ?? '';
+        }
+
         return [
             data.customer.doc_number,
             data.customer.commercial_name,
             data.customer.name,
         ].join(' ').trim();
-    }, [data.customer.commercial_name, data.customer.doc_number, data.customer.name]);
+    }, [country, data.customer.address, data.customer.commercial_name, data.customer.consumidor_final, data.customer.doc_number, data.customer.doc_type, data.customer.name, data.customer.phone]);
+
+    const isPristineGenericFinalConsumer = useMemo(() => (
+        country === 'GT' &&
+        data.customer.consumidor_final &&
+        data.customer.doc_type === 'CF' &&
+        data.customer.doc_number === 'CF' &&
+        data.customer.name.trim().toLowerCase() === 'consumidor final' &&
+        data.customer.commercial_name.trim() === ''
+    ), [country, data.customer.commercial_name, data.customer.consumidor_final, data.customer.doc_number, data.customer.doc_type, data.customer.name]);
 
     useEffect(() => {
-        if (!customerSearchTerm || data.customer.consumidor_final || data.customer.id) {
+        if (!customerSearchTerm || isPristineGenericFinalConsumer || data.customer.id) {
             setCustomerSearchResults([]);
             return;
         }
@@ -1134,12 +1152,12 @@ export default function POS({
             window.clearTimeout(timer);
             controller.abort();
         };
-    }, [customerSearchTerm, data.customer.consumidor_final, data.customer.id]);
+    }, [customerSearchTerm, data.customer.id, isPristineGenericFinalConsumer]);
 
     const customerMatches = useMemo(() => {
         const value = customerSearchTerm.toLowerCase();
 
-        if (!value || data.customer.consumidor_final) {
+        if (!value || isPristineGenericFinalConsumer) {
             return [];
         }
 
@@ -1160,7 +1178,7 @@ export default function POS({
                     .some((field) => field!.toLowerCase().includes(value)),
             )
             .slice(0, 5);
-    }, [customerSearchResults, customerSearchTerm, customers, data.customer.consumidor_final]);
+    }, [customerSearchResults, customerSearchTerm, customers, isPristineGenericFinalConsumer]);
     const selectedCreditAccount = useMemo(
         () => [...customerSearchResults, ...customers].find((customer) => customer.id === data.customer.id)?.credit_account ?? null,
         [customerSearchResults, customers, data.customer.id],
