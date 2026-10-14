@@ -462,6 +462,126 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertJsonPath('message', 'Este cliente existe, pero su NIT aún no ha sido validado fiscalmente. Valídalo nuevamente para emitir factura FEL.');
     }
 
+    public function test_typed_guatemala_identity_lookup_dispatches_nit_and_returns_the_normalized_customer(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner');
+        CustomerTaxLookup::query()->create([
+            'business_id' => $business->id,
+            'country' => 'GT',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+            'name' => 'Cliente NIT Digifact',
+            'provider' => 'digifact',
+            'raw_response' => ['nit' => '57289085'],
+            'last_lookup_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->getJson(route('customers.gt.identity-lookup', ['doc_type' => 'NIT', 'doc_number' => '5728-9085']))
+            ->assertOk()
+            ->assertJsonPath('doc_type', 'NIT')
+            ->assertJsonPath('doc_number', '57289085')
+            ->assertJsonPath('name', 'Cliente NIT Digifact')
+            ->assertJsonPath('customer.doc_type', 'NIT')
+            ->assertJsonPath('customer.doc_number', '57289085')
+            ->assertJsonPath('customer.name_locked', true)
+            ->assertJsonPath('customer.tax_lookup_verified_at', fn ($value) => filled($value));
+    }
+
+    public function test_typed_guatemala_identity_lookup_dispatches_cui_without_inventing_customer_address_data(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner');
+        $settings = $this->felSettings($business);
+        $settings->update([
+            'token' => 'cached-token',
+            'token_expires_at' => now()->addHour(),
+        ]);
+
+        Http::fake(['*' => Http::response([
+            'RESPONSE' => [[
+                'PAIS' => 'GT',
+                'CUI' => '2249256361307',
+                'NOMBRE' => 'EMANUEL ALEJANDRO LÓPEZ LÓPEZ',
+                'STATUS' => 'A',
+            ]],
+        ])]);
+
+        $this->actingAs($user)
+            ->getJson(route('customers.gt.identity-lookup', ['doc_type' => 'CUI', 'doc_number' => '2249-2563-61307']))
+            ->assertOk()
+            ->assertJsonPath('doc_type', 'CUI')
+            ->assertJsonPath('doc_number', '2249256361307')
+            ->assertJsonPath('name', 'EMANUEL ALEJANDRO LÓPEZ LÓPEZ')
+            ->assertJsonPath('customer.id', null)
+            ->assertJsonPath('customer.doc_type', 'CUI')
+            ->assertJsonPath('customer.doc_number', '2249256361307')
+            ->assertJsonPath('customer.address', null)
+            ->assertJsonPath('customer.department', null)
+            ->assertJsonPath('customer.municipality', null);
+    }
+
+    public function test_typed_guatemala_identity_lookup_rejects_an_unknown_document_type(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner');
+
+        $this->actingAs($user)
+            ->getJson(route('customers.gt.identity-lookup', ['doc_type' => 'DPI', 'doc_number' => '2249256361307']))
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.doc_type.0', 'El tipo de documento debe ser NIT o CUI.');
+    }
+
+    public function test_typed_guatemala_identity_lookup_rejects_an_invalid_cui_before_remote_lookup(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner');
+        Http::fake();
+
+        $this->actingAs($user)
+            ->getJson(route('customers.gt.identity-lookup', ['doc_type' => 'CUI', 'doc_number' => '224925636130']))
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.doc_number.0', 'El CUI/DPI debe tener 13 dígitos.');
+
+        Http::assertNothingSent();
+    }
+
+    public function test_typed_guatemala_identity_lookup_never_infers_or_falls_back_between_nit_and_cui(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner');
+        $identity = '2249256361307';
+
+        CustomerTaxLookup::query()->create([
+            'business_id' => $business->id,
+            'country' => 'GT',
+            'doc_type' => 'NIT',
+            'doc_number' => $identity,
+            'name' => 'Identidad NIT',
+            'provider' => 'digifact',
+            'raw_response' => ['nit' => $identity],
+            'last_lookup_at' => now(),
+        ]);
+        CustomerTaxLookup::query()->create([
+            'business_id' => $business->id,
+            'country' => 'GT',
+            'doc_type' => 'CUI',
+            'doc_number' => $identity,
+            'name' => 'Identidad CUI',
+            'provider' => 'digifact',
+            'raw_response' => ['CUI' => $identity, 'STATUS' => 'A'],
+            'last_lookup_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->getJson(route('customers.gt.identity-lookup', ['doc_type' => 'NIT', 'doc_number' => $identity]))
+            ->assertOk()
+            ->assertJsonPath('doc_type', 'NIT')
+            ->assertJsonPath('name', 'Identidad NIT');
+
+        $this->actingAs($user)
+            ->getJson(route('customers.gt.identity-lookup', ['doc_type' => 'CUI', 'doc_number' => $identity]))
+            ->assertOk()
+            ->assertJsonPath('doc_type', 'CUI')
+            ->assertJsonPath('name', 'Identidad CUI');
+    }
+
     public function test_fel_invoice_accepts_verified_customer_with_normalized_nit_match(): void
     {
         [$business, $user] = $this->tenant(

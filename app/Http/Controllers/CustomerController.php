@@ -4,7 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\Business;
 use App\Models\Customer;
+use App\Models\CustomerTaxLookup;
+use App\Services\Fel\FelIdentityLookupException;
 use App\Support\CustomerIdentity;
+use App\Support\GuatemalaCuiCustomerResolver;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\TextEncoding;
 use Illuminate\Http\JsonResponse;
@@ -317,6 +320,87 @@ class CustomerController extends Controller
         }
     }
 
+    public function lookupGuatemalaIdentity(Request $request): JsonResponse
+    {
+        $docType = CustomerIdentity::normalizeGuatemalaDocType($request->query('doc_type'));
+
+        if (! in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)) {
+            return response()->json([
+                'message' => 'El tipo de documento debe ser NIT o CUI.',
+                'errors' => ['doc_type' => ['El tipo de documento debe ser NIT o CUI.']],
+            ], 422);
+        }
+
+        $business = Business::query()->findOrFail(currentBusinessId());
+
+        if ($business->country !== 'GT') {
+            return response()->json([
+                'message' => 'La consulta de identidad fiscal está disponible solo para Guatemala.',
+            ], 403);
+        }
+
+        $docNumber = CustomerIdentity::normalizeDocument($docType, $request->query('doc_number')) ?? '';
+
+        if ($docType === CustomerIdentity::CUI && ! CustomerIdentity::isValidCui($docNumber)) {
+            return $this->identityLookupValidationError(GuatemalaCuiCustomerResolver::INVALID_CUI_MESSAGE);
+        }
+
+        try {
+            if ($docType === CustomerIdentity::NIT) {
+                $result = GuatemalaNitCustomerResolver::resolve($business, $docNumber, requireVerifiedExisting: true);
+                /** @var Customer $customer */
+                $customer = $result['customer'];
+                $docNumber = $result['nit'];
+                $name = $customer->name;
+                $verifiedAt = $customer->tax_lookup_verified_at?->toIso8601String();
+            } else {
+                $result = GuatemalaCuiCustomerResolver::lookupTaxData($business, $docNumber);
+                $docNumber = $result['cui'];
+                $name = $result['name'];
+                $customer = $this->customerByFiscalIdentity($business->id, $docType, $docNumber);
+                $verifiedAt = CustomerTaxLookup::query()
+                    ->where('business_id', $business->id)
+                    ->where('country', 'GT')
+                    ->where('doc_type', CustomerIdentity::CUI)
+                    ->where('doc_number', $docNumber)
+                    ->first(['last_lookup_at'])
+                    ?->last_lookup_at
+                    ?->toIso8601String();
+            }
+
+            return response()->json([
+                'doc_type' => $docType,
+                'doc_number' => $docNumber,
+                'name' => $name,
+                'source' => $result['source'],
+                'tax_lookup_verified_at' => $verifiedAt,
+                'customer' => $customer
+                    ? $this->customerPayload($customer)
+                    : $this->resolvedIdentityCustomerPayload($docType, $docNumber, $name, $verifiedAt),
+            ]);
+        } catch (ValidationException $exception) {
+            $message = $exception->errors()['cui'][0]
+                ?? $exception->errors()['nit'][0]
+                ?? $exception->errors()['customer.doc_number'][0]
+                ?? 'No se pudo validar la identidad fiscal.';
+
+            return $this->identityLookupValidationError($message);
+        } catch (FelIdentityLookupException $exception) {
+            return response()->json([
+                'message' => $exception->getMessage(),
+                'reason_code' => $exception->reason(),
+                'errors' => ['doc_number' => [$exception->getMessage()]],
+            ], 422);
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return response()->json([
+                'message' => 'No se pudo consultar la identidad fiscal. Inténtalo nuevamente.',
+                'errors' => ['doc_number' => ['No se pudo consultar la identidad fiscal. Inténtalo nuevamente.']],
+            ], 500);
+        }
+    }
+
     private function customerPayload(Customer $customer): array
     {
         $customer->loadMissing('creditAccount:id,customer_id,credit_limit,current_balance,is_blocked');
@@ -348,6 +432,52 @@ class CustomerController extends Controller
                 'current_balance' => $customer->creditAccount->current_balance,
                 'is_blocked' => (bool) $customer->creditAccount->is_blocked,
             ] : null,
+        ];
+    }
+
+    private function identityLookupValidationError(string $message): JsonResponse
+    {
+        return response()->json([
+            'message' => $message,
+            'errors' => ['doc_number' => [$message]],
+        ], 422);
+    }
+
+    private function customerByFiscalIdentity(int $businessId, string $docType, string $docNumber): ?Customer
+    {
+        return Customer::query()
+            ->where('business_id', $businessId)
+            ->whereNull('merged_into_customer_id')
+            ->where('doc_type', $docType)
+            ->where('normalized_tax_id', $docNumber)
+            ->first();
+    }
+
+    private function resolvedIdentityCustomerPayload(string $docType, string $docNumber, string $name, ?string $verifiedAt): array
+    {
+        return [
+            'id' => null,
+            'name' => $name,
+            'commercial_name' => null,
+            'contact_name' => null,
+            'doc_type' => $docType,
+            'doc_number' => $docNumber,
+            'tax_condition' => null,
+            'address' => null,
+            'postal_code' => null,
+            'department' => null,
+            'municipality' => null,
+            'phone' => null,
+            'country' => 'GT',
+            'is_final_consumer' => false,
+            'name_locked' => false,
+            'tax_lookup_verified_at' => $verifiedAt,
+            'encoding_issue_fields' => [],
+            'has_encoding_issue' => false,
+            'fiscal_status' => 'CUI validado',
+            'has_real_nit' => false,
+            'is_cf' => false,
+            'credit_account' => null,
         ];
     }
 
