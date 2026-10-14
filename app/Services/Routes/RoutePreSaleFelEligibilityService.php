@@ -3,6 +3,7 @@
 namespace App\Services\Routes;
 
 use App\Models\PreSale;
+use App\Support\CustomerIdentity;
 use Illuminate\Validation\ValidationException;
 
 class RoutePreSaleFelEligibilityService
@@ -27,12 +28,16 @@ class RoutePreSaleFelEligibilityService
                 : $this->notEligible('final_consumer_limit', 'Consumidor Final no puede certificarse por Q2,500.00 o más.');
         }
 
-        if ($docType === 'CUI' || $docNumber === '' || ! preg_match('/^[A-Z0-9]+$/', $docNumber)) {
+        if (($docType === CustomerIdentity::CUI && ! CustomerIdentity::isValidCui($docNumber))
+            || ($docType !== CustomerIdentity::CUI && ($docNumber === '' || ! preg_match('/^[A-Z0-9]+$/', $docNumber)))) {
             return $this->notEligible('invalid_tax_id', 'El cliente no tiene un NIT fiscal válido para certificar FEL.');
         }
 
         if (! $customer->tax_lookup_verified_at || ! $customer->name_locked) {
-            return $this->notEligible('nit_not_verified', 'El NIT debe validarse antes de certificar FEL.');
+            return $this->notEligible(
+                $docType === CustomerIdentity::CUI ? 'cui_not_verified' : 'nit_not_verified',
+                $docType === CustomerIdentity::CUI ? 'El CUI/DPI debe validarse antes de certificar FEL.' : 'El NIT debe validarse antes de certificar FEL.',
+            );
         }
 
         return $this->eligible();

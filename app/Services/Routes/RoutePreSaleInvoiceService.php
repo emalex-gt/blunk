@@ -22,6 +22,7 @@ use App\Support\AccountsReceivable;
 use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\CashRegister;
+use App\Support\CustomerIdentity;
 use App\Support\Credits;
 use App\Support\IdempotencyResult;
 use App\Support\IdempotencyService;
@@ -523,15 +524,20 @@ class RoutePreSaleInvoiceService
             return;
         }
 
-        if ($docType === 'CUI' || $docNumber === '' || ! preg_match('/^[A-Z0-9]+$/', $docNumber)) {
+        if (($docType === CustomerIdentity::CUI && ! CustomerIdentity::isValidCui($docNumber))
+            || ($docType !== CustomerIdentity::CUI && ($docNumber === '' || ! preg_match('/^[A-Z0-9]+$/', $docNumber)))) {
             throw ValidationException::withMessages([
-                'customer' => 'El NIT debe validarse antes de emitir factura FEL.',
+                'customer' => $docType === CustomerIdentity::CUI
+                    ? 'El CUI/DPI debe validarse antes de emitir factura FEL.'
+                    : 'El NIT debe validarse antes de emitir factura FEL.',
             ]);
         }
 
         if (! $customer->tax_lookup_verified_at || ! $customer->name_locked) {
             throw ValidationException::withMessages([
-                'customer' => 'Este cliente existe, pero su NIT no ha sido validado fiscalmente. Valídalo nuevamente antes de emitir factura FEL.',
+                'customer' => $docType === CustomerIdentity::CUI
+                    ? 'Este cliente existe, pero su CUI/DPI no ha sido validado fiscalmente. Valídalo nuevamente antes de emitir factura FEL.'
+                    : 'Este cliente existe, pero su NIT no ha sido validado fiscalmente. Valídalo nuevamente antes de emitir factura FEL.',
             ]);
         }
     }

@@ -344,6 +344,9 @@ class RoutePreSaleInvoiceTest extends TestCase
             'tax_lookup_verified_at' => now(),
             'name_locked' => true,
         ]);
+        $this->assertSame('eligible', $eligibility->evaluate($preSale->fresh('customer'))['status']);
+
+        $preSale->customer->update(['doc_number' => '123456789012']);
         $this->assertSame('invalid_tax_id', $eligibility->evaluate($preSale->fresh('customer'))['reason_code']);
 
         $preSale->customer->update([
@@ -357,6 +360,43 @@ class RoutePreSaleInvoiceTest extends TestCase
 
         $preSale->customer->update(['tax_lookup_verified_at' => now(), 'name_locked' => true]);
         $this->assertSame('eligible', $eligibility->evaluate($preSale->fresh('customer'))['status']);
+    }
+
+    public function test_route_pre_sale_fel_certifies_a_verified_cui_customer(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(allowInvoices: true);
+        $this->felSettings($business, $branch);
+        $product = $this->product($business, $branch, stock: 10, price: 100);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product);
+        $preSale->customer->update([
+            'name' => 'Persona CUI de ruta',
+            'doc_type' => 'CUI',
+            'doc_number' => '2249256361307',
+            'is_final_consumer' => false,
+            'tax_lookup_verified_at' => now(),
+            'name_locked' => true,
+        ]);
+        $this->openCashRegister($business, $branch, $admin);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload())
+            ->assertSessionHasNoErrors();
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $sale): ElectronicDocument {
+            $document = $sale->electronicDocument()->firstOrFail();
+            $document->update(['status' => 'certified', 'uuid' => 'route-cui-fel-uuid', 'series' => 'A', 'number' => '1', 'certification_date' => now()]);
+            $sale->update(['certification_status' => 'certified', 'fel_status' => 'CERTIFIED', 'fel_uuid' => 'route-cui-fel-uuid']);
+
+            return $document->refresh();
+        });
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.fel.certify', $preSale), ['idempotency_key' => 'route-cui-fel-key'])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('certified', $preSale->refresh()->convertedSale()->firstOrFail()->certification_status);
     }
 
     public function test_ineligible_customer_does_not_block_internal_receipt_when_tenant_policy_is_disabled(): void

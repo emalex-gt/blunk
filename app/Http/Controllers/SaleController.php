@@ -2065,8 +2065,8 @@ class SaleController extends Controller
                 ]);
             }
 
-            if ($docType === 'NIT') {
-                $verifiedCustomer = $this->verifiedNitCustomer($businessId, $docNumber);
+            if (in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)) {
+                $verifiedCustomer = $this->verifiedFiscalCustomer($businessId, $docType, $docNumber);
 
                 if ($verifiedCustomer) {
                     $name = $verifiedCustomer->name;
@@ -2123,7 +2123,7 @@ class SaleController extends Controller
             'phone' => $customerData['phone'] ?? null,
             'country' => $customerCountry,
             'is_final_consumer' => $customerCountry === 'GT' ? false : ($docType === 'Consumidor Final'),
-            'name_locked' => $customerCountry === 'GT' && $docType === 'NIT'
+            'name_locked' => $customerCountry === 'GT' && in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)
                 ? (bool) (($verifiedCustomer ?? null)?->name_locked ?? ($customerData['name_locked'] ?? false))
                 : false,
         ];
@@ -2263,7 +2263,9 @@ class SaleController extends Controller
 
         $customerData ??= [];
         $isFinalConsumer = (bool) ($customerData['consumidor_final'] ?? false);
-        $docType = $customerData['doc_type'] ?? null;
+        $docType = CustomerIdentity::normalizeGuatemalaDocType($customerData['doc_type'] ?? null)
+            ?? $customerData['doc_type']
+            ?? null;
         $docNumber = $this->normalizeDocument($customerData['doc_number'] ?? null);
         $name = trim((string) ($customerData['name'] ?? ''));
         $submittedCustomer = null;
@@ -2278,13 +2280,15 @@ class SaleController extends Controller
             return;
         }
 
-        if ($docType === 'CUI') {
+        $isCui = $docType === CustomerIdentity::CUI;
+
+        if ($isCui && ! CustomerIdentity::isValidCui($docNumber)) {
             throw ValidationException::withMessages([
-                'customer.doc_number' => 'CUI/DPI aún no está habilitado.',
+                'customer.doc_number' => 'El CUI/DPI debe tener 13 digitos.',
             ]);
         }
 
-        if ($docNumber === '' || ! preg_match('/^[A-Za-z0-9]+$/', $docNumber)) {
+        if (! $isCui && ($docNumber === '' || ! preg_match('/^[A-Za-z0-9]+$/', $docNumber))) {
             throw ValidationException::withMessages([
                 'customer.doc_number' => 'El NIT debe validarse antes de emitir factura FEL.',
             ]);
@@ -2296,39 +2300,43 @@ class SaleController extends Controller
                 ->find($customerData['id']);
 
             if ($submittedCustomer) {
-                $submittedCustomerNit = $this->normalizeDocument($submittedCustomer->doc_number);
+                $submittedCustomerDocument = $this->normalizeDocument($submittedCustomer->doc_number);
+                $identityLabel = $isCui ? 'CUI/DPI' : 'NIT';
 
-                if ($submittedCustomer->tax_lookup_verified_at && $submittedCustomerNit !== '' && $submittedCustomerNit !== $docNumber) {
+                if ($submittedCustomer->tax_lookup_verified_at && $submittedCustomerDocument !== '' && $submittedCustomerDocument !== $docNumber) {
                     throw ValidationException::withMessages([
-                        'customer.doc_number' => 'El NIT fue modificado después de la validación. Valídalo nuevamente.',
+                        'customer.doc_number' => "El {$identityLabel} fue modificado después de la validación. Valídalo nuevamente.",
                     ]);
                 }
 
                 if (! $submittedCustomer->tax_lookup_verified_at) {
                     throw ValidationException::withMessages([
-                        'customer.doc_number' => 'Este cliente ya existe, pero su NIT no ha sido validado fiscalmente. Valídalo nuevamente antes de emitir factura FEL.',
+                        'customer.doc_number' => "Este cliente ya existe, pero su {$identityLabel} no ha sido validado fiscalmente. Valídalo nuevamente antes de emitir factura FEL.",
                     ]);
                 }
             }
         }
 
-        $verifiedCustomer = $this->verifiedNitCustomer($business->id, $docNumber);
+        $verifiedCustomer = $this->verifiedFiscalCustomer($business->id, $isCui ? CustomerIdentity::CUI : CustomerIdentity::NIT, $docNumber);
+        $identityLabel = $isCui ? 'CUI/DPI' : 'NIT';
 
         if (! $verifiedCustomer) {
-            if ($this->customerByNormalizedNit($business->id, $docNumber)) {
+            if ($this->customerByNormalizedFiscalIdentity($business->id, $isCui ? CustomerIdentity::CUI : CustomerIdentity::NIT, $docNumber)) {
                 throw ValidationException::withMessages([
-                    'customer.doc_number' => 'Este cliente ya existe, pero su NIT no ha sido validado fiscalmente. Valídalo nuevamente antes de emitir factura FEL.',
+                    'customer.doc_number' => "Este cliente ya existe, pero su {$identityLabel} no ha sido validado fiscalmente. Valídalo nuevamente antes de emitir factura FEL.",
                 ]);
             }
 
             throw ValidationException::withMessages([
-                'customer.doc_number' => 'El NIT debe validarse antes de emitir factura FEL.',
+                'customer.doc_number' => "El {$identityLabel} debe validarse antes de emitir factura FEL.",
             ]);
         }
 
         if ($name === '' || $name !== $verifiedCustomer->name || ! $verifiedCustomer->name_locked) {
             throw ValidationException::withMessages([
-                'customer.name' => 'El nombre del cliente debe obtenerse automaticamente desde la consulta NIT.',
+                'customer.name' => $isCui
+                    ? 'El nombre del cliente debe obtenerse automaticamente desde la consulta CUI/DPI.'
+                    : 'El nombre del cliente debe obtenerse automaticamente desde la consulta NIT.',
             ]);
         }
     }
@@ -2346,7 +2354,12 @@ class SaleController extends Controller
 
     private function verifiedNitCustomer(int $businessId, string $docNumber): ?Customer
     {
-        $normalized = $this->normalizeDocument($docNumber);
+        return $this->verifiedFiscalCustomer($businessId, CustomerIdentity::NIT, $docNumber);
+    }
+
+    private function verifiedFiscalCustomer(int $businessId, string $docType, string $docNumber): ?Customer
+    {
+        $normalized = CustomerIdentity::normalizeDocument($docType, $docNumber) ?? '';
 
         if ($normalized === '') {
             return null;
@@ -2354,8 +2367,12 @@ class SaleController extends Controller
 
         return Customer::query()
             ->where('business_id', $businessId)
-            ->where(function ($query) {
-                $query->where('doc_type', 'NIT')->orWhereNull('doc_type');
+            ->where(function ($query) use ($docType) {
+                $query->where('doc_type', $docType);
+
+                if ($docType === CustomerIdentity::NIT) {
+                    $query->orWhereNull('doc_type');
+                }
             })
             ->whereRaw("UPPER(REPLACE(REPLACE(doc_number, '-', ''), ' ', '')) = ?", [$normalized])
             ->whereNotNull('tax_lookup_verified_at')
@@ -2365,7 +2382,12 @@ class SaleController extends Controller
 
     private function customerByNormalizedNit(int $businessId, string $docNumber): ?Customer
     {
-        $normalized = $this->normalizeDocument($docNumber);
+        return $this->customerByNormalizedFiscalIdentity($businessId, CustomerIdentity::NIT, $docNumber);
+    }
+
+    private function customerByNormalizedFiscalIdentity(int $businessId, string $docType, string $docNumber): ?Customer
+    {
+        $normalized = CustomerIdentity::normalizeDocument($docType, $docNumber) ?? '';
 
         if ($normalized === '') {
             return null;
@@ -2373,8 +2395,12 @@ class SaleController extends Controller
 
         return Customer::query()
             ->where('business_id', $businessId)
-            ->where(function ($query) {
-                $query->where('doc_type', 'NIT')->orWhereNull('doc_type');
+            ->where(function ($query) use ($docType) {
+                $query->where('doc_type', $docType);
+
+                if ($docType === CustomerIdentity::NIT) {
+                    $query->orWhereNull('doc_type');
+                }
             })
             ->whereRaw("UPPER(REPLACE(REPLACE(doc_number, '-', ''), ' ', '')) = ?", [$normalized])
             ->first();

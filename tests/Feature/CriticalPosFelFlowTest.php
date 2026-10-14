@@ -3365,6 +3365,36 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('Direccion B', $payload['Seller']['BranchInfo']['AddressInfo']['Address']);
     }
 
+    public function test_fel_buyer_payload_marks_only_cui_tax_ids_with_tax_id_type(): void
+    {
+        [$business] = $this->tenant(country: 'GT', modules: ['fel_gt'], allowInvoices: true);
+        $settings = $this->felSettings($business);
+        $sale = $this->invoiceSale($business);
+        $builder = app(DigifactNucJsonBuilder::class);
+
+        $sale->update([
+            'customer_doc_type' => 'CUI',
+            'customer_doc_number' => '2249256361307',
+            'customer_name' => 'Emanuel Alejandro López López',
+        ]);
+        $cuiBuyer = $builder->buildInvoicePayload($sale->refresh(), $settings->refresh())['Buyer'];
+
+        $this->assertSame('2249256361307', $cuiBuyer['TaxID']);
+        $this->assertSame('CUI', $cuiBuyer['TaxIDType']);
+
+        $sale->update(['customer_doc_type' => 'NIT', 'customer_doc_number' => '57289085']);
+        $nitBuyer = $builder->buildInvoicePayload($sale->refresh(), $settings->refresh())['Buyer'];
+
+        $this->assertSame('57289085', $nitBuyer['TaxID']);
+        $this->assertArrayNotHasKey('TaxIDType', $nitBuyer);
+
+        $sale->update(['customer_doc_type' => 'CF', 'customer_doc_number' => 'CF']);
+        $cfBuyer = $builder->buildInvoicePayload($sale->refresh(), $settings->refresh())['Buyer'];
+
+        $this->assertSame('CF', $cfBuyer['TaxID']);
+        $this->assertArrayNotHasKey('TaxIDType', $cfBuyer);
+    }
+
     public function test_fel_certification_is_blocked_when_branch_establishment_data_is_missing(): void
     {
         [$business] = $this->tenant(country: 'GT', modules: ['fel_gt'], allowInvoices: true);
@@ -4285,7 +4315,55 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertNull($sale->fel_uuid);
     }
 
-    public function test_pos_invoice_with_cui_remains_blocked(): void
+    public function test_pos_invoice_accepts_a_verified_cui_customer(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'fel_gt'], allowInvoices: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $this->felSettings($business);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Persona CUI sintética',
+            'doc_type' => 'CUI',
+            'doc_number' => '1234567890123',
+            'address' => 'Dirección declarada',
+            'country' => 'GT',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
+        ]);
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $sale) {
+            $document = $sale->electronicDocument;
+            $document->update(['status' => 'certified', 'uuid' => 'UUID-CUI']);
+
+            return $document->refresh();
+        });
+        $digifact->shouldReceive('recordSaleRequestTiming')->once();
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                documentType: 'invoice',
+                customer: [
+                    'id' => $customer->id,
+                    'name' => 'Persona CUI sintética',
+                    'doc_type' => 'CUI',
+                    'doc_number' => '1234567890123',
+                    'address' => 'Dirección declarada',
+                    'country' => 'GT',
+                ],
+            ))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('invoice', Sale::query()->where('business_id', $business->id)->sole()->document_type);
+    }
+
+    public function test_pos_invoice_rejects_a_malformed_cui_customer(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'fel_gt'], allowInvoices: true);
         $product = $this->product($business, stock: 10, salePrice: 100);
@@ -4293,19 +4371,20 @@ class CriticalPosFelFlowTest extends TestCase
         $this->felSettings($business);
 
         $this->actingAs($user)
+            ->from(route('sales.create'))
             ->post(route('sales.store'), $this->salePayload(
                 $product,
                 quantity: 1,
                 total: 100,
                 documentType: 'invoice',
                 customer: [
-                    'name' => 'Persona CUI sintética',
+                    'name' => 'Persona CUI inválida',
                     'doc_type' => 'CUI',
-                    'doc_number' => '1234567890123',
+                    'doc_number' => '123456789012',
                     'address' => 'Dirección declarada',
                 ],
             ))
-            ->assertSessionHasErrors(['customer.doc_number' => 'CUI/DPI aún no está habilitado.']);
+            ->assertSessionHasErrors(['customer.doc_number' => 'El CUI/DPI debe tener 13 digitos.']);
 
         $this->assertDatabaseCount('sales', 0);
     }

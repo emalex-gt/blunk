@@ -9,6 +9,7 @@ use App\Models\TenantFelSetting;
 use App\Models\TenantSetting;
 use App\Services\Fel\FelException;
 use App\Support\BranchInventory;
+use App\Support\CustomerIdentity;
 use App\Support\FelPhraseRenderer;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -26,7 +27,18 @@ class DigifactNucJsonBuilder
         $felBranch = $this->felBranch($sale);
         $this->validateFelBranch($felBranch);
         $customer = $sale->customer;
-        $buyerTaxId = DigifactNit::cleanReceiverNit($sale->customer_doc_number ?: $customer?->doc_number ?: 'CF');
+        $buyerDocType = CustomerIdentity::normalizeGuatemalaDocType($sale->customer_doc_type ?: $customer?->doc_type);
+        $buyerDocument = $sale->customer_doc_number ?: $customer?->doc_number ?: 'CF';
+
+        if ($buyerDocType === CustomerIdentity::CUI) {
+            $buyerTaxId = CustomerIdentity::normalizeCui($buyerDocument);
+
+            if (! CustomerIdentity::isValidCui($buyerTaxId)) {
+                throw new FelException('El CUI/DPI del comprador debe tener 13 dígitos para certificar FEL.');
+            }
+        } else {
+            $buyerTaxId = DigifactNit::cleanReceiverNit($buyerDocument);
+        }
         $buyerName = $buyerTaxId === 'CF'
             ? ($sale->customer_name ?: $customer?->name ?: 'Consumidor Final')
             : (string) ($sale->customer_name ?: $customer?->name);
@@ -77,6 +89,10 @@ class DigifactNucJsonBuilder
                 'Country' => $buyerCountry,
             ],
         ];
+
+        if ($buyerDocType === CustomerIdentity::CUI) {
+            $buyer['TaxIDType'] = 'CUI';
+        }
 
         $items = [];
         $grandTotal = 0.0;
