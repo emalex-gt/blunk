@@ -40,6 +40,8 @@ export default function Customers({ zone, assignments, availableCustomers, filte
         municipality: '',
         notes: '',
     });
+    const customerIdentityReady = customerForm.data.doc_type === 'CF' || Boolean(customerForm.data.tax_lookup_verified_at);
+    const editCustomerIdentityReady = editCustomerForm.data.doc_type === 'CF' || Boolean(editCustomerForm.data.tax_lookup_verified_at);
     const [nitLookupLoading, setNitLookupLoading] = useState(false);
     const [nitLookupError, setNitLookupError] = useState('');
     const [editIdentityLookupLoading, setEditIdentityLookupLoading] = useState(false);
@@ -264,7 +266,8 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                 <input
                                     value={customerForm.data.name}
                                     onChange={(event) => customerForm.setData('name', event.target.value)}
-                                    readOnly={customerForm.data.doc_type !== 'CF' && Boolean(customerForm.data.tax_lookup_verified_at)}
+                                    disabled={!customerIdentityReady}
+                                    readOnly={customerForm.data.doc_type !== 'CF' && customerIdentityReady}
                                     className="mt-1 w-full rounded-lg border-slate-200 text-sm"
                                 />
                                 {customerForm.errors.name && <span className="mt-1 block text-xs text-red-600">{customerForm.errors.name}</span>}
@@ -274,6 +277,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                 <input
                                     value={customerForm.data.commercial_name}
                                     onChange={(event) => customerForm.setData('commercial_name', event.target.value)}
+                                    disabled={!customerIdentityReady}
                                     className="mt-1 w-full rounded-lg border-slate-200 text-sm"
                                 />
                             </label>
@@ -282,6 +286,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                 <input
                                     value={customerForm.data.contact_name}
                                     onChange={(event) => customerForm.setData('contact_name', event.target.value)}
+                                    disabled={!customerIdentityReady}
                                     className="mt-1 w-full rounded-lg border-slate-200 text-sm"
                                 />
                             </label>
@@ -290,7 +295,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                 <GuatemalaIdentityTypeSelector
                                     value={customerForm.data.doc_type as 'CF' | 'NIT' | 'CUI'}
                                     onChange={(docType) => {
-                                        customerForm.setData({ ...customerForm.data, doc_type: docType, doc_number: docType === 'CF' ? 'CF' : '', tax_lookup_verified_at: null });
+                                        customerForm.setData({ ...customerForm.data, name: '', doc_type: docType, doc_number: docType === 'CF' ? 'CF' : '', tax_lookup_verified_at: null });
                                         setNitLookupError('');
                                     }}
                                 />
@@ -299,7 +304,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                 {customerForm.data.doc_type === 'CUI' ? 'CUI / DPI' : 'NIT'}
                                 <div className="mt-1 flex gap-2">
                                     <input value={customerForm.data.doc_number} onChange={(event) => {
-                                        customerForm.setData({ ...customerForm.data, doc_number: customerForm.data.doc_type === 'CUI' ? event.target.value.replace(/\D/g, '') : event.target.value, tax_lookup_verified_at: null });
+                                        customerForm.setData({ ...customerForm.data, name: '', doc_number: customerForm.data.doc_type === 'CUI' ? event.target.value.replace(/\D/g, '') : event.target.value, tax_lookup_verified_at: null });
                                         setNitLookupError('');
                                     }} placeholder={customerForm.data.doc_type === 'CUI' ? '13 dígitos' : 'Ingresar NIT'} className="min-w-0 flex-1 rounded-lg border-slate-200 text-sm" />
                                     <button type="button" onClick={resolveIdentityForCreate} disabled={nitLookupLoading || !customerForm.data.doc_number} className="rounded-lg bg-orange-600 px-3 text-sm font-semibold text-white disabled:opacity-60">{nitLookupLoading ? 'Validando...' : `Validar ${customerForm.data.doc_type}`}</button>
@@ -308,11 +313,15 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                 {nitLookupError && <span className="mt-1 block text-xs font-semibold text-red-600">{nitLookupError}</span>}
                                 {customerForm.errors.doc_number && <span className="mt-1 block text-xs text-red-600">{customerForm.errors.doc_number}</span>}
                             </label>}
+                            {customerForm.data.doc_type !== 'CF' && !customerIdentityReady && (
+                                <p className="text-sm text-slate-500">Valida el {customerForm.data.doc_type === 'CUI' ? 'CUI/DPI' : 'NIT'} para completar los datos del cliente.</p>
+                            )}
                             <label className="text-sm font-medium text-slate-700">
                                 Teléfono
                                 <input
                                     value={customerForm.data.phone}
                                     onChange={(event) => customerForm.setData('phone', event.target.value)}
+                                    disabled={!customerIdentityReady}
                                     className="mt-1 w-full rounded-lg border-slate-200 text-sm"
                                 />
                             </label>
@@ -321,6 +330,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                 <input
                                     value={customerForm.data.address}
                                     onChange={(event) => customerForm.setData('address', event.target.value)}
+                                    disabled={!customerIdentityReady}
                                     className="mt-1 w-full rounded-lg border-slate-200 text-sm"
                                 />
                             </label>
@@ -331,6 +341,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                 onMunicipalityChange={(value) => customerForm.setData('municipality', value)}
                                 departmentError={customerForm.errors.department}
                                 municipalityError={customerForm.errors.municipality}
+                                disabled={!customerIdentityReady}
                                 compact
                             />
                             <label className="text-sm font-medium text-slate-700 md:col-span-2">
@@ -338,6 +349,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                 <textarea
                                     value={customerForm.data.notes}
                                     onChange={(event) => customerForm.setData('notes', event.target.value)}
+                                    disabled={!customerIdentityReady}
                                     className="mt-1 w-full rounded-lg border-slate-200 text-sm"
                                     rows={2}
                                 />
@@ -351,7 +363,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                             >
                                 Cancelar
                             </button>
-                            <button disabled={customerForm.processing || nitLookupLoading} className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                            <button disabled={customerForm.processing || nitLookupLoading || !customerIdentityReady} className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
                                 Crear y asignar
                             </button>
                         </div>
@@ -411,16 +423,16 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                                 <div className="grid gap-3 md:grid-cols-2">
                                                     <label className="text-sm font-medium text-slate-700">
                                                         Nombre fiscal
-                                                        <input value={editCustomerForm.data.name} readOnly={editCustomerForm.data.doc_type !== 'CF' && Boolean(editCustomerForm.data.tax_lookup_verified_at)} onChange={(event) => editCustomerForm.setData('name', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
+                                                        <input value={editCustomerForm.data.name} disabled={!editCustomerIdentityReady} readOnly={editCustomerForm.data.doc_type !== 'CF' && editCustomerIdentityReady} onChange={(event) => editCustomerForm.setData('name', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
                                                         {editCustomerForm.errors.name && <span className="mt-1 block text-xs text-red-600">{editCustomerForm.errors.name}</span>}
                                                     </label>
                                                     <label className="text-sm font-medium text-slate-700">
                                                         Nombre del negocio
-                                                        <input value={editCustomerForm.data.commercial_name} onChange={(event) => editCustomerForm.setData('commercial_name', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
+                                                        <input value={editCustomerForm.data.commercial_name} disabled={!editCustomerIdentityReady} onChange={(event) => editCustomerForm.setData('commercial_name', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
                                                     </label>
                                                     <label className="text-sm font-medium text-slate-700">
                                                         Encargado / contacto
-                                                        <input value={editCustomerForm.data.contact_name} onChange={(event) => editCustomerForm.setData('contact_name', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
+                                                        <input value={editCustomerForm.data.contact_name} disabled={!editCustomerIdentityReady} onChange={(event) => editCustomerForm.setData('contact_name', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
                                                     </label>
                                                     <label className="text-sm font-medium text-slate-700">
                                                         Tipo de documento
@@ -429,6 +441,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                                             onChange={(docType) => {
                                                                 editCustomerForm.setData({
                                                                 ...editCustomerForm.data,
+                                                                 name: '',
                                                                  doc_type: docType,
                                                                 doc_number: docType === 'CF' ? 'CF' : '',
                                                                 tax_lookup_verified_at: null,
@@ -442,7 +455,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                                         <input
                                                             value={editCustomerForm.data.doc_number}
                                                             onChange={(event) => {
-                                                                editCustomerForm.setData({ ...editCustomerForm.data, doc_number: editCustomerForm.data.doc_type === 'CUI' ? event.target.value.replace(/\D/g, '') : event.target.value, tax_lookup_verified_at: null });
+                                                                editCustomerForm.setData({ ...editCustomerForm.data, name: '', doc_number: editCustomerForm.data.doc_type === 'CUI' ? event.target.value.replace(/\D/g, '') : event.target.value, tax_lookup_verified_at: null });
                                                                 setEditIdentityLookupError('');
                                                             }}
                                                             placeholder={editCustomerForm.data.doc_type === 'CF' ? 'CF' : 'Opcional'}
@@ -454,13 +467,16 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                                         {editIdentityLookupError && <span className="mt-1 block text-xs font-semibold text-red-600">{editIdentityLookupError}</span>}
                                                         {editCustomerForm.errors.doc_number && <span className="mt-1 block text-xs text-red-600">{editCustomerForm.errors.doc_number}</span>}
                                                     </label>
+                                                    {editCustomerForm.data.doc_type !== 'CF' && !editCustomerIdentityReady && (
+                                                        <p className="text-sm text-slate-500">Valida el {editCustomerForm.data.doc_type === 'CUI' ? 'CUI/DPI' : 'NIT'} para completar los datos del cliente.</p>
+                                                    )}
                                                     <label className="text-sm font-medium text-slate-700">
                                                         Teléfono
-                                                        <input value={editCustomerForm.data.phone} onChange={(event) => editCustomerForm.setData('phone', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
+                                                        <input value={editCustomerForm.data.phone} disabled={!editCustomerIdentityReady} onChange={(event) => editCustomerForm.setData('phone', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
                                                     </label>
                                                     <label className="text-sm font-medium text-slate-700">
                                                         Dirección
-                                                        <input value={editCustomerForm.data.address} onChange={(event) => editCustomerForm.setData('address', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
+                                                        <input value={editCustomerForm.data.address} disabled={!editCustomerIdentityReady} onChange={(event) => editCustomerForm.setData('address', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
                                                     </label>
                                                     <GuatemalaLocationSelects
                                                         department={editCustomerForm.data.department}
@@ -469,18 +485,19 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                                         onMunicipalityChange={(value) => editCustomerForm.setData('municipality', value)}
                                                         departmentError={editCustomerForm.errors.department}
                                                         municipalityError={editCustomerForm.errors.municipality}
+                                                        disabled={!editCustomerIdentityReady}
                                                         compact
                                                     />
                                                     <label className="text-sm font-medium text-slate-700 md:col-span-2">
                                                         Referencia / notas
-                                                        <textarea value={editCustomerForm.data.notes} onChange={(event) => editCustomerForm.setData('notes', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" rows={2} />
+                                                        <textarea value={editCustomerForm.data.notes} disabled={!editCustomerIdentityReady} onChange={(event) => editCustomerForm.setData('notes', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" rows={2} />
                                                     </label>
                                                 </div>
                                                 <div className="mt-4 flex justify-end gap-2">
                                                     <button type="button" onClick={() => setEditingAssignmentId(null)} className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-200">
                                                         Cancelar
                                                     </button>
-                                                    <button disabled={editCustomerForm.processing} className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">
+                                                    <button disabled={editCustomerForm.processing || !editCustomerIdentityReady} className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white">
                                                         Guardar cliente
                                                     </button>
                                                 </div>

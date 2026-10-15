@@ -66,6 +66,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
         notes: '',
         work_day: '',
     });
+    const customerIdentityReady = customerForm.data.doc_type === 'CF' || Boolean(customerForm.data.tax_lookup_verified_at);
     const [nitLookupLoading, setNitLookupLoading] = useState(false);
     const [nitLookupError, setNitLookupError] = useState('');
     const [showCloseConfirm, setShowCloseConfirm] = useState(false);
@@ -255,7 +256,8 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                 <input
                                     value={customerForm.data.name}
                                     onChange={(event) => customerForm.setData('name', event.target.value)}
-                                    readOnly={customerForm.data.doc_type !== 'CF' && Boolean(customerForm.data.tax_lookup_verified_at)}
+                                    disabled={!customerIdentityReady}
+                                    readOnly={customerForm.data.doc_type !== 'CF' && customerIdentityReady}
                                     className="mt-1 w-full rounded-xl border-slate-200 text-base"
                                 />
                                 {customerForm.errors.name && <span className="mt-1 block text-xs text-red-600">{customerForm.errors.name}</span>}
@@ -265,6 +267,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                 <input
                                     value={customerForm.data.commercial_name}
                                     onChange={(event) => customerForm.setData('commercial_name', event.target.value)}
+                                    disabled={!customerIdentityReady}
                                     className="mt-1 w-full rounded-xl border-slate-200 text-base"
                                 />
                             </label>
@@ -273,6 +276,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                 <input
                                     value={customerForm.data.contact_name}
                                     onChange={(event) => customerForm.setData('contact_name', event.target.value)}
+                                    disabled={!customerIdentityReady}
                                     className="mt-1 w-full rounded-xl border-slate-200 text-base"
                                 />
                             </label>
@@ -281,7 +285,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                 <GuatemalaIdentityTypeSelector
                                     value={customerForm.data.doc_type as 'CF' | 'NIT' | 'CUI'}
                                     onChange={(docType) => {
-                                        customerForm.setData({ ...customerForm.data, doc_type: docType, doc_number: docType === 'CF' ? 'CF' : '', tax_lookup_verified_at: null });
+                                        customerForm.setData({ ...customerForm.data, name: '', doc_type: docType, doc_number: docType === 'CF' ? 'CF' : '', tax_lookup_verified_at: null });
                                         setNitLookupError('');
                                     }}
                                 />
@@ -292,7 +296,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                     <input
                                         value={customerForm.data.doc_number}
                                         onChange={(event) => {
-                                            customerForm.setData({ ...customerForm.data, doc_number: customerForm.data.doc_type === 'CUI' ? event.target.value.replace(/\D/g, '') : event.target.value, tax_lookup_verified_at: null });
+                                            customerForm.setData({ ...customerForm.data, name: '', doc_number: customerForm.data.doc_type === 'CUI' ? event.target.value.replace(/\D/g, '') : event.target.value, tax_lookup_verified_at: null });
                                             setNitLookupError('');
                                         }}
                                         placeholder={customerForm.data.doc_type === 'CUI' ? '13 dígitos' : 'Ingresar NIT'}
@@ -306,11 +310,15 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                 {nitLookupLoading && <span className="mt-1 block text-xs font-semibold text-orange-600">Consultando {customerForm.data.doc_type}...</span>}
                                 {nitLookupError && <span className="mt-1 block text-xs font-semibold text-red-600">{nitLookupError}</span>}
                             </label>}
+                            {customerForm.data.doc_type !== 'CF' && !customerIdentityReady && (
+                                <p className="text-sm text-slate-500">Valida el {customerForm.data.doc_type === 'CUI' ? 'CUI/DPI' : 'NIT'} para completar los datos del cliente.</p>
+                            )}
                             <label className="block text-sm font-medium text-slate-700">
                                 Teléfono
                                 <input
                                     value={customerForm.data.phone}
                                     onChange={(event) => customerForm.setData('phone', event.target.value)}
+                                    disabled={!customerIdentityReady}
                                     className="mt-1 w-full rounded-xl border-slate-200 text-base"
                                 />
                             </label>
@@ -319,6 +327,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                 <input
                                     value={customerForm.data.address}
                                     onChange={(event) => customerForm.setData('address', event.target.value)}
+                                    disabled={!customerIdentityReady}
                                     className="mt-1 w-full rounded-xl border-slate-200 text-base"
                                 />
                             </label>
@@ -329,12 +338,14 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                 onMunicipalityChange={(value) => customerForm.setData('municipality', value)}
                                 departmentError={customerForm.errors.department}
                                 municipalityError={customerForm.errors.municipality}
+                                disabled={!customerIdentityReady}
                             />
                             <label className="block text-sm font-medium text-slate-700">
                                 Referencia
                                 <textarea
                                     value={customerForm.data.notes}
                                     onChange={(event) => customerForm.setData('notes', event.target.value)}
+                                    disabled={!customerIdentityReady}
                                     className="mt-1 w-full rounded-xl border-slate-200 text-base"
                                     rows={2}
                                 />
@@ -348,7 +359,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                             >
                                 Cancelar
                             </button>
-                            <button disabled={customerForm.processing || nitLookupLoading} className="rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60">
+                            <button disabled={customerForm.processing || nitLookupLoading || !customerIdentityReady} className="rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60">
                                 Crear cliente
                             </button>
                         </div>

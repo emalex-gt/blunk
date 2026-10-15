@@ -92,6 +92,27 @@ class RoutesPreSalesTest extends TestCase
         $this->assertStringNotContainsString('<select', substr($adminSource, strpos($adminSource, 'editingAssignmentId'), 10000));
     }
 
+    public function test_guatemala_route_customer_details_stay_locked_until_identity_verification(): void
+    {
+        $mobileSource = file_get_contents(resource_path('js/Pages/Routes/Mobile/WorkDay.tsx'));
+        $adminSource = file_get_contents(resource_path('js/Pages/Routes/Zones/Customers.tsx'));
+
+        foreach ([$mobileSource, $adminSource] as $source) {
+            $this->assertStringContainsString("const customerIdentityReady = customerForm.data.doc_type === 'CF' || Boolean(customerForm.data.tax_lookup_verified_at);", $source);
+            $this->assertStringContainsString('disabled={!customerIdentityReady}', $source);
+            $this->assertStringContainsString('disabled={customerForm.processing || nitLookupLoading || !customerIdentityReady}', $source);
+            $this->assertStringContainsString("name: '',", $source);
+            $this->assertStringContainsString("address: customerForm.data.address || customer.address || '',", $source);
+        }
+
+        $this->assertStringContainsString("const editCustomerIdentityReady = editCustomerForm.data.doc_type === 'CF' || Boolean(editCustomerForm.data.tax_lookup_verified_at);", $adminSource);
+        $this->assertStringContainsString('disabled={!editCustomerIdentityReady}', $adminSource);
+        $this->assertStringContainsString('disabled={editCustomerForm.processing || !editCustomerIdentityReady}', $adminSource);
+        $this->assertStringContainsString("tax_lookup_verified_at: assignment.customer.name_locked && assignment.customer.tax_lookup_verified_at", $adminSource);
+        $this->assertStringContainsString("{ ...editCustomerForm.data, name: '', doc_number:", $adminSource);
+        $this->assertStringContainsString("Valida el {customerForm.data.doc_type === 'CUI' ? 'CUI/DPI' : 'NIT'} para completar los datos del cliente.", $mobileSource);
+    }
+
     public function test_admin_can_create_route_zone_and_assign_customer(): void
     {
         [$business, $admin, $branch] = $this->tenant(role: 'owner');
