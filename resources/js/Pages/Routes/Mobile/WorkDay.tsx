@@ -1,5 +1,6 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
+import GuatemalaIdentityTypeSelector from '@/Components/GuatemalaIdentityTypeSelector';
 import ConfirmDialog from '@/Components/ConfirmDialog';
 import { makeOperationKey } from '@/lib/idempotency';
 import { Head, Link, useForm } from '@inertiajs/react';
@@ -85,6 +86,10 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
     const createCustomer = (event: FormEvent) => {
         event.preventDefault();
         if (nitLookupLoading) {
+            return;
+        }
+        if (customerForm.data.doc_type !== 'CF' && !customerForm.data.tax_lookup_verified_at) {
+            setNitLookupError(`Ingresa el ${customerForm.data.doc_type} y valídalo antes de continuar.`);
             return;
         }
         customerForm.post(route('routes.mobile.work-days.customers.store', workDay.id), {
@@ -250,6 +255,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                 <input
                                     value={customerForm.data.name}
                                     onChange={(event) => customerForm.setData('name', event.target.value)}
+                                    readOnly={customerForm.data.doc_type !== 'CF' && Boolean(customerForm.data.tax_lookup_verified_at)}
                                     className="mt-1 w-full rounded-xl border-slate-200 text-base"
                                 />
                                 {customerForm.errors.name && <span className="mt-1 block text-xs text-red-600">{customerForm.errors.name}</span>}
@@ -270,35 +276,36 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                     className="mt-1 w-full rounded-xl border-slate-200 text-base"
                                 />
                             </label>
-                            <label className="block text-sm font-medium text-slate-700">
-                                Tipo de documento
-                                <select
-                                    value={customerForm.data.doc_type}
-                                    onChange={(event) => customerForm.setData({
-                                        ...customerForm.data,
-                                        doc_type: event.target.value,
-                                        doc_number: event.target.value === 'CF' ? 'CF' : '',
-                                        tax_lookup_verified_at: null,
-                                    })}
-                                    className="mt-1 w-full rounded-xl border-slate-200 text-base"
-                                >
-                                    <option value="CF">CF</option>
-                                    <option value="NIT">NIT</option>
-                                    <option value="CUI">CUI</option>
-                                </select>
-                            </label>
-                            <label className="block text-sm font-medium text-slate-700">
-                                {customerForm.data.doc_type}
-                                <input
-                                    value={customerForm.data.doc_number}
-                                    onChange={(event) => customerForm.setData('doc_number', customerForm.data.doc_type === 'CUI' ? event.target.value.replace(/\D/g, '') : event.target.value)}
-                                    onBlur={resolveIdentityForCreate}
-                                    placeholder={customerForm.data.doc_type === 'CF' ? 'CF' : 'Opcional'}
-                                    className="mt-1 w-full rounded-xl border-slate-200 text-base"
+                            <div className="space-y-2">
+                                <span className="block text-sm font-medium text-slate-700">Tipo de documento</span>
+                                <GuatemalaIdentityTypeSelector
+                                    value={customerForm.data.doc_type as 'CF' | 'NIT' | 'CUI'}
+                                    onChange={(docType) => {
+                                        customerForm.setData({ ...customerForm.data, doc_type: docType, doc_number: docType === 'CF' ? 'CF' : '', tax_lookup_verified_at: null });
+                                        setNitLookupError('');
+                                    }}
                                 />
+                            </div>
+                            {customerForm.data.doc_type !== 'CF' && <label className="block text-sm font-medium text-slate-700">
+                                {customerForm.data.doc_type === 'CUI' ? 'CUI / DPI' : 'NIT'}
+                                <div className="mt-1 flex gap-2">
+                                    <input
+                                        value={customerForm.data.doc_number}
+                                        onChange={(event) => {
+                                            customerForm.setData({ ...customerForm.data, doc_number: customerForm.data.doc_type === 'CUI' ? event.target.value.replace(/\D/g, '') : event.target.value, tax_lookup_verified_at: null });
+                                            setNitLookupError('');
+                                        }}
+                                        placeholder={customerForm.data.doc_type === 'CUI' ? '13 dígitos' : 'Ingresar NIT'}
+                                        className="min-w-0 flex-1 rounded-xl border-slate-200 text-base"
+                                    />
+                                    <button type="button" onClick={resolveIdentityForCreate} disabled={nitLookupLoading || !customerForm.data.doc_number} className="rounded-xl bg-orange-600 px-3 text-sm font-semibold text-white disabled:opacity-60">
+                                        {nitLookupLoading ? 'Validando...' : `Validar ${customerForm.data.doc_type}`}
+                                    </button>
+                                </div>
+                                {customerForm.data.tax_lookup_verified_at && <span className="mt-1 block text-xs font-semibold text-emerald-700">Identidad verificada</span>}
                                 {nitLookupLoading && <span className="mt-1 block text-xs font-semibold text-orange-600">Consultando {customerForm.data.doc_type}...</span>}
                                 {nitLookupError && <span className="mt-1 block text-xs font-semibold text-red-600">{nitLookupError}</span>}
-                            </label>
+                            </label>}
                             <label className="block text-sm font-medium text-slate-700">
                                 Teléfono
                                 <input

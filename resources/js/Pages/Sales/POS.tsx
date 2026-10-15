@@ -2297,9 +2297,9 @@ export default function POS({
             return;
         }
 
-        if (invoiceNitNeedsVerification) {
-            showError(invoiceNitVerificationMessage);
-            toast.error(invoiceNitVerificationMessage);
+        if (invoiceIdentityNeedsVerification) {
+            showError(invoiceIdentityVerificationMessage);
+            toast.error(invoiceIdentityVerificationMessage);
             return;
         }
 
@@ -2712,35 +2712,36 @@ export default function POS({
         .filter(([key]) => key === 'payments' || key.startsWith('payments.'))
         .map(([, value]) => value);
     const documentError = typedErrors.document_type;
-    const invoiceNitNeedsVerification =
+    const invoiceIdentityNeedsVerification =
         effectiveDocumentType === 'invoice' &&
         country === 'GT' &&
         !data.customer.consumidor_final &&
-        data.customer.doc_type === 'NIT' &&
+        ['NIT', 'CUI'].includes(data.customer.doc_type) &&
         !data.customer.tax_lookup_verified_at;
-    const invoiceNitVerificationMessage = (() => {
-        if (!invoiceNitNeedsVerification) {
+    const invoiceIdentityVerificationMessage = (() => {
+        if (!invoiceIdentityNeedsVerification) {
             return '';
         }
 
-        const currentNit = normalizedFiscalNit(data.customer.doc_number);
-        const verifiedNit = normalizedFiscalNit(data.customer.tax_lookup_verified_doc_number);
+        const documentLabel = data.customer.doc_type === 'CUI' ? 'CUI' : 'NIT';
+        const currentIdentity = normalizedFiscalNit(data.customer.doc_number);
+        const verifiedIdentity = normalizedFiscalNit(data.customer.tax_lookup_verified_doc_number);
 
-        if (verifiedNit && currentNit !== verifiedNit) {
-            return 'El NIT fue modificado después de la validación. Valídalo nuevamente.';
+        if (verifiedIdentity && currentIdentity !== verifiedIdentity) {
+            return `El ${documentLabel} fue modificado después de la validación. Valídalo nuevamente.`;
         }
 
-        if (data.customer.id && currentNit) {
-            return 'Cliente existente sin validación fiscal. Valida el NIT para poder emitir factura FEL.';
+        if (data.customer.id && currentIdentity) {
+            return `Cliente existente sin validación fiscal. Valida el ${documentLabel} para poder emitir factura FEL.`;
         }
 
-        return 'El NIT debe validarse antes de emitir factura FEL.';
+        return `El ${documentLabel} debe validarse antes de emitir factura FEL.`;
     })();
     const isFelProcessing = processing && effectiveDocumentType === 'invoice';
     const checkoutHasErrors =
         customerModalErrors.length > 0 ||
         paymentModalErrors.length > 0 ||
-        Boolean(documentError || cashRegisterError || errors.items || invoiceNitNeedsVerification);
+        Boolean(documentError || cashRegisterError || errors.items || invoiceIdentityNeedsVerification);
     const customerFormExpanded = customerEditing || hasCustomerFieldErrors || nitLookupLoading;
     const customerTypeLabel = country === 'GT'
         ? (data.customer.consumidor_final ? 'Consumidor Final' : (data.customer.doc_type || 'NIT'))
@@ -2829,7 +2830,7 @@ export default function POS({
                                                 </span>
                                                 {!data.customer.consumidor_final && data.customer.doc_number && (
                                                     <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-600">
-                                                        NIT: {data.customer.doc_number}
+                                                        {data.customer.doc_type}: {data.customer.doc_number}
                                                     </span>
                                                 )}
                                             </div>
@@ -4098,9 +4099,9 @@ export default function POS({
                                         {documentError}
                                     </div>
                                 )}
-                                {invoiceNitNeedsVerification && (
+                                {invoiceIdentityNeedsVerification && (
                                     <div className="mt-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
-                                        {invoiceNitVerificationMessage}
+                                        {invoiceIdentityVerificationMessage}
                                     </div>
                                 )}
                             </section>
@@ -4152,7 +4153,7 @@ export default function POS({
                             <button
                                 type="button"
                                 onClick={submitSale}
-                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && (!paymentIsBalanced || !cashReceivedIsValid)) || invoiceNitNeedsVerification || hasInvalidCartQuantities || noAvailableDocumentTypes}
+                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && (!paymentIsBalanced || !cashReceivedIsValid)) || invoiceIdentityNeedsVerification || hasInvalidCartQuantities || noAvailableDocumentTypes}
                                 className="rounded-xl bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-orange-200 hover:from-orange-700 hover:via-orange-600 hover:to-amber-600 disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : ((processing || creditProcessing) ? 'Confirmando...' : (effectiveCheckoutType === 'credit' ? 'Confirmar crédito' : 'Confirmar venta'))}

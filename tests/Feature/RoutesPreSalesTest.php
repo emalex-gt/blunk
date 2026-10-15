@@ -72,6 +72,26 @@ class RoutesPreSalesTest extends TestCase
         $this->assertStringContainsString('Limpiar búsqueda', $source);
     }
 
+    public function test_route_customer_forms_expose_explicit_guatemala_identity_controls(): void
+    {
+        foreach ([
+            resource_path('js/Pages/Routes/Mobile/WorkDay.tsx'),
+            resource_path('js/Pages/Routes/Zones/Customers.tsx'),
+        ] as $path) {
+            $source = file_get_contents($path);
+
+            $this->assertStringContainsString('GuatemalaIdentityTypeSelector', $source);
+            $this->assertStringContainsString("route('customers.gt.identity-lookup')", $source);
+            $this->assertStringContainsString('Validar ${customerForm.data.doc_type}', $source);
+            $this->assertStringContainsString('Identidad verificada', $source);
+            $this->assertStringNotContainsString('onBlur={resolveIdentityForCreate}', $source);
+        }
+
+        $adminSource = file_get_contents(resource_path('js/Pages/Routes/Zones/Customers.tsx'));
+        $this->assertGreaterThanOrEqual(2, substr_count($adminSource, '<GuatemalaIdentityTypeSelector'));
+        $this->assertStringNotContainsString('<select', substr($adminSource, strpos($adminSource, 'editingAssignmentId'), 10000));
+    }
+
     public function test_admin_can_create_route_zone_and_assign_customer(): void
     {
         [$business, $admin, $branch] = $this->tenant(role: 'owner');

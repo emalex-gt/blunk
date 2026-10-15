@@ -766,6 +766,15 @@ class CustomerManagementTest extends TestCase
         return [$business, $user];
     }
 
+    public function test_cf_identity_conversion_uses_only_the_typed_selector_options(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Customers/Edit.tsx'));
+
+        $this->assertStringContainsString('GuatemalaIdentityTypeSelector', $source);
+        $this->assertStringContainsString("options={['NIT', 'CUI']}", $source);
+        $this->assertStringNotContainsString('<select', substr($source, strpos($source, 'Asignar identidad fiscal'), 2200));
+    }
+
     private function realNitCustomer(Business $business, array $overrides = []): Customer
     {
         return Customer::query()->create(array_replace([

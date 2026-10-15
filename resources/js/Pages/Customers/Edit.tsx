@@ -1,4 +1,5 @@
 import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
+import GuatemalaIdentityTypeSelector from '@/Components/GuatemalaIdentityTypeSelector';
 
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 
@@ -316,21 +317,14 @@ export default function Edit({ customer }: { customer: Customer }) {
 
                                 Tipo de documento
 
-                                <select
+                                <GuatemalaIdentityTypeSelector
 
-                                    value={assignForm.data.doc_type}
+                                    value={assignForm.data.doc_type as 'NIT' | 'CUI'}
 
-                                    onChange={(event) => assignForm.setData('doc_type', event.target.value)}
+                                    onChange={(docType) => assignForm.setData({ doc_type: docType, doc_number: '' })}
 
-                                    className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
-
-                                >
-
-                                    <option value="NIT">NIT</option>
-
-                                    <option value="CUI">CUI</option>
-
-                                </select>
+                                    options={['NIT', 'CUI']}
+                                />
 
                                 {assignForm.errors.doc_type && <span className="mt-1 block text-xs text-red-600">{assignForm.errors.doc_type}</span>}
 
@@ -338,7 +332,7 @@ export default function Edit({ customer }: { customer: Customer }) {
 
                             <label className="block min-w-0 flex-1 text-sm font-medium text-slate-700">
 
-                                {assignForm.data.doc_type}
+                                {assignForm.data.doc_type === 'CUI' ? 'CUI / DPI' : 'NIT'}
 
                                 <input
 

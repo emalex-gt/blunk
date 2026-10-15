@@ -101,7 +101,7 @@ class RouteController extends Controller
             'assignments' => RouteZoneCustomer::query()
                 ->where('business_id', $businessId)
                 ->where('route_zone_id', $zone->id)
-                ->with('customer:id,name,commercial_name,contact_name,doc_type,doc_number,address,department,municipality,phone')
+                ->with('customer:id,name,commercial_name,contact_name,doc_type,doc_number,address,department,municipality,phone,name_locked,tax_lookup_verified_at')
                 ->orderByRaw('visit_order IS NULL, visit_order')
                 ->orderBy('id')
                 ->get(),
