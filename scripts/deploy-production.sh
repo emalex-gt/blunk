@@ -114,6 +114,8 @@ case "$COMPOSER_VERSION" in
   *) fail "DEPLOY_COMPOSER_PATH did not identify a compatible Composer script or PHAR" ;;
 esac
 
+[[ "${DEPLOY_RUN_ID:-}" =~ ^[1-9][0-9]*$ ]] || fail "DEPLOY_RUN_ID must identify the queued deploy run"
+
 require_absolute_executable "${DEPLOY_PAUSE_WORKERS_HOOK:-}" "DEPLOY_PAUSE_WORKERS_HOOK"
 require_absolute_executable "${DEPLOY_RESUME_WORKERS_HOOK:-}" "DEPLOY_RESUME_WORKERS_HOOK"
 
@@ -126,12 +128,18 @@ echo "COMPOSER_HOME: $COMPOSER_HOME"
 
 "$PHP_BIN" -m | grep -qi pgsql || fail "PHP pgsql extension is not available"
 
+DEPLOY_STAGE="pre-deploy-backup-configuration"
+"$PHP_BIN" artisan system:pre-deploy-backup "$TARGET_SHA" --check --no-interaction --no-ansi
+
 DEPLOY_STAGE="maintenance"
 "$PHP_BIN" artisan down
 MAINTENANCE_ENABLED=1
 
 DEPLOY_STAGE="pause-business-workers"
 "$DEPLOY_PAUSE_WORKERS_HOOK"
+
+DEPLOY_STAGE="pre-deploy-backup"
+"$PHP_BIN" artisan system:pre-deploy-backup "$TARGET_SHA" "--deploy-run=$DEPLOY_RUN_ID" --no-interaction --no-ansi
 
 DEPLOY_STAGE="checkout"
 git merge --ff-only "$TARGET_SHA"
@@ -142,16 +150,16 @@ echo "Actual checked-out SHA: $ACTUAL_SHA"
 DEPLOY_STAGE="composer-install"
 "$PHP_BIN" "$DEPLOY_COMPOSER_PATH" install --no-dev --prefer-dist --no-interaction --optimize-autoloader
 
-DEPLOY_STAGE="frontend-build"
-npm ci
-npm run build
-
 DEPLOY_STAGE="migrations"
 "$PHP_BIN" artisan migrate --force
 
 DEPLOY_STAGE="production-seeders"
 "$PHP_BIN" artisan db:seed --class=PermissionSeeder --force
 "$PHP_BIN" artisan db:seed --class=GuatemalaLocationSeeder --force
+
+DEPLOY_STAGE="frontend-build"
+npm ci
+npm run build
 
 DEPLOY_STAGE="cache-rebuild"
 "$PHP_BIN" artisan optimize:clear

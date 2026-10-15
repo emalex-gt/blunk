@@ -25,6 +25,10 @@ type DeployRun = {
     local_commit_before: string | null;
     remote_commit_target: string | null;
     local_commit_after: string | null;
+    backup_path: string | null;
+    backup_size_bytes: number | null;
+    backup_created_at: string | null;
+    backup_validated_at: string | null;
     exit_code: number | null;
     error_message: string | null;
     show_url: string;
@@ -188,6 +192,14 @@ export default function Deploy({ status, statusError, queueConnection, queueWork
                     <section className="border border-slate-200 bg-white p-5 shadow-sm">
                         <h2 className="font-bold text-slate-900">Deploy #{selectedRun.id}</h2>
                         {selectedRun.error_message ? <p className="mt-3 whitespace-pre-wrap font-mono text-sm text-rose-700">{selectedRun.error_message}</p> : <p className="mt-3 text-sm text-slate-600">Sin error registrado.</p>}
+                        {selectedRun.backup_path ? (
+                            <dl className="mt-4 border-t border-slate-100 pt-3">
+                                <Commit label="Respaldo PostgreSQL" value={selectedRun.backup_path} />
+                                <Commit label="Tamaño del respaldo" value={selectedRun.backup_size_bytes === null ? null : `${selectedRun.backup_size_bytes} bytes`} />
+                                <Commit label="Respaldo creado" value={selectedRun.backup_created_at} />
+                                <Commit label="Respaldo validado" value={selectedRun.backup_validated_at} />
+                            </dl>
+                        ) : null}
                         {selectedRun.log_url ? <a href={selectedRun.log_url} target="_blank" rel="noreferrer" className="mt-3 inline-block font-semibold text-orange-700">Abrir log completo</a> : null}
                     </section>
                 ) : null}

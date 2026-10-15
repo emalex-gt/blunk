@@ -12,4 +12,9 @@ return [
     'composer_path' => env('DEPLOY_COMPOSER_PATH'),
     'pause_workers_hook' => env('DEPLOY_PAUSE_WORKERS_HOOK'),
     'resume_workers_hook' => env('DEPLOY_RESUME_WORKERS_HOOK'),
+    'backup_directory' => env('DEPLOY_BACKUP_DIRECTORY'),
+    'pg_dump_path' => env('DEPLOY_PG_DUMP_PATH'),
+    'pg_restore_path' => env('DEPLOY_PG_RESTORE_PATH'),
+    'backup_retention' => (int) env('DEPLOY_BACKUP_RETENTION', 30),
+    'backup_timeout' => (int) env('DEPLOY_BACKUP_TIMEOUT', 900),
 ];

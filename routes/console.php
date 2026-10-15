@@ -8,6 +8,7 @@ use App\Models\Business;
 use App\Models\Sale;
 use App\Models\Customer;
 use App\Models\CustomerTaxLookup;
+use App\Models\DeployRun;
 use App\Models\TenantFelSetting;
 use App\Models\User;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
@@ -20,6 +21,7 @@ use App\Support\Products\MainPriceAuditor;
 use App\Support\SalesDuplicateAuditor;
 use App\Support\SystemIntegrityAuditor;
 use App\Support\TextEncoding;
+use App\Services\System\PostgresPreDeployBackupService;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
@@ -44,6 +46,34 @@ Artisan::command('app:diagnose-storage', function () {
     $this->line('is_writable(bootstrap/cache): '.(is_writable(base_path('bootstrap/cache')) ? 'yes' : 'no'));
     $this->line('current_os_user: '.$currentUser);
 })->purpose('Diagnose Laravel storage and temp path permissions');
+
+Artisan::command('system:pre-deploy-backup {target-sha} {--deploy-run=} {--check}', function (PostgresPreDeployBackupService $service) {
+    try {
+        if ($this->option('check')) {
+            $service->validateConfiguration();
+            $this->info('Configuración de respaldo PostgreSQL verificada.');
+
+            return self::SUCCESS;
+        }
+
+        $deployRunId = (int) $this->option('deploy-run');
+
+        if ($deployRunId <= 0) {
+            throw new RuntimeException('El respaldo pre-deploy requiere un deploy run válido.');
+        }
+
+        $run = DeployRun::query()->findOrFail($deployRunId);
+        $backup = $service->createAndValidate($run, (string) $this->argument('target-sha'));
+
+        $this->info('Respaldo PostgreSQL pre-deploy validado: '.basename($backup['path']).' ('.$backup['size_bytes'].' bytes).');
+
+        return self::SUCCESS;
+    } catch (Throwable $exception) {
+        $this->error($exception->getMessage());
+
+        return self::FAILURE;
+    }
+})->purpose('Create and validate the PostgreSQL backup required before a production deploy');
 
 Artisan::command('app:create-super-admin {email?} {--name=} {--password=}', function (?string $email = null) {
     $email ??= $this->ask('Email');

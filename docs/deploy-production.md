@@ -14,6 +14,12 @@ El workflow existente de GitHub no se amplía ni se considera endurecido en esta
 tarea. No debe utilizarse como sustituto automático de ese primer procedimiento
 supervisado.
 
+La primera instalación de la versión que añade el respaldo pre-deploy también debe
+ser manual y supervisada: el script que ya está instalado no puede ejecutar una
+capacidad que aún no existe en ese checkout. Esa instalación debe aplicar la
+migración de `deploy_runs`, configurar las rutas de PostgreSQL y verificar un
+respaldo manual antes de habilitar el panel para los siguientes deploys.
+
 ## Contrato del deploy interno
 
 Al solicitar una actualización, Laravel obtiene `origin/main` y persiste su SHA
@@ -34,14 +40,21 @@ Para una actualización real, el orden es:
 1. preflight de repositorio, SHA, runtimes, Composer y hooks;
 2. `php8.5 artisan down`;
 3. pausa de workers de negocio mediante el hook configurado;
-4. fast-forward al SHA aprobado;
-5. Composer con PHP 8.5;
-6. `npm ci` y `npm run build`;
+4. respaldo PostgreSQL en formato custom y validación mediante `pg_restore --list`;
+5. fast-forward al SHA aprobado;
+6. Composer con PHP 8.5;
 7. migraciones y seeders autorizados;
-8. reconstrucción de cachés y smoke checks;
-9. señal `php8.5 artisan queue:restart`;
-10. reanudación de workers de negocio;
-11. `php8.5 artisan up`.
+8. `npm ci` y `npm run build`;
+9. reconstrucción de cachés y smoke checks;
+10. señal `php8.5 artisan queue:restart`;
+11. reanudación de workers de negocio;
+12. `php8.5 artisan up`.
+
+El respaldo se crea sólo después de mantenimiento y de confirmar la pausa de los
+workers de negocio, pero antes de modificar el checkout, Composer o la base de
+datos. Si `pg_dump`, la existencia/tamaño del archivo o `pg_restore --list` falla,
+el deploy se aborta sin avanzar el SHA y la aplicación queda en mantenimiento con
+los workers de negocio pausados. No se ejecuta un restore automático.
 
 Después de entrar en mantenimiento, cualquier error deja la aplicación en
 mantenimiento e intenta confirmar nuevamente la pausa de workers. No existe rollback
@@ -93,6 +106,11 @@ DEPLOY_COMPOSER_HOME=/ruta/home/usuario-worker/.composer
 DEPLOY_COMPOSER_PATH=/ruta/absoluta/composer.phar
 DEPLOY_PAUSE_WORKERS_HOOK=/ruta/absoluta/blunk-pause-business-workers
 DEPLOY_RESUME_WORKERS_HOOK=/ruta/absoluta/blunk-resume-business-workers
+DEPLOY_BACKUP_DIRECTORY=/ruta/externa/resguardos/blunk-pre-deploy
+DEPLOY_PG_DUMP_PATH=/usr/bin/pg_dump
+DEPLOY_PG_RESTORE_PATH=/usr/bin/pg_restore
+DEPLOY_BACKUP_RETENTION=30
+DEPLOY_BACKUP_TIMEOUT=900
 FEL_ROUTE_AUTOMATION_ENABLED=false
 ```
 
@@ -105,6 +123,16 @@ repositorio. El de pausa debe detener y verificar todos los workers que puedan e
 datos de negocio, incluido el worker FEL si existe, pero **no** el worker exclusivo
 `deploys`. El de reanudación debe iniciar exactamente esos mismos workers. Los nombres
 de programas Supervisor son propios del servidor y no se fijan en Blunk.
+
+`DEPLOY_BACKUP_DIRECTORY` debe ser absoluta, escribible por el worker y estar fuera
+del repositorio. El mecanismo sólo administra archivos con el patrón
+`blunk-pre-deploy-<sha-corto>-<UTC>.dump`; conserva los 30 más recientes y nunca
+elimina el respaldo del deploy en curso. `DEPLOY_PG_DUMP_PATH` y
+`DEPLOY_PG_RESTORE_PATH` deben apuntar a ejecutables PostgreSQL compatibles con el
+servidor. La conexión se lee de la configuración Laravel activa; la contraseña se
+entrega únicamente al proceso hijo como `PGPASSWORD`, nunca se añade a argumentos,
+logs o metadatos. El usuario del worker necesita permiso de conexión a PostgreSQL y
+escritura sólo sobre ese directorio externo.
 
 Supervisor debe ejecutar exactamente una instancia dedicada que no consuma `default`:
 
@@ -157,9 +185,10 @@ restauración coherente de aplicación y base de datos.
 ## Diagnóstico
 
 Cada run registra usuario, SHA anterior, target solicitado, SHA final, estado, código
-de salida y log. Es seguro registrar etapa, usuario del proceso, versiones de runtimes
-y rutas operativas. No copies en tickets el contenido de `.env`, Composer `auth.json`,
-tokens, DSN ni credenciales Git.
+de salida y log. Cuando el respaldo es válido también registra ruta, tamaño y marcas
+de creación/validación; la pantalla de detalle lo muestra. Es seguro registrar etapa,
+usuario del proceso, versiones de runtimes y rutas operativas. No copies en tickets el
+contenido de `.env`, Composer `auth.json`, tokens, DSN ni credenciales Git.
 
 Estados terminales:
 

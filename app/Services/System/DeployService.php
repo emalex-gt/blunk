@@ -112,7 +112,7 @@ class DeployService
             $target = (string) $run->remote_commit_target;
 
             $result = Process::timeout((int) config('deploy.timeout', 900))
-                ->env($this->processEnvironment())
+                ->env($this->processEnvironment($run))
                 ->run(['bash', $scriptPath, $target]);
 
             $this->writeLog($logPath, $result);
@@ -174,7 +174,7 @@ class DeployService
         }
     }
 
-    private function processEnvironment(): array
+    private function processEnvironment(DeployRun $run): array
     {
         return array_filter([
             'DEPLOY_APP_PATH' => base_path(),
@@ -183,6 +183,7 @@ class DeployService
             'DEPLOY_COMPOSER_PATH' => (string) config('deploy.composer_path', ''),
             'DEPLOY_PAUSE_WORKERS_HOOK' => (string) config('deploy.pause_workers_hook', ''),
             'DEPLOY_RESUME_WORKERS_HOOK' => (string) config('deploy.resume_workers_hook', ''),
+            'DEPLOY_RUN_ID' => (string) $run->id,
         ], fn (string $value): bool => $value !== '');
     }
 

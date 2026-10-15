@@ -24,6 +24,10 @@ class DeployRun extends Model
         'local_commit_after',
         'branch',
         'output_log_path',
+        'backup_path',
+        'backup_size_bytes',
+        'backup_created_at',
+        'backup_validated_at',
         'error_message',
         'exit_code',
     ];
@@ -34,6 +38,9 @@ class DeployRun extends Model
             'started_at' => 'datetime',
             'finished_at' => 'datetime',
             'exit_code' => 'integer',
+            'backup_size_bytes' => 'integer',
+            'backup_created_at' => 'datetime',
+            'backup_validated_at' => 'datetime',
         ];
     }
 

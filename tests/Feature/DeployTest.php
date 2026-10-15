@@ -206,7 +206,8 @@ class DeployTest extends TestCase
             && $process->environment['DEPLOY_COMPOSER_HOME'] === '/srv/blunk/.composer'
             && $process->environment['DEPLOY_COMPOSER_PATH'] === '/usr/local/lib/composer.phar'
             && $process->environment['DEPLOY_PAUSE_WORKERS_HOOK'] === '/usr/local/sbin/blunk-pause-workers'
-            && $process->environment['DEPLOY_RESUME_WORKERS_HOOK'] === '/usr/local/sbin/blunk-resume-workers');
+            && $process->environment['DEPLOY_RESUME_WORKERS_HOOK'] === '/usr/local/sbin/blunk-resume-workers'
+            && $process->environment['DEPLOY_RUN_ID'] === (string) $run->id);
         $this->assertFileExists(storage_path("logs/deploys/deploy-{$run->id}.log"));
     }
 
@@ -377,6 +378,30 @@ class DeployTest extends TestCase
             ->assertHeader('content-type', 'text/plain; charset=UTF-8');
 
         $this->assertSame('safe deploy output', File::get(storage_path('logs/deploys/deploy-1.log')));
+    }
+
+    public function test_deploy_history_exposes_validated_backup_metadata(): void
+    {
+        $superAdmin = User::factory()->create(['is_super_admin' => true]);
+        $run = DeployRun::query()->create([
+            'status' => DeployRun::STATUS_SUCCEEDED,
+            'branch' => 'main',
+            'backup_path' => '/var/backups/blunk/blunk-pre-deploy-abcdef0-20261015T120000Z.dump',
+            'backup_size_bytes' => 4096,
+            'backup_created_at' => now()->subMinute(),
+            'backup_validated_at' => now(),
+        ]);
+        $this->mockStatus();
+
+        $this->actingAs($superAdmin)
+            ->get(route('super-admin.system.deploy.show', $run))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('selectedRun.backup_path', $run->backup_path)
+                ->where('selectedRun.backup_size_bytes', 4096)
+                ->where('selectedRun.backup_created_at', $run->backup_created_at?->format('Y-m-d H:i:s'))
+                ->where('selectedRun.backup_validated_at', $run->backup_validated_at?->format('Y-m-d H:i:s'))
+            );
     }
 
     protected function tearDown(): void

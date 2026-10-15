@@ -81,6 +81,26 @@ class DeployProductionScriptTest extends TestCase
         );
     }
 
+    public function test_script_requires_a_validated_postgres_backup_after_maintenance_and_before_checkout(): void
+    {
+        $script = file_get_contents(base_path('scripts/deploy-production.sh'));
+        $configurationCheck = strpos($script, 'system:pre-deploy-backup "$TARGET_SHA" --check');
+        $maintenance = strpos($script, '"$PHP_BIN" artisan down');
+        $pausedWorkers = strpos($script, 'DEPLOY_STAGE="pause-business-workers"');
+        $backup = strpos($script, 'DEPLOY_STAGE="pre-deploy-backup"');
+        $checkout = strpos($script, 'git merge --ff-only "$TARGET_SHA"');
+
+        $this->assertNotFalse($configurationCheck);
+        $this->assertNotFalse($backup);
+        $this->assertStringContainsString('DEPLOY_RUN_ID must identify the queued deploy run', $script);
+        $this->assertLessThan($maintenance, $configurationCheck);
+        $this->assertLessThan($pausedWorkers, $maintenance);
+        $this->assertLessThan($backup, $pausedWorkers);
+        $this->assertLessThan($checkout, $backup);
+        $this->assertStringContainsString('"--deploy-run=$DEPLOY_RUN_ID"', $script);
+        $this->assertLessThan(strpos($script, 'DEPLOY_STAGE="frontend-build"'), strpos($script, 'DEPLOY_STAGE="migrations"'));
+    }
+
     public function test_production_contract_documents_dedicated_worker_and_safe_retry_window(): void
     {
         $environment = file_get_contents(base_path('.env.example'));
@@ -88,9 +108,13 @@ class DeployProductionScriptTest extends TestCase
 
         $this->assertStringContainsString('DB_QUEUE_RETRY_AFTER=1200', $environment);
         $this->assertStringContainsString('DEPLOY_COMPOSER_PATH=', $environment);
+        $this->assertStringContainsString('DEPLOY_BACKUP_DIRECTORY=', $environment);
+        $this->assertStringContainsString('DEPLOY_PG_DUMP_PATH=', $environment);
+        $this->assertStringContainsString('DEPLOY_PG_RESTORE_PATH=', $environment);
         $this->assertStringContainsString('--queue=deploys ', $documentation);
         $this->assertStringNotContainsString('--queue=deploys,default', $documentation);
         $this->assertStringContainsString('php8.5', $documentation);
+        $this->assertStringContainsString('pg_restore --list', $documentation);
         $this->assertStringContainsString('manual y supervisado', $documentation);
     }
 }
