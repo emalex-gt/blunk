@@ -680,7 +680,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertDatabaseCount('sales', 0);
     }
 
-    public function test_receipt_sale_allows_existing_unverified_customer_without_fel_validation(): void
+    public function test_receipt_sale_rejects_existing_unverified_nit_customer(): void
     {
         [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'cash_register']);
         $product = $this->product($business, stock: 10, salePrice: 100);
@@ -709,9 +709,9 @@ class CriticalPosFelFlowTest extends TestCase
                     'country' => 'GT',
                 ],
             ))
-            ->assertSessionHasNoErrors();
+            ->assertSessionHasErrors('customer.doc_number');
 
-        $this->assertSame('receipt', Sale::query()->where('business_id', $business->id)->firstOrFail()->document_type);
+        $this->assertDatabaseCount('sales', 0);
     }
 
     public function test_credit_reservation_allows_existing_unverified_customer_without_fel_validation(): void
@@ -3665,6 +3665,7 @@ class CriticalPosFelFlowTest extends TestCase
     public function test_real_credit_sale_creates_receivable_and_deducts_stock_without_cash_movement(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $this->verifiedNitLookup($business, 'Cliente crédito real');
         $product = $this->product($business, stock: 10, salePrice: 100);
         $payload = $this->salePayload($product, quantity: 2, total: 200, customer: [
             'name' => 'Cliente crédito real',
@@ -3692,7 +3693,15 @@ class CriticalPosFelFlowTest extends TestCase
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
         $product = $this->product($business, stock: 10, salePrice: 100);
-        $customer = Customer::create(['business_id' => $business->id, 'name' => 'Cliente limitado', 'doc_type' => 'NIT', 'doc_number' => '1234567', 'country' => 'GT']);
+        $customer = Customer::create([
+            'business_id' => $business->id,
+            'name' => 'Cliente limitado',
+            'doc_type' => 'NIT',
+            'doc_number' => '1234567',
+            'country' => 'GT',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
+        ]);
         CustomerCreditAccount::create(['business_id' => $business->id, 'customer_id' => $customer->id, 'credit_limit' => 50, 'current_balance' => 0]);
         $payload = $this->salePayload($product, quantity: 1, total: 100, customer: [
             'id' => $customer->id, 'name' => $customer->name, 'doc_type' => 'NIT', 'doc_number' => $customer->doc_number,
@@ -3713,6 +3722,7 @@ class CriticalPosFelFlowTest extends TestCase
     public function test_non_cash_credit_payment_reduces_balance_and_allocates_oldest_sale(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $this->verifiedNitLookup($business, 'Cliente abono');
         $product = $this->product($business, stock: 10, salePrice: 100);
         $payload = $this->salePayload($product, quantity: 2, total: 200, customer: [
             'name' => 'Cliente abono',
@@ -3743,6 +3753,7 @@ class CriticalPosFelFlowTest extends TestCase
     public function test_cash_credit_payment_requires_open_register_and_cancellation_reverses_it(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'credits', 'cash_register'], enableCredits: true);
+        $this->verifiedNitLookup($business, 'Cliente efectivo');
         $product = $this->product($business, stock: 10, salePrice: 100);
         $payload = $this->salePayload($product, quantity: 1, total: 100, customer: [
             'name' => 'Cliente efectivo',
@@ -3981,6 +3992,7 @@ class CriticalPosFelFlowTest extends TestCase
     public function test_credit_payment_print_route_works(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $this->verifiedNitLookup($business, 'Cliente recibo');
         $product = $this->product($business, stock: 10, salePrice: 100);
         $payload = $this->salePayload($product, quantity: 1, total: 100, customer: [
             'name' => 'Cliente recibo',
@@ -4044,6 +4056,7 @@ class CriticalPosFelFlowTest extends TestCase
     public function test_credit_payment_allocates_oldest_unpaid_sales_first(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $this->verifiedNitLookup($business, 'Cliente FIFO');
         $product = $this->product($business, stock: 10, salePrice: 100);
         $customerData = ['name' => 'Cliente FIFO', 'doc_type' => 'NIT', 'doc_number' => '57289085'];
 
@@ -4086,6 +4099,7 @@ class CriticalPosFelFlowTest extends TestCase
     public function test_credit_sale_with_payments_cannot_be_cancelled(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $this->verifiedNitLookup($business, 'Cliente anular');
         Permissions::assignDirectPermissions($user, [Permissions::SALES_CANCEL]);
         $product = $this->product($business, stock: 10, salePrice: 100);
         $payload = $this->salePayload($product, quantity: 1, total: 100, customer: [
@@ -4115,6 +4129,7 @@ class CriticalPosFelFlowTest extends TestCase
     public function test_credit_reservation_invoiced_as_credit_sale_creates_receivable_charge(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $this->verifiedNitLookup($business, 'Cliente crédito');
         Permissions::assignDirectPermissions($user, [Permissions::CREDITS_INVOICE]);
         $product = $this->product($business, stock: 10, salePrice: 100);
         $this->actingAs($user)->post(route('credits.receipts.store'), $this->creditPayload($product, 2))->assertSessionHasNoErrors();
@@ -4139,6 +4154,7 @@ class CriticalPosFelFlowTest extends TestCase
     public function test_credit_reservation_invoiced_as_paid_sale_does_not_create_receivable_charge(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'credits', 'cash_register'], enableCredits: true);
+        $this->verifiedNitLookup($business, 'Cliente crédito');
         Permissions::assignDirectPermissions($user, [Permissions::CREDITS_INVOICE]);
         $product = $this->product($business, stock: 10, salePrice: 100);
         $this->actingAs($user)->post(route('credits.receipts.store'), $this->creditPayload($product, 2))->assertSessionHasNoErrors();
@@ -4486,6 +4502,7 @@ class CriticalPosFelFlowTest extends TestCase
     public function test_pos_customer_sale_saves_department_and_municipality(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);
+        $this->verifiedNitLookup($business, 'Cliente POS');
         $product = $this->product($business, stock: 10, salePrice: 100);
         $this->openCashRegister($business, $user);
 
@@ -4519,10 +4536,20 @@ class CriticalPosFelFlowTest extends TestCase
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);
         $product = $this->product($business, stock: 10, salePrice: 100);
         $this->openCashRegister($business, $user);
+        CustomerTaxLookup::query()->create([
+            'business_id' => $business->id,
+            'country' => 'GT',
+            'doc_type' => 'CUI',
+            'doc_number' => '1234567890123',
+            'name' => 'NOMBRE OFICIAL CUI',
+            'provider' => 'digifact',
+            'raw_response' => ['RESPONSE' => []],
+            'last_lookup_at' => now(),
+        ]);
 
         $this->actingAs($user)
             ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 100, customer: [
-                'name' => 'Persona CUI sintética',
+                'name' => 'Nombre manual ignorado',
                 'doc_type' => 'CUI',
                 'doc_number' => '1234-5678-9012-3',
                 'address' => 'Dirección declarada',
@@ -4532,6 +4559,7 @@ class CriticalPosFelFlowTest extends TestCase
         $customer = Customer::query()->where('business_id', $business->id)->where('doc_type', 'CUI')->sole();
         $sale = Sale::query()->where('business_id', $business->id)->sole();
         $this->assertSame('1234567890123', $customer->doc_number);
+        $this->assertSame('NOMBRE OFICIAL CUI', $customer->name);
         $this->assertSame('CUI', $sale->customer_doc_type);
         $this->assertSame('1234567890123', $sale->customer_doc_number);
         $this->assertNull($sale->fel_uuid);
@@ -4640,6 +4668,8 @@ class CriticalPosFelFlowTest extends TestCase
             'doc_type' => 'NIT',
             'doc_number' => '57289085',
             'country' => 'GT',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
         ]);
 
         $this->actingAs($user)
@@ -4939,6 +4969,11 @@ class CriticalPosFelFlowTest extends TestCase
 
     private function creditPayload(Product $product, int $quantity): array
     {
+        $this->verifiedNitLookup(
+            Business::query()->findOrFail($product->business_id),
+            'Cliente crédito',
+        );
+
         return [
             'idempotency_key' => 'test-credit-'.str_replace('.', '-', uniqid('', true)),
             'customer' => [
@@ -5004,6 +5039,7 @@ class CriticalPosFelFlowTest extends TestCase
     private function creditPaymentForPrint(User $user): CustomerCreditPayment
     {
         $business = Business::query()->findOrFail($user->business_id);
+        $this->verifiedNitLookup($business, 'Cliente recibo');
         $product = $this->product($business, stock: 10, salePrice: 100);
         $payload = $this->salePayload($product, quantity: 1, total: 100, customer: [
             'name' => 'Cliente recibo',
@@ -5030,5 +5066,23 @@ class CriticalPosFelFlowTest extends TestCase
             ->where('business_id', $business->id)
             ->latest('id')
             ->firstOrFail();
+    }
+
+    private function verifiedNitLookup(Business $business, string $name, string $docNumber = '57289085'): void
+    {
+        CustomerTaxLookup::query()->updateOrCreate(
+            [
+                'business_id' => $business->id,
+                'country' => 'GT',
+                'doc_type' => 'NIT',
+                'doc_number' => $docNumber,
+            ],
+            [
+                'name' => $name,
+                'provider' => 'digifact',
+                'raw_response' => ['NIT' => $docNumber, 'NOMBRE' => $name],
+                'last_lookup_at' => now(),
+            ],
+        );
     }
 }

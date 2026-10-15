@@ -7,6 +7,7 @@ use App\Models\Customer;
 use App\Models\CustomerTaxLookup;
 use App\Services\Fel\FelIdentityLookupException;
 use App\Support\CustomerIdentity;
+use App\Support\GuatemalaCustomerIdentityPolicy;
 use App\Support\GuatemalaCuiCustomerResolver;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\TextEncoding;
@@ -204,61 +205,53 @@ class CustomerController extends Controller
             'nit' => ['nullable', 'string', 'max:50'],
         ]);
 
-        $docType = CustomerIdentity::normalizeGuatemalaDocType($data['doc_type'] ?? null)
-            ?? ($request->filled('nit') ? CustomerIdentity::NIT : null);
+        $rawDocNumber = $data['doc_number'] ?? $data['nit'] ?? '';
+        $submittedDocType = $data['doc_type'] ?? null;
+
+        if (blank($submittedDocType) && $request->filled('nit')) {
+            $submittedDocType = CustomerIdentity::NIT;
+        }
+
+        $requestedDocType = CustomerIdentity::normalizeGuatemalaDocType($submittedDocType);
+        $requestedDocNumber = $requestedDocType
+            ? CustomerIdentity::normalizeDocument($requestedDocType, $rawDocNumber) ?? ''
+            : '';
+
+        if (in_array($requestedDocType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)
+            && $this->fiscalIdentityExists(currentBusinessId(), $requestedDocType, $requestedDocNumber, $customer->id)) {
+            throw ValidationException::withMessages([
+                $this->identityErrorField($requestedDocType) => $this->duplicateIdentityMessage($requestedDocType),
+            ]);
+        }
+
+        try {
+            $identity = app(GuatemalaCustomerIdentityPolicy::class)->resolve(
+                Business::query()->findOrFail(currentBusinessId()),
+                $submittedDocType,
+                $rawDocNumber,
+                $customer,
+            );
+        } catch (ValidationException $exception) {
+            if ($requestedDocType === CustomerIdentity::NIT) {
+                $message = $exception->errors()['doc_number'][0] ?? self::INVALID_NIT_MESSAGE;
+
+                throw ValidationException::withMessages([
+                    'nit' => $message === GuatemalaNitCustomerResolver::LOOKUP_ERROR_MESSAGE
+                        ? $message
+                        : self::INVALID_NIT_MESSAGE,
+                ]);
+            }
+
+            throw $exception;
+        }
+        $docType = $identity['doc_type'];
+        $docNumber = $identity['doc_number'];
 
         if (! in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)) {
             throw ValidationException::withMessages([
                 'doc_type' => 'El tipo de documento debe ser NIT o CUI.',
             ]);
         }
-
-        $rawDocNumber = $data['doc_number'] ?? $data['nit'] ?? '';
-        $docNumber = CustomerIdentity::normalizeDocument($docType, $rawDocNumber) ?? '';
-
-        if ($docType === CustomerIdentity::NIT && ($docNumber === '' || $this->isCfValue($docNumber) || ! preg_match('/^[A-Z0-9]+$/', $docNumber))) {
-            throw ValidationException::withMessages([
-                'nit' => self::INVALID_NIT_MESSAGE,
-            ]);
-        }
-
-        if ($docType === CustomerIdentity::CUI && ! CustomerIdentity::isValidCui($docNumber)) {
-            throw ValidationException::withMessages([
-                'doc_number' => GuatemalaCuiCustomerResolver::INVALID_CUI_MESSAGE,
-            ]);
-        }
-
-        if ($this->fiscalIdentityExists(currentBusinessId(), $docType, $docNumber, $customer->id)) {
-            throw ValidationException::withMessages([
-                $this->identityErrorField($docType) => $this->duplicateIdentityMessage($docType),
-            ]);
-        }
-
-        try {
-            $lookup = $this->lookupTaxIdentity(
-                Business::query()->findOrFail(currentBusinessId()),
-                $docType,
-                $docNumber,
-            );
-        } catch (ValidationException $exception) {
-            if ($docType === CustomerIdentity::NIT) {
-                $message = $exception->errors()['nit'][0] ?? self::INVALID_NIT_MESSAGE;
-
-                throw ValidationException::withMessages([
-                    'nit' => $message === GuatemalaNitCustomerResolver::LOOKUP_ERROR_MESSAGE ? $message : self::INVALID_NIT_MESSAGE,
-                ]);
-            }
-
-            throw $this->identityLookupValidationException($docType, $exception);
-        } catch (Throwable $exception) {
-            report($exception);
-
-            throw ValidationException::withMessages([
-                $this->identityErrorField($docType) => $this->identityLookupErrorMessage($docType),
-            ]);
-        }
-
-        $docNumber = $this->lookupDocumentNumber($docType, $lookup);
 
         if ($this->fiscalIdentityExists(currentBusinessId(), $docType, $docNumber, $customer->id)) {
             throw ValidationException::withMessages([
@@ -267,14 +260,14 @@ class CustomerController extends Controller
         }
 
         $customer->forceFill([
-            'name' => $lookup['name'],
+            'name' => $identity['name'],
             'doc_type' => $docType,
             'doc_number' => $docNumber,
             'country' => 'GT',
             'is_final_consumer' => false,
             'name_locked' => true,
-            'tax_lookup_payload' => is_array($lookup['raw'] ?? null) ? $lookup['raw'] : null,
-            'tax_lookup_verified_at' => now(),
+            'tax_lookup_payload' => $identity['tax_lookup_payload'],
+            'tax_lookup_verified_at' => $identity['tax_lookup_verified_at'],
         ])->save();
 
         return back()->with('success', $docType.' asignado correctamente.');

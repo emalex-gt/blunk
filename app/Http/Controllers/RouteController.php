@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\Branch;
 use App\Models\Business;
 use App\Models\Customer;
-use App\Models\CustomerTaxLookup;
 use App\Models\PreSale;
 use App\Models\PreSaleItem;
 use App\Models\Product;
@@ -22,6 +21,7 @@ use App\Models\TenantFelSetting;
 use App\Models\User;
 use App\Support\BranchInventory;
 use App\Support\CustomerIdentity;
+use App\Support\GuatemalaCustomerIdentityPolicy;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\GuatemalaLocations;
 use App\Support\IdempotencyService;
@@ -201,7 +201,7 @@ class RouteController extends Controller
         $assignment->loadMissing('customer');
         abort_unless((int) $assignment->customer->business_id === currentBusinessId(), 403);
 
-        $data = $this->validateRouteCustomer($request, requireAnyName: true);
+        $data = $this->validateRouteCustomer($request, requireAnyName: true, existingCustomer: $assignment->customer);
         $this->updateCustomerFromRouteData($assignment->customer, $data, allowFiscalFields: true);
 
         if (array_key_exists('notes', $data)) {
@@ -1436,7 +1436,7 @@ class RouteController extends Controller
         $this->authorizeSellerVisit($request, $visit);
         $visit->loadMissing('customer');
 
-        $data = $this->validateRouteCustomer($request, requireAnyName: false);
+        $data = $this->validateRouteCustomer($request, requireAnyName: false, existingCustomer: $visit->customer);
         $this->updateCustomerFromRouteData($visit->customer, $data, allowFiscalFields: false);
 
         if (array_key_exists('notes', $data) && $data['notes'] !== '') {
@@ -2002,7 +2002,7 @@ class RouteController extends Controller
         }
     }
 
-    private function validateRouteCustomer(Request $request, bool $requireAnyName = true): array
+    private function validateRouteCustomer(Request $request, bool $requireAnyName = true, ?Customer $existingCustomer = null): array
     {
         $data = $request->validate([
             'name' => ['nullable', 'string', 'max:255'],
@@ -2023,41 +2023,31 @@ class RouteController extends Controller
         $docType = CustomerIdentity::normalizeGuatemalaDocType($submittedDocType);
 
         if ($this->currentBusinessCountry() === 'GT') {
+            if ($submittedDocType === '' && blank($data['doc_number'] ?? null) && $existingCustomer) {
+                $submittedDocType = (string) $existingCustomer->doc_type;
+                $data['doc_number'] = $existingCustomer->doc_number;
+                $docType = CustomerIdentity::normalizeGuatemalaDocType($submittedDocType);
+            }
+
             if ($submittedDocType !== '' && $docType === null) {
                 throw ValidationException::withMessages([
                     'doc_type' => 'El tipo de documento debe ser NIT, CUI o CF.',
                 ]);
             }
 
-            $legacyDocument = CustomerIdentity::normalizeTaxId($data['doc_number'] ?? null);
-            $docType ??= $legacyDocument === null || $legacyDocument === CustomerIdentity::CF
-                ? CustomerIdentity::CF
-                : CustomerIdentity::NIT;
-            $data['doc_number'] = CustomerIdentity::normalizeDocument($docType, $data['doc_number'] ?? null) ?? '';
+            $identity = app(GuatemalaCustomerIdentityPolicy::class)->resolve(
+                Business::query()->findOrFail(currentBusinessId()),
+                $submittedDocType,
+                $data['doc_number'] ?? null,
+                $existingCustomer,
+            );
+            $docType = $identity['doc_type'];
+            $data['doc_number'] = $identity['doc_number'];
 
-            if ($docType === CustomerIdentity::CUI && ! CustomerIdentity::isValidCui($data['doc_number'])) {
-                throw ValidationException::withMessages([
-                    'doc_number' => 'El CUI/DPI debe tener 13 dígitos.',
-                ]);
-            }
-
-            if ($data['doc_number'] === '' || $docType === CustomerIdentity::CF) {
-                $docType = CustomerIdentity::CF;
-                $data['doc_number'] = CustomerIdentity::CF;
-            }
-
-            if ($docType === CustomerIdentity::CUI) {
-                $lookup = $this->verifiedRouteCuiLookup((int) currentBusinessId(), $data['doc_number']);
-
-                if (! $lookup) {
-                    throw ValidationException::withMessages([
-                        'doc_number' => 'Valida el CUI antes de crear o actualizar el cliente de ruta.',
-                    ]);
-                }
-
-                $data['name'] = $lookup->name;
-                $data['tax_lookup_verified_at'] = $lookup->last_lookup_at;
-                $data['tax_lookup_payload'] = $lookup->raw_response;
+            if (in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)) {
+                $data['name'] = $identity['name'];
+                $data['tax_lookup_verified_at'] = $identity['tax_lookup_verified_at'];
+                $data['tax_lookup_payload'] = $identity['tax_lookup_payload'];
             }
         } else {
             $docType = CustomerIdentity::normalizeTaxId($data['doc_number'] ?? null) === CustomerIdentity::CF
@@ -2181,7 +2171,7 @@ class RouteController extends Controller
                 'phone' => $data['phone'] !== '' ? $data['phone'] : null,
                 'country' => $this->currentBusinessCountry(),
                 'is_final_consumer' => false,
-                'name_locked' => $docType === CustomerIdentity::CUI,
+                'name_locked' => in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true),
                 'tax_lookup_verified_at' => $data['tax_lookup_verified_at'] ?? null,
                 'tax_lookup_payload' => $data['tax_lookup_payload'] ?? null,
             ]);
@@ -2201,7 +2191,7 @@ class RouteController extends Controller
                     $payload['contact_name'] = $data['contact_name'];
                 }
 
-                if ($docType === CustomerIdentity::CUI) {
+                if (in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)) {
                     $payload['name'] = $data['name'];
                     $payload['name_locked'] = true;
                     $payload['tax_lookup_verified_at'] = $data['tax_lookup_verified_at'];
@@ -2245,7 +2235,7 @@ class RouteController extends Controller
             'phone' => $data['phone'] !== '' ? $data['phone'] : null,
             'country' => $this->currentBusinessCountry(),
             'is_final_consumer' => $isFinalConsumer,
-            'name_locked' => $docType === CustomerIdentity::CUI,
+            'name_locked' => in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true),
             'tax_lookup_verified_at' => $data['tax_lookup_verified_at'] ?? null,
             'tax_lookup_payload' => $data['tax_lookup_payload'] ?? null,
         ]);
@@ -2293,7 +2283,7 @@ class RouteController extends Controller
             $payload['doc_number'] = $docNumber;
             $payload['is_final_consumer'] = $docType === CustomerIdentity::CF;
 
-            if ($docType === CustomerIdentity::CUI) {
+            if (in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)) {
                 $payload['name'] = $data['name'];
                 $payload['name_locked'] = true;
                 $payload['tax_lookup_verified_at'] = $data['tax_lookup_verified_at'];
@@ -2472,17 +2462,6 @@ class RouteController extends Controller
     private function normalizeRouteCustomerDocument(?string $value): string
     {
         return CustomerIdentity::normalizeTaxId($value) ?? '';
-    }
-
-    private function verifiedRouteCuiLookup(int $businessId, string $cui): ?CustomerTaxLookup
-    {
-        return CustomerTaxLookup::query()
-            ->where('business_id', $businessId)
-            ->where('country', 'GT')
-            ->where('doc_type', CustomerIdentity::CUI)
-            ->where('doc_number', $cui)
-            ->where('last_lookup_at', '>=', now()->subDays(30))
-            ->first();
     }
 
     private function authorizeBusiness(RouteZone $zone): void

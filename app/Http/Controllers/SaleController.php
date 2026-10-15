@@ -30,6 +30,7 @@ use App\Support\BusinessCounter;
 use App\Support\BusinessLogo;
 use App\Support\Credits;
 use App\Support\CustomerIdentity;
+use App\Support\GuatemalaCustomerIdentityPolicy;
 use App\Support\DocumentCompanyHeader;
 use App\Support\DocumentCustomerDisplay;
 use App\Support\FelPhraseRenderer;
@@ -2042,35 +2043,35 @@ class SaleController extends Controller
             if ($docNumber === '' && $name === '' && $commercialName === '') {
                 return null;
             }
+            $existingCustomer = filled($customerData['id'] ?? null)
+                ? Customer::query()->where('business_id', $businessId)->find($customerData['id'])
+                : null;
+            try {
+                $identity = app(GuatemalaCustomerIdentityPolicy::class)->resolve(
+                    Business::query()->findOrFail($businessId),
+                    $submittedDocType,
+                    $customerData['doc_number'] ?? null,
+                    $existingCustomer,
+                );
+            } catch (ValidationException $exception) {
+                $errors = [];
 
-            if ($docType === 'CUI') {
-                if (! preg_match('/^\d{13}$/', $docNumber)) {
-                    throw ValidationException::withMessages([
-                        'customer.doc_number' => 'El CUI/DPI debe tener 13 digitos.',
-                    ]);
+                if (isset($exception->errors()['doc_type'][0])) {
+                    $errors['customer.doc_type'] = $exception->errors()['doc_type'][0];
                 }
 
-                if ($name === '') {
-                    throw ValidationException::withMessages([
-                        'customer.name' => 'El nombre del cliente es obligatorio para CUI/DPI.',
-                    ]);
+                if (isset($exception->errors()['doc_number'][0])) {
+                    $errors['customer.doc_number'] = $exception->errors()['doc_number'][0];
                 }
-            } elseif ($docNumber !== '') {
-                $docType = 'NIT';
-            }
 
-            if ($docNumber !== '' && ! preg_match('/^[A-Za-z0-9]+$/', $docNumber)) {
-                throw ValidationException::withMessages([
-                    'customer.doc_number' => 'El NIT solo puede contener números y letras.',
-                ]);
+                throw ValidationException::withMessages($errors ?: ['customer.doc_number' => 'No se pudo validar la identidad fiscal.']);
             }
+            $docType = $identity['doc_type'];
+            $docNumber = $identity['doc_number'];
 
             if (in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)) {
-                $verifiedCustomer = $this->verifiedFiscalCustomer($businessId, $docType, $docNumber);
-
-                if ($verifiedCustomer) {
-                    $name = $verifiedCustomer->name;
-                }
+                $name = $identity['name'];
+                $verifiedCustomer = $existingCustomer;
             }
         }
 
@@ -2095,7 +2096,7 @@ class SaleController extends Controller
         $query = Customer::query()->where('business_id', $businessId);
 
         if (! empty($customerData['id'])) {
-            $customer = (clone $query)->find($customerData['id']);
+            $customer = $existingCustomer ?? (clone $query)->find($customerData['id']);
         } elseif (CustomerIdentity::isRealTaxId($docNumber)) {
             $customer = Customer::findOrCreateByNormalizedTaxId($businessId, [
                 'name' => $name ?: ($commercialName !== '' ? $commercialName : "Cliente {$docNumber}"),
@@ -2109,6 +2110,9 @@ class SaleController extends Controller
                 'phone' => $customerData['phone'] ?? null,
                 'country' => $customerCountry,
                 'is_final_consumer' => false,
+                'name_locked' => true,
+                'tax_lookup_payload' => $identity['tax_lookup_payload'],
+                'tax_lookup_verified_at' => $identity['tax_lookup_verified_at'],
             ]);
         }
 
@@ -2124,9 +2128,14 @@ class SaleController extends Controller
             'country' => $customerCountry,
             'is_final_consumer' => $customerCountry === 'GT' ? false : ($docType === 'Consumidor Final'),
             'name_locked' => $customerCountry === 'GT' && in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)
-                ? (bool) (($verifiedCustomer ?? null)?->name_locked ?? ($customerData['name_locked'] ?? false))
+                ? true
                 : false,
         ];
+
+        if ($customerCountry === 'GT' && in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)) {
+            $payload['tax_lookup_payload'] = $identity['tax_lookup_payload'];
+            $payload['tax_lookup_verified_at'] = $identity['tax_lookup_verified_at'];
+        }
 
         if (isset($customer)) {
             if ($commercialName !== '') {

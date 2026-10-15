@@ -118,7 +118,8 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($admin)
             ->post(route('routes.zones.customers.create', $zone), [
                 'name' => 'Tienda Nueva',
-                'doc_number' => ' 123-456 ',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
                 'phone' => '5555-1111',
                 'address' => 'Zona 1',
                 'notes' => 'Frente al parque',
@@ -128,7 +129,7 @@ class RoutesPreSalesTest extends TestCase
 
         $customer = Customer::query()
             ->where('business_id', $business->id)
-            ->where('doc_number', '123456')
+            ->where('name', 'Tienda Nueva')
             ->firstOrFail();
 
         $this->assertDatabaseHas('route_zone_customers', [
@@ -146,12 +147,14 @@ class RoutesPreSalesTest extends TestCase
         [$business, $admin, $branch] = $this->tenant(role: 'owner');
         $seller = $this->user($business, $branch, 'pre_seller');
         $zone = $this->zone($business, $branch, $seller);
+        $this->verifiedTaxLookup($business, 'NIT', '331004X700', 'INVERSIONES BONGO SOCIEDAD ANONIMA');
 
         $this->actingAs($admin)
             ->post(route('routes.zones.customers.create', $zone), [
                 'name' => 'INVERSIONES BONGO SOCIEDAD ANONIMA',
                 'commercial_name' => 'Bongo Repuestos',
                 'contact_name' => 'Carlos Perez',
+                'doc_type' => 'NIT',
                 'doc_number' => ' 33100-4X700 ',
                 'phone' => '5555-1111',
                 'address' => 'Zona 1',
@@ -297,11 +300,13 @@ class RoutesPreSalesTest extends TestCase
         $zone = $this->zone($business, $branch, $seller);
         $existing = Customer::query()->create([
             'business_id' => $business->id,
-            'name' => '',
+            'name' => 'NOMBRE FISCAL VERIFICADO',
             'commercial_name' => 'Nombre comercial existente',
             'doc_type' => 'NIT',
             'doc_number' => '1234567',
             'country' => 'GT',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
         ]);
 
         $this->actingAs($admin)
@@ -309,6 +314,7 @@ class RoutesPreSalesTest extends TestCase
                 'name' => 'NOMBRE FISCAL DESDE NIT',
                 'commercial_name' => 'Nombre comercial nuevo',
                 'contact_name' => 'Contacto nuevo',
+                'doc_type' => 'NIT',
                 'doc_number' => ' 123-4567 ',
                 'address' => 'Direccion nueva',
             ])
@@ -316,7 +322,7 @@ class RoutesPreSalesTest extends TestCase
 
         $existing->refresh();
 
-        $this->assertSame('NOMBRE FISCAL DESDE NIT', $existing->name);
+        $this->assertSame('NOMBRE FISCAL VERIFICADO', $existing->name);
         $this->assertSame('Nombre comercial existente', $existing->commercial_name);
         $this->assertSame('Contacto nuevo', $existing->contact_name);
         $this->assertSame('Direccion nueva', $existing->address);
@@ -361,6 +367,8 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($admin)
             ->post(route('routes.zones.customers.create', $zone), [
                 'commercial_name' => 'Tienda GT',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
                 'department' => 'Guatemala',
                 'municipality' => 'Huehuetenango',
             ])
@@ -398,6 +406,7 @@ class RoutesPreSalesTest extends TestCase
 
         $payload = [
             'name' => 'Nombre nuevo no usado',
+            'doc_type' => 'NIT',
             'doc_number' => '789-123',
             'address' => 'Otra direccion',
         ];
@@ -426,6 +435,8 @@ class RoutesPreSalesTest extends TestCase
                 ->post(route('routes.zones.customers.create', $zone), [
                     'name' => 'Cliente sin NIT',
                     'commercial_name' => 'Tienda Repetida',
+                    'doc_type' => 'CF',
+                    'doc_number' => 'CF',
                 ])
                 ->assertSessionHasNoErrors();
         }
@@ -443,6 +454,7 @@ class RoutesPreSalesTest extends TestCase
         $zone = $this->zone($business, $branch, $seller);
         $existing = $this->customer($business, 'Cliente existente');
         $existing->forceFill(['doc_number' => '123456'])->save();
+        $this->verifiedTaxLookup($business, 'NIT', '123456', 'Cliente existente');
         $target = $this->customer($business, 'Cliente objetivo');
         $assignment = RouteZoneCustomer::query()->create([
             'business_id' => $business->id,
@@ -455,6 +467,7 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($admin)
             ->put(route('routes.zones.customers.details.update', [$zone, $assignment]), [
                 'name' => 'Cliente objetivo',
+                'doc_type' => 'NIT',
                 'doc_number' => '123-456',
             ])
             ->assertSessionHasErrors('doc_number');
@@ -472,6 +485,8 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($cashier)
             ->post(route('routes.zones.customers.create', $zone), [
                 'name' => 'Cliente no autorizado',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
                 'doc_number' => '555',
             ])
             ->assertForbidden();
@@ -724,14 +739,15 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($seller)
             ->post(route('routes.mobile.work-days.customers.store', $workDay), [
                 'name' => 'Cliente movil',
-                'doc_number' => '101010',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
                 'phone' => '4444-0000',
                 'address' => 'Mercado',
                 'notes' => 'Local 4',
             ])
             ->assertSessionHasNoErrors();
 
-        $customer = Customer::query()->where('business_id', $business->id)->where('doc_number', '101010')->firstOrFail();
+        $customer = Customer::query()->where('business_id', $business->id)->where('name', 'Cliente movil')->firstOrFail();
         $visit = RouteVisit::query()->where('route_work_day_id', $workDay->id)->where('customer_id', $customer->id)->firstOrFail();
 
         $this->assertSame('pending', $visit->status);
@@ -772,13 +788,14 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($seller)
             ->post(route('routes.mobile.work-days.customers.store', $workDay), [
                 'name' => 'Cliente preventa nueva',
-                'doc_number' => '202020',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
                 'phone' => '4444-2020',
                 'address' => 'Mercado local 20',
             ])
             ->assertSessionHasNoErrors();
 
-        $customer = Customer::query()->where('business_id', $business->id)->where('doc_number', '202020')->firstOrFail();
+        $customer = Customer::query()->where('business_id', $business->id)->where('name', 'Cliente preventa nueva')->firstOrFail();
         $visit = RouteVisit::query()->where('route_work_day_id', $workDay->id)->where('customer_id', $customer->id)->firstOrFail();
 
         $this->actingAs($seller)
@@ -823,11 +840,12 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($seller)
             ->post(route('routes.mobile.work-days.customers.store', $workDay), [
                 'name' => 'Cliente default ubicacion',
-                'doc_number' => '121212',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
             ])
             ->assertSessionHasNoErrors();
 
-        $customer = Customer::query()->where('business_id', $business->id)->where('doc_number', '121212')->firstOrFail();
+        $customer = Customer::query()->where('business_id', $business->id)->where('name', 'Cliente default ubicacion')->firstOrFail();
 
         $this->assertSame('Huehuetenango', $customer->department);
         $this->assertSame('Huehuetenango', $customer->municipality);
@@ -849,13 +867,14 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($seller)
             ->post(route('routes.mobile.work-days.customers.store', $workDay), [
                 'name' => 'Cliente override ubicacion',
-                'doc_number' => '343434',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
                 'department' => 'Guatemala',
                 'municipality' => 'Guatemala',
             ])
             ->assertSessionHasNoErrors();
 
-        $customer = Customer::query()->where('business_id', $business->id)->where('doc_number', '343434')->firstOrFail();
+        $customer = Customer::query()->where('business_id', $business->id)->where('name', 'Cliente override ubicacion')->firstOrFail();
 
         $this->assertSame('Guatemala', $customer->department);
         $this->assertSame('Guatemala', $customer->municipality);
@@ -876,11 +895,14 @@ class RoutesPreSalesTest extends TestCase
             'doc_type' => 'NIT',
             'doc_number' => '555888',
             'country' => 'GT',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
         ]);
 
         $this->actingAs($admin)
             ->post(route('routes.zones.customers.create', $zone), [
                 'name' => 'Cliente existente',
+                'doc_type' => 'NIT',
                 'doc_number' => '555888',
                 'department' => 'Huehuetenango',
                 'municipality' => 'Huehuetenango',
@@ -905,6 +927,8 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($seller)
             ->post(route('routes.mobile.work-days.customers.store', $workDay), [
                 'commercial_name' => 'Ferreteria El Tornillo',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
                 'department' => 'Huehuetenango',
                 'municipality' => 'Huehuetenango',
             ])
@@ -969,7 +993,8 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($seller)
             ->post(route('routes.mobile.work-days.customers.store', $workDay), [
                 'name' => 'Cliente cerrado',
-                'doc_number' => '202020',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
             ])
             ->assertSessionHasErrors('work_day');
     }
@@ -987,7 +1012,8 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($otherSeller)
             ->post(route('routes.mobile.work-days.customers.store', $workDay), [
                 'name' => 'Cliente ajeno',
-                'doc_number' => '303030',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
             ])
             ->assertForbidden();
     }
@@ -1016,7 +1042,8 @@ class RoutesPreSalesTest extends TestCase
         $this->actingAs($seller)
             ->post(route('routes.mobile.work-days.customers.store', $workDay), [
                 'name' => 'Cliente otra sucursal',
-                'doc_number' => '404040',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
             ])
             ->assertForbidden();
     }
@@ -1034,10 +1061,12 @@ class RoutesPreSalesTest extends TestCase
             'doc_number' => '909090',
             'country' => 'GT',
         ]);
+        $this->verifiedTaxLookup($business, 'NIT', '909090', 'Cliente negocio actual');
 
         $this->actingAs($admin)
             ->post(route('routes.zones.customers.create', $zone), [
                 'name' => 'Cliente negocio actual',
+                'doc_type' => 'NIT',
                 'doc_number' => '909090',
             ])
             ->assertSessionHasNoErrors();
@@ -2337,7 +2366,7 @@ class RoutesPreSalesTest extends TestCase
                 ->where('delivery.preview.payment_methods.cash.count', 1)
                 ->where('delivery.preview.payment_methods.cash.total', 100)
                 ->where('delivery.preview.missing_payment_method.count', 1)
-                ->where('delivery.preview.fel.not_eligible_count', 2)
+                ->where('delivery.preview.fel.not_eligible_count', 0)
                 ->where('delivery.preview.cash.is_open', true));
     }
 
@@ -3463,7 +3492,27 @@ class RoutesPreSalesTest extends TestCase
             'address' => 'Ciudad',
             'phone' => '5555-0000',
             'country' => 'GT',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
         ]);
+    }
+
+    private function verifiedTaxLookup(Business $business, string $docType, string $docNumber, string $name): void
+    {
+        CustomerTaxLookup::query()->updateOrCreate(
+            [
+                'business_id' => $business->id,
+                'country' => 'GT',
+                'doc_type' => $docType,
+                'doc_number' => $docNumber,
+            ],
+            [
+                'name' => $name,
+                'provider' => 'digifact',
+                'raw_response' => [$docType => $docNumber, 'NOMBRE' => $name],
+                'last_lookup_at' => now(),
+            ],
+        );
     }
 
     private function product(Business $business, Branch $branch, float $stock = 10, float $salePrice = 100): Product
