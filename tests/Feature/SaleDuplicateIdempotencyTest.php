@@ -382,6 +382,8 @@ class SaleDuplicateIdempotencyTest extends TestCase
             'doc_type' => 'NIT',
             'doc_number' => '5728-9085',
             'country' => 'GT',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
         ]);
 
         $this->actingAs($user)
