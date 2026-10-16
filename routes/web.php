@@ -38,6 +38,7 @@ use App\Http\Controllers\TenantUserController;
 use App\Http\Controllers\SuperAdmin\DashboardController as SuperAdminDashboardController;
 use App\Http\Controllers\SuperAdmin\DeployController as SuperAdminDeployController;
 use App\Http\Controllers\SuperAdmin\FelIncidentController as SuperAdminFelIncidentController;
+use App\Http\Controllers\SuperAdmin\MaintenanceAnnouncementController as SuperAdminMaintenanceAnnouncementController;
 use App\Http\Controllers\SuperAdmin\ProductImportController as SuperAdminProductImportController;
 use App\Http\Controllers\SuperAdmin\SecurityController as SuperAdminSecurityController;
 use App\Http\Controllers\SuperAdmin\TenantController as SuperAdminTenantController;
@@ -86,6 +87,10 @@ Route::middleware(['auth', 'super.admin'])
         Route::post('/system/deploy/run', [SuperAdminDeployController::class, 'run'])->name('system.deploy.run');
         Route::get('/system/deploy/{deployRun}', [SuperAdminDeployController::class, 'show'])->name('system.deploy.show');
         Route::get('/system/deploy/{deployRun}/log', [SuperAdminDeployController::class, 'log'])->name('system.deploy.log');
+        Route::get('/system/maintenance-announcements', [SuperAdminMaintenanceAnnouncementController::class, 'index'])->name('system.maintenance-announcements.index');
+        Route::post('/system/maintenance-announcements', [SuperAdminMaintenanceAnnouncementController::class, 'store'])->name('system.maintenance-announcements.store');
+        Route::put('/system/maintenance-announcements/{maintenanceAnnouncement}', [SuperAdminMaintenanceAnnouncementController::class, 'update'])->name('system.maintenance-announcements.update');
+        Route::delete('/system/maintenance-announcements/{maintenanceAnnouncement}', [SuperAdminMaintenanceAnnouncementController::class, 'destroy'])->name('system.maintenance-announcements.destroy');
         Route::get('/fel-incidents', [SuperAdminFelIncidentController::class, 'index'])->name('fel-incidents.index');
         Route::post('/fel-incidents/{incident}/review', [SuperAdminFelIncidentController::class, 'review'])->name('fel-incidents.review');
         Route::post('/fel-incidents/{incident}/resolve', [SuperAdminFelIncidentController::class, 'resolve'])->name('fel-incidents.resolve');

@@ -1,4 +1,5 @@
 import Dropdown from '@/Components/Dropdown';
+import MaintenanceAnnouncementBanner, { MaintenanceAnnouncement } from '@/Components/MaintenanceAnnouncementBanner';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink';
 import { t } from '@/lib/i18n';
 import { Link, router, usePage } from '@inertiajs/react';
@@ -59,6 +60,7 @@ export default function Authenticated({
         logo_url: null,
         subtitle: 'Blunk v2.0',
     };
+    const maintenanceAnnouncement = (usePage().props.maintenance_announcement as MaintenanceAnnouncement | null) ?? null;
     const [showingNavigationDropdown, setShowingNavigationDropdown] = useState(false);
     const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
     // Disabled while session expiry recovery is handled by valid Inertia redirects.
@@ -453,6 +455,7 @@ export default function Authenticated({
                     </div>
                 </div>
             </nav>
+            <MaintenanceAnnouncementBanner announcement={maintenanceAnnouncement} />
 
             {header && (
                 <header className="border-b border-slate-200/70 bg-white/70 backdrop-blur-xl">

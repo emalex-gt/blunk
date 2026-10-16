@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\Business;
+use App\Models\MaintenanceAnnouncement;
 use App\Services\BranchAccessService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
@@ -64,6 +65,7 @@ class HandleInertiaRequests extends Middleware
                     'subtitle' => 'Blunk v2.0',
                 ],
                 'use_product_images' => true,
+                'maintenance_announcement' => null,
                 'flash' => [
                     'success' => fn () => $request->session()->get('success'),
                     'receipt_sale_id' => fn () => $request->session()->get('receipt_sale_id'),
@@ -251,6 +253,18 @@ class HandleInertiaRequests extends Middleware
                 ];
             },
             'use_product_images' => fn () => $user && $businessId ? tenantSetting('use_product_images', true) : true,
+            'maintenance_announcement' => function () use ($businessId) {
+                $announcement = MaintenanceAnnouncement::query()
+                    ->visible()
+                    ->latest('starts_at')
+                    ->first();
+
+                if (! $announcement) {
+                    return null;
+                }
+
+                return $announcement->publicPayload($businessId ? tenantTimezone($businessId) : 'UTC');
+            },
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),
                 'receipt_sale_id' => fn () => $request->session()->get('receipt_sale_id'),
