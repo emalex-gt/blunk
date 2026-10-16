@@ -12,6 +12,7 @@ use App\Services\Dashboard\Metrics\TopProductMetricQuery;
 use App\Services\Dashboard\Metrics\RouteOperationsMetricQuery;
 use App\Services\Dashboard\Metrics\RouteSellerWorkDayMetricQuery;
 use App\Services\Dashboard\Metrics\RouteDeliveryRunMetricQuery;
+use App\Services\Dashboard\Metrics\CashierWorkspaceMetricQuery;
 use App\Support\Permissions;
 use LogicException;
 
@@ -47,6 +48,10 @@ final class DashboardWidgetRegistry
                 query: new CashCurrentMetricQuery(),
                 requiredModules: ['cash_register'],
                 requiredPermissions: [Permissions::CASH_REGISTER_VIEW],
+            ),
+            new DashboardWidgetDefinition(
+                key: 'cashier.workspace', title: 'Mi caja', type: 'cashier_workspace', period: DashboardPeriod::CURRENT,
+                query: new CashierWorkspaceMetricQuery(), requiredModules: ['pos'], requiredPermissions: [Permissions::POS_VIEW],
             ),
             new DashboardWidgetDefinition(
                 key: 'stock.alerts',

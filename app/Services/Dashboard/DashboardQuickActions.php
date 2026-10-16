@@ -30,11 +30,11 @@ final class DashboardQuickActions
     /** @return array<int, array{key:string,label:string,route:string,profiles:array<int,string>,modules:array<int,string>,permissions:array<int,string>,features:array<int,string>,emphasis:string}> */
     private static function definitions(): array
     {
-        $operational = ['executive', 'branch_manager', 'cashier', 'generic'];
+        $operational = ['executive', 'branch_manager', 'generic'];
 
         return [
             ['key' => 'sales.create', 'label' => 'Nueva venta', 'route' => 'sales.create', 'profiles' => $operational, 'modules' => ['pos'], 'permissions' => [Permissions::POS_VIEW], 'features' => [], 'emphasis' => 'primary'],
-            ['key' => 'cash-register.index', 'label' => 'Ver caja', 'route' => 'cash-register.index', 'profiles' => ['executive', 'branch_manager', 'cashier', 'generic'], 'modules' => ['cash_register'], 'permissions' => [Permissions::CASH_REGISTER_VIEW], 'emphasis' => 'secondary'],
+            ['key' => 'cash-register.index', 'label' => 'Ver caja', 'route' => 'cash-register.index', 'profiles' => ['executive', 'branch_manager', 'generic'], 'modules' => ['cash_register'], 'permissions' => [Permissions::CASH_REGISTER_VIEW], 'emphasis' => 'secondary'],
             ['key' => 'routes.mobile.zones', 'label' => 'Mis rutas', 'route' => 'routes.mobile.zones', 'profiles' => ['generic'], 'modules' => ['routes'], 'permissions' => [Permissions::ROUTES_WORK], 'emphasis' => 'primary'],
             ['key' => 'routes.mobile.post-conversion-collections', 'label' => 'Cobros pendientes', 'route' => 'routes.mobile.post-conversion-collections.index', 'profiles' => ['generic'], 'modules' => ['routes'], 'permissions' => [Permissions::ROUTES_POST_CONVERSION_COLLECTIONS_COLLECT], 'emphasis' => 'secondary'],
             ['key' => 'routes.delivery-runs', 'label' => 'Mis entregas', 'route' => 'routes.delivery-runs.index', 'profiles' => ['generic'], 'modules' => ['routes'], 'permissions' => [Permissions::ROUTES_DELIVERY_RUNS_VIEW], 'emphasis' => 'primary'],

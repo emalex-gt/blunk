@@ -5,7 +5,7 @@ import { Head, Link, usePage } from '@inertiajs/react';
 type Widget = {
     key: string;
     title: string;
-    type: 'sales_summary' | 'cash_status' | 'stock_alerts' | 'top_product' | 'money' | 'count' | 'route_work_day' | 'route_delivery_run';
+    type: 'sales_summary' | 'cash_status' | 'stock_alerts' | 'top_product' | 'money' | 'count' | 'route_work_day' | 'route_delivery_run' | 'cashier_workspace';
     period: 'today' | 'this_month' | 'current';
     data: Record<string, unknown>;
 };
@@ -35,6 +35,13 @@ type RouteDeliveryRunData = {
     progress?: { assigned: number; pending: number; delivered: number; not_delivered: number; unpaid_delivered_count: number; unpaid_delivered_amount: string | number };
     next_stop?: { id: number; position: number | null; customer_name: string | null; customer_address: string | null; customer_phone: string | null; sale_number: string | null; sale_total: string | number | null; href: string } | null;
     primary_action: { label: string; href: string };
+};
+
+type CashierWorkspaceData = {
+    cash_session: { status: 'open' | 'closed'; id?: number; opened_at?: string | null } | null;
+    sales_period: 'current_session' | 'today'; sales_count: number; sales_total: string | number; average_ticket: string | number; last_sale_time: string | null;
+    latest_sales: Array<{ id: number; business_number: number | null; total: string | number; created_at: string | null }>;
+    active_pos_drafts_count: number; primary_action: { label: string; href: string }; cash_action: { label: string; href: string } | null;
 };
 
 type DashboardData = {
@@ -132,6 +139,10 @@ function WidgetCard({ widget, country }: { widget: Widget; country: string }) {
         return <RouteDeliveryRunCard data={widget.data as RouteDeliveryRunData} country={country} />;
     }
 
+    if (widget.type === 'cashier_workspace') {
+        return <CashierWorkspaceCard data={widget.data as CashierWorkspaceData} country={country} />;
+    }
+
     const content = widgetContent(widget, country);
 
     return (
@@ -148,6 +159,20 @@ function WidgetCard({ widget, country }: { widget: Widget; country: string }) {
             {content}
         </article>
     );
+}
+
+function CashierWorkspaceCard({ data, country }: { data: CashierWorkspaceData; country: string }) {
+    const open = data.cash_session?.status === 'open';
+    return <section data-dashboard-widget="cashier.workspace" className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
+        <p className="text-xs font-bold tracking-[0.14em] text-orange-700">MI CAJA</p>
+        {data.cash_session && <div className={`mt-2 rounded-xl p-3 text-sm font-medium ${open ? 'bg-emerald-50 text-emerald-800' : 'bg-slate-50 text-slate-600'}`}><p>{open ? '● Caja abierta' : 'No hay una caja abierta.'}</p>{open && data.cash_session.opened_at && <p className="mt-1 text-xs">Desde {new Date(data.cash_session.opened_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>}</div>}
+        <p className="mt-5 text-sm text-slate-500">{data.sales_period === 'current_session' ? 'Mis ventas del turno' : 'Mis ventas de hoy'}</p>
+        <p className="text-3xl font-bold tracking-tight text-slate-950">{formatCurrency(data.sales_total, country)}</p>
+        <div className="mt-4 grid grid-cols-3 gap-3"><Metric label="Operaciones" value={data.sales_count} tone="text-slate-900" /><Metric label="Ticket promedio" value={formatCurrency(data.average_ticket, country)} tone="text-orange-700" /><Metric label="Borradores" value={data.active_pos_drafts_count} tone="text-slate-700" /></div>
+        {data.latest_sales.length > 0 && <div className="mt-5 rounded-xl bg-slate-50 p-4"><p className="text-xs font-bold tracking-wide text-slate-500">ÚLTIMAS VENTAS</p>{data.latest_sales.map((sale) => <div key={sale.id} className="mt-2 flex justify-between gap-3 text-sm text-slate-700"><span>#{sale.business_number ?? sale.id}</span><span className="font-semibold">{formatCurrency(sale.total, country)}</span></div>)}</div>}
+        <Link href={data.primary_action.href} className="mt-5 block rounded-xl bg-orange-600 px-4 py-3 text-center text-sm font-bold text-white hover:bg-orange-700">{data.primary_action.label}</Link>
+        {data.cash_action && <Link href={data.cash_action.href} className="mt-3 block rounded-xl border border-slate-200 px-4 py-3 text-center text-sm font-semibold text-slate-700 hover:border-orange-300">{data.cash_action.label}</Link>}
+    </section>;
 }
 
 function RouteDeliveryRunCard({ data, country }: { data: RouteDeliveryRunData; country: string }) {

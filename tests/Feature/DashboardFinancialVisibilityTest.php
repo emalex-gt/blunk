@@ -41,15 +41,11 @@ class DashboardFinancialVisibilityTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Dashboard')
-                ->where('dashboard.widgets', fn ($widgets) => collect($widgets)->pluck('key')->all() === [
-                    'sales.today',
-                    'sales.this_month',
-                    'sales.top_product',
-                ])
-                ->missing('dashboard.widgets.3'));
+                ->where('dashboard.widgets', fn ($widgets) => collect($widgets)->pluck('key')->all() === ['cashier.workspace'])
+                ->missing('dashboard.widgets.1'));
     }
 
-    public function test_user_with_profit_permission_receives_estimated_margin(): void
+    public function test_cashier_with_profit_permission_still_receives_only_personal_workspace(): void
     {
         [$business, $user] = $this->tenantUser('cashier');
         Permissions::assignDirectPermissions($user, [Permissions::REPORTS_PROFIT_VIEW]);
@@ -60,8 +56,7 @@ class DashboardFinancialVisibilityTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Dashboard')
-                ->where('dashboard.widgets.3.key', 'sales.estimated_margin')
-                ->where('dashboard.widgets.3.data.amount', '60.00'));
+                ->where('dashboard.widgets', fn ($widgets) => collect($widgets)->pluck('key')->all() === ['cashier.workspace']));
     }
 
     public function test_admin_dashboard_receives_estimated_margin_by_default_role_permission(): void
@@ -89,9 +84,10 @@ class DashboardFinancialVisibilityTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Dashboard')
-                ->where('dashboard.widgets.2.key', 'cash.current')
-                ->where('dashboard.widgets.2.data.status', 'closed')
-                ->missing('dashboard.widgets.4'));
+                ->where('dashboard.widgets.0.key', 'cashier.workspace')
+                ->where('dashboard.widgets.0.data.cash_session.status', 'closed')
+                ->where('dashboard.widgets.0.data.cash_action.href', route('cash-register.index', absolute: false))
+                ->missing('dashboard.widgets.1'));
     }
 
     public function test_profit_permission_has_financial_visibility_metadata(): void

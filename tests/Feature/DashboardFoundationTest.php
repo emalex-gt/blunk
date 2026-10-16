@@ -116,7 +116,7 @@ class DashboardFoundationTest extends TestCase
             ->get(route('dashboard'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->where('dashboard.widgets', fn ($widgets) => collect($widgets)->pluck('key')->all() === ['sales.today', 'sales.this_month', 'sales.top_product'])
+                ->where('dashboard.widgets', fn ($widgets) => collect($widgets)->pluck('key')->all() === ['cashier.workspace'])
                 ->missing('dashboard.widgets.3'));
     }
 
