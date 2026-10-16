@@ -142,7 +142,8 @@ class DashboardFinancialVisibilityTest extends TestCase
 
         $this->actingAs($user)->get(route('dashboard'))->assertInertia(fn (Assert $page) => $page
             ->where('dashboard.actions', fn ($actions) => collect($actions)->pluck('key')->contains('credits.accounts'))
-            ->where('dashboard.widgets', fn ($widgets) => collect($widgets)->pluck('key')->contains('credits.receivable')));
+            ->where('dashboard.widgets', fn ($widgets) => collect($widgets)->pluck('key')->contains('executive.overview'))
+            ->where('dashboard.widgets.0.data.receivable.amount', '0.00'));
     }
 
     public function test_hidden_credit_sales_widget_never_executes_its_metric_query(): void

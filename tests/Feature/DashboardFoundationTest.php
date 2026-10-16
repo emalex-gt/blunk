@@ -345,6 +345,7 @@ class DashboardFoundationTest extends TestCase
     {
         [$business, $owner, $branch, $other] = $this->tenant('owner', branches: true, modules: ['pos', 'reports', 'inventory', 'credits', 'routes']);
         $business->tenantSetting()->update(['enable_credit_sales' => true]);
+        $business->tenantSetting()->update(['enable_credit_sales' => true]);
         $customer = $this->customer($business, 'CxC principal');
         CustomerCreditAccount::query()->create([
             'business_id' => $business->id,
@@ -374,20 +375,21 @@ class DashboardFoundationTest extends TestCase
         ]);
 
         $context = new DashboardContext($business, $owner, $branch, true, [
+            Permissions::POS_VIEW,
             Permissions::INVENTORY_VIEW,
             Permissions::CREDITS_ACCOUNTS_VIEW,
             Permissions::ROUTES_VIEW,
             Permissions::ROUTES_PRE_SALES_ADMIN_VIEW,
             Permissions::ROUTES_DELIVERY_RUNS_VIEW,
-        ], ['inventory', 'credits', 'routes'], 'America/Guatemala');
+        ], ['pos', 'inventory', 'credits', 'routes'], 'America/Guatemala');
         $dashboard = app(DashboardService::class)->resolve($context, 'warehouse');
 
         $this->assertSame(['stock.alerts', 'stock.active_reservations'], collect($dashboard['widgets'])->pluck('key')->all());
         $this->assertSame(1, $dashboard['widgets'][1]['data']['count']);
 
         $executive = app(DashboardService::class)->resolve($context, 'executive');
-        $receivable = collect($executive['widgets'])->firstWhere('key', 'credits.receivable');
-        $this->assertSame('200.00', $receivable['data']['amount']);
+        $overview = collect($executive['widgets'])->firstWhere('key', 'executive.overview');
+        $this->assertSame('200.00', $overview['data']['receivable']['amount']);
     }
 
     public function test_route_supervisor_uses_current_domain_states_and_excludes_reversed_settlement_cash(): void

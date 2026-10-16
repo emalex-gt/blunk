@@ -29,4 +29,9 @@ final class DashboardPeriod
             default => throw new InvalidArgumentException("Unsupported dashboard period [{$key}]."),
         };
     }
+
+    public static function range(string $key, Carbon $start, Carbon $end): self
+    {
+        return new self($key, $start->copy()->utc(), $end->copy()->utc());
+    }
 }

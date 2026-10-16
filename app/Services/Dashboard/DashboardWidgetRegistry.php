@@ -13,6 +13,7 @@ use App\Services\Dashboard\Metrics\RouteOperationsMetricQuery;
 use App\Services\Dashboard\Metrics\RouteSellerWorkDayMetricQuery;
 use App\Services\Dashboard\Metrics\RouteDeliveryRunMetricQuery;
 use App\Services\Dashboard\Metrics\CashierWorkspaceMetricQuery;
+use App\Services\Dashboard\Metrics\ExecutiveOverviewMetricQuery;
 use App\Support\Permissions;
 use LogicException;
 
@@ -22,6 +23,7 @@ final class DashboardWidgetRegistry
     public static function all(): array
     {
         $definitions = [
+            new DashboardWidgetDefinition(key: 'executive.overview', title: 'Resumen ejecutivo', type: 'executive_overview', period: DashboardPeriod::CURRENT, query: new ExecutiveOverviewMetricQuery(), requiredModules: ['pos'], requiredAnyPermissions: [Permissions::POS_VIEW, Permissions::REPORTS_SALES_VIEW]),
             new DashboardWidgetDefinition(
                 key: 'sales.today',
                 title: 'Ventas de hoy',

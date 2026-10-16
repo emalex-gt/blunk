@@ -37,14 +37,7 @@ final class DashboardProfiles
                 'sales.top_product',
                 'sales.estimated_margin',
             ],
-            'executive' => [
-                'sales.today',
-                'sales.this_month',
-                'sales.estimated_margin',
-                'sales.top_product',
-                'stock.alerts',
-                'credits.receivable',
-            ],
+            'executive' => ['executive.overview'],
             'branch_manager' => [
                 'sales.today',
                 'sales.this_month',
