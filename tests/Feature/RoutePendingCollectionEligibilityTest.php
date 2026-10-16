@@ -362,9 +362,10 @@ class RoutePendingCollectionEligibilityTest extends TestCase
         $this->assertNull(RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->first());
         $this->assertNull(app(RoutePendingCollectionEligibility::class)->queue($business->id, $branch->id)->first()['case_id']);
 
+        $occurredAt = now()->toDateTimeString();
         $result = app(RoutePendingCollectionCaseService::class)->addEventForEligibleSale($item->sale_id, [
             'type' => 'contact',
-            'occurred_at' => now()->toDateTimeString(),
+            'occurred_at' => $occurredAt,
         ], $actor, 'pending-derived-event-0001');
 
         $case = RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->firstOrFail();
@@ -372,7 +373,7 @@ class RoutePendingCollectionEligibilityTest extends TestCase
         $this->assertSame($item->reconciled_at?->format('Y-m-d H:i:s'), $case->opened_at?->format('Y-m-d H:i:s'));
         $this->assertDatabaseCount('route_pending_collection_cases', 1);
         $this->assertDatabaseCount('route_pending_collection_events', 1);
-        $replay = app(RoutePendingCollectionCaseService::class)->addEventForEligibleSale($item->sale_id, ['type' => 'contact', 'occurred_at' => now()->toDateTimeString()], $actor, 'pending-derived-event-0001');
+        $replay = app(RoutePendingCollectionCaseService::class)->addEventForEligibleSale($item->sale_id, ['type' => 'contact', 'occurred_at' => $occurredAt], $actor, 'pending-derived-event-0001');
         $this->assertTrue($replay->replayed);
         $this->assertDatabaseCount('route_pending_collection_events', 1);
     }
