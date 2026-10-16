@@ -344,6 +344,7 @@ class DashboardFoundationTest extends TestCase
     public function test_professional_widgets_use_authoritative_sources_and_exclude_reversed_route_settlements(): void
     {
         [$business, $owner, $branch, $other] = $this->tenant('owner', branches: true, modules: ['pos', 'reports', 'inventory', 'credits', 'routes']);
+        $business->tenantSetting()->update(['enable_credit_sales' => true]);
         $customer = $this->customer($business, 'CxC principal');
         CustomerCreditAccount::query()->create([
             'business_id' => $business->id,

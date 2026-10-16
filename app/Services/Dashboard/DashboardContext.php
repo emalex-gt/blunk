@@ -6,6 +6,7 @@ use App\Models\Branch;
 use App\Models\Business;
 use App\Models\User;
 use App\Support\BranchInventory;
+use App\Support\Credits;
 use App\Support\Permissions;
 
 final class DashboardContext
@@ -48,6 +49,15 @@ final class DashboardContext
     public function hasModule(string $module): bool
     {
         return in_array($module, $this->modules, true);
+    }
+
+    public function hasFeature(string $feature): bool
+    {
+        return match ($feature) {
+            'credit_sales' => Credits::salesEnabled((int) $this->business->id),
+            'credit_reservations' => Credits::reservationsEnabled((int) $this->business->id),
+            default => false,
+        };
     }
 
     public function period(string $key): DashboardPeriod

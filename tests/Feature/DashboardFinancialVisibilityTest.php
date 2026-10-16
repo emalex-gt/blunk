@@ -10,6 +10,11 @@ use App\Models\TenantModule;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\Permissions;
+use App\Services\Dashboard\DashboardContext;
+use App\Services\Dashboard\DashboardMetricQuery;
+use App\Services\Dashboard\DashboardPeriod;
+use App\Services\Dashboard\DashboardService;
+use App\Services\Dashboard\DashboardWidgetDefinition;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
@@ -116,6 +121,51 @@ class DashboardFinancialVisibilityTest extends TestCase
         $this->assertStringContainsString('data-dashboard-widget', $source);
         $this->assertStringContainsString('widget.title', $source);
         $this->assertStringContainsString('data.expected_cash', $source);
+    }
+
+    public function test_credit_sales_effectively_disabled_hides_accounts_action_and_widget(): void
+    {
+        [$business, $user] = $this->tenantUser('owner', ['pos', 'reports', 'credits']);
+        Permissions::assignDirectPermissions($user, [Permissions::CREDITS_ACCOUNTS_VIEW]);
+
+        $this->actingAs($user)->get(route('dashboard'))->assertInertia(fn (Assert $page) => $page
+            ->where('dashboard.actions', fn ($actions) => ! collect($actions)->pluck('key')->contains('credits.accounts'))
+            ->where('dashboard.widgets', fn ($widgets) => ! collect($widgets)->pluck('key')->contains('credits.receivable')));
+
+        $business->tenantSetting->update(['enable_credit_reservations' => true]);
+        $this->actingAs($user)->get(route('dashboard'))->assertInertia(fn (Assert $page) => $page
+            ->where('dashboard.actions', fn ($actions) => ! collect($actions)->pluck('key')->contains('credits.accounts'))
+            ->where('dashboard.widgets', fn ($widgets) => ! collect($widgets)->pluck('key')->contains('credits.receivable')));
+    }
+
+    public function test_credit_sales_effectively_enabled_exposes_accounts_action_and_widget(): void
+    {
+        [$business, $user] = $this->tenantUser('owner', ['pos', 'reports', 'credits']);
+        $business->tenantSetting->update(['enable_credit_sales' => true]);
+        Permissions::assignDirectPermissions($user, [Permissions::CREDITS_ACCOUNTS_VIEW]);
+
+        $this->actingAs($user)->get(route('dashboard'))->assertInertia(fn (Assert $page) => $page
+            ->where('dashboard.actions', fn ($actions) => collect($actions)->pluck('key')->contains('credits.accounts'))
+            ->where('dashboard.widgets', fn ($widgets) => collect($widgets)->pluck('key')->contains('credits.receivable')));
+    }
+
+    public function test_hidden_credit_sales_widget_never_executes_its_metric_query(): void
+    {
+        [$business, $user] = $this->tenantUser('owner', ['pos', 'reports', 'credits']);
+        Permissions::assignDirectPermissions($user, [Permissions::CREDITS_ACCOUNTS_VIEW]);
+        $query = new class implements DashboardMetricQuery {
+            public function resolve(DashboardContext $context, DashboardPeriod $period): array
+            {
+                throw new \LogicException('The hidden credit widget must not execute.');
+            }
+        };
+        $registry = ['credits.receivable' => new DashboardWidgetDefinition(
+            key: 'credits.receivable', title: 'CxC', type: 'money', period: DashboardPeriod::CURRENT,
+            query: $query, requiredModules: ['credits'], requiredPermissions: [Permissions::CREDITS_ACCOUNTS_VIEW], requiredFeatures: ['credit_sales'],
+        )];
+
+        $dashboard = (new DashboardService($registry))->resolve(DashboardContext::forUser($business, $user), 'executive');
+        $this->assertSame([], $dashboard['widgets']);
     }
 
     private function tenantUser(string $role, array $modules = ['pos']): array

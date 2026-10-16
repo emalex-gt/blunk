@@ -83,6 +83,7 @@ final class DashboardWidgetRegistry
                 query: new AccountsReceivableMetricQuery(),
                 requiredModules: ['credits'],
                 requiredPermissions: [Permissions::CREDITS_ACCOUNTS_VIEW],
+                requiredFeatures: ['credit_sales'],
             ),
             new DashboardWidgetDefinition(
                 key: 'stock.active_reservations',

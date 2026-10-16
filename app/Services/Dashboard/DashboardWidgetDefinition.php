@@ -8,6 +8,7 @@ final class DashboardWidgetDefinition
      * @param array<int, string> $requiredModules
      * @param array<int, string> $requiredPermissions
      * @param array<int, string> $requiredAnyPermissions
+     * @param array<int, string> $requiredFeatures
      */
     public function __construct(
         public readonly string $key,
@@ -18,6 +19,7 @@ final class DashboardWidgetDefinition
         public readonly array $requiredModules = [],
         public readonly array $requiredPermissions = [],
         public readonly array $requiredAnyPermissions = [],
+        public readonly array $requiredFeatures = [],
     ) {
     }
 
@@ -25,6 +27,7 @@ final class DashboardWidgetDefinition
     {
         return collect($this->requiredModules)->every(fn (string $module) => $context->hasModule($module))
             && collect($this->requiredPermissions)->every(fn (string $permission) => $context->hasPermission($permission))
-            && ($this->requiredAnyPermissions === [] || collect($this->requiredAnyPermissions)->contains(fn (string $permission) => $context->hasPermission($permission)));
+            && ($this->requiredAnyPermissions === [] || collect($this->requiredAnyPermissions)->contains(fn (string $permission) => $context->hasPermission($permission)))
+            && collect($this->requiredFeatures)->every(fn (string $feature) => $context->hasFeature($feature));
     }
 }
