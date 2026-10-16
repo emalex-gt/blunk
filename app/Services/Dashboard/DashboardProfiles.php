@@ -60,7 +60,9 @@ final class DashboardProfiles
                 'sales.top_product',
                 'sales.estimated_margin',
             ],
-            'route_seller', 'route_delivery', 'purchases', 'generic' => [],
+            'route_seller' => ['routes.my_work_day'],
+            'route_delivery' => ['routes.my_delivery_run'],
+            'purchases', 'generic' => [],
             'warehouse' => [
                 'stock.alerts',
                 'stock.active_reservations',

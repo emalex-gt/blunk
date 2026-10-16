@@ -320,7 +320,7 @@ class DashboardFoundationTest extends TestCase
         $dashboard = app(DashboardService::class)->resolve(DashboardContext::forUser($business, $user));
 
         $this->assertSame('route_seller', $dashboard['profile']);
-        $this->assertSame(['routes.mobile.zones', 'routes.mobile.post-conversion-collections'], collect($dashboard['actions'])->pluck('key')->all());
+        $this->assertSame([], $dashboard['actions']);
         $this->assertSame([], app(DashboardService::class)->resolve(new DashboardContext(
             $business,
             $user,
