@@ -377,8 +377,8 @@ class DashboardFoundationTest extends TestCase
         ], ['pos', 'inventory', 'credits', 'routes'], 'America/Guatemala');
         $dashboard = app(DashboardService::class)->resolve($context, 'warehouse');
 
-        $this->assertSame(['stock.alerts', 'stock.active_reservations'], collect($dashboard['widgets'])->pluck('key')->all());
-        $this->assertSame(1, $dashboard['widgets'][1]['data']['count']);
+        $this->assertSame(['warehouse.overview'], collect($dashboard['widgets'])->pluck('key')->all());
+        $this->assertSame(1, $dashboard['widgets'][0]['data']['reservations']['count']);
 
         $executive = app(DashboardService::class)->resolve($context, 'executive');
         $overview = collect($executive['widgets'])->firstWhere('key', 'executive.overview');

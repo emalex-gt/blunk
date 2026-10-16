@@ -43,10 +43,7 @@ final class DashboardProfiles
             'route_seller' => ['routes.my_work_day'],
             'route_delivery' => ['routes.my_delivery_run'],
             'purchases', 'generic' => [],
-            'warehouse' => [
-                'stock.alerts',
-                'stock.active_reservations',
-            ],
+            'warehouse' => ['warehouse.overview'],
             'finance' => [
                 'sales.today',
                 'sales.this_month',

@@ -5,7 +5,7 @@ import { Head, Link, usePage } from '@inertiajs/react';
 type Widget = {
     key: string;
     title: string;
-    type: 'sales_summary' | 'cash_status' | 'stock_alerts' | 'top_product' | 'money' | 'count' | 'route_work_day' | 'route_delivery_run' | 'cashier_workspace' | 'executive_overview' | 'branch_manager_overview';
+    type: 'sales_summary' | 'cash_status' | 'stock_alerts' | 'top_product' | 'money' | 'count' | 'route_work_day' | 'route_delivery_run' | 'cashier_workspace' | 'executive_overview' | 'branch_manager_overview' | 'warehouse_overview';
     period: 'today' | 'this_month' | 'current';
     data: Record<string, unknown>;
 };
@@ -144,6 +144,7 @@ function WidgetCard({ widget, country }: { widget: Widget; country: string }) {
     }
     if (widget.type === 'executive_overview') return <ExecutiveOverviewCard data={widget.data as any} country={country} />;
     if (widget.type === 'branch_manager_overview') return <BranchManagerOverviewCard data={widget.data as any} country={country} />;
+    if (widget.type === 'warehouse_overview') return <WarehouseOverviewCard data={widget.data as any} />;
 
     const content = widgetContent(widget, country);
 
@@ -203,6 +204,41 @@ function BranchManagerOverviewCard({ data, country }: { data: any; country: stri
                 <p className="text-xs font-bold tracking-wide text-slate-500">ACCIONES</p>
                 <div className="mt-2 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{data.actions.map((action: any) => <Link key={action.key} href={action.href} className={`rounded-xl border px-4 py-3 text-center text-sm font-semibold ${action.emphasis === 'primary' ? 'border-orange-600 bg-orange-600 text-white' : 'border-slate-200 text-slate-700 hover:border-orange-300'}`}>{action.label}</Link>)}</div>
             </div>}
+        </section>
+    );
+}
+
+function WarehouseOverviewCard({ data }: { data: any }) {
+    const signed = (quantity: number) => `${quantity >= 0 ? '+' : ''}${quantity}`;
+
+    return (
+        <section data-dashboard-widget="warehouse.overview" className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)] sm:col-span-2 xl:col-span-3">
+            <p className="text-xs font-bold tracking-[0.14em] text-orange-700">INVENTARIO</p>
+            <div className="mt-4 grid gap-3 grid-cols-2 sm:grid-cols-4">
+                <Metric label="Sin stock" value={data.inventory.out_of_stock_count} tone="text-red-700" />
+                <Metric label="Stock bajo" value={data.inventory.low_stock_count} tone="text-amber-700" />
+                <Metric label="Reservas activas" value={data.reservations.count} tone="text-slate-900" />
+                <Metric label="Movimientos hoy" value={data.movements_today_count} tone="text-slate-900" />
+            </div>
+            <p className="mt-2 text-sm text-slate-500">{data.reservations.detail} unidades reservadas</p>
+
+            <div className="mt-5">
+                <p className="text-xs font-bold tracking-wide text-slate-500">REQUIERE TU ATENCIÓN</p>
+                {data.attention.length > 0 ? data.attention.map((item: any) => <div key={item.key} className="mt-2 rounded-xl bg-slate-50 p-3 text-sm">
+                    <p className="font-semibold text-slate-800">{item.title}</p><p className="text-slate-500">{item.detail}</p>
+                    {item.href && <Link href={item.href} className="text-orange-700">Ver detalle</Link>}
+                </div>) : <p className="mt-2 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">No hay alertas de stock que requieran atención.</p>}
+            </div>
+
+            <div className="mt-5">
+                <p className="text-xs font-bold tracking-wide text-slate-500">ACTIVIDAD RECIENTE</p>
+                {data.recent_movements.length > 0 ? data.recent_movements.map((movement: any) => <div key={movement.id} className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm">
+                    <div><p className="font-semibold text-slate-800">{movement.product_name}</p><p className="text-slate-500">{movement.previous_stock ?? '—'} → {movement.new_stock ?? '—'}{movement.product_code ? ` · ${movement.product_code}` : ''}</p></div>
+                    <div className="text-right"><p className="font-semibold text-slate-900">{signed(movement.quantity)}</p><p className="text-xs text-slate-500">{movement.time}</p></div>
+                </div>) : <p className="mt-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-500">No hay movimientos recientes en esta sucursal.</p>}
+            </div>
+
+            {data.actions.length > 0 && <div className="mt-5"><p className="text-xs font-bold tracking-wide text-slate-500">ACCIONES</p><div className="mt-2 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{data.actions.map((action: any) => <Link key={action.key} href={action.href} className={`rounded-xl border px-4 py-3 text-center text-sm font-semibold ${action.emphasis === 'primary' ? 'border-orange-600 bg-orange-600 text-white' : 'border-slate-200 text-slate-700 hover:border-orange-300'}`}>{action.label}</Link>)}</div></div>}
         </section>
     );
 }
