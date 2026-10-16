@@ -123,19 +123,16 @@ class ProductController extends Controller
             'categories' => Category::query()
                 ->where('business_id', $businessId)
                 ->orderBy('name')
-                ->limit(200)
                 ->get(['id', 'name']),
             'brands' => Brand::query()
                 ->where('business_id', $businessId)
                 ->where('is_active', true)
                 ->orderBy('name')
-                ->limit(200)
                 ->get(['id', 'name']),
             'locations' => ProductLocation::query()
                 ->where('business_id', $businessId)
                 ->where('is_active', true)
                 ->orderBy('name')
-                ->limit(200)
                 ->get(['id', 'name']),
             'filters' => [
                 'search' => $search,

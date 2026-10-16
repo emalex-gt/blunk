@@ -144,6 +144,164 @@ const emptyForm: ProductForm = {
     prices: {},
 };
 
+type SearchableFilterOption = {
+    id: number;
+    name: string;
+};
+
+function SearchableFilterSelect({
+    value,
+    options,
+    placeholder,
+    searchPlaceholder,
+    onChange,
+}: {
+    value: string;
+    options: SearchableFilterOption[];
+    placeholder: string;
+    searchPlaceholder: string;
+    onChange: (value: string) => void;
+}) {
+    const [open, setOpen] = useState(false);
+    const [search, setSearch] = useState('');
+    const containerRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    const selected = useMemo(
+        () => options.find((option) => String(option.id) === value) ?? null,
+        [options, value],
+    );
+
+    const filteredOptions = useMemo(() => {
+        const term = search.trim().toLowerCase();
+
+        if (!term) {
+            return options;
+        }
+
+        return options.filter((option) =>
+            option.name.toLowerCase().includes(term),
+        );
+    }, [options, search]);
+
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (
+                containerRef.current &&
+                !containerRef.current.contains(event.target as Node)
+            ) {
+                setOpen(false);
+            }
+        }
+
+        document.addEventListener('mousedown', handleClickOutside);
+
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!open) {
+            setSearch('');
+            return;
+        }
+
+        window.setTimeout(() => inputRef.current?.focus(), 0);
+    }, [open]);
+
+    function selectValue(nextValue: string) {
+        onChange(nextValue);
+        setOpen(false);
+        setSearch('');
+    }
+
+    return (
+        <div
+            ref={containerRef}
+            className="relative min-w-0"
+            onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                    setOpen(false);
+                }
+            }}
+        >
+            <button
+                type="button"
+                onClick={() => setOpen((current) => !current)}
+                aria-expanded={open}
+                className="flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm shadow-sm transition focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
+            >
+                <span
+                    className={`min-w-0 truncate ${
+                        selected ? 'text-slate-800' : 'text-slate-500'
+                    }`}
+                >
+                    {selected?.name ?? placeholder}
+                </span>
+
+                <span className="shrink-0 text-xs text-slate-400">
+                    {open ? '▲' : '▼'}
+                </span>
+            </button>
+
+            {open && (
+                <div className="absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+                    <div className="border-b border-slate-100 p-2">
+                        <input
+                            ref={inputRef}
+                            type="text"
+                            value={search}
+                            onChange={(event) => setSearch(event.target.value)}
+                            placeholder={searchPlaceholder}
+                            className="w-full rounded-lg border-slate-200 px-3 py-2 text-sm focus:border-orange-400 focus:ring-orange-100"
+                        />
+                    </div>
+
+                    <div className="max-h-64 overflow-y-auto p-1">
+                        <button
+                            type="button"
+                            onClick={() => selectValue('')}
+                            className={`block w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-orange-50 ${
+                                value === ''
+                                    ? 'bg-orange-50 font-semibold text-orange-700'
+                                    : 'text-slate-700'
+                            }`}
+                        >
+                            {placeholder}
+                        </button>
+
+                        {filteredOptions.map((option) => {
+                            const active = String(option.id) === value;
+
+                            return (
+                                <button
+                                    key={option.id}
+                                    type="button"
+                                    onClick={() => selectValue(String(option.id))}
+                                    className={`block w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-orange-50 ${
+                                        active
+                                            ? 'bg-orange-50 font-semibold text-orange-700'
+                                            : 'text-slate-700'
+                                    }`}
+                                >
+                                    {option.name}
+                                </button>
+                            );
+                        })}
+
+                        {filteredOptions.length === 0 && (
+                            <p className="px-3 py-4 text-center text-sm text-slate-500">
+                                No se encontraron resultados.
+                            </p>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
 export default function ProductIndex({
     products,
     priceTypes,
@@ -801,36 +959,28 @@ export default function ProductIndex({
                 <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 p-4 shadow-[0_8px_30px_rgba(15,23,42,0.06)] 2xl:p-5">
                     <form onSubmit={applySearch} className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-[minmax(18rem,1fr)_150px_150px_150px_130px_140px_auto]">
                         <TextInput className="w-full sm:col-span-2 xl:col-span-3 2xl:col-span-1" placeholder={t('products.search_placeholder')} value={search} onChange={(e) => setSearch(e.target.value)} />
-                        <select
+                        <SearchableFilterSelect
                             value={filterState.category_id}
-                            onChange={(event) => updateFilter('category_id', event.target.value)}
-                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
-                        >
-                            <option value="">Categoría</option>
-                            {categories.map((category) => (
-                                <option key={category.id} value={category.id}>{category.name}</option>
-                            ))}
-                        </select>
-                        <select
+                            options={categories}
+                            placeholder="Categoría"
+                            searchPlaceholder="Buscar categoría..."
+                            onChange={(value) => updateFilter('category_id', value)}
+                        />
+
+                        <SearchableFilterSelect
                             value={filterState.brand_id}
-                            onChange={(event) => updateFilter('brand_id', event.target.value)}
-                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
-                        >
-                            <option value="">Marca</option>
-                            {brands.map((brand) => (
-                                <option key={brand.id} value={brand.id}>{brand.name}</option>
-                            ))}
-                        </select>
-                        <select
+                            options={brands}
+                            placeholder="Marca"
+                            searchPlaceholder="Buscar marca..."
+                            onChange={(value) => updateFilter('brand_id', value)}
+                        />
+                        <SearchableFilterSelect
                             value={filterState.location_id}
-                            onChange={(event) => updateFilter('location_id', event.target.value)}
-                            className="rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
-                        >
-                            <option value="">Ubicación</option>
-                            {locations.map((location) => (
-                                <option key={location.id} value={location.id}>{location.name}</option>
-                            ))}
-                        </select>
+                            options={locations}
+                            placeholder="Ubicación"
+                            searchPlaceholder="Buscar ubicación..."
+                            onChange={(value) => updateFilter('location_id', value)}
+                        />
                         <select
                             value={filterState.status}
                             onChange={(event) => updateFilter('status', event.target.value)}
