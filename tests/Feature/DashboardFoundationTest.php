@@ -55,7 +55,7 @@ class DashboardFoundationTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_branch_manager_dashboard_exposes_only_authorized_widgets_with_current_and_month_sales(): void
+    public function test_branch_manager_dashboard_exposes_only_authorized_operational_data(): void
     {
         [$business, $owner, $branch] = $this->tenant('owner');
         $product = $this->product($business, $branch, 'Martillo', 2, 3);
@@ -70,19 +70,14 @@ class DashboardFoundationTest extends TestCase
                 ->component('Dashboard')
                 ->where('dashboard.profile', 'branch_manager')
                 ->where('dashboard.context.timezone', 'America/Guatemala')
-                ->where('dashboard.widgets.0.key', 'sales.today')
-                ->where('dashboard.widgets.0.data.total', '100.00')
-                ->where('dashboard.widgets.0.data.count', 1)
-                ->where('dashboard.widgets.0.data.cancelled_count', 1)
-                ->where('dashboard.widgets.1.key', 'sales.this_month')
-                ->where('dashboard.widgets.1.data.total', '150.00')
-                ->where('dashboard.widgets.2.key', 'cash.current')
-                ->where('dashboard.widgets.2.data.status', 'closed')
-                ->where('dashboard.widgets.3.key', 'stock.alerts')
-                ->where('dashboard.widgets.3.data.low_stock_count', 1)
-                ->where('dashboard.widgets.4.key', 'sales.top_product')
-                ->where('dashboard.widgets.4.data.name', 'Martillo')
-                ->where('dashboard.widgets.5.key', 'sales.estimated_margin'));
+                ->where('dashboard.widgets.0.key', 'branch_manager.overview')
+                ->where('dashboard.widgets.0.data.sales.total', '100.00')
+                ->where('dashboard.widgets.0.data.sales.count', 1)
+                ->where('dashboard.widgets.0.data.sales.cancelled_count', 1)
+                ->where('dashboard.widgets.0.data.cash.status', 'closed')
+                ->where('dashboard.widgets.0.data.inventory.low_stock_count', 1)
+                ->missing('dashboard.widgets.0.data.margin_today')
+                ->missing('dashboard.widgets.0.data.receivable'));
     }
 
     public function test_dashboard_is_tenant_and_active_branch_scoped_and_ignores_branch_query_input(): void
@@ -102,9 +97,8 @@ class DashboardFoundationTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->where('dashboard.context.branch.id', $main->id)
-                ->where('dashboard.widgets.0.data.total', '100.00')
-                ->where('dashboard.widgets.3.data.out_of_stock_count', 1)
-                ->where('dashboard.widgets.4.data.name', 'Sucursal principal'));
+                ->where('dashboard.widgets.0.data.sales.total', '100.00')
+                ->where('dashboard.widgets.0.data.inventory.out_of_stock_count', 1));
     }
 
     public function test_widgets_with_missing_modules_or_permissions_are_not_exposed(): void
@@ -131,8 +125,8 @@ class DashboardFoundationTest extends TestCase
             ->get(route('dashboard'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->where('dashboard.widgets.0.data.total', '100.00')
-                ->where('dashboard.widgets.1.data.total', '300.00'));
+                ->where('dashboard.widgets.0.data.sales.total', '100.00')
+                ->where('dashboard.widgets.0.data.sales.previous_day_total', '200.00'));
     }
 
     public function test_cash_widget_uses_only_the_current_branch_open_session(): void
@@ -152,9 +146,8 @@ class DashboardFoundationTest extends TestCase
             ->get(route('dashboard'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->where('dashboard.widgets.2.key', 'cash.current')
-                ->where('dashboard.widgets.2.data.status', 'closed')
-                ->where('dashboard.widgets.2.data.expected_cash', null));
+                ->where('dashboard.widgets.0.data.cash.status', 'closed')
+                ->where('dashboard.widgets.0.data.cash.expected_cash', null));
 
         CashRegisterSession::query()->create([
             'business_id' => $business->id,
@@ -170,8 +163,8 @@ class DashboardFoundationTest extends TestCase
             ->get(route('dashboard'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->where('dashboard.widgets.2.data.status', 'open')
-                ->where('dashboard.widgets.2.data.expected_cash', '0.00'));
+                ->where('dashboard.widgets.0.data.cash.status', 'open')
+                ->where('dashboard.widgets.0.data.cash.expected_cash', '0.00'));
     }
 
     public function test_hidden_widgets_do_not_execute_their_metric_query(): void

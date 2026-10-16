@@ -5,7 +5,7 @@ import { Head, Link, usePage } from '@inertiajs/react';
 type Widget = {
     key: string;
     title: string;
-    type: 'sales_summary' | 'cash_status' | 'stock_alerts' | 'top_product' | 'money' | 'count' | 'route_work_day' | 'route_delivery_run' | 'cashier_workspace' | 'executive_overview';
+    type: 'sales_summary' | 'cash_status' | 'stock_alerts' | 'top_product' | 'money' | 'count' | 'route_work_day' | 'route_delivery_run' | 'cashier_workspace' | 'executive_overview' | 'branch_manager_overview';
     period: 'today' | 'this_month' | 'current';
     data: Record<string, unknown>;
 };
@@ -143,6 +143,7 @@ function WidgetCard({ widget, country }: { widget: Widget; country: string }) {
         return <CashierWorkspaceCard data={widget.data as CashierWorkspaceData} country={country} />;
     }
     if (widget.type === 'executive_overview') return <ExecutiveOverviewCard data={widget.data as any} country={country} />;
+    if (widget.type === 'branch_manager_overview') return <BranchManagerOverviewCard data={widget.data as any} country={country} />;
 
     const content = widgetContent(widget, country);
 
@@ -165,6 +166,45 @@ function WidgetCard({ widget, country }: { widget: Widget; country: string }) {
 function ExecutiveOverviewCard({ data, country }: { data: any; country: string }) {
     const change = (value: number | null) => value === null ? 'Sin comparación previa' : `${value >= 0 ? '↑' : '↓'} ${Math.abs(value)}%`;
     return <section data-dashboard-widget="executive.overview" className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)] sm:col-span-2 xl:col-span-3"><p className="text-xs font-bold tracking-[0.14em] text-orange-700">RESUMEN EJECUTIVO</p><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{data.sales_today && <Metric label={`Ventas hoy · ${change(data.sales_today.change_percent)}`} value={formatCurrency(data.sales_today.total,country)} tone="text-slate-900" />}{data.sales_month && <Metric label={`Ventas mes · ${change(data.sales_month.change_percent)}`} value={formatCurrency(data.sales_month.total,country)} tone="text-slate-900" />}{data.margin_today && <Metric label="Margen estimado" value={formatCurrency(data.margin_today.amount,country)} tone="text-emerald-700" />}{data.receivable && <Metric label="Por cobrar" value={formatCurrency(data.receivable.amount,country)} tone="text-amber-700" />}</div>{data.attention.length>0 && <div className="mt-5"><p className="text-xs font-bold tracking-wide text-slate-500">REQUIERE TU ATENCIÓN</p>{data.attention.map((item:any)=><div key={item.key} className="mt-2 rounded-xl bg-slate-50 p-3 text-sm"><p className="font-semibold text-slate-800">{item.title}</p><p className="text-slate-500">{item.detail}</p>{item.href && <Link href={item.href} className="text-orange-700">Ver detalle</Link>}</div>)}</div>}</section>;
+}
+
+function BranchManagerOverviewCard({ data, country }: { data: any; country: string }) {
+    const change = (value: number | null) => value === null ? 'Sin comparación previa' : `${value >= 0 ? '↑' : '↓'} ${Math.abs(value)}% vs ayer`;
+
+    return (
+        <section data-dashboard-widget="branch_manager.overview" className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)] sm:col-span-2 xl:col-span-3">
+            <p className="text-xs font-bold tracking-[0.14em] text-orange-700">OPERACIÓN DE SUCURSAL</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {data.sales && <Metric label={`Ventas hoy · ${change(data.sales.change_percent)}`} value={formatCurrency(data.sales.total, country)} tone="text-slate-900" />}
+                {data.cash && <Metric label="Caja" value={data.cash.status === 'open' ? 'Abierta' : 'Cerrada'} tone={data.cash.status === 'open' ? 'text-emerald-700' : 'text-slate-700'} />}
+                {data.inventory && <><Metric label="Sin stock" value={data.inventory.out_of_stock_count} tone="text-red-700" /><Metric label="Stock bajo" value={data.inventory.low_stock_count} tone="text-amber-700" /></>}
+            </div>
+
+            {data.attention.length > 0 && <div className="mt-5">
+                <p className="text-xs font-bold tracking-wide text-slate-500">REQUIERE TU ATENCIÓN</p>
+                {data.attention.map((item: any) => <div key={item.key} className="mt-2 rounded-xl bg-slate-50 p-3 text-sm">
+                    <p className="font-semibold text-slate-800">{item.title}</p>
+                    <p className="text-slate-500">{item.detail}</p>
+                    {item.href && <Link href={item.href} className="text-orange-700">Ver detalle</Link>}
+                </div>)}
+            </div>}
+
+            {data.routes && <div className="mt-5">
+                <p className="text-xs font-bold tracking-wide text-slate-500">OPERACIÓN DE HOY</p>
+                <div className="mt-2 grid gap-3 grid-cols-2 sm:grid-cols-4">
+                    <Metric label="Jornadas abiertas" value={data.routes.open_work_days} tone="text-slate-900" />
+                    <Metric label="Visitas pendientes" value={data.routes.pending_visits} tone="text-slate-900" />
+                    <Metric label="Preventas" value={data.routes.operational_pre_sales} tone="text-slate-900" />
+                    <Metric label="Entregas pendientes" value={data.routes.pending_delivery_stops} tone="text-slate-900" />
+                </div>
+            </div>}
+
+            {data.actions.length > 0 && <div className="mt-5">
+                <p className="text-xs font-bold tracking-wide text-slate-500">ACCIONES</p>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{data.actions.map((action: any) => <Link key={action.key} href={action.href} className={`rounded-xl border px-4 py-3 text-center text-sm font-semibold ${action.emphasis === 'primary' ? 'border-orange-600 bg-orange-600 text-white' : 'border-slate-200 text-slate-700 hover:border-orange-300'}`}>{action.label}</Link>)}</div>
+            </div>}
+        </section>
+    );
 }
 
 function CashierWorkspaceCard({ data, country }: { data: CashierWorkspaceData; country: string }) {

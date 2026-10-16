@@ -59,7 +59,7 @@ class DashboardFinancialVisibilityTest extends TestCase
                 ->where('dashboard.widgets', fn ($widgets) => collect($widgets)->pluck('key')->all() === ['cashier.workspace']));
     }
 
-    public function test_admin_dashboard_receives_estimated_margin_by_default_role_permission(): void
+    public function test_admin_branch_manager_dashboard_does_not_receive_estimated_margin(): void
     {
         [$business, $user] = $this->tenantUser('admin');
         $this->saleWithProfit($business, $user, total: 100, cost: 25, profit: 75);
@@ -69,8 +69,8 @@ class DashboardFinancialVisibilityTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Dashboard')
-                ->where('dashboard.widgets.3.key', 'sales.estimated_margin')
-                ->where('dashboard.widgets.3.data.amount', '75.00'));
+                ->where('dashboard.widgets.0.key', 'branch_manager.overview')
+                ->missing('dashboard.widgets.0.data.margin_today'));
     }
 
     public function test_cash_register_totals_require_cash_register_view_permission(): void

@@ -14,6 +14,7 @@ use App\Services\Dashboard\Metrics\RouteSellerWorkDayMetricQuery;
 use App\Services\Dashboard\Metrics\RouteDeliveryRunMetricQuery;
 use App\Services\Dashboard\Metrics\CashierWorkspaceMetricQuery;
 use App\Services\Dashboard\Metrics\ExecutiveOverviewMetricQuery;
+use App\Services\Dashboard\Metrics\BranchManagerOverviewMetricQuery;
 use App\Support\Permissions;
 use LogicException;
 
@@ -24,6 +25,7 @@ final class DashboardWidgetRegistry
     {
         $definitions = [
             new DashboardWidgetDefinition(key: 'executive.overview', title: 'Resumen ejecutivo', type: 'executive_overview', period: DashboardPeriod::CURRENT, query: new ExecutiveOverviewMetricQuery(), requiredModules: ['pos'], requiredAnyPermissions: [Permissions::POS_VIEW, Permissions::REPORTS_SALES_VIEW]),
+            new DashboardWidgetDefinition(key: 'branch_manager.overview', title: 'Operación de sucursal', type: 'branch_manager_overview', period: DashboardPeriod::CURRENT, query: new BranchManagerOverviewMetricQuery(), requiredModules: [], requiredAnyPermissions: []),
             new DashboardWidgetDefinition(
                 key: 'sales.today',
                 title: 'Ventas de hoy',
