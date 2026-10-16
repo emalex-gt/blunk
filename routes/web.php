@@ -64,7 +64,7 @@ Route::get('/', function () {
 });
 
 Route::get('/dashboard', [ReportController::class, 'dashboard'])
-    ->middleware(['auth', 'verified', 'tenant.active', 'permission:pos.view'])
+    ->middleware(['auth', 'verified', 'tenant.active'])
     ->name('dashboard');
 
 Route::get('/session/keep-alive', function (Request $request) {

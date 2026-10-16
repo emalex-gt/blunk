@@ -11,9 +11,16 @@ final class DashboardProfiles
     {
         return match ($profile) {
             'owner_simple' => ['title' => 'Información operativa', 'description' => 'Resumen del negocio para la operación actual.'],
-            'executive' => ['title' => 'Resumen ejecutivo', 'description' => 'Ventas, rentabilidad y señales clave del negocio.'],
-            'warehouse' => ['title' => 'Operación de inventario', 'description' => 'Disponibilidad y reservas activas de la sucursal.'],
-            'route_supervisor' => ['title' => 'Supervisión de rutas', 'description' => 'Jornadas, preventas, entregas y efectivo de rutas.'],
+            'executive' => ['title' => 'Resumen ejecutivo', 'description' => 'Estado general y señales clave del negocio.'],
+            'branch_manager' => ['title' => 'Operación de sucursal', 'description' => 'Ventas, caja, inventario y operación de la sucursal.'],
+            'cashier' => ['title' => 'Mi caja', 'description' => 'Accesos y estado de tu operación de venta.'],
+            'route_seller' => ['title' => 'Mi jornada', 'description' => 'Accede rápidamente a tus rutas y trabajo del día.'],
+            'route_delivery' => ['title' => 'Mis entregas', 'description' => 'Accede a tus jornadas y entregas asignadas.'],
+            'route_supervisor' => ['title' => 'Supervisión de rutas', 'description' => 'Estado operativo de rutas, visitas, entregas y liquidaciones.'],
+            'warehouse' => ['title' => 'Operación de inventario', 'description' => 'Stock, reservas y tareas de almacén.'],
+            'purchases' => ['title' => 'Compras', 'description' => 'Accesos principales para compras y abastecimiento.'],
+            'finance' => ['title' => 'Análisis financiero', 'description' => 'Ventas, rentabilidad, cartera y reportes disponibles.'],
+            'generic' => ['title' => 'Inicio', 'description' => 'Accesos disponibles según tus permisos.'],
             default => throw new InvalidArgumentException("Unsupported dashboard profile [{$profile}]."),
         };
     }
@@ -38,9 +45,32 @@ final class DashboardProfiles
                 'stock.alerts',
                 'credits.receivable',
             ],
+            'branch_manager' => [
+                'sales.today',
+                'sales.this_month',
+                'cash.current',
+                'stock.alerts',
+                'sales.top_product',
+                'sales.estimated_margin',
+            ],
+            'cashier' => [
+                'sales.today',
+                'sales.this_month',
+                'cash.current',
+                'sales.top_product',
+                'sales.estimated_margin',
+            ],
+            'route_seller', 'route_delivery', 'purchases', 'generic' => [],
             'warehouse' => [
                 'stock.alerts',
                 'stock.active_reservations',
+            ],
+            'finance' => [
+                'sales.today',
+                'sales.this_month',
+                'sales.estimated_margin',
+                'sales.top_product',
+                'credits.receivable',
             ],
             'route_supervisor' => [
                 'routes.open_work_days',

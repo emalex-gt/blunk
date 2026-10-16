@@ -81,12 +81,12 @@ class AuthenticationTest extends TestCase
 
     public function test_user_can_login_logout_and_view_login_again(): void
     {
-        $user = User::factory()->create();
+        [$user] = $this->tenantUser();
 
         $this->post('/login', [
             'email' => $user->email,
             'password' => 'password',
-        ])->assertRedirect(route('profile.edit', absolute: false));
+        ])->assertRedirect(route('dashboard', absolute: false));
 
         $this->withSession([
             'active_business_id' => 123,
@@ -120,7 +120,7 @@ class AuthenticationTest extends TestCase
 
     public function test_users_can_authenticate_using_the_login_screen(): void
     {
-        $user = User::factory()->create();
+        [$user] = $this->tenantUser();
 
         $response = $this->post('/login', [
             'email' => $user->email,
@@ -128,7 +128,7 @@ class AuthenticationTest extends TestCase
         ]);
 
         $this->assertAuthenticated();
-        $response->assertRedirect(route('profile.edit', absolute: false));
+        $response->assertRedirect(route('dashboard', absolute: false));
     }
 
     public function test_users_can_not_authenticate_with_invalid_password(): void
@@ -166,12 +166,12 @@ class AuthenticationTest extends TestCase
 
     public function test_user_can_login_logout_and_login_again(): void
     {
-        $user = User::factory()->create();
+        [$user] = $this->tenantUser();
 
         $this->post('/login', [
             'email' => $user->email,
             'password' => 'password',
-        ])->assertRedirect(route('profile.edit', absolute: false));
+        ])->assertRedirect(route('dashboard', absolute: false));
 
         $this->post('/logout')->assertRedirect(route('login'));
         $this->assertGuest();
@@ -179,15 +179,15 @@ class AuthenticationTest extends TestCase
         $this->post('/login', [
             'email' => $user->email,
             'password' => 'password',
-        ])->assertRedirect(route('profile.edit', absolute: false));
+        ])->assertRedirect(route('dashboard', absolute: false));
 
         $this->assertAuthenticatedAs($user);
     }
 
     public function test_another_user_can_login_immediately_after_logout(): void
     {
-        $userA = User::factory()->create();
-        $userB = User::factory()->create();
+        [$userA] = $this->tenantUser();
+        [$userB] = $this->tenantUser();
 
         $this->post('/login', [
             'email' => $userA->email,
@@ -199,23 +199,36 @@ class AuthenticationTest extends TestCase
         $this->post('/login', [
             'email' => $userB->email,
             'password' => 'password',
-        ])->assertRedirect(route('profile.edit', absolute: false));
+        ])->assertRedirect(route('dashboard', absolute: false));
 
         $this->assertAuthenticatedAs($userB);
     }
 
     public function test_authenticated_user_without_pos_permission_does_not_get_403_when_visiting_login(): void
     {
-        $user = User::factory()->create();
+        $this->withoutVite();
+        [$user] = $this->tenantUser();
+        $user->roles()->detach();
+        $user->update(['role' => 'custom_without_pos']);
 
         $this->actingAs($user)
             ->get(route('login'))
-            ->assertRedirect(route('profile.edit', absolute: false));
+            ->assertRedirect(route('dashboard', absolute: false));
 
         $this->actingAs($user)
             ->followingRedirects()
             ->get(route('login'))
             ->assertOk();
+    }
+
+    public function test_super_admin_login_redirect_remains_the_platform_dashboard(): void
+    {
+        $user = User::factory()->create(['is_super_admin' => true]);
+
+        $this->post('/login', [
+            'email' => $user->email,
+            'password' => 'password',
+        ])->assertRedirect(route('super-admin.dashboard', absolute: false));
     }
 
     public function test_guest_login_page_ignores_all_stale_tenant_and_branch_session_keys(): void

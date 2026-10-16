@@ -37,6 +37,7 @@ final class DashboardService
             'profile_meta' => DashboardProfiles::metadata($profile),
             'context' => $context->payload(),
             'widgets' => $widgets,
+            'actions' => DashboardQuickActions::for($context, $profile),
         ];
     }
 }

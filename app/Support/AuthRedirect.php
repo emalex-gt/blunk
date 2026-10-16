@@ -16,10 +16,6 @@ class AuthRedirect
             return route('super-admin.dashboard', absolute: false);
         }
 
-        if (Permissions::userHas($user, Permissions::POS_VIEW)) {
-            return route('dashboard', absolute: false);
-        }
-
-        return route('profile.edit', absolute: false);
+        return route('dashboard', absolute: false);
     }
 }

@@ -55,7 +55,7 @@ class DashboardFoundationTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_owner_simple_dashboard_exposes_only_authorized_widgets_with_current_and_month_sales(): void
+    public function test_branch_manager_dashboard_exposes_only_authorized_widgets_with_current_and_month_sales(): void
     {
         [$business, $owner, $branch] = $this->tenant('owner');
         $product = $this->product($business, $branch, 'Martillo', 2, 3);
@@ -68,7 +68,7 @@ class DashboardFoundationTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Dashboard')
-                ->where('dashboard.profile', 'owner_simple')
+                ->where('dashboard.profile', 'branch_manager')
                 ->where('dashboard.context.timezone', 'America/Guatemala')
                 ->where('dashboard.widgets.0.key', 'sales.today')
                 ->where('dashboard.widgets.0.data.total', '100.00')
@@ -237,6 +237,8 @@ class DashboardFoundationTest extends TestCase
             Permissions::ROUTES_PRE_SALES_ADMIN_VIEW,
             Permissions::ROUTES_DELIVERY_RUNS_VIEW,
         ], ['routes'], 'America/Guatemala');
+        $routeSeller = new DashboardContext($business, $user, $branch, false, [Permissions::ROUTES_WORK], ['routes'], 'America/Guatemala');
+        $routeDelivery = new DashboardContext($business, $user, $branch, false, [Permissions::ROUTES_DELIVERY_RUNS_VIEW], ['routes'], 'America/Guatemala');
         $incompleteRouteRole = new DashboardContext($business, $user, $branch, false, [Permissions::ROUTES_VIEW], ['routes'], 'America/Guatemala');
 
         $resolver = new DashboardProfileResolver();
@@ -244,7 +246,9 @@ class DashboardFoundationTest extends TestCase
         $this->assertSame('warehouse', $resolver->resolve($warehouse));
         $this->assertSame('executive', $resolver->resolve($executive));
         $this->assertSame('route_supervisor', $resolver->resolve($routes));
-        $this->assertSame('owner_simple', $resolver->resolve($incompleteRouteRole));
+        $this->assertSame('route_seller', $resolver->resolve($routeSeller));
+        $this->assertSame('route_delivery', $resolver->resolve($routeDelivery));
+        $this->assertSame('generic', $resolver->resolve($incompleteRouteRole));
     }
 
     public function test_standard_role_preferences_apply_only_after_their_capability_sets_validate(): void
@@ -252,11 +256,89 @@ class DashboardFoundationTest extends TestCase
         [$warehouseBusiness, $stockManager] = $this->tenant('stock_manager', modules: ['inventory']);
         [$executiveBusiness, $reportsUser] = $this->tenant('reports', modules: ['pos', 'reports']);
         [$limitedBusiness, $limitedStockManager] = $this->tenant('stock_manager', modules: ['pos', 'reports']);
+        [$ownerBusiness, $owner] = $this->tenant('owner', modules: ['pos', 'reports', 'routes']);
+        [$adminBusiness, $admin] = $this->tenant('admin', modules: ['pos', 'routes']);
+        Permissions::assignDirectPermissions($owner, [
+            Permissions::ROUTES_VIEW,
+            Permissions::ROUTES_PRE_SALES_ADMIN_VIEW,
+            Permissions::ROUTES_DELIVERY_RUNS_VIEW,
+        ]);
+        Permissions::assignDirectPermissions($admin, [
+            Permissions::ROUTES_VIEW,
+            Permissions::ROUTES_PRE_SALES_ADMIN_VIEW,
+            Permissions::ROUTES_DELIVERY_RUNS_VIEW,
+        ]);
         $resolver = new DashboardProfileResolver();
 
         $this->assertSame('warehouse', $resolver->resolve(DashboardContext::forUser($warehouseBusiness, $stockManager)));
-        $this->assertSame('executive', $resolver->resolve(DashboardContext::forUser($executiveBusiness, $reportsUser)));
-        $this->assertSame('owner_simple', $resolver->resolve(DashboardContext::forUser($limitedBusiness, $limitedStockManager)));
+        $this->assertSame('finance', $resolver->resolve(DashboardContext::forUser($executiveBusiness, $reportsUser)));
+        $this->assertSame('generic', $resolver->resolve(DashboardContext::forUser($limitedBusiness, $limitedStockManager)));
+        $this->assertSame('executive', $resolver->resolve(DashboardContext::forUser($ownerBusiness, $owner)));
+        $this->assertSame('branch_manager', $resolver->resolve(DashboardContext::forUser($adminBusiness, $admin)));
+    }
+
+    public function test_operational_roles_can_open_the_universal_dashboard_without_pos_permission(): void
+    {
+        foreach ([
+            ['pre_seller', ['routes']],
+            ['delivery_agent', ['routes']],
+            ['stock_manager', ['inventory']],
+            ['purchases', ['purchases']],
+            ['reports', ['reports']],
+            ['cashier', ['pos']],
+        ] as [$role, $modules]) {
+            [, $user] = $this->tenant($role, modules: $modules);
+
+            $this->actingAs($user)
+                ->get(route('dashboard'))
+                ->assertOk()
+                ->assertInertia(fn (Assert $page) => $page->component('Dashboard'));
+        }
+    }
+
+    public function test_standard_operational_roles_resolve_to_their_safe_presentation_profiles(): void
+    {
+        $resolver = new DashboardProfileResolver();
+
+        foreach ([
+            ['pre_seller', ['routes'], 'route_seller'],
+            ['delivery_agent', ['routes'], 'route_delivery'],
+            ['cashier', ['pos'], 'cashier'],
+            ['stock_manager', ['inventory'], 'warehouse'],
+            ['purchases', ['purchases'], 'purchases'],
+            ['reports', ['reports'], 'finance'],
+        ] as [$role, $modules, $profile]) {
+            [$business, $user] = $this->tenant($role, modules: $modules);
+
+            $this->assertSame($profile, $resolver->resolve(DashboardContext::forUser($business, $user)));
+        }
+    }
+
+    public function test_dashboard_actions_are_generated_only_for_authorized_routes(): void
+    {
+        [$business, $user] = $this->tenant('pre_seller', modules: ['routes']);
+        $dashboard = app(DashboardService::class)->resolve(DashboardContext::forUser($business, $user));
+
+        $this->assertSame('route_seller', $dashboard['profile']);
+        $this->assertSame(['routes.mobile.zones', 'routes.mobile.post-conversion-collections'], collect($dashboard['actions'])->pluck('key')->all());
+        $this->assertSame([], app(DashboardService::class)->resolve(new DashboardContext(
+            $business,
+            $user,
+            null,
+            false,
+            [],
+            [],
+            'America/Guatemala',
+        ))['actions']);
+    }
+
+    public function test_dashboard_source_renders_actions_and_a_safe_empty_state(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Dashboard.tsx'));
+
+        $this->assertStringContainsString('dashboard.actions.map', $source);
+        $this->assertStringContainsString('data-dashboard-action', $source);
+        $this->assertStringContainsString('No hay acciones disponibles', $source);
     }
 
     public function test_professional_widgets_use_authoritative_sources_and_exclude_reversed_route_settlements(): void

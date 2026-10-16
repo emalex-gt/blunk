@@ -1,6 +1,6 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { formatCurrency } from '@/utils/currency';
-import { Head, usePage } from '@inertiajs/react';
+import { Head, Link, usePage } from '@inertiajs/react';
 
 type Widget = {
     key: string;
@@ -11,7 +11,7 @@ type Widget = {
 };
 
 type DashboardData = {
-    profile: 'owner_simple' | 'executive' | 'warehouse' | 'route_supervisor';
+    profile: 'owner_simple' | 'executive' | 'branch_manager' | 'cashier' | 'route_seller' | 'route_delivery' | 'route_supervisor' | 'warehouse' | 'purchases' | 'finance' | 'generic';
     profile_meta: { title: string; description: string };
     context: {
         timezone: string;
@@ -19,6 +19,12 @@ type DashboardData = {
         branch_scoped: boolean;
     };
     widgets: Widget[];
+    actions: Array<{
+        key: string;
+        label: string;
+        href: string;
+        emphasis: 'primary' | 'secondary';
+    }>;
 };
 
 function periodLabel(period: Widget['period']): string {
@@ -53,11 +59,37 @@ export default function Dashboard({ dashboard }: { dashboard: DashboardData }) {
                         </div>
                     </section>
 
-                    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                        {dashboard.widgets.map((widget) => (
-                            <WidgetCard key={widget.key} widget={widget} country={country} />
-                        ))}
-                    </section>
+                    {dashboard.actions.length > 0 && (
+                        <section aria-label="Accesos rápidos" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                            {dashboard.actions.map((action) => (
+                                <Link
+                                    key={action.key}
+                                    href={action.href}
+                                    data-dashboard-action={action.key}
+                                    className={`rounded-2xl border px-5 py-4 text-sm font-semibold shadow-[0_8px_30px_rgba(15,23,42,0.06)] transition focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 ${
+                                        action.emphasis === 'primary'
+                                            ? 'border-orange-600 bg-orange-600 text-white hover:bg-orange-700'
+                                            : 'border-slate-200 bg-white text-slate-800 hover:border-orange-300 hover:text-orange-800'
+                                    }`}
+                                >
+                                    {action.label}
+                                </Link>
+                            ))}
+                        </section>
+                    )}
+
+                    {dashboard.widgets.length > 0 ? (
+                        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                            {dashboard.widgets.map((widget) => (
+                                <WidgetCard key={widget.key} widget={widget} country={country} />
+                            ))}
+                        </section>
+                    ) : dashboard.actions.length === 0 ? (
+                        <section className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+                            <h2 className="text-base font-semibold text-slate-800">No hay acciones disponibles</h2>
+                            <p className="mt-2 text-sm text-slate-500">Tu inicio mostrará accesos cuando tengas permisos operativos disponibles.</p>
+                        </section>
+                    ) : null}
                 </div>
             </div>
         </AuthenticatedLayout>
