@@ -1837,6 +1837,33 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringNotContainsString('invoiceCuiDisabled', $source);
     }
 
+    public function test_pos_renews_only_a_failed_operation_key_after_a_meaningful_mutation(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+
+        $this->assertStringContainsString('failed_submission?: boolean;', $source);
+        $this->assertStringContainsString('const [failedSubmission, setFailedSubmission] = useState(false);', $source);
+        $this->assertStringContainsString('const latestSubmitSucceededRef = useRef(false);', $source);
+        $this->assertStringContainsString('const latestSubmitFailureHandledRef = useRef(false);', $source);
+        $this->assertStringContainsString('function renewOperationKeyAfterFailedMutation()', $source);
+        $this->assertStringContainsString('if (!failedSubmission || processing || creditProcessing || saleSubmitLockedRef.current)', $source);
+        $this->assertStringContainsString('failed_submission: failedSubmission,', $source);
+        $this->assertStringContainsString('setFailedSubmission(Boolean(draft.failed_submission));', $source);
+        $this->assertStringContainsString('function handleOperationSubmitError(errors: Record<string, string>, fallback: string)', $source);
+        $this->assertStringContainsString('function beginOperationSubmit()', $source);
+        $this->assertStringContainsString('function finalizeOperationSubmit()', $source);
+        $this->assertStringContainsString("errors.idempotency_key", $source);
+        $this->assertStringContainsString('La venta cambió después del intento anterior. Intenta confirmar nuevamente.', $source);
+        $this->assertStringContainsString("handleOperationSubmitError(errors as Record<string, string>, 'No se pudo registrar el crédito.')", $source);
+        $this->assertStringContainsString("handleOperationSubmitError(errors as Record<string, string>, 'No se pudo completar la venta. Revisa los datos.')", $source);
+        $this->assertStringContainsString('function updateManualPrice(productId: number, value: string)', $source);
+        $this->assertStringContainsString('function updateQuantity(productId: number, quantity: number | string)', $source);
+        $this->assertStringContainsString('function selectCustomer(customer: Customer)', $source);
+        $this->assertStringContainsString('function updatePayment(index: number, field: keyof PaymentLine, value: string)', $source);
+        $this->assertStringContainsString('function applyDiscount()', $source);
+        $this->assertStringContainsString('unit_price: Number(item.unit_price),', $source);
+    }
+
     public function test_pos_customer_search_keeps_generic_and_named_cf_customers_distinct(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'customers'], role: 'owner');
@@ -3213,6 +3240,36 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame(3, StockAvailability::reservedStock($product, null, BranchInventory::defaultBranch($business->id)->id));
         $this->assertSame(7.0, StockAvailability::availableStock($product, null, BranchInventory::defaultBranch($business->id)->id));
         Http::assertNothingSent();
+    }
+
+    public function test_inertia_credit_reservation_payload_conflict_returns_an_operational_error(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $payload = $this->creditPayload($product, 1);
+        $payload['idempotency_key'] = 'credit-inertia-payload-conflict';
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('credits.receipts.store'), $payload)
+            ->assertRedirect(route('sales.create'));
+
+        $changedPayload = $payload;
+        $changedPayload['items'][0]['unit_price'] = 95;
+
+        $this->actingAs($user)
+            ->withHeader('X-Inertia', 'true')
+            ->from(route('sales.create'))
+            ->post(route('credits.receipts.store'), $changedPayload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasErrors([
+                'idempotency_key' => 'La venta cambió después del intento anterior. Intenta confirmar nuevamente.',
+            ]);
+
+        $this->assertDatabaseCount('credit_receipts', 1);
+        $this->assertDatabaseHas('credit_receipt_lines', [
+            'unit_price' => 100,
+        ]);
     }
 
     public function test_credit_receipt_can_skip_stock_reservation_when_tenant_setting_is_disabled(): void

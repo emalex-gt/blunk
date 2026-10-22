@@ -192,6 +192,7 @@ type PosDraft = {
     user_id?: number | string | null;
     branch_id?: number | string | null;
     idempotency_key?: string | null;
+    failed_submission?: boolean;
     checkout_type?: CheckoutType;
     cart: {
         product_id: number;
@@ -764,6 +765,7 @@ export default function POS({
     const [cashReceived, setCashReceived] = useState('');
     const [restoreDraft, setRestoreDraft] = useState<PosDraft | null>(null);
     const [idempotencyKey, setIdempotencyKey] = useState(makeOperationKey);
+    const [failedSubmission, setFailedSubmission] = useState(false);
     const [draftReady, setDraftReady] = useState(false);
     const [showClearSaleModal, setShowClearSaleModal] = useState(false);
     const [activeOperationDraftId, setActiveOperationDraftId] = useState<number | null>(null);
@@ -792,6 +794,8 @@ export default function POS({
     const messageTimerRef = useRef<number | null>(null);
     const tokenPrewarmStartedRef = useRef(false);
     const saleSubmitLockedRef = useRef(false);
+    const latestSubmitSucceededRef = useRef(false);
+    const latestSubmitFailureHandledRef = useRef(false);
     const creditInvoiceLoadedRef = useRef(false);
     const draftLoadInitializedRef = useRef(false);
     const latestDraftRef = useRef<PosDraft | null>(null);
@@ -1310,6 +1314,7 @@ export default function POS({
             user_id: userId,
             branch_id: draftBranchId,
             idempotency_key: idempotencyKey,
+            failed_submission: failedSubmission,
             checkout_type: effectiveCheckoutType,
             cart: cart.map((item) => ({
                 product_id: item.product.id,
@@ -1401,6 +1406,7 @@ export default function POS({
         setData('customer', normalizeCustomerValidationState(draft.customer, country, activeBranchLocationDefaults));
         setData('note', draft.note ?? '');
         setIdempotencyKey(draft.idempotency_key || makeOperationKey());
+        setFailedSubmission(Boolean(draft.failed_submission));
         setPayments(draft.payments?.length ? draft.payments.map((payment) => ({
             method: payment.method ?? 'cash',
             amount: payment.amount ?? '0.00',
@@ -1438,6 +1444,44 @@ export default function POS({
         setCustomerEditing(false);
         setActiveOperationDraftId(null);
         setIdempotencyKey(makeOperationKey());
+        setFailedSubmission(false);
+    }
+
+    function renewOperationKeyAfterFailedMutation() {
+        if (!failedSubmission || processing || creditProcessing || saleSubmitLockedRef.current) {
+            return;
+        }
+
+        setIdempotencyKey(makeOperationKey());
+        setFailedSubmission(false);
+    }
+
+    function handleOperationSubmitError(errors: Record<string, string>, fallback: string) {
+        const idempotencyError = errors.idempotency_key;
+        const message = idempotencyError ?? Object.values(errors)[0] ?? fallback;
+
+        latestSubmitFailureHandledRef.current = true;
+
+        if (idempotencyError === 'La venta cambió después del intento anterior. Intenta confirmar nuevamente.') {
+            setIdempotencyKey(makeOperationKey());
+            setFailedSubmission(false);
+        } else {
+            setFailedSubmission(true);
+        }
+
+        showError(message);
+        toast.error(message);
+    }
+
+    function beginOperationSubmit() {
+        latestSubmitSucceededRef.current = false;
+        latestSubmitFailureHandledRef.current = false;
+    }
+
+    function finalizeOperationSubmit() {
+        if (!latestSubmitSucceededRef.current && !latestSubmitFailureHandledRef.current) {
+            setFailedSubmission(true);
+        }
     }
 
     function clearPosDraftAndState() {
@@ -1480,6 +1524,7 @@ export default function POS({
             return;
         }
 
+        renewOperationKeyAfterFailedMutation();
         setDiscount(nextDiscount);
         setShowDiscountModal(false);
         setDiscountFormError('');
@@ -1552,6 +1597,7 @@ export default function POS({
     }
 
     function setCustomerField<K extends keyof CustomerForm>(field: K, value: CustomerForm[K]) {
+        renewOperationKeyAfterFailedMutation();
         setData('customer', {
             ...data.customer,
             [field]: value,
@@ -1559,6 +1605,7 @@ export default function POS({
     }
 
     function setCustomerLocation(department: string, municipality: string) {
+        renewOperationKeyAfterFailedMutation();
         setData('customer', {
             ...data.customer,
             department,
@@ -1567,6 +1614,7 @@ export default function POS({
     }
 
     function setCustomerDocument(value: string) {
+        renewOperationKeyAfterFailedMutation();
         const docType = data.customer.doc_type === 'CUI' ? 'CUI' : 'NIT';
         const cleanValue = country === 'GT' ? sanitizeGuatemalaIdentity(docType, value) : value.replace(/[\s-]/g, '');
         const normalizedValue = normalizedFiscalNit(cleanValue);
@@ -1582,6 +1630,7 @@ export default function POS({
     }
 
     function selectCustomer(customer: Customer) {
+        renewOperationKeyAfterFailedMutation();
         setData('customer', {
             id: customer.id,
             consumidor_final: customer.doc_type === 'CF' || customer.doc_type === 'Consumidor Final',
@@ -1624,6 +1673,8 @@ export default function POS({
         if (!docNumber || country !== 'GT' || !['NIT', 'CUI'].includes(docType)) {
             return;
         }
+
+        renewOperationKeyAfterFailedMutation();
 
         if (docType === 'CUI' && !/^\d{13}$/.test(docNumber)) {
             const message = 'El CUI/DPI debe tener 13 dígitos.';
@@ -1750,6 +1801,7 @@ export default function POS({
             ]
             : [buildCartItem(product), ...items];
 
+        renewOperationKeyAfterFailedMutation();
         cartRef.current = nextItems;
         setCart(nextItems);
         setErrorMessage('');
@@ -1762,6 +1814,7 @@ export default function POS({
     }
 
     function removeProduct(productId: number) {
+        renewOperationKeyAfterFailedMutation();
         setCart((items) => items.filter((item) => item.product.id !== productId));
         focusSearch();
     }
@@ -1775,6 +1828,7 @@ export default function POS({
             return;
         }
 
+        renewOperationKeyAfterFailedMutation();
         setCart((items) =>
             items.map((item) => {
                 if (item.product.id !== productId) {
@@ -1806,6 +1860,7 @@ export default function POS({
     }
 
     function changeLinePriceType(productId: number, priceTypeId: number) {
+        renewOperationKeyAfterFailedMutation();
         setCart((items) => items.map((item) => {
             if (item.product.id !== productId) {
                 return item;
@@ -1826,6 +1881,7 @@ export default function POS({
     }
 
     function enableManualPrice(productId: number) {
+        renewOperationKeyAfterFailedMutation();
         setCart((items) => items.map((item) => (
             item.product.id === productId
                 ? { ...item, price_source: 'manual', manual_price: true, price_warning: null }
@@ -1854,6 +1910,7 @@ export default function POS({
     }
 
     function resetLinePrice(productId: number) {
+        renewOperationKeyAfterFailedMutation();
         setCart((items) => items.map((item) => {
             if (item.product.id !== productId) {
                 return item;
@@ -1880,6 +1937,7 @@ export default function POS({
 
         const productId = manualPriceDraft.productId;
 
+        renewOperationKeyAfterFailedMutation();
         setCart((items) => items.map((item) => (
             item.product.id === productId
                 ? { ...item, unit_price: manualPriceDraft.unitPrice, price_source: 'manual', manual_price: true, price_warning: null }
@@ -1889,6 +1947,7 @@ export default function POS({
     }
 
     function updateManualPrice(productId: number, value: string) {
+        renewOperationKeyAfterFailedMutation();
         setCart((items) => items.map((item) => (
             item.product.id === productId
                 ? { ...item, unit_price: value, price_source: 'manual', manual_price: true, price_warning: null }
@@ -1897,6 +1956,7 @@ export default function POS({
     }
 
     function applyManualPercentage(productId: number, percent: number) {
+        renewOperationKeyAfterFailedMutation();
         setCart((items) => items.map((item) => {
             if (item.product.id !== productId) {
                 return item;
@@ -2206,6 +2266,7 @@ export default function POS({
             }
 
             saleSubmitLockedRef.current = true;
+            beginOperationSubmit();
             setCreditProcessing(true);
             router.post(route('credits.receipts.store'), {
                 idempotency_key: idempotencyKey,
@@ -2221,6 +2282,7 @@ export default function POS({
             }, {
                 preserveScroll: true,
                 onSuccess: (page) => {
+                    latestSubmitSucceededRef.current = true;
                     const flash = page.props.flash as {
                         credit_print_url?: string | null;
                     } | undefined;
@@ -2236,6 +2298,7 @@ export default function POS({
                     setPayments([paymentLine(mainPaymentMethod, '0.00')]);
                     setActiveOperationDraftId(null);
                     setIdempotencyKey(makeOperationKey());
+                    setFailedSubmission(false);
                     clearDraft(draftKey);
                     latestDraftRef.current = null;
                     reset();
@@ -2252,12 +2315,10 @@ export default function POS({
                     toast.success(successMessage, { persistent: true });
                 },
                 onError: (errors) => {
-                    const firstError = Object.values(errors)[0] ?? 'No se pudo registrar el crédito.';
-
-                    showError(firstError);
-                    toast.error(firstError);
+                    handleOperationSubmitError(errors as Record<string, string>, 'No se pudo registrar el crédito.');
                 },
                 onFinish: () => {
+                    finalizeOperationSubmit();
                     saleSubmitLockedRef.current = false;
                     setCreditProcessing(false);
                 },
@@ -2312,6 +2373,7 @@ export default function POS({
         }
 
         saleSubmitLockedRef.current = true;
+        beginOperationSubmit();
         transform(() => ({
             idempotency_key: idempotencyKey,
             note: data.note,
@@ -2345,6 +2407,7 @@ export default function POS({
         post(route('sales.store'), {
             preserveScroll: true,
             onSuccess: (page) => {
+                latestSubmitSucceededRef.current = true;
                 const flash = page.props.flash as {
                     receipt_sale_id?: number | null;
                     fel_print_sale_id?: number | null;
@@ -2375,6 +2438,7 @@ export default function POS({
                 setData('customer', defaultCustomer);
                 setCustomerEditing(false);
                 setIdempotencyKey(makeOperationKey());
+                setFailedSubmission(false);
                 focusSearch();
 
                 if (effectiveDocumentType === 'receipt' && receiptSaleId) {
@@ -2401,12 +2465,10 @@ export default function POS({
                 toast.success(successMessage, { persistent: true });
             },
             onError: (errors) => {
-                const firstError = Object.values(errors)[0] ?? 'No se pudo completar la venta. Revisa los datos.';
-
-                showError(firstError);
-                toast.error(firstError);
+                handleOperationSubmitError(errors as Record<string, string>, 'No se pudo completar la venta. Revisa los datos.');
             },
             onFinish: () => {
+                finalizeOperationSubmit();
                 saleSubmitLockedRef.current = false;
             },
         });
@@ -2614,6 +2676,7 @@ export default function POS({
     }, [cashPaymentAmount, showCheckoutModal]);
 
     function updatePayment(index: number, field: keyof PaymentLine, value: string) {
+        renewOperationKeyAfterFailedMutation();
         setPayments((current) =>
             current.map((payment, paymentIndex) =>
                 paymentIndex === index
@@ -2628,6 +2691,7 @@ export default function POS({
     }
 
     function updatePaymentDetail(index: number, field: keyof PaymentDetails, value: string) {
+        renewOperationKeyAfterFailedMutation();
         setPayments((current) =>
             current.map((payment, paymentIndex) =>
                 paymentIndex === index
@@ -2638,6 +2702,7 @@ export default function POS({
     }
 
     function addPaymentLine() {
+        renewOperationKeyAfterFailedMutation();
         setPayments((current) => [
             ...current,
             paymentLine(paymentMethods[0].value, Math.max(pendingAmount, 0).toFixed(2)),
@@ -2645,10 +2710,12 @@ export default function POS({
     }
 
     function removePaymentLine(index: number) {
+        renewOperationKeyAfterFailedMutation();
         setPayments((current) => current.filter((_, paymentIndex) => paymentIndex !== index));
     }
 
     function assignPending() {
+        renewOperationKeyAfterFailedMutation();
         setPayments((current) => {
             if (current.length === 0) {
                 return [paymentLine(paymentMethods[0].value, total.toFixed(2))];
@@ -2859,6 +2926,7 @@ export default function POS({
                                             <button
                                                 type="button"
                                                 onClick={() => {
+                                                    renewOperationKeyAfterFailedMutation();
                                                     setData('customer', emptyCustomer('GT', activeBranchLocationDefaults));
                                                     setNitLookupMessage('');
                                                     setCustomerEditing(true);
@@ -2875,6 +2943,7 @@ export default function POS({
                                             <button
                                                 type="button"
                                                 onClick={() => {
+                                                    renewOperationKeyAfterFailedMutation();
                                                     setData('customer', {
                                                         ...emptyCustomer('GT', activeBranchLocationDefaults),
                                                         consumidor_final: false,
@@ -2899,6 +2968,7 @@ export default function POS({
                                             <button
                                                 type="button"
                                                 onClick={() => {
+                                                    renewOperationKeyAfterFailedMutation();
                                                     setData('customer', {
                                                         ...emptyCustomer('GT', activeBranchLocationDefaults),
                                                         consumidor_final: false,
@@ -2967,6 +3037,7 @@ export default function POS({
                                                         <input
                                                             value={data.customer.doc_number}
                                                             onChange={(event) => {
+                                                                renewOperationKeyAfterFailedMutation();
                                                                 const docNumber = sanitizeGuatemalaIdentity(data.customer.doc_type, event.target.value);
                                                                 setData('customer', {
                                                                     ...data.customer,
@@ -3049,6 +3120,7 @@ export default function POS({
                                                 <select
                                                     value={data.customer.doc_type}
                                                     onChange={(event) => {
+                                                        renewOperationKeyAfterFailedMutation();
                                                         const docType = event.target.value;
                                                         setData('customer', {
                                                             ...data.customer,
@@ -3626,7 +3698,10 @@ export default function POS({
                                         <span className="truncate">Motivo: {discount.reason}</span>
                                         <button
                                             type="button"
-                                            onClick={() => setDiscount(null)}
+                                            onClick={() => {
+                                                renewOperationKeyAfterFailedMutation();
+                                                setDiscount(null);
+                                            }}
                                             className="shrink-0 font-semibold text-red-600 hover:text-red-700"
                                         >
                                             Quitar
@@ -3843,10 +3918,16 @@ export default function POS({
                                         Condición de pago
                                     </h3>
                                     <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
-                                        <button type="button" onClick={() => setPaymentCondition('paid')} className={`rounded-lg px-4 py-2 text-sm font-semibold ${paymentCondition === 'paid' ? 'bg-white text-orange-700 shadow-sm' : 'text-slate-600'}`}>
+                                        <button type="button" onClick={() => {
+                                            renewOperationKeyAfterFailedMutation();
+                                            setPaymentCondition('paid');
+                                        }} className={`rounded-lg px-4 py-2 text-sm font-semibold ${paymentCondition === 'paid' ? 'bg-white text-orange-700 shadow-sm' : 'text-slate-600'}`}>
                                             Contado
                                         </button>
-                                        <button type="button" onClick={() => setPaymentCondition('credit')} className={`rounded-lg px-4 py-2 text-sm font-semibold ${paymentCondition === 'credit' ? 'bg-white text-orange-700 shadow-sm' : 'text-slate-600'}`}>
+                                        <button type="button" onClick={() => {
+                                            renewOperationKeyAfterFailedMutation();
+                                            setPaymentCondition('credit');
+                                        }} className={`rounded-lg px-4 py-2 text-sm font-semibold ${paymentCondition === 'credit' ? 'bg-white text-orange-700 shadow-sm' : 'text-slate-600'}`}>
                                             Crédito
                                         </button>
                                     </div>
@@ -3873,6 +3954,7 @@ export default function POS({
                                             checked={splitPayment}
                                             onChange={(event) => {
                                                 const checked = event.target.checked;
+                                                renewOperationKeyAfterFailedMutation();
                                                 setSplitPayment(checked);
                                                 setPayments([paymentLine(mainPaymentMethod, total.toFixed(2))]);
                                             }}
@@ -3888,6 +3970,7 @@ export default function POS({
                                             key={method.value}
                                             type="button"
                                             onClick={() => {
+                                                renewOperationKeyAfterFailedMutation();
                                                 setMainPaymentMethod(method.value);
                                                 if (!splitPayment) {
                                                     setPayments([paymentLine(method.value, total.toFixed(2))]);
@@ -4043,7 +4126,10 @@ export default function POS({
                                         {availableCheckoutTypes.includes('receipt') && (
                                         <button
                                             type="button"
-                                            onClick={() => setDocumentType('receipt')}
+                                            onClick={() => {
+                                                renewOperationKeyAfterFailedMutation();
+                                                setDocumentType('receipt');
+                                            }}
                                             className={`rounded-2xl border px-4 py-3 text-left transition ${
                                                 documentType === 'receipt'
                                                     ? 'border-orange-600 bg-orange-50 text-orange-700 shadow-sm'
@@ -4057,7 +4143,10 @@ export default function POS({
                                         {availableCheckoutTypes.includes('invoice') && (
                                         <button
                                             type="button"
-                                            onClick={() => setDocumentType('invoice')}
+                                            onClick={() => {
+                                                renewOperationKeyAfterFailedMutation();
+                                                setDocumentType('invoice');
+                                            }}
                                             className={`rounded-2xl border px-4 py-3 text-left transition ${
                                                 documentType === 'invoice'
                                                     ? 'border-orange-600 bg-orange-50 text-orange-700 shadow-sm'
@@ -4071,7 +4160,10 @@ export default function POS({
                                         {credit_available && (
                                             <button
                                                 type="button"
-                                                onClick={() => setDocumentType('credit')}
+                                                onClick={() => {
+                                                    renewOperationKeyAfterFailedMutation();
+                                                    setDocumentType('credit');
+                                                }}
                                                 className={`rounded-2xl border px-4 py-3 text-left transition ${
                                                     documentType === 'credit'
                                                         ? 'border-orange-600 bg-orange-50 text-orange-700 shadow-sm'

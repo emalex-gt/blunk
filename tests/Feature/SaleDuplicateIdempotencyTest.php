@@ -105,6 +105,31 @@ class SaleDuplicateIdempotencyTest extends TestCase
         $this->assertSame(4.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
     }
 
+    public function test_inertia_pos_payload_conflict_returns_an_operational_error_instead_of_a_generic_409_page(): void
+    {
+        [$business, $user] = $this->tenant();
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $payload = $this->salePayload($product, 'idem-sale-inertia-conflict');
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $payload)->assertSessionHasNoErrors();
+
+        $changedPayload = $payload;
+        $changedPayload['items'][0]['quantity'] = 2;
+        $changedPayload['payments'][0]['amount'] = 200;
+
+        $this->actingAs($user)
+            ->withHeader('X-Inertia', 'true')
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $changedPayload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasErrors([
+                'idempotency_key' => 'La venta cambió después del intento anterior. Intenta confirmar nuevamente.',
+            ]);
+
+        $this->assertSame(1, Sale::query()->count());
+    }
+
     public function test_sales_audit_duplicates_detects_same_sale_fingerprint_within_window(): void
     {
         [$business, $user] = $this->tenant();

@@ -1,5 +1,6 @@
 <?php
 
+use App\Support\IdempotencyConflictException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -50,6 +51,21 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $exceptions->render(function (TokenMismatchException $exception, Request $request) use ($sessionExpiredResponse) {
             return $sessionExpiredResponse($request);
+        });
+
+        $exceptions->render(function (IdempotencyConflictException $exception, Request $request) {
+            if (
+                $request->header('X-Inertia') !== 'true'
+                || ! $request->routeIs('sales.store', 'credits.receipts.store')
+            ) {
+                return null;
+            }
+
+            $message = $exception->kind === IdempotencyConflictException::PAYLOAD_MISMATCH
+                ? 'La venta cambió después del intento anterior. Intenta confirmar nuevamente.'
+                : $exception->getMessage();
+
+            return back()->withErrors(['idempotency_key' => $message]);
         });
 
         $exceptions->render(function (HttpException $exception, Request $request) use ($sessionExpiredResponse) {
