@@ -385,17 +385,22 @@ class CustomerController extends Controller
                 $verifiedAt = $customer->tax_lookup_verified_at?->toIso8601String();
             } else {
                 $result = GuatemalaCuiCustomerResolver::lookupTaxData($business, $docNumber);
-                $docNumber = $result['cui'];
-                $name = $result['name'];
-                $customer = $this->customerByFiscalIdentity($business->id, $docType, $docNumber);
-                $verifiedAt = CustomerTaxLookup::query()
-                    ->where('business_id', $business->id)
-                    ->where('country', 'GT')
-                    ->where('doc_type', CustomerIdentity::CUI)
-                    ->where('doc_number', $docNumber)
-                    ->first(['last_lookup_at'])
-                    ?->last_lookup_at
-                    ?->toIso8601String();
+                $docNumber = CustomerIdentity::normalizeCui($result['cui'] ?? null);
+                $name = trim((string) ($result['name'] ?? ''));
+
+                if (! CustomerIdentity::isValidCui($docNumber) || $name === '') {
+                    throw ValidationException::withMessages([
+                        'doc_number' => 'La validación fiscal no corresponde al documento ingresado.',
+                    ]);
+                }
+
+                $customer = $this->persistVerifiedCuiCustomer(
+                    $business,
+                    $docNumber,
+                    $name,
+                    is_array($result['raw'] ?? null) ? $result['raw'] : null,
+                );
+                $verifiedAt = $customer->tax_lookup_verified_at?->toIso8601String();
             }
 
             return response()->json([
@@ -404,9 +409,7 @@ class CustomerController extends Controller
                 'name' => $name,
                 'source' => $result['source'],
                 'tax_lookup_verified_at' => $verifiedAt,
-                'customer' => $customer
-                    ? $this->customerPayload($customer)
-                    : $this->resolvedIdentityCustomerPayload($docType, $docNumber, $name, $verifiedAt),
+                'customer' => $this->customerPayload($customer),
             ]);
         } catch (ValidationException $exception) {
             $message = $exception->errors()['cui'][0]
@@ -474,42 +477,27 @@ class CustomerController extends Controller
         ], 422);
     }
 
-    private function customerByFiscalIdentity(int $businessId, string $docType, string $docNumber): ?Customer
+    private function persistVerifiedCuiCustomer(Business $business, string $cui, string $name, ?array $raw): Customer
     {
-        return Customer::query()
-            ->where('business_id', $businessId)
-            ->whereNull('merged_into_customer_id')
-            ->where('doc_type', $docType)
-            ->where('normalized_tax_id', $docNumber)
-            ->first();
-    }
-
-    private function resolvedIdentityCustomerPayload(string $docType, string $docNumber, string $name, ?string $verifiedAt): array
-    {
-        return [
-            'id' => null,
+        $customer = Customer::findOrCreateByFiscalIdentity($business, [
             'name' => $name,
-            'commercial_name' => null,
-            'contact_name' => null,
-            'doc_type' => $docType,
-            'doc_number' => $docNumber,
-            'tax_condition' => null,
-            'address' => null,
-            'postal_code' => null,
-            'department' => null,
-            'municipality' => null,
-            'phone' => null,
+            'doc_type' => CustomerIdentity::CUI,
+            'doc_number' => $cui,
+            'country' => 'GT',
+        ]);
+
+        $customer->forceFill([
+            'name' => $name,
+            'doc_type' => CustomerIdentity::CUI,
+            'doc_number' => $cui,
             'country' => 'GT',
             'is_final_consumer' => false,
-            'name_locked' => false,
-            'tax_lookup_verified_at' => $verifiedAt,
-            'encoding_issue_fields' => [],
-            'has_encoding_issue' => false,
-            'fiscal_status' => 'CUI validado',
-            'has_real_nit' => false,
-            'is_cf' => false,
-            'credit_account' => null,
-        ];
+            'name_locked' => true,
+            'tax_lookup_payload' => $raw,
+            'tax_lookup_verified_at' => now(),
+        ])->save();
+
+        return $customer->refresh();
     }
 
     private function applySearch($query, string $search): void

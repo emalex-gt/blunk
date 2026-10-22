@@ -512,12 +512,53 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertJsonPath('doc_type', 'CUI')
             ->assertJsonPath('doc_number', '2249256361307')
             ->assertJsonPath('name', 'EMANUEL ALEJANDRO LÓPEZ LÓPEZ')
-            ->assertJsonPath('customer.id', null)
+            ->assertJsonPath('customer.id', fn ($value) => filled($value))
             ->assertJsonPath('customer.doc_type', 'CUI')
             ->assertJsonPath('customer.doc_number', '2249256361307')
+            ->assertJsonPath('customer.name_locked', true)
+            ->assertJsonPath('customer.tax_lookup_verified_at', fn ($value) => filled($value))
             ->assertJsonPath('customer.address', null)
             ->assertJsonPath('customer.department', null)
             ->assertJsonPath('customer.municipality', null);
+
+        $customer = Customer::query()->where('business_id', $business->id)->where('doc_type', 'CUI')->sole();
+        $this->assertSame('2249256361307', $customer->doc_number);
+        $this->assertSame('EMANUEL ALEJANDRO LÓPEZ LÓPEZ', $customer->name);
+        $this->assertTrue($customer->name_locked);
+        $this->assertNotNull($customer->tax_lookup_verified_at);
+        $this->assertNotNull($customer->tax_lookup_payload);
+    }
+
+    public function test_typed_guatemala_identity_lookup_upgrades_an_existing_unverified_cui_customer_without_duplication(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner');
+        $settings = $this->felSettings($business);
+        $settings->update(['token' => 'cached-token', 'token_expires_at' => now()->addHour()]);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Nombre sin verificar',
+            'commercial_name' => 'Comercial preservado',
+            'doc_type' => 'CUI',
+            'doc_number' => '2249256361307',
+            'country' => 'GT',
+            'name_locked' => false,
+            'tax_lookup_verified_at' => null,
+        ]);
+        Http::fake(['*' => Http::response(['RESPONSE' => [[
+            'PAIS' => 'GT', 'CUI' => '2249256361307', 'NOMBRE' => 'NOMBRE VERIFICADO', 'STATUS' => 'A',
+        ]]])]);
+
+        $this->actingAs($user)
+            ->getJson(route('customers.gt.identity-lookup', ['doc_type' => 'CUI', 'doc_number' => '2249-2563-61307']))
+            ->assertOk()
+            ->assertJsonPath('customer.id', $customer->id)
+            ->assertJsonPath('customer.name', 'NOMBRE VERIFICADO')
+            ->assertJsonPath('customer.name_locked', true);
+
+        $customer->refresh();
+        $this->assertSame('Comercial preservado', $customer->commercial_name);
+        $this->assertNotNull($customer->tax_lookup_verified_at);
+        $this->assertSame(1, Customer::query()->where('business_id', $business->id)->where('doc_type', 'CUI')->count());
     }
 
     public function test_typed_guatemala_identity_lookup_rejects_an_unknown_document_type(): void
