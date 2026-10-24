@@ -8,6 +8,7 @@ use App\Models\CashMovement;
 use App\Models\Customer;
 use App\Models\ElectronicDocument;
 use App\Models\FelReconciliationRequest;
+use App\Models\FiscalDocumentIntent;
 use App\Models\PreSale;
 use App\Models\PreSaleItem;
 use App\Models\Product;
@@ -925,15 +926,7 @@ class RouteDeliveryBatchTest extends TestCase
         $stockBefore = (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock');
         $cashBefore = CashMovement::query()->where('business_id', $business->id)->count();
 
-        $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $certifiedSale): ElectronicDocument {
-            $document = $certifiedSale->electronicDocument()->firstOrFail();
-            $document->update(['status' => 'certified', 'uuid' => 'automatic-route-fel-uuid']);
-            $certifiedSale->update(['certification_status' => 'certified']);
-
-            return $document->refresh();
-        });
-        $this->app->instance(DigifactInvoiceService::class, $digifact);
+        $this->mockRouteIntentCertification('automatic-route-fel-uuid');
 
         $this->runAutomaticFelJob($preSale, $sale, $user, $business, $branch);
 
@@ -958,18 +951,15 @@ class RouteDeliveryBatchTest extends TestCase
         $cashBefore = CashMovement::query()->where('business_id', $business->id)->count();
 
         $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $failedSale): never {
-            $failedSale->electronicDocument()->firstOrFail()->update(['status' => 'failed', 'error_message' => 'Digifact rechazó la solicitud.']);
-            $failedSale->update(['certification_status' => 'failed']);
-
-            throw new FelException('Digifact rechazó la solicitud.');
-        });
+        $digifact->shouldReceive('buildIntentPayload')->once()->andReturn(['Header' => []]);
+        $digifact->shouldReceive('certifyIntent')->once()->andThrow(new FelException('Digifact rechazó la solicitud.'));
         $this->app->instance(DigifactInvoiceService::class, $digifact);
 
         $this->runAutomaticFelJob($preSale, $sale, $user, $business, $branch);
 
-        $this->assertDatabaseHas('electronic_documents', ['sale_id' => $sale->id, 'status' => 'failed']);
-        $this->assertDatabaseHas('route_delivery_batch_pre_sales', ['pre_sale_id' => $preSale->id, 'fel_dispatch_status' => 'failed']);
+        $this->assertDatabaseMissing('electronic_documents', ['sale_id' => $sale->id]);
+        $this->assertDatabaseHas('fiscal_document_intents', ['finalized_sale_id' => $sale->id, 'status' => 'unknown']);
+        $this->assertDatabaseHas('route_delivery_batch_pre_sales', ['pre_sale_id' => $preSale->id, 'fel_dispatch_status' => 'unknown']);
         $this->assertSame(1, Sale::query()->where('business_id', $business->id)->count());
         $this->assertSame(1, \App\Models\SalePayment::query()->where('sale_id', $sale->id)->count());
         $this->assertSame($cashBefore, CashMovement::query()->where('business_id', $business->id)->count());
@@ -987,27 +977,23 @@ class RouteDeliveryBatchTest extends TestCase
         $sale = $preSale->refresh()->convertedSale()->firstOrFail();
 
         $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $unknownSale): never {
-            $unknownSale->electronicDocument()->firstOrFail()->update(['status' => 'unknown', 'error_message' => 'Tiempo de espera agotado.']);
-            $unknownSale->update(['certification_status' => 'unknown']);
-
-            throw new FelException('Tiempo de espera agotado.');
-        });
+        $digifact->shouldReceive('buildIntentPayload')->once()->andReturn(['Header' => []]);
+        $digifact->shouldReceive('certifyIntent')->once()->andThrow(new FelException('Tiempo de espera agotado.'));
         $this->app->instance(DigifactInvoiceService::class, $digifact);
 
         $this->runAutomaticFelJob($preSale, $sale, $user, $business, $branch);
 
-        $this->assertDatabaseHas('electronic_documents', ['sale_id' => $sale->id, 'status' => 'unknown']);
-        $this->assertDatabaseHas('fel_reconciliation_requests', ['business_id' => $business->id, 'sale_id' => $sale->id, 'status' => 'pending']);
+        $this->assertDatabaseMissing('electronic_documents', ['sale_id' => $sale->id]);
+        $this->assertDatabaseHas('fiscal_document_intents', ['business_id' => $business->id, 'finalized_sale_id' => $sale->id, 'status' => 'unknown']);
         $this->assertDatabaseHas('route_delivery_batch_pre_sales', ['pre_sale_id' => $preSale->id, 'fel_dispatch_status' => 'unknown']);
 
         $retry = Mockery::mock(DigifactInvoiceService::class);
-        $retry->shouldReceive('certifySale')->never();
+        $retry->shouldReceive('certifyIntent')->never();
         $this->app->instance(DigifactInvoiceService::class, $retry);
 
         $this->runAutomaticFelJob($preSale->fresh(), $sale->fresh(), $user, $business, $branch);
 
-        $this->assertSame(1, FelReconciliationRequest::query()->where('sale_id', $sale->id)->count());
+        $this->assertSame(1, FiscalDocumentIntent::query()->where('finalized_sale_id', $sale->id)->count());
         $this->assertSame(1, Sale::query()->where('business_id', $business->id)->count());
     }
 
@@ -1254,6 +1240,25 @@ class RouteDeliveryBatchTest extends TestCase
             'fel_department' => 'Guatemala',
             'fel_country' => 'GT',
         ]);
+    }
+
+    private function mockRouteIntentCertification(string $uuid): void
+    {
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('buildIntentPayload')->once()->andReturn(['Header' => []]);
+        $digifact->shouldReceive('certifyIntent')->once()->andReturn([
+            'request_payload' => [],
+            'response_payload' => ['RESPONSE' => [['UUID' => $uuid, 'Serie' => 'A', 'Numero' => '1']]],
+            'identifiers' => ['uuid' => $uuid, 'series' => 'A', 'number' => '1', 'certification_date' => now()],
+            'issued_at' => now(),
+        ]);
+        $digifact->shouldReceive('extractCertificationIdentifiers')->andReturn([
+            'uuid' => $uuid,
+            'series' => 'A',
+            'number' => '1',
+            'certification_date' => now(),
+        ]);
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
     }
 
     private function runAutomaticFelJob(PreSale $preSale, Sale $sale, User $user, Business $business, $branch): void

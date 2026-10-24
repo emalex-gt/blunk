@@ -7,6 +7,7 @@ use App\Models\ElectronicDocument;
 use App\Models\Sale;
 use App\Models\TenantFelSetting;
 use App\Services\Fel\FelException;
+use App\Services\Fel\FelProviderRejectedException;
 use App\Services\Fel\FelIdentityLookupException;
 use App\Support\CustomerIdentity;
 use App\Support\TextEncoding;
@@ -773,7 +774,7 @@ class DigifactClient
         }
 
         if (! $this->isSuccessfulBusinessResponse($data)) {
-            throw new FelException(
+            throw new FelProviderRejectedException(
                 $this->readableErrorFromArray($data) ?: 'Digifact rechazo la solicitud.',
                 responsePayload: $data,
             );

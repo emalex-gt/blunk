@@ -6,6 +6,7 @@ use App\Models\Business;
 use App\Models\CashExpense;
 use App\Models\CashExpenseCategory;
 use App\Models\CashRegisterSession;
+use App\Models\FiscalDocumentIntent;
 use App\Services\BranchAccessService;
 use App\Models\TenantSetting;
 use App\Support\BranchInventory;
@@ -138,6 +139,19 @@ class CashRegisterController extends Controller
         $sessionId = DB::transaction(function () use ($request, $data) {
             $businessId = currentBusinessId();
             $session = CashRegister::requireOpenSession($businessId, 'No hay caja abierta.', true);
+            if (FiscalDocumentIntent::query()
+                ->where('cash_register_session_id', $session->id)
+                ->whereIn('status', [
+                    FiscalDocumentIntent::PENDING,
+                    FiscalDocumentIntent::UNKNOWN,
+                    FiscalDocumentIntent::CERTIFIED,
+                    FiscalDocumentIntent::RETRYABLE,
+                ])
+                ->exists()) {
+                throw ValidationException::withMessages([
+                    'cash_register' => 'No se puede cerrar caja mientras existan facturas FEL pendientes de resolución o finalización.',
+                ]);
+            }
             $expected = CashRegister::expectedCash($session->id);
             $counted = round((float) $data['counted_cash'], 2);
 

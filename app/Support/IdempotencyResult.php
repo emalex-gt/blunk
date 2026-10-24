@@ -8,6 +8,7 @@ class IdempotencyResult
         public readonly bool $replayed,
         public readonly int $resultId,
         public readonly array $responsePayload = [],
+        public readonly string $resultType = '',
     ) {
     }
 }

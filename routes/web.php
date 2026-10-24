@@ -12,7 +12,7 @@ use App\Http\Controllers\ProductLocationController;
 use App\Http\Controllers\CashRegisterController;
 use App\Http\Controllers\AccountReceivableController;
 use App\Http\Controllers\CreditReceiptController;
-use App\Http\Controllers\FelReconciliationController;
+use App\Http\Controllers\FiscalDocumentIntentController;
 use App\Http\Controllers\InventoryTransferController;
 use App\Http\Controllers\OperationDraftController;
 use App\Http\Controllers\ReportController;
@@ -92,6 +92,10 @@ Route::middleware(['auth', 'super.admin'])
         Route::put('/system/maintenance-announcements/{maintenanceAnnouncement}', [SuperAdminMaintenanceAnnouncementController::class, 'update'])->name('system.maintenance-announcements.update');
         Route::delete('/system/maintenance-announcements/{maintenanceAnnouncement}', [SuperAdminMaintenanceAnnouncementController::class, 'destroy'])->name('system.maintenance-announcements.destroy');
         Route::get('/fel-incidents', [SuperAdminFelIncidentController::class, 'index'])->name('fel-incidents.index');
+        Route::post('/fel-incidents/intents/{intent}/reconcile', [SuperAdminFelIncidentController::class, 'reconcileIntent'])->name('fel-incidents.intents.reconcile');
+        Route::post('/fel-incidents/intents/{intent}/retry', [SuperAdminFelIncidentController::class, 'retryIntent'])->name('fel-incidents.intents.retry');
+        Route::post('/fel-incidents/intents/{intent}/finalize', [SuperAdminFelIncidentController::class, 'finalizeIntent'])->name('fel-incidents.intents.finalize');
+        Route::post('/fel-incidents/reconciliations/{reconciliation}/check', [SuperAdminFelIncidentController::class, 'reconcileLegacy'])->name('fel-incidents.reconciliations.check');
         Route::post('/fel-incidents/{incident}/review', [SuperAdminFelIncidentController::class, 'review'])->name('fel-incidents.review');
         Route::post('/fel-incidents/{incident}/resolve', [SuperAdminFelIncidentController::class, 'resolve'])->name('fel-incidents.resolve');
         Route::get('/security/roles', [SuperAdminSecurityController::class, 'roles'])->name('security.roles');
@@ -174,12 +178,9 @@ Route::middleware('auth')->group(function () {
             ->name('sales.fel-download');
         Route::get('/sales/{sale}/fel-print', [SaleController::class, 'felPrint'])->middleware(['module:fel_gt', 'permission:fel.documents.view,signed'])->name('sales.fel-print');
         Route::get('/sales/{sale}/invoice-document', [SaleController::class, 'invoiceDocument'])->middleware(['module:fel_gt', 'permission:fel.documents.view,signed'])->name('sales.invoice-document');
-        Route::get('/fel/reconciliation', [FelReconciliationController::class, 'index'])
-            ->middleware(['module:fel_gt', 'permission:fel.reconcile'])
-            ->name('fel.reconciliation.index');
-        Route::post('/fel/reconciliation/{reconciliation}/check', [FelReconciliationController::class, 'check'])
-            ->middleware(['module:fel_gt', 'permission:fel.reconcile'])
-            ->name('fel.reconciliation.check');
+        Route::get('/fiscal-intents/{intent}/provisional-receipt', [FiscalDocumentIntentController::class, 'provisionalReceipt'])
+            ->middleware(['module:pos', 'permission:sales.print'])
+            ->name('fiscal-intents.provisional-receipt');
         Route::get('/customers', [CustomerController::class, 'index'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.index');
         Route::get('/customers/search', [CustomerController::class, 'search'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.search');
         Route::get('/customers/lookup/nit', [CustomerController::class, 'lookupNit'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.lookup.nit');

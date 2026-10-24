@@ -73,7 +73,6 @@ class Permissions
     public const FEL_CERTIFY = 'fel.certify';
     public const FEL_CANCEL = 'fel.cancel';
     public const FEL_TECHNICAL_VIEW = 'fel.technical.view';
-    public const FEL_RECONCILE = 'fel.reconcile';
 
     public const PRICE_LISTS_VIEW = 'price_lists.view';
     public const PRICE_LISTS_MANAGE = 'price_lists.manage';
@@ -215,7 +214,6 @@ class Permissions
             self::FEL_CERTIFY => ['name' => 'Certificar FEL', 'group' => 'FEL'],
             self::FEL_CANCEL => ['name' => 'Anular FEL', 'group' => 'FEL'],
             self::FEL_TECHNICAL_VIEW => ['name' => 'Ver respuesta técnica FEL', 'group' => 'FEL'],
-            self::FEL_RECONCILE => ['name' => 'Conciliar FEL', 'group' => 'FEL'],
             self::PRICE_LISTS_VIEW => ['name' => 'Ver listas de precios', 'group' => 'Precios'],
             self::PRICE_LISTS_MANAGE => ['name' => 'Gestionar listas de precios', 'group' => 'Precios'],
             self::ROUTES_VIEW => ['name' => 'Ver rutas', 'group' => 'Rutas'],

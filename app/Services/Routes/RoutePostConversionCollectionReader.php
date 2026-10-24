@@ -35,7 +35,9 @@ class RoutePostConversionCollectionReader
                 ->where('amount_paid', 0)
                 ->where('credit_balance', 0)
                 ->where('is_credit_sale', false)
-                ->where('status', '!=', 'cancelled'))
+                ->where(fn ($query) => $query
+                    ->where('status', 'completed')
+                    ->orWhereNull('status')))
             ->whereDoesntHave('sale.routePostConversionCollections', fn ($query) => $query->captured())
             ->with([
                 'batch:id,business_id,branch_id,route_work_day_id,collection_workflow_mode_snapshot,collection_responsibility_snapshot',

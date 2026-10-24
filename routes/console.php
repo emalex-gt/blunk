@@ -9,6 +9,7 @@ use App\Models\Sale;
 use App\Models\Customer;
 use App\Models\CustomerTaxLookup;
 use App\Models\DeployRun;
+use App\Models\FiscalDocumentIntent;
 use App\Models\TenantFelSetting;
 use App\Models\User;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
@@ -22,10 +23,33 @@ use App\Support\SalesDuplicateAuditor;
 use App\Support\SystemIntegrityAuditor;
 use App\Support\TextEncoding;
 use App\Services\System\PostgresPreDeployBackupService;
+use App\Services\Fiscal\FiscalDocumentIntentService;
+use Illuminate\Support\Facades\Schedule;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
+
+Artisan::command('fel:reconcile-unknown-intents {--limit=100}', function (FiscalDocumentIntentService $service) {
+    $processed = 0;
+    FiscalDocumentIntent::query()
+        ->where('status', FiscalDocumentIntent::UNKNOWN)
+        ->whereNotNull('next_reconciliation_at')
+        ->where('next_reconciliation_at', '<=', now())
+        ->orderBy('next_reconciliation_at')
+        ->limit((int) $this->option('limit'))
+        ->get()
+        ->each(function (FiscalDocumentIntent $intent) use ($service, &$processed) {
+            $service->reconcile($intent);
+            $processed++;
+        });
+
+    $this->info("Intenciones fiscales conciliadas: {$processed}");
+
+    return self::SUCCESS;
+})->purpose('Reconcile due unknown fiscal intents without issuing a replacement document');
+
+Schedule::command('fel:reconcile-unknown-intents')->everyFiveMinutes()->withoutOverlapping();
 
 Artisan::command('app:diagnose-storage', function () {
     $tmpPath = storage_path('app/tmp');

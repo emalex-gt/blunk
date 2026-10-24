@@ -3,15 +3,12 @@
 namespace App\Services\Routes;
 
 use App\Models\Business;
-use App\Models\ElectronicDocument;
-use App\Models\FelReconciliationRequest;
 use App\Models\PreSale;
 use App\Models\Sale;
 use App\Models\TenantFelSetting;
 use App\Models\TenantSetting;
 use App\Models\User;
-use App\Services\Fel\FelException;
-use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
+use App\Services\Fiscal\FiscalDocumentIntentService;
 use App\Support\IdempotencyResult;
 use App\Support\IdempotencyService;
 use Illuminate\Support\Facades\DB;
@@ -85,36 +82,11 @@ class RoutePreSaleFelService
                         ]);
                     }
 
-                    $document = $sale->electronicDocument;
-
-                    if (! $document) {
-                        $document = ElectronicDocument::query()->create([
-                            'business_id' => $sale->business_id,
-                            'sale_id' => $sale->id,
-                            'provider' => 'digifact',
-                            'environment' => TenantFelSetting::query()->where('business_id', $sale->business_id)->value('environment') ?: 'test',
-                            'document_type' => 'invoice',
-                            'status' => 'pending',
-                            'created_by' => $user->id,
-                        ]);
-                    } else {
-                        $document->update([
-                            'status' => 'pending',
-                            'error_message' => null,
-                        ]);
-                    }
-
-                    $sale->update([
-                        'electronic_document_id' => $document->id,
-                        'certification_status' => 'pending',
-                    ]);
-
                     return [
                         'result_id' => $sale->id,
                         'response_payload' => [
                             'pre_sale_id' => $lockedPreSale->id,
                             'sale_id' => $sale->id,
-                            'electronic_document_id' => $document->id,
                         ],
                     ];
                 });
@@ -127,16 +99,22 @@ class RoutePreSaleFelService
             ->with(['business', 'customer', 'items.product', 'payments', 'electronicDocument'])
             ->findOrFail($prepared->resultId);
 
-        if (! $prepared->replayed) {
-            try {
-                app(DigifactInvoiceService::class)->certifySale($sale);
-            } catch (FelException $exception) {
-                $this->recordUnknownReconciliation($sale->refresh(), $user, $exception);
+        $intent = app(FiscalDocumentIntentService::class)->createForExistingSale($sale, $idempotencyKey, $user->id);
+        if ($intent->status === \App\Models\FiscalDocumentIntent::PENDING) {
+            $intent = app(FiscalDocumentIntentService::class)->certify($intent);
+        } elseif ($intent->status === \App\Models\FiscalDocumentIntent::CERTIFIED) {
+            $intent = app(FiscalDocumentIntentService::class)->finalize($intent);
+        }
 
-                throw ValidationException::withMessages([
-                    'fel' => $exception->getMessage() ?: 'No se pudo certificar la factura FEL.',
-                ]);
-            }
+        if ($intent->status === \App\Models\FiscalDocumentIntent::UNKNOWN) {
+            throw ValidationException::withMessages([
+                'fel' => 'La certificación FEL quedó en verificación y será conciliada por Super Admin.',
+            ]);
+        }
+        if ($intent->status === \App\Models\FiscalDocumentIntent::REJECTED) {
+            throw ValidationException::withMessages([
+                'fel' => 'Digifact rechazó explícitamente la certificación FEL.',
+            ]);
         }
 
         return $prepared;
@@ -159,29 +137,4 @@ class RoutePreSaleFelService
         }
     }
 
-    private function recordUnknownReconciliation(Sale $sale, User $user, FelException $exception): void
-    {
-        $document = $sale->electronicDocument;
-
-        if (($document?->status ?? $sale->certification_status) !== 'unknown') {
-            return;
-        }
-
-        FelReconciliationRequest::query()->updateOrCreate(
-            [
-                'business_id' => $sale->business_id,
-                'provider' => 'digifact',
-                'environment' => $document?->environment ?: 'test',
-                'internal_reference' => $sale->fel_internal_reference ?: 'BLUNK-'.$sale->business_id.'-'.$sale->id,
-            ],
-            [
-                'branch_id' => $sale->branch_id,
-                'sale_id' => $sale->id,
-                'issued_date' => $sale->fel_issued_at ?: $sale->created_at,
-                'status' => 'pending',
-                'last_error' => $exception->getMessage(),
-                'created_by' => $user->id,
-            ],
-        );
-    }
 }

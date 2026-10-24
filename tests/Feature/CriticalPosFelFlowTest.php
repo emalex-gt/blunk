@@ -19,6 +19,7 @@ use App\Models\CustomerCreditPaymentAllocation;
 use App\Models\CustomerTaxLookup;
 use App\Models\ElectronicDocument;
 use App\Models\FelReconciliationRequest;
+use App\Models\FiscalDocumentIntent;
 use App\Models\PriceType;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
@@ -36,8 +37,11 @@ use App\Models\TenantModule;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Services\Fel\FelException;
+use App\Services\Fel\FelProviderRejectedException;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
+use App\Services\Fel\Providers\Digifact\DigifactReconciliationService;
 use App\Services\Fel\Providers\Digifact\DigifactNucJsonBuilder;
+use App\Services\Fiscal\FiscalDocumentIntentService;
 use App\Support\BranchInventory;
 use App\Support\Credits;
 use App\Support\FelPhraseRenderer;
@@ -47,6 +51,7 @@ use App\Support\StockAvailability;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Route;
 use Inertia\Testing\AssertableInertia as Assert;
 use Mockery;
 use Tests\TestCase;
@@ -360,7 +365,6 @@ class CriticalPosFelFlowTest extends TestCase
         $this->actingAs($user)
             ->post(route('sales.store'), $payload)
             ->assertSessionHasNoErrors();
-
         $this->assertSame('receipt', Sale::query()->firstOrFail()->document_type);
     }
 
@@ -385,20 +389,13 @@ class CriticalPosFelFlowTest extends TestCase
             'consumidor_final' => true,
         ];
 
-        $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $sale) {
-            $document = $sale->electronicDocument;
-            $document->update(['status' => 'certified', 'uuid' => 'UUID-TEST']);
-
-            return $document->refresh();
-        });
-        $digifact->shouldReceive('recordSaleRequestTiming')->once();
-        $this->app->instance(DigifactInvoiceService::class, $digifact);
+        $this->mockResilientIntentCertification('UUID-TEST');
 
         $this->actingAs($user)
             ->post(route('sales.store'), $payload)
             ->assertSessionHasNoErrors();
 
+        $this->assertDatabaseHas('fiscal_document_intents', ['business_id' => $business->id, 'status' => 'finalized']);
         $this->assertSame('invoice', Sale::query()->firstOrFail()->document_type);
     }
 
@@ -643,15 +640,7 @@ class CriticalPosFelFlowTest extends TestCase
             'tax_lookup_verified_at' => now(),
         ]);
 
-        $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $sale) {
-            $document = $sale->electronicDocument;
-            $document->update(['status' => 'certified', 'uuid' => 'UUID-NIT']);
-
-            return $document->refresh();
-        });
-        $digifact->shouldReceive('recordSaleRequestTiming')->once();
-        $this->app->instance(DigifactInvoiceService::class, $digifact);
+        $this->mockResilientIntentCertification('UUID-NIT');
 
         $this->actingAs($user)
             ->from(route('sales.create'))
@@ -3899,7 +3888,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertDatabaseCount('customer_account_movements', 0);
     }
 
-    public function test_credit_invoice_fel_failure_rolls_back_sale_stock_and_receivable(): void
+    public function test_credit_invoice_ambiguous_fel_failure_keeps_an_unfinalized_intent_without_sale_effects(): void
     {
         [$business, $user] = $this->tenant(
             country: 'GT',
@@ -3921,8 +3910,8 @@ class CriticalPosFelFlowTest extends TestCase
         ]);
 
         $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('certifySale')->once()->andThrow(new FelException('Digifact rechazo la factura.'));
-        $digifact->shouldReceive('recordSaleRequestTiming')->once();
+        $digifact->shouldReceive('buildIntentPayload')->once()->andReturn(['Header' => ['IssuedDateTime' => now('America/Guatemala')->format('Y-m-d\\TH:i:sP')]]);
+        $digifact->shouldReceive('certifyIntent')->once()->andThrow(new FelException('Digifact rechazo la factura.'));
         $this->app->instance(DigifactInvoiceService::class, $digifact);
 
         $payload = $this->salePayload($product, quantity: 2, total: 200, documentType: 'invoice', customer: [
@@ -3941,17 +3930,18 @@ class CriticalPosFelFlowTest extends TestCase
             ->from(route('sales.create'))
             ->post(route('sales.store'), $payload)
             ->assertRedirect(route('sales.create'))
-            ->assertSessionHasErrors('document_type');
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('warning');
 
         $this->assertDatabaseCount('sales', 0);
         $this->assertDatabaseCount('sale_items', 0);
         $this->assertDatabaseCount('electronic_documents', 0);
-        $this->assertDatabaseCount('customer_credit_accounts', 0);
         $this->assertDatabaseCount('customer_account_movements', 0);
-        $reconciliation = FelReconciliationRequest::query()->where('business_id', $business->id)->firstOrFail();
-        $this->assertNull($reconciliation->sale_id);
-        $this->assertSame('pending', $reconciliation->status);
-        $this->assertStringStartsWith('BLUNK-'.$business->id.'-', $reconciliation->internal_reference);
+        $this->assertDatabaseHas('fiscal_document_intents', [
+            'business_id' => $business->id,
+            'status' => 'unknown',
+            'operation_type' => 'sale',
+        ]);
         $this->assertSame(10.0, (float) ProductBranchStock::query()
             ->where('business_id', $business->id)
             ->where('product_id', $product->id)
@@ -4295,13 +4285,209 @@ class CriticalPosFelFlowTest extends TestCase
             'raw' => ['Autorizacion' => 'UUID-FOUND'],
         ]);
         $this->app->instance(\App\Services\Fel\Providers\Digifact\DigifactReconciliationService::class, $service);
+        $superAdmin = User::factory()->create(['role' => 'super_admin', 'is_super_admin' => true]);
 
-        $this->actingAs($user)
-            ->post(route('fel.reconciliation.check', $request))
+        $this->actingAs($superAdmin)
+            ->post(route('super-admin.fel-incidents.reconciliations.check', $request))
             ->assertSessionHasErrors('reconciliation');
 
         $this->assertSame('found', $request->refresh()->status);
-        $this->assertStringContainsString('venta local no existe', $request->last_error);
+        $this->assertStringContainsString('venta local legacy', $request->last_error);
+    }
+
+    public function test_tenant_fel_reconciliation_route_is_removed_and_incidents_are_super_admin_only(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner', allowInvoices: true);
+        $this->assertFalse(Route::has('fel.reconciliation.check'));
+
+        $this->actingAs($user)
+            ->get(route('super-admin.fel-incidents.index'))
+            ->assertForbidden();
+    }
+
+    public function test_provisional_receipt_is_tenant_scoped_non_fiscal_and_only_available_while_unresolved(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt', 'pos'], allowInvoices: true);
+        $intent = $this->unknownFiscalIntent($business, $user);
+
+        $this->actingAs($user)
+            ->get(route('fiscal-intents.provisional-receipt', $intent))
+            ->assertOk()
+            ->assertSee('COMPROBANTE PROVISIONAL — NO ES FACTURA NI DOCUMENTO TRIBUTARIO FEL');
+
+        $intent->update(['status' => FiscalDocumentIntent::FINALIZED]);
+        $this->actingAs($user)
+            ->get(route('fiscal-intents.provisional-receipt', $intent))
+            ->assertNotFound();
+
+        [$otherBusiness, $otherUser] = $this->tenant(country: 'GT', modules: ['fel_gt', 'pos'], allowInvoices: true);
+        $this->actingAs($otherUser)
+            ->get(route('fiscal-intents.provisional-receipt', $intent))
+            ->assertForbidden();
+    }
+
+    public function test_super_admin_retries_only_local_finalization_for_a_certified_intent(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], allowInvoices: true);
+        $intent = $this->unknownFiscalIntent($business, $user);
+        $intent->update(['status' => FiscalDocumentIntent::CERTIFIED]);
+        $superAdmin = User::factory()->create(['role' => 'super_admin', 'is_super_admin' => true]);
+
+        $this->actingAs($superAdmin)
+            ->post(route('super-admin.fel-incidents.intents.finalize', $intent))
+            ->assertSessionHasNoErrors();
+
+        $intent->refresh();
+        $this->assertSame(FiscalDocumentIntent::CERTIFIED, $intent->status);
+        $this->assertNotNull($intent->last_finalization_error);
+    }
+
+    public function test_legacy_cancelled_sale_found_in_digifact_requires_manual_resolution_without_restoring_effects(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner', allowInvoices: true);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente legacy anulado',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+        ]);
+        $sale = Sale::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'business_number' => 1,
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'customer_doc_type' => 'CF',
+            'customer_doc_number' => 'CF',
+            'total' => 100,
+            'subtotal_before_discount' => 100,
+            'payment_method' => 'cash',
+            'payment_status' => 'cancelled',
+            'status' => 'cancelled',
+            'document_type' => 'invoice',
+            'certification_status' => 'unknown',
+            'fel_internal_reference' => 'LEGACY-CANCELLED-'.uniqid(),
+            'created_by' => $user->id,
+        ]);
+        $request = FelReconciliationRequest::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'sale_id' => $sale->id,
+            'internal_reference' => $sale->fel_internal_reference,
+            'issued_date' => now(),
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'status' => 'pending',
+        ]);
+        $reconciliation = Mockery::mock(DigifactReconciliationService::class);
+        $reconciliation->shouldReceive('findByInternalReference')->once()->andReturn([
+            'found' => true,
+            'authNumber' => 'UUID-CANCELLED',
+            'serial' => '7',
+            'batch' => 'A',
+            'raw' => ['UUID' => 'UUID-CANCELLED', 'Serie' => 'A', 'Numero' => '7'],
+        ]);
+        $this->app->instance(DigifactReconciliationService::class, $reconciliation);
+        $superAdmin = User::factory()->create(['role' => 'super_admin', 'is_super_admin' => true]);
+
+        $this->actingAs($superAdmin)
+            ->post(route('super-admin.fel-incidents.reconciliations.check', $request))
+            ->assertSessionHasErrors('reconciliation');
+
+        $this->assertSame('manual_resolution_required', $request->refresh()->status);
+        $this->assertSame('cancelled', $sale->refresh()->status);
+        $this->assertDatabaseMissing('electronic_documents', ['sale_id' => $sale->id]);
+        $this->assertDatabaseMissing('customer_account_movements', ['sale_id' => $sale->id]);
+    }
+
+    public function test_unknown_existing_sale_intent_found_by_reconciliation_finalizes_once_without_replaying_commercial_effects(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], allowInvoices: true);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id, 'name' => 'Cliente conciliado',
+            'doc_type' => 'CF', 'doc_number' => 'CF', 'country' => 'GT',
+        ]);
+        $sale = Sale::query()->create([
+            'business_id' => $business->id, 'branch_id' => $branch->id, 'business_number' => 1,
+            'customer_id' => $customer->id, 'customer_name' => $customer->name,
+            'customer_doc_type' => 'CF', 'customer_doc_number' => 'CF',
+            'total' => 100, 'subtotal_before_discount' => 100,
+            'payment_method' => 'cash', 'payment_status' => 'paid', 'amount_paid' => 100,
+            'status' => 'completed', 'document_type' => 'invoice', 'certification_status' => 'unknown',
+            'created_by' => $user->id,
+        ]);
+        $intent = FiscalDocumentIntent::query()->create([
+            'business_id' => $business->id, 'branch_id' => $branch->id, 'finalized_sale_id' => $sale->id,
+            'created_by' => $user->id, 'country' => 'GT', 'provider' => 'digifact', 'environment' => 'test',
+            'document_type' => 'invoice', 'operation_type' => 'certify_existing_sale',
+            'internal_reference' => 'FIS-FOUND-'.uniqid(), 'status' => FiscalDocumentIntent::UNKNOWN,
+            'operation_payload' => ['existing_sale_id' => $sale->id], 'fiscal_payload' => [],
+        ]);
+        $reconciliation = Mockery::mock(DigifactReconciliationService::class);
+        $reconciliation->shouldReceive('findByInternalReference')->once()->andReturn([
+            'found' => true, 'raw' => ['UUID' => 'UUID-FOUND', 'Serie' => 'A', 'Numero' => '10'],
+        ]);
+        $invoice = Mockery::mock(DigifactInvoiceService::class);
+        $invoice->shouldReceive('extractCertificationIdentifiers')->andReturn([
+            'uuid' => 'UUID-FOUND', 'series' => 'A', 'number' => '10', 'certification_date' => now(),
+        ]);
+
+        $result = (new FiscalDocumentIntentService($invoice, $reconciliation))->reconcile($intent);
+
+        $this->assertSame(FiscalDocumentIntent::FINALIZED, $result->status);
+        $this->assertDatabaseHas('electronic_documents', ['sale_id' => $sale->id, 'status' => 'certified', 'uuid' => 'UUID-FOUND']);
+        $this->assertSame(1, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame('completed', $sale->refresh()->status);
+    }
+
+    public function test_pending_or_unknown_fiscal_intent_blocks_normal_sale_cancellation(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'fel_gt'], role: 'owner', allowInvoices: true);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id, 'name' => 'Cliente fiscal pendiente',
+            'doc_type' => 'CF', 'doc_number' => 'CF', 'country' => 'GT',
+        ]);
+
+        foreach ([FiscalDocumentIntent::PENDING, FiscalDocumentIntent::UNKNOWN] as $status) {
+            $sale = Sale::query()->create([
+                'business_id' => $business->id, 'branch_id' => $branch->id, 'business_number' => Sale::query()->count() + 1,
+                'customer_id' => $customer->id, 'customer_name' => $customer->name,
+                'customer_doc_type' => 'CF', 'customer_doc_number' => 'CF',
+                'total' => 100, 'subtotal_before_discount' => 100, 'payment_method' => 'cash',
+                'payment_status' => 'paid', 'amount_paid' => 100, 'status' => 'completed',
+                'document_type' => 'invoice', 'created_by' => $user->id,
+            ]);
+            FiscalDocumentIntent::query()->create([
+                'business_id' => $business->id, 'branch_id' => $branch->id, 'finalized_sale_id' => $sale->id,
+                'created_by' => $user->id, 'country' => 'GT', 'provider' => 'digifact', 'environment' => 'test',
+                'document_type' => 'invoice', 'operation_type' => 'certify_existing_sale',
+                'internal_reference' => 'FIS-CANCEL-'.$status.'-'.uniqid(), 'status' => $status,
+                'operation_payload' => ['existing_sale_id' => $sale->id], 'fiscal_payload' => [],
+            ]);
+
+            $this->actingAs($user)
+                ->post(route('sales.cancel', $sale), ['reason' => 'Prueba fiscal pendiente', 'idempotency_key' => 'cancel-'.$status.'-'.uniqid()])
+                ->assertSessionHasErrors('sale');
+
+            $this->assertSame('completed', $sale->refresh()->status);
+        }
+    }
+
+    public function test_super_admin_fel_incident_ui_limits_fiscal_actions_to_their_allowed_states(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/SuperAdmin/FelIncidents/Index.tsx'));
+
+        $this->assertStringContainsString("intent.status === 'unknown'", $source);
+        $this->assertStringContainsString('Consultar Digifact ahora', $source);
+        $this->assertStringContainsString("intent.status === 'certified'", $source);
+        $this->assertStringContainsString('Reintentar finalización local', $source);
+        $this->assertStringContainsString("intent.status === 'retryable'", $source);
+        $this->assertStringContainsString('Reintentar certificación', $source);
+        $this->assertStringContainsString('Cerrar alerta administrativa', $source);
     }
 
     public function test_fel_reconciliation_not_found_marks_request_without_creating_local_records(): void
@@ -4323,9 +4509,10 @@ class CriticalPosFelFlowTest extends TestCase
             'raw' => [],
         ]);
         $this->app->instance(\App\Services\Fel\Providers\Digifact\DigifactReconciliationService::class, $service);
+        $superAdmin = User::factory()->create(['role' => 'super_admin', 'is_super_admin' => true]);
 
-        $this->actingAs($user)
-            ->post(route('fel.reconciliation.check', $request))
+        $this->actingAs($superAdmin)
+            ->post(route('super-admin.fel-incidents.reconciliations.check', $request))
             ->assertSessionHasNoErrors();
 
         $request->refresh();
@@ -4354,9 +4541,10 @@ class CriticalPosFelFlowTest extends TestCase
         $service = Mockery::mock(\App\Services\Fel\Providers\Digifact\DigifactReconciliationService::class);
         $service->shouldReceive('findByInternalReference')->once()->andThrow(new FelException('Servicio Digifact no disponible.'));
         $this->app->instance(\App\Services\Fel\Providers\Digifact\DigifactReconciliationService::class, $service);
+        $superAdmin = User::factory()->create(['role' => 'super_admin', 'is_super_admin' => true]);
 
-        $this->actingAs($user)
-            ->post(route('fel.reconciliation.check', $request))
+        $this->actingAs($superAdmin)
+            ->post(route('super-admin.fel-incidents.reconciliations.check', $request))
             ->assertSessionHasErrors('reconciliation');
 
         $request->refresh();
@@ -4424,9 +4612,10 @@ class CriticalPosFelFlowTest extends TestCase
             'raw' => ['Autorizacion' => 'UUID-FOUND', 'Serial' => '123', 'Batch' => 'A'],
         ]);
         $this->app->instance(\App\Services\Fel\Providers\Digifact\DigifactReconciliationService::class, $service);
+        $superAdmin = User::factory()->create(['role' => 'super_admin', 'is_super_admin' => true]);
 
-        $this->actingAs($user)
-            ->post(route('fel.reconciliation.check', $request))
+        $this->actingAs($superAdmin)
+            ->post(route('super-admin.fel-incidents.reconciliations.check', $request))
             ->assertSessionHasNoErrors();
 
         $this->assertSame('resolved', $request->refresh()->status);
@@ -4680,15 +4869,7 @@ class CriticalPosFelFlowTest extends TestCase
             'tax_lookup_verified_at' => now(),
         ]);
 
-        $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $sale) {
-            $document = $sale->electronicDocument;
-            $document->update(['status' => 'certified', 'uuid' => 'UUID-CUI']);
-
-            return $document->refresh();
-        });
-        $digifact->shouldReceive('recordSaleRequestTiming')->once();
-        $this->app->instance(DigifactInvoiceService::class, $digifact);
+        $this->mockResilientIntentCertification('UUID-CUI');
 
         $this->actingAs($user)
             ->from(route('sales.create'))
@@ -4793,6 +4974,288 @@ class CriticalPosFelFlowTest extends TestCase
 
         $this->assertStringNotContainsString('Nombre del negocio', $posSource);
         $this->assertStringContainsString('Nombre del negocio', $routeWorkDaySource.$routeVisitSource);
+    }
+
+    public function test_retryable_intent_performs_the_required_final_reconciliation_before_reemitting(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], allowInvoices: true);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $intent = FiscalDocumentIntent::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'created_by' => $user->id,
+            'country' => 'GT',
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'document_type' => 'invoice',
+            'operation_type' => 'sale',
+            'internal_reference' => 'FIS-RETRY-'.strtoupper(uniqid()),
+            'idempotency_key' => 'retry-final-check-'.uniqid(),
+            'status' => FiscalDocumentIntent::RETRYABLE,
+            'operation_payload' => [],
+            'fiscal_payload' => [],
+            'negative_reconciliation_count' => 3,
+        ]);
+
+        $reconciliation = Mockery::mock(DigifactReconciliationService::class);
+        $reconciliation->shouldReceive('findByInternalReference')->once()->andReturn([
+            'found' => false,
+            'raw' => [],
+        ]);
+        $invoice = Mockery::mock(DigifactInvoiceService::class);
+        $invoice->shouldReceive('certifyIntent')->once()->andThrow(new FelException('Proveedor temporalmente no disponible.'));
+
+        $result = (new FiscalDocumentIntentService($invoice, $reconciliation))->retry($intent);
+
+        $this->assertSame(FiscalDocumentIntent::UNKNOWN, $result->status);
+        $this->assertSame(4, $result->negative_reconciliation_count);
+        $this->assertSame('certification_ambiguous', $result->last_reconciliation_result['outcome']);
+    }
+
+    public function test_three_valid_negative_reconciliations_make_an_unknown_intent_retryable(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], allowInvoices: true);
+        $intent = $this->unknownFiscalIntent($business, $user);
+        $reconciliation = Mockery::mock(DigifactReconciliationService::class);
+        $reconciliation->shouldReceive('findByInternalReference')->times(3)->andReturn([
+            'found' => false,
+            'raw' => [],
+        ]);
+        $invoice = Mockery::mock(DigifactInvoiceService::class);
+        $service = new FiscalDocumentIntentService($invoice, $reconciliation);
+
+        $intent = $service->reconcile($intent);
+        $this->assertSame(FiscalDocumentIntent::UNKNOWN, $intent->status);
+        $this->assertSame(1, $intent->negative_reconciliation_count);
+        $intent = $service->reconcile($intent);
+        $this->assertSame(FiscalDocumentIntent::UNKNOWN, $intent->status);
+        $this->assertSame(2, $intent->negative_reconciliation_count);
+        $intent = $service->reconcile($intent);
+
+        $this->assertSame(FiscalDocumentIntent::RETRYABLE, $intent->status);
+        $this->assertSame(3, $intent->negative_reconciliation_count);
+    }
+
+    public function test_technical_reconciliation_error_keeps_unknown_without_counting_a_negative(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], allowInvoices: true);
+        $intent = $this->unknownFiscalIntent($business, $user);
+        $reconciliation = Mockery::mock(DigifactReconciliationService::class);
+        $reconciliation->shouldReceive('findByInternalReference')->once()->andThrow(new FelException('Tiempo de espera de Digifact.'));
+
+        $result = (new FiscalDocumentIntentService(Mockery::mock(DigifactInvoiceService::class), $reconciliation))->reconcile($intent);
+
+        $this->assertSame(FiscalDocumentIntent::UNKNOWN, $result->status);
+        $this->assertSame(0, $result->negative_reconciliation_count);
+        $this->assertSame('reconciliation_unavailable', $result->last_reconciliation_result['outcome']);
+    }
+
+    public function test_only_an_explicit_provider_rejection_marks_a_pending_intent_rejected(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], allowInvoices: true);
+        $intent = $this->unknownFiscalIntent($business, $user);
+        $intent->update(['status' => FiscalDocumentIntent::PENDING]);
+        $invoice = Mockery::mock(DigifactInvoiceService::class);
+        $invoice->shouldReceive('certifyIntent')->once()->andThrow(new FelProviderRejectedException('Rechazo fiscal explícito.', responsePayload: ['code' => 'REJECTED']));
+
+        $result = (new FiscalDocumentIntentService($invoice, Mockery::mock(DigifactReconciliationService::class)))->certify($intent);
+
+        $this->assertSame(FiscalDocumentIntent::REJECTED, $result->status);
+        $this->assertSame(['code' => 'REJECTED'], $result->provider_response);
+    }
+
+    public function test_digifact_token_timeout_leaves_the_intent_unknown_without_final_sale_effects(): void
+    {
+        [$business, $user, $product] = $this->realDigifactInvoiceContext();
+
+        Http::fake([
+            '*login/get_token' => function () {
+                throw new \Illuminate\Http\Client\ConnectionException('token timeout');
+            },
+        ]);
+
+        $this->submitRealDigifactInvoice($user, $product);
+
+        $this->assertAmbiguousDigifactIntent($business, $product, 'token timeout');
+    }
+
+    public function test_digifact_certification_timeout_leaves_the_intent_unknown_and_preserves_its_hold(): void
+    {
+        [$business, $user, $product, $settings] = $this->realDigifactInvoiceContext();
+        $settings->update(['token' => 'cached-token', 'token_expires_at' => now()->addHour()]);
+
+        Http::fake([
+            '*v2/transform/nuc_json*' => function () {
+                throw new \Illuminate\Http\Client\ConnectionException('certification timeout');
+            },
+        ]);
+
+        $this->submitRealDigifactInvoice($user, $product);
+
+        $this->assertAmbiguousDigifactIntent($business, $product, 'certification timeout');
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('unavailableDigifactStatuses')]
+    public function test_digifact_unavailable_http_status_is_unknown_not_rejected(int $status): void
+    {
+        [$business, $user, $product, $settings] = $this->realDigifactInvoiceContext();
+        $settings->update(['token' => 'cached-token', 'token_expires_at' => now()->addHour()]);
+
+        Http::fake([
+            '*v2/transform/nuc_json*' => Http::response(['message' => "upstream {$status}"], $status),
+        ]);
+
+        $this->submitRealDigifactInvoice($user, $product);
+
+        $this->assertAmbiguousDigifactIntent($business, $product, 'Digifact no respondió correctamente');
+        $this->assertSame(
+            "upstream {$status}",
+            FiscalDocumentIntent::query()->where('business_id', $business->id)->firstOrFail()->provider_response['message'] ?? null,
+        );
+    }
+
+    public static function unavailableDigifactStatuses(): array
+    {
+        return [[500], [502], [503]];
+    }
+
+    public function test_digifact_html_certification_response_is_unknown_not_rejected(): void
+    {
+        [$business, $user, $product, $settings] = $this->realDigifactInvoiceContext();
+        $settings->update(['token' => 'cached-token', 'token_expires_at' => now()->addHour()]);
+
+        Http::fake([
+            '*v2/transform/nuc_json*' => Http::response('<html><body>upstream unavailable</body></html>', 200, ['Content-Type' => 'text/html']),
+        ]);
+
+        $this->submitRealDigifactInvoice($user, $product);
+
+        $this->assertAmbiguousDigifactIntent($business, $product, 'respuesta no válida');
+    }
+
+    public function test_digifact_malformed_json_certification_response_is_unknown_not_rejected(): void
+    {
+        [$business, $user, $product, $settings] = $this->realDigifactInvoiceContext();
+        $settings->update(['token' => 'cached-token', 'token_expires_at' => now()->addHour()]);
+
+        Http::fake([
+            '*v2/transform/nuc_json*' => Http::response('{"REQUEST_DATA":', 200, ['Content-Type' => 'application/json']),
+        ]);
+
+        $this->submitRealDigifactInvoice($user, $product);
+
+        $this->assertAmbiguousDigifactIntent($business, $product, 'No se pudo leer la respuesta');
+    }
+
+    public function test_digifact_explicit_fiscal_rejection_is_rejected_not_unknown(): void
+    {
+        [$business, $user, $product, $settings] = $this->realDigifactInvoiceContext();
+        $settings->update(['token' => 'cached-token', 'token_expires_at' => now()->addHour()]);
+
+        Http::fake([
+            '*v2/transform/nuc_json*' => Http::response([
+                'REQUEST_DATA' => [[
+                    'Codigo' => 0,
+                    'Mensaje' => 'Rechazo fiscal explícito de prueba',
+                ]],
+            ], 200),
+        ]);
+
+        $this->submitRealDigifactInvoice($user, $product, expectsValidationError: true);
+
+        $intent = FiscalDocumentIntent::query()->where('business_id', $business->id)->firstOrFail();
+        $this->assertSame(FiscalDocumentIntent::REJECTED, $intent->status);
+        $this->assertStringContainsString('Rechazo fiscal explícito', (string) $intent->last_reconciliation_error);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseMissing('stock_reservations', ['source_type' => 'fiscal_document_intent', 'source_id' => $intent->id, 'status' => 'active']);
+    }
+
+    private function realDigifactInvoiceContext(): array
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'cash_register', 'fel_gt'],
+            allowInvoices: true,
+        );
+        $settings = $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        return [$business, $user, $product, $settings];
+    }
+
+    private function submitRealDigifactInvoice(User $user, Product $product, bool $expectsValidationError = false): void
+    {
+        $response = $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                documentType: 'invoice',
+                customer: [
+                    'name' => 'Consumidor Final',
+                    'doc_type' => 'CF',
+                    'doc_number' => 'CF',
+                    'country' => 'GT',
+                    'consumidor_final' => true,
+                ],
+            ))
+            ->assertRedirect(route('sales.create'));
+
+        if ($expectsValidationError) {
+            $response->assertSessionHasErrors();
+
+            return;
+        }
+
+        $response->assertSessionHasNoErrors()->assertSessionHas('warning');
+    }
+
+    private function assertAmbiguousDigifactIntent(Business $business, Product $product, string $error): void
+    {
+        $intent = FiscalDocumentIntent::query()->where('business_id', $business->id)->firstOrFail();
+
+        $this->assertSame(FiscalDocumentIntent::UNKNOWN, $intent->status);
+        $this->assertStringContainsString($error, (string) $intent->last_reconciliation_error);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('sale_items', 0);
+        $this->assertDatabaseCount('sale_payments', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertDatabaseCount('customer_account_movements', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseHas('stock_reservations', [
+            'source_type' => 'fiscal_document_intent',
+            'source_id' => $intent->id,
+            'product_id' => $product->id,
+            'status' => 'active',
+            'quantity' => 1,
+        ]);
+        $this->assertSame(10.0, (float) ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+    }
+
+    private function unknownFiscalIntent(Business $business, User $user): FiscalDocumentIntent
+    {
+        return FiscalDocumentIntent::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => BranchInventory::defaultBranchForBusiness($business)->id,
+            'created_by' => $user->id,
+            'country' => 'GT',
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'document_type' => 'invoice',
+            'operation_type' => 'sale',
+            'internal_reference' => 'FIS-UNKNOWN-'.strtoupper(uniqid()),
+            'idempotency_key' => 'unknown-intent-'.uniqid(),
+            'status' => FiscalDocumentIntent::UNKNOWN,
+            'operation_payload' => [],
+            'fiscal_payload' => [],
+            'next_reconciliation_at' => now()->addMinutes(5),
+        ]);
     }
 
     private function tenant(
@@ -5182,5 +5645,26 @@ class CriticalPosFelFlowTest extends TestCase
                 'last_lookup_at' => now(),
             ],
         );
+    }
+
+    private function mockResilientIntentCertification(string $uuid): void
+    {
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('buildIntentPayload')->once()->andReturn([
+            'Header' => ['IssuedDateTime' => now('America/Guatemala')->format('Y-m-d\\TH:i:sP')],
+        ]);
+        $digifact->shouldReceive('certifyIntent')->once()->andReturn([
+            'request_payload' => [],
+            'response_payload' => ['RESPONSE' => [['UUID' => $uuid, 'Serie' => 'A', 'Numero' => '1']]],
+            'identifiers' => ['uuid' => $uuid, 'series' => 'A', 'number' => '1', 'certification_date' => now()],
+            'issued_at' => now(),
+        ]);
+        $digifact->shouldReceive('extractCertificationIdentifiers')->andReturn([
+            'uuid' => $uuid,
+            'series' => 'A',
+            'number' => '1',
+            'certification_date' => now(),
+        ]);
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
     }
 }

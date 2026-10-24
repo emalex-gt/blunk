@@ -118,15 +118,7 @@ class RoutePreSaleInvoiceTest extends TestCase
             ->where('product_id', $product->id)
             ->value('stock');
 
-        $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $certifiedSale): ElectronicDocument {
-            $document = $certifiedSale->electronicDocument()->firstOrFail();
-            $document->update(['status' => 'certified', 'uuid' => 'route-receipt-fel-uuid', 'series' => 'A', 'number' => '1', 'certification_date' => now()]);
-            $certifiedSale->update(['certification_status' => 'certified', 'fel_status' => 'CERTIFIED', 'fel_uuid' => 'route-receipt-fel-uuid']);
-
-            return $document->refresh();
-        });
-        $this->app->instance(DigifactInvoiceService::class, $digifact);
+        $this->mockIntentCertification('route-receipt-fel-uuid');
 
         $this->actingAs($admin)
             ->post("/routes/pre-sales/{$preSale->id}/fel/certify", ['idempotency_key' => 'route-receipt-first-fel-key'])
@@ -160,15 +152,7 @@ class RoutePreSaleInvoiceTest extends TestCase
         $stockMovementsBeforeFel = StockMovement::query()->where('business_id', $business->id)->count();
         $activeReservationsBeforeFel = StockReservation::query()->where('source_id', $preSale->id)->where('status', 'active')->count();
 
-        $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $certifiedSale): ElectronicDocument {
-            $document = $certifiedSale->electronicDocument()->firstOrFail();
-            $document->update(['status' => 'certified', 'uuid' => 'route-unpaid-fel-uuid', 'series' => 'A', 'number' => '1', 'certification_date' => now()]);
-            $certifiedSale->update(['certification_status' => 'certified', 'fel_status' => 'CERTIFIED', 'fel_uuid' => 'route-unpaid-fel-uuid']);
-
-            return $document->refresh();
-        });
-        $this->app->instance(DigifactInvoiceService::class, $digifact);
+        $this->mockIntentCertification('route-unpaid-fel-uuid');
 
         $this->actingAs($admin)
             ->post(route('routes.pre-sales.fel.certify', $preSale), ['idempotency_key' => 'route-unpaid-fel-without-cash'])
@@ -202,12 +186,8 @@ class RoutePreSaleInvoiceTest extends TestCase
         $cashMovementsBeforeFel = \App\Models\CashMovement::query()->where('business_id', $business->id)->count();
 
         $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $failedSale): never {
-            $failedSale->electronicDocument()->firstOrFail()->update(['status' => 'failed', 'error_message' => 'Digifact rechazó la solicitud.']);
-            $failedSale->update(['certification_status' => 'failed']);
-
-            throw new FelException('Digifact rechazó la solicitud.');
-        });
+        $digifact->shouldReceive('buildIntentPayload')->once()->andReturn(['Header' => ['IssuedDateTime' => now('America/Guatemala')->format('Y-m-d\\TH:i:sP')]]);
+        $digifact->shouldReceive('certifyIntent')->once()->andThrow(new \App\Services\Fel\FelProviderRejectedException('Digifact rechazó la solicitud.'));
         $this->app->instance(DigifactInvoiceService::class, $digifact);
 
         $this->actingAs($admin)
@@ -223,7 +203,7 @@ class RoutePreSaleInvoiceTest extends TestCase
         $this->assertSame($stockBeforeFel, (float) ProductBranchStock::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('product_id', $product->id)->value('stock'));
         $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('product_id', $product->id)->count());
         $this->assertSame($cashMovementsBeforeFel, \App\Models\CashMovement::query()->where('business_id', $business->id)->count());
-        $this->assertDatabaseHas('electronic_documents', ['sale_id' => $sale->id, 'status' => 'failed']);
+        $this->assertDatabaseMissing('electronic_documents', ['sale_id' => $sale->id]);
     }
 
     public function test_unknown_route_fel_requires_reconciliation_before_another_attempt(): void
@@ -238,19 +218,15 @@ class RoutePreSaleInvoiceTest extends TestCase
         $sale = $preSale->refresh()->convertedSale()->firstOrFail();
 
         $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $unknownSale): never {
-            $unknownSale->electronicDocument()->firstOrFail()->update(['status' => 'unknown', 'error_message' => 'Tiempo de espera agotado.']);
-            $unknownSale->update(['certification_status' => 'unknown']);
-
-            throw new FelException('Tiempo de espera agotado.');
-        });
+        $digifact->shouldReceive('buildIntentPayload')->once()->andReturn(['Header' => ['IssuedDateTime' => now('America/Guatemala')->format('Y-m-d\\TH:i:sP')]]);
+        $digifact->shouldReceive('certifyIntent')->once()->andThrow(new FelException('Tiempo de espera agotado.'));
         $this->app->instance(DigifactInvoiceService::class, $digifact);
 
         $this->actingAs($admin)
             ->post(route('routes.pre-sales.fel.certify', $preSale), ['idempotency_key' => 'route-pre-sale-unknown-fel-key'])
             ->assertSessionHasErrors('fel');
 
-        $this->assertDatabaseHas('fel_reconciliation_requests', ['business_id' => $business->id, 'sale_id' => $sale->id, 'status' => 'pending']);
+        $this->assertDatabaseHas('fiscal_document_intents', ['business_id' => $business->id, 'finalized_sale_id' => $sale->id, 'status' => 'unknown']);
         $this->actingAs($admin)
             ->post(route('routes.pre-sales.fel.certify', $preSale), ['idempotency_key' => 'route-pre-sale-unknown-fel-retry-key'])
             ->assertSessionHasErrors('fel');
@@ -382,15 +358,7 @@ class RoutePreSaleInvoiceTest extends TestCase
             ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload())
             ->assertSessionHasNoErrors();
 
-        $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $sale): ElectronicDocument {
-            $document = $sale->electronicDocument()->firstOrFail();
-            $document->update(['status' => 'certified', 'uuid' => 'route-cui-fel-uuid', 'series' => 'A', 'number' => '1', 'certification_date' => now()]);
-            $sale->update(['certification_status' => 'certified', 'fel_status' => 'CERTIFIED', 'fel_uuid' => 'route-cui-fel-uuid']);
-
-            return $document->refresh();
-        });
-        $this->app->instance(DigifactInvoiceService::class, $digifact);
+        $this->mockIntentCertification('route-cui-fel-uuid');
 
         $this->actingAs($admin)
             ->post(route('routes.pre-sales.fel.certify', $preSale), ['idempotency_key' => 'route-cui-fel-key'])
@@ -655,25 +623,7 @@ class RoutePreSaleInvoiceTest extends TestCase
         $preSale = $this->pickedPreSale($business, $branch, $admin, $product, quantity: 2, pickedQuantity: 2);
         $this->openCashRegister($business, $branch, $admin);
 
-        $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('certifySale')->once()->andReturnUsing(function (Sale $sale): ElectronicDocument {
-            $document = $sale->electronicDocument()->firstOrFail();
-            $document->update([
-                'status' => 'certified',
-                'uuid' => 'route-pre-sale-fel-uuid',
-                'series' => 'A',
-                'number' => '1',
-                'certification_date' => now(),
-            ]);
-            $sale->update([
-                'certification_status' => 'certified',
-                'fel_status' => 'CERTIFIED',
-                'fel_uuid' => 'route-pre-sale-fel-uuid',
-            ]);
-
-            return $document->refresh();
-        });
-        $this->app->instance(DigifactInvoiceService::class, $digifact);
+        $this->mockIntentCertification('route-pre-sale-fel-uuid');
 
         $this->actingAs($admin)
             ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload('receipt', 'paid', 'cash'))
@@ -960,5 +910,26 @@ class RoutePreSaleInvoiceTest extends TestCase
             'payment_method' => $paymentMethod,
             'note' => 'Facturación de ruta',
         ];
+    }
+
+    private function mockIntentCertification(string $uuid): void
+    {
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('buildIntentPayload')->once()->andReturn([
+            'Header' => ['IssuedDateTime' => now('America/Guatemala')->format('Y-m-d\\TH:i:sP')],
+        ]);
+        $digifact->shouldReceive('certifyIntent')->once()->andReturn([
+            'request_payload' => [],
+            'response_payload' => ['RESPONSE' => [['UUID' => $uuid, 'Serie' => 'A', 'Numero' => '1']]],
+            'identifiers' => ['uuid' => $uuid, 'series' => 'A', 'number' => '1', 'certification_date' => now()],
+            'issued_at' => now(),
+        ]);
+        $digifact->shouldReceive('extractCertificationIdentifiers')->andReturn([
+            'uuid' => $uuid,
+            'series' => 'A',
+            'number' => '1',
+            'certification_date' => now(),
+        ]);
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
     }
 }

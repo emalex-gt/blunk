@@ -7,6 +7,7 @@ use App\Models\CashMovement;
 use App\Models\CashRegisterSession;
 use App\Models\Customer;
 use App\Models\ElectronicDocument;
+use App\Models\FiscalDocumentIntent;
 use App\Models\OperationIdempotencyKey;
 use App\Models\PriceType;
 use App\Models\Product;
@@ -24,8 +25,10 @@ use App\Models\User;
 use App\Support\BranchInventory;
 use App\Support\IdempotencyService;
 use App\Support\Permissions;
+use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Mockery;
 use Tests\TestCase;
 
 class SaleDuplicateIdempotencyTest extends TestCase
@@ -38,6 +41,13 @@ class SaleDuplicateIdempotencyTest extends TestCase
 
         $this->assertSame('pgsql', DB::connection()->getDriverName());
         Permissions::syncDefaults();
+    }
+
+    protected function tearDown(): void
+    {
+        Mockery::close();
+
+        parent::tearDown();
     }
 
     public function test_first_sale_request_with_idempotency_key_creates_sale(): void
@@ -335,6 +345,59 @@ class SaleDuplicateIdempotencyTest extends TestCase
 
         $this->assertSame(1, Sale::query()->count());
         $this->assertSame(0, ElectronicDocument::query()->where('status', 'certified')->count());
+    }
+
+    public function test_resilient_invoice_idempotency_persists_and_replays_its_fiscal_intent(): void
+    {
+        [$business, $user] = $this->tenant();
+        $this->enableFelInvoices($business);
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $payload = $this->salePayload($product, 'idem-resilient-invoice', 'invoice', [
+            'name' => 'Consumidor Final',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'consumidor_final' => true,
+        ]);
+
+        $invoice = Mockery::mock(DigifactInvoiceService::class);
+        $invoice->shouldReceive('buildIntentPayload')->once()->andReturn([
+            'Header' => ['IssuedDateTime' => now('America/Guatemala')->format('Y-m-d\\TH:i:sP')],
+        ]);
+        $invoice->shouldReceive('certifyIntent')->once()->andReturn([
+            'request_payload' => [],
+            'response_payload' => ['RESPONSE' => [['UUID' => 'UUID-IDEM-INTENT', 'Serie' => 'A', 'Numero' => '1']]],
+            'identifiers' => ['uuid' => 'UUID-IDEM-INTENT', 'series' => 'A', 'number' => '1', 'certification_date' => now()],
+            'issued_at' => now(),
+        ]);
+        $invoice->shouldReceive('extractCertificationIdentifiers')->once()->andReturn([
+            'uuid' => 'UUID-IDEM-INTENT',
+            'series' => 'A',
+            'number' => '1',
+            'certification_date' => now(),
+        ]);
+        $this->app->instance(DigifactInvoiceService::class, $invoice);
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $payload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasNoErrors();
+
+        $intent = FiscalDocumentIntent::query()->where('business_id', $business->id)->sole();
+        $this->assertSame(FiscalDocumentIntent::FINALIZED, $intent->status);
+        $this->assertDatabaseHas('operation_idempotency_keys', [
+            'business_id' => $business->id,
+            'operation_type' => 'pos_sale',
+            'idempotency_key' => 'idem-resilient-invoice',
+            'result_type' => 'fiscal_document_intent',
+            'result_id' => $intent->id,
+        ]);
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $payload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(1, FiscalDocumentIntent::query()->where('business_id', $business->id)->count());
+        $this->assertSame(1, Sale::query()->where('business_id', $business->id)->count());
     }
 
     public function test_pos_reuses_one_generic_final_consumer_customer(): void

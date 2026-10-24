@@ -6,6 +6,7 @@ use App\Models\Business;
 use App\Models\ElectronicDocument;
 use App\Models\FelCertificationAttempt;
 use App\Models\FelIncident;
+use App\Models\FiscalDocumentIntent;
 use App\Models\Sale;
 use App\Models\TenantFelSetting;
 use App\Services\Fel\FelException;
@@ -290,6 +291,56 @@ class DigifactInvoiceService
 
             throw new FelException($message, previous: $exception);
         }
+    }
+
+    /** Build and validate a frozen payload without writing a fiscal document. */
+    public function buildIntentPayload(Sale $sale, string $internalReference): array
+    {
+        $sale->loadMissing(['business', 'branch', 'customer', 'items.product']);
+        $settings = $this->settings($sale->business ?: Business::query()->findOrFail($sale->business_id));
+        $sale->setAttribute('fel_internal_reference', $internalReference);
+        $payload = $this->payloadBuilder->buildInvoicePayload($sale, $settings);
+        $this->validateInvoicePayload($payload, $settings);
+
+        return $payload;
+    }
+
+    /**
+     * Sends an already-frozen fiscal payload without creating a provisional
+     * Sale, ElectronicDocument, or certification attempt. The caller owns the
+     * durable intent and persists the returned certification only after the
+     * provider outcome is known.
+     *
+     * @return array{request_payload: array, response_payload: array, identifiers: array, issued_at: ?Carbon}
+     */
+    public function certifyIntent(FiscalDocumentIntent $intent): array
+    {
+        $business = $intent->business()->firstOrFail();
+        $settings = $this->settings($business);
+        $payload = $intent->fiscal_payload;
+
+        if (! is_array($payload) || $payload === []) {
+            throw new FelException('La intención fiscal no contiene un payload FEL válido.');
+        }
+
+        $this->validateInvoicePayload($payload, $settings);
+        $issuedAt = $this->parseIssuedAt((string) ($payload['Header']['IssuedDateTime'] ?? now('America/Guatemala')->format('Y-m-d\\TH:i:sP')));
+        $response = DigifactClient::forBusiness($business, $settings)->certify($payload, 'XML');
+        $identifiers = $this->extractCertificationIdentifiers($response);
+
+        if (! filled($identifiers['uuid'])) {
+            throw new FelException(
+                'No se pudo identificar la autorización FEL devuelta por Digifact.',
+                responsePayload: $response,
+            );
+        }
+
+        return [
+            'request_payload' => $payload,
+            'response_payload' => $this->sanitizeProviderResponse($response),
+            'identifiers' => $identifiers,
+            'issued_at' => $issuedAt,
+        ];
     }
 
     public function retryCertification(Sale $sale): ElectronicDocument

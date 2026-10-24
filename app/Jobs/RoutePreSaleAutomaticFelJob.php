@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Branch;
 use App\Models\Business;
+use App\Models\FiscalDocumentIntent;
 use App\Models\PreSale;
 use App\Models\RouteDeliveryBatchPreSale;
 use App\Models\Sale;
@@ -11,6 +12,7 @@ use App\Models\User;
 use App\Services\Routes\RoutePreSaleFelAvailabilityService;
 use App\Services\Routes\RoutePreSaleFelEligibilityService;
 use App\Services\Routes\RoutePreSaleFelService;
+use App\Services\Fiscal\FiscalDocumentIntentService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -41,6 +43,7 @@ class RoutePreSaleAutomaticFelJob implements ShouldQueue
         RoutePreSaleFelService $fel,
         RoutePreSaleFelEligibilityService $eligibility,
         RoutePreSaleFelAvailabilityService $availability,
+        FiscalDocumentIntentService $intents,
     ): void
     {
         if (! config('fel.route_automation_enabled')) {
@@ -65,31 +68,25 @@ class RoutePreSaleAutomaticFelJob implements ShouldQueue
             return;
         }
 
-        $documentStatus = $sale->electronicDocument?->status ?? $sale->certification_status;
-        if ($documentStatus === 'certified') {
-            $this->updateEntry($preSale, $sale, 'certified');
+        $intent = $this->intentFor($sale);
+        if ($intent) {
+            if ($intent->status === FiscalDocumentIntent::CERTIFIED) {
+                $intent = $intents->finalize($intent);
+            }
 
-            return;
-        }
+            if ($this->syncIntentStatus($preSale, $sale, $intent)) {
+                return;
+            }
+        } elseif (in_array($sale->electronicDocument?->status ?? $sale->certification_status, ['certified', 'unknown', 'failed', 'pending'], true)) {
+            // Compatibility for historical sales that predate durable intents.
+            $legacyStatus = $sale->electronicDocument?->status ?? $sale->certification_status;
+            $this->updateEntry($preSale, $sale, match ($legacyStatus) {
+                'certified' => 'certified',
+                'unknown' => 'unknown',
+                'pending' => 'queued',
+                default => 'failed',
+            }, $sale->electronicDocument?->error_message);
 
-        if ($documentStatus === 'unknown') {
-            $this->updateEntry($preSale, $sale, 'unknown', $sale->electronicDocument?->error_message);
-            Log::warning('route_fel_auto.unknown', $this->context($preSale, $sale));
-
-            return;
-        }
-
-        if ($documentStatus === 'failed') {
-            $this->updateEntry($preSale, $sale, 'failed', $sale->electronicDocument?->error_message);
-            Log::warning('route_fel_auto.failed', [
-                ...$this->context($preSale, $sale),
-                'retry' => false,
-            ]);
-
-            return;
-        }
-
-        if ($documentStatus === 'pending') {
             return;
         }
 
@@ -124,17 +121,61 @@ class RoutePreSaleAutomaticFelJob implements ShouldQueue
 
         try {
             $fel->certify($preSale, $user, "route-auto-fel-{$preSale->id}");
-            $this->updateEntry($preSale, $sale, 'certified');
-            Log::info('route_fel_auto.certified', $this->context($preSale, $sale));
+            $intent = $this->intentFor($sale);
+            if ($intent) {
+                $this->syncIntentStatus($preSale, $sale, $intent);
+                Log::info("route_fel_auto.{$intent->status}", $this->context($preSale, $sale));
+            }
         } catch (Throwable $exception) {
-            $status = $sale->refresh()->electronicDocument?->status === 'unknown' ? 'unknown' : 'failed';
-            $message = $sale->electronicDocument?->error_message ?: 'No se pudo certificar FEL automáticamente.';
+            $intent = $this->intentFor($sale);
+            $status = $intent ? $this->dispatchStatus($intent) : 'failed';
+            $message = $intent?->last_reconciliation_error
+                ?: $intent?->last_finalization_error
+                ?: 'No se pudo certificar FEL automáticamente.';
             $this->updateEntry($preSale, $sale, $status, $message);
             Log::warning("route_fel_auto.{$status}", [
                 ...$this->context($preSale, $sale),
                 'error_class' => $exception::class,
             ]);
         }
+    }
+
+    private function intentFor(Sale $sale): ?FiscalDocumentIntent
+    {
+        return FiscalDocumentIntent::query()
+            ->where('business_id', $sale->business_id)
+            ->where('finalized_sale_id', $sale->id)
+            ->where('operation_type', 'certify_existing_sale')
+            ->latest('id')
+            ->first();
+    }
+
+    /** Returns true when the intent requires no provider call from this job. */
+    private function syncIntentStatus(PreSale $preSale, Sale $sale, FiscalDocumentIntent $intent): bool
+    {
+        $status = $this->dispatchStatus($intent);
+        $this->updateEntry($preSale, $sale, $status, $intent->last_reconciliation_error ?: $intent->last_finalization_error);
+
+        return in_array($intent->status, [
+            FiscalDocumentIntent::PENDING,
+            FiscalDocumentIntent::UNKNOWN,
+            FiscalDocumentIntent::CERTIFIED,
+            FiscalDocumentIntent::FINALIZED,
+            FiscalDocumentIntent::REJECTED,
+            FiscalDocumentIntent::RETRYABLE,
+        ], true);
+    }
+
+    private function dispatchStatus(FiscalDocumentIntent $intent): string
+    {
+        return match ($intent->status) {
+            FiscalDocumentIntent::FINALIZED, FiscalDocumentIntent::CERTIFIED => 'certified',
+            FiscalDocumentIntent::UNKNOWN => 'unknown',
+            FiscalDocumentIntent::PENDING => 'queued',
+            // The legacy delivery-batch contract has no rejected/retryable values.
+            FiscalDocumentIntent::REJECTED, FiscalDocumentIntent::RETRYABLE => 'failed',
+            default => 'failed',
+        };
     }
 
     private function updateEntry(PreSale $preSale, Sale $sale, string $status, ?string $errorMessage = null): void

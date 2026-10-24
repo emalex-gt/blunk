@@ -7,6 +7,7 @@ use App\Models\CustomerAccountMovement;
 use App\Models\CustomerCreditAccount;
 use App\Models\CustomerCreditPayment;
 use App\Models\CustomerCreditPaymentAllocation;
+use App\Models\FiscalDocumentIntent;
 use App\Models\Sale;
 use App\Models\User;
 use Illuminate\Database\QueryException;
@@ -47,7 +48,17 @@ class AccountsReceivable
     public static function assertCanCharge(Customer $customer, float $amount, ?int $branchId = null): CustomerCreditAccount
     {
         $account = self::accountFor($customer, $branchId, true);
-        $nextBalance = round((float) $account->current_balance + $amount, 2);
+        $activeHolds = (float) FiscalDocumentIntent::query()
+            ->where('business_id', $customer->business_id)
+            ->where('credit_customer_id', $customer->id)
+            ->whereIn('status', [
+                FiscalDocumentIntent::PENDING,
+                FiscalDocumentIntent::UNKNOWN,
+                FiscalDocumentIntent::CERTIFIED,
+                FiscalDocumentIntent::RETRYABLE,
+            ])
+            ->sum('credit_hold_amount');
+        $nextBalance = round((float) $account->current_balance + $activeHolds + $amount, 2);
 
         if ($account->is_blocked || ($account->credit_limit !== null && $nextBalance > (float) $account->credit_limit)) {
             throw ValidationException::withMessages([

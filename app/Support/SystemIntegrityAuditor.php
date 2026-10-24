@@ -415,6 +415,12 @@ class SystemIntegrityAuditor
             ->leftJoin('customers as c', 'c.id', '=', 's.customer_id')
             ->leftJoin('branches as b', 'b.id', '=', 's.branch_id')
             ->where('s.business_id', $businessId)
+            // Draft fiscal intents have no final financial or inventory
+            // effects yet, so they are not sales to be audited as such.
+            ->where(fn (Builder $q) => $q
+                ->where('s.status', 'completed')
+                ->orWhereNull('s.status')
+                ->orWhere('s.status', 'cancelled'))
             ->when($context['branch_id'], fn (Builder $q, $branch) => $q->where('s.branch_id', $branch))
             ->tap(fn (Builder $q) => $this->applyDates($q, 's.created_at', $context))
             ->select('s.*', DB::raw('COALESCE(items.item_count, 0) as item_count'), DB::raw('COALESCE(items.expected_total, 0) as expected_total'), DB::raw('COALESCE(cash.cash_in, 0) as cash_in'), DB::raw('COALESCE(cash.cash_cancel, 0) as cash_cancel'), DB::raw('COALESCE(refunds.refunded_cash, 0) as refunded_cash'), DB::raw('COALESCE(payments.cash_paid, 0) as cash_paid'), DB::raw('COALESCE(payments.held_route_cash, 0) as held_route_cash'), DB::raw('COALESCE(route_cash.cash_in, 0) as route_cash_in'), 'c.business_id as customer_business_id', 'b.business_id as branch_business_id')
@@ -1110,7 +1116,7 @@ class SystemIntegrityAuditor
             ->leftJoinSub($allocations, 'allocations', fn ($join) => $join->on('allocations.sale_id', '=', 's.id'))
             ->where('s.business_id', $businessId)
             ->where('s.is_credit_sale', true)
-            ->where('s.status', '!=', 'cancelled')
+            ->where(fn (Builder $q) => $q->where('s.status', 'completed')->orWhereNull('s.status'))
             ->when($context['branch_id'], fn (Builder $q, $branch) => $q->where('s.branch_id', $branch))
             ->tap(fn (Builder $q) => $this->applyDates($q, 's.created_at', $context))
             ->select('s.*', DB::raw('COALESCE(allocations.allocated, 0) as allocated'))

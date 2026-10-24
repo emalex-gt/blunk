@@ -68,6 +68,7 @@ class IdempotencyService
                         replayed: true,
                         resultId: (int) $record->result_id,
                         responsePayload: $record->response_payload ?? [],
+                        resultType: (string) $record->result_type,
                     );
                 }
 
@@ -97,10 +98,13 @@ class IdempotencyService
                 $result = $operation();
                 $resultId = is_array($result) ? (int) ($result['result_id'] ?? 0) : (int) $result;
                 $responsePayload = is_array($result) ? ($result['response_payload'] ?? []) : [];
+                $resolvedResultType = is_array($result) && filled($result['result_type'] ?? null)
+                    ? (string) $result['result_type']
+                    : $resultType;
 
                 $record->update([
                     'status' => self::STATUS_COMPLETED,
-                    'result_type' => $resultType,
+                    'result_type' => $resolvedResultType,
                     'result_id' => $resultId,
                     'response_payload' => $responsePayload,
                     'completed_at' => now(),
@@ -108,7 +112,7 @@ class IdempotencyService
                     'last_error' => null,
                 ]);
                 $this->log('idempotency.completed', $record, [
-                    'result_type' => $resultType,
+                    'result_type' => $resolvedResultType,
                     'result_id' => $resultId,
                 ]);
 
@@ -116,6 +120,7 @@ class IdempotencyService
                     replayed: false,
                     resultId: $resultId,
                     responsePayload: $responsePayload,
+                    resultType: $resolvedResultType,
                 );
             });
         } catch (IdempotencyConflictException $exception) {

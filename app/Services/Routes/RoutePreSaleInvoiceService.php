@@ -11,6 +11,7 @@ use App\Models\PreSaleItem;
 use App\Models\RoutePreSaleCollection;
 use App\Models\Product;
 use App\Models\Sale;
+use App\Models\SaleItem;
 use App\Models\StockMovement;
 use App\Models\StockReservation;
 use App\Models\TenantFelSetting;
@@ -18,6 +19,7 @@ use App\Models\TenantSetting;
 use App\Models\User;
 use App\Services\Fel\FelException;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
+use App\Services\Fiscal\FiscalDocumentIntentService;
 use App\Support\AccountsReceivable;
 use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
@@ -48,6 +50,11 @@ class RoutePreSaleInvoiceService
         $isCreditSale = ($data['payment_condition'] ?? 'paid') === 'credit';
         $isUnpaidRouteReceipt = (bool) ($data['route_internal_receipt'] ?? false) && ($data['payment_condition'] ?? 'paid') === 'unpaid';
         $skipPaymentPosting = (bool) ($data['skip_payment_posting'] ?? false);
+        $usesResilientFiscalIntent = $data['document_type'] === 'invoice'
+            && $business->country === 'GT'
+            && module_enabled('fel_gt', $business->id)
+            && (bool) $felSettings?->enabled
+            && (bool) $felSettings?->isConfigured();
         $failedFel = null;
 
         $this->assertDocumentIsAvailable(
@@ -81,15 +88,15 @@ class RoutePreSaleInvoiceService
             ->get(['id', 'product_id', 'picked_quantity', 'unit_price']);
 
         try {
-            return app(IdempotencyService::class)->run(
+            $result = app(IdempotencyService::class)->run(
                 (int) $preSale->business_id,
                 (int) $preSale->branch_id,
                 $user->id,
                 'route_pre_sale_invoice',
                 $data['idempotency_key'],
                 $this->idempotencyPayload($preSale, $data, $snapshotItems),
-                function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $isUnpaidRouteReceipt, $skipPaymentPosting, $stockDeductionTiming, $cashSession, &$failedFel) {
-                    return DB::transaction(function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $isUnpaidRouteReceipt, $skipPaymentPosting, $stockDeductionTiming, $cashSession, &$failedFel) {
+                function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $isUnpaidRouteReceipt, $skipPaymentPosting, $stockDeductionTiming, $cashSession, $usesResilientFiscalIntent, &$failedFel) {
+                    return DB::transaction(function () use ($preSale, $data, $user, $business, $settings, $felSettings, $isCreditSale, $isUnpaidRouteReceipt, $skipPaymentPosting, $stockDeductionTiming, $cashSession, $usesResilientFiscalIntent, &$failedFel) {
                         $lockedPreSale = PreSale::query()
                             ->where('business_id', $preSale->business_id)
                             ->whereKey($preSale->id)
@@ -260,6 +267,101 @@ class RoutePreSaleInvoiceService
                                 true,
                             ));
 
+                        if ($usesResilientFiscalIntent) {
+                            $sale = new Sale([
+                                'business_id' => $lockedPreSale->business_id,
+                                'branch_id' => $lockedPreSale->branch_id,
+                                'customer_id' => $customer?->id,
+                                ...$this->customerSnapshot($customer),
+                                'payment_method' => $isCreditSale ? 'credit' : ($isUnpaidRouteReceipt ? null : $data['payment_method']),
+                                'payment_status' => ($isCreditSale || $isUnpaidRouteReceipt) ? 'unpaid' : 'paid',
+                                'amount_paid' => 0,
+                                'credit_balance' => 0,
+                                'is_credit_sale' => $isCreditSale,
+                                'due_date' => $isCreditSale ? ($data['due_date'] ?? null) : null,
+                                'document_type' => 'invoice',
+                                'status' => 'fiscal_pending',
+                                'note' => $data['note'] ?? null,
+                                'created_by' => $user->id,
+                                'total' => $total,
+                                'subtotal_before_discount' => round($subtotal, 2),
+                                'discount_type' => $discountTotal > 0 ? 'fixed' : null,
+                                'discount_value' => $discountTotal,
+                                'discount_amount' => $discountTotal,
+                                'discount_reason' => $discountTotal > 0 ? 'Descuento de preventa' : null,
+                            ]);
+                            $sale->setRelation('business', $business);
+                            $sale->setRelation('branch', $lockedPreSale->branch);
+                            $sale->setRelation('customer', $customer);
+                            $sale->setRelation('items', collect($saleLines)->map(function (array $line) use ($sale) {
+                                $product = $line['product'];
+                                $unitCost = round((float) $product->cost_price, 4);
+
+                                $saleItem = new SaleItem([
+                                    'business_id' => $sale->business_id,
+                                    'product_id' => $product->id,
+                                    'product_name' => $product->name,
+                                    'quantity' => $line['quantity'],
+                                    'price_type_id' => $line['price_type_id'],
+                                    'unit_price' => $line['unit_price'],
+                                    'original_price' => $line['original_price'],
+                                    'price_source' => $line['manual_price'] ? PriceLists::SOURCE_MANUAL : PriceLists::SOURCE_PRICE_LIST,
+                                    'manual_price' => $line['manual_price'],
+                                    'unit_cost' => $unitCost,
+                                    'total_cost' => round($unitCost * $line['quantity'], 2),
+                                    'profit_amount' => round($line['line_total'] - ($unitCost * $line['quantity']), 2),
+                                    'total' => $line['line_total'],
+                                    'discount_amount' => $line['line_discount'],
+                                    'total_before_discount' => $line['line_subtotal'],
+                                    'total_after_discount' => $line['line_total'],
+                                ]);
+                                $saleItem->setRelation('product', $product);
+
+                                return $saleItem;
+                            }));
+
+                            $priorCollection = RoutePreSaleCollection::query()
+                                ->where('business_id', $lockedPreSale->business_id)
+                                ->where('branch_id', $lockedPreSale->branch_id)
+                                ->where('pre_sale_id', $lockedPreSale->id)
+                                ->whereIn('status', ['captured', 'linked'])
+                                ->lockForUpdate()
+                                ->first();
+
+                            $intent = app(FiscalDocumentIntentService::class)->createForRoutePreSaleInvoice(
+                                $sale,
+                                [
+                                    'environment' => $felSettings?->environment ?? 'test',
+                                    'cash_register_session_id' => $cashSession?->id,
+                                    'payments' => (! $isCreditSale && ! $isUnpaidRouteReceipt && ! $skipPaymentPosting)
+                                        ? [['method' => $data['payment_method'], 'amount' => $total]]
+                                        : [],
+                                    'route_pre_sale' => [
+                                        'pre_sale_id' => $lockedPreSale->id,
+                                        'route_work_day_id' => $lockedPreSale->route_work_day_id,
+                                        'route_visit_id' => $lockedPreSale->route_visit_id,
+                                        'stock_deduction_timing' => $stockDeductionTiming,
+                                        'route_internal_receipt' => (bool) ($data['route_internal_receipt'] ?? false),
+                                        'skip_payment_posting' => $skipPaymentPosting,
+                                        'prior_collection_id' => $priorCollection?->id,
+                                        'prior_collection_status' => $priorCollection?->status,
+                                        'items' => collect($saleLines)->map(fn (array $line) => [
+                                            'pre_sale_item_id' => $line['item']->id,
+                                            'product_id' => $line['product']->id,
+                                            'quantity' => $line['quantity'],
+                                        ])->values()->all(),
+                                    ],
+                                ],
+                                $data['idempotency_key'],
+                                $user->id,
+                            );
+
+                            return [
+                                'result_id' => $intent->id,
+                                'response_payload' => ['fiscal_document_intent_id' => $intent->id, 'pre_sale_id' => $lockedPreSale->id],
+                            ];
+                        }
+
                         $sale = Sale::query()->create([
                             'business_id' => $lockedPreSale->business_id,
                             'business_number' => BusinessCounter::next((int) $lockedPreSale->business_id, 'sales'),
@@ -426,6 +528,31 @@ class RoutePreSaleInvoiceService
                 },
                 'sale',
             );
+
+            if (! $usesResilientFiscalIntent) {
+                return $result;
+            }
+
+            $intent = \App\Models\FiscalDocumentIntent::query()
+                ->where('business_id', $business->id)
+                ->findOrFail($result->resultId);
+            $intent = app(FiscalDocumentIntentService::class)->certify($intent);
+
+            if ($intent->status === \App\Models\FiscalDocumentIntent::FINALIZED) {
+                $saleId = (int) $intent->finalized_sale_id;
+
+                return new IdempotencyResult($result->replayed, $saleId, [
+                    'sale_id' => $saleId,
+                    'pre_sale_id' => $preSale->id,
+                    'fiscal_document_intent_id' => $intent->id,
+                    'document_type' => 'invoice',
+                ]);
+            }
+
+            $message = $intent->status === \App\Models\FiscalDocumentIntent::REJECTED
+                ? 'Digifact rechazó explícitamente la factura FEL. La preventa continúa preparada.'
+                : 'La certificación FEL quedó en verificación. La preventa continúa preparada y Super Admin la conciliará.';
+            throw ValidationException::withMessages(['document_type' => $message]);
         } catch (FelException $exception) {
             if ($failedFel !== null) {
                 FelReconciliationRequest::query()->updateOrCreate(

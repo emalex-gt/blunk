@@ -153,6 +153,11 @@ class Sale extends Model
         return $this->hasMany(FelIncident::class);
     }
 
+    public function fiscalDocumentIntent(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(FiscalDocumentIntent::class, 'finalized_sale_id');
+    }
+
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');

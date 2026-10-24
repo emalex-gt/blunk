@@ -361,7 +361,7 @@ class PriceLists
             ->where('sales.business_id', $businessId)
             ->where('sales.customer_id', $customerId)
             ->where('sale_items.product_id', $productId)
-            ->where(fn ($query) => $query->where('sales.status', '!=', 'cancelled')->orWhereNull('sales.status'))
+            ->where(fn ($query) => $query->where('sales.status', 'completed')->orWhereNull('sales.status'))
             ->latest('sales.created_at')
             ->latest('sale_items.id')
             ->first();

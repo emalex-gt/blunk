@@ -14,6 +14,7 @@ use App\Models\CreditReceiptLineInvoice;
 use App\Models\Customer;
 use App\Models\ElectronicDocument;
 use App\Models\FelReconciliationRequest;
+use App\Models\FiscalDocumentIntent;
 use App\Models\StockMovement;
 use App\Models\TenantSetting;
 use App\Models\TenantFelSetting;
@@ -23,6 +24,7 @@ use App\Services\BranchAccessService;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Fel\Providers\Digifact\DigifactNit;
+use App\Services\Fiscal\FiscalDocumentIntentService;
 use App\Support\CashRegister;
 use App\Support\AccountsReceivable;
 use App\Support\BranchInventory;
@@ -421,6 +423,10 @@ class SaleController extends Controller
             $this->validateInvoiceConfiguration($business, $data['customer'] ?? null, $felSettings, $felModuleEnabled);
         }
 
+        $usesResilientFiscalIntent = $country === 'GT'
+            && $felModuleEnabled
+            && $data['document_type'] === 'invoice';
+
         if (! empty($data['discount']) && collect($data['items'])->contains(fn (array $item) => filled($item['credit_line_id'] ?? null))) {
             throw ValidationException::withMessages([
                 'discount' => 'No se puede aplicar descuento general al facturar productos a crédito.',
@@ -450,8 +456,8 @@ class SaleController extends Controller
                 'pos_sale',
                 $data['idempotency_key'],
                 $this->saleIdempotencyPayload($data, $activeBranch->id, $business->id, $request->user()->id),
-                function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
-            return DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
+                function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
+            return DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
             $businessId = currentBusinessId();
             $branch = $activeBranch;
             $openSession = $isCreditSale ? null : CashRegister::requireOpenSession(
@@ -475,24 +481,28 @@ class SaleController extends Controller
                 }
             }
 
-            $sale = Sale::create([
+            $saleAttributes = [
                 'business_id' => $businessId,
-                'business_number' => BusinessCounter::next($businessId, 'sales'),
+                'business_number' => $usesResilientFiscalIntent ? null : BusinessCounter::next($businessId, 'sales'),
                 'branch_id' => $branch->id,
                 'customer_id' => $customer?->id,
                 ...$customerSnapshot,
                 'payment_method' => $isCreditSale ? 'credit' : $data['payments'][0]['method'],
-                'payment_status' => $isCreditSale ? 'unpaid' : 'paid',
+                'payment_status' => $usesResilientFiscalIntent ? 'pending' : ($isCreditSale ? 'unpaid' : 'paid'),
                 'amount_paid' => 0,
                 'credit_balance' => 0,
                 'is_credit_sale' => $isCreditSale,
                 'due_date' => $isCreditSale ? ($data['due_date'] ?? null) : null,
                 'document_type' => $data['document_type'],
-                'status' => 'completed',
+                'status' => $usesResilientFiscalIntent ? 'fiscal_pending' : 'completed',
                 'note' => $data['note'] ?? null,
                 'created_by' => $request->user()->id,
                 'total' => 0,
-            ]);
+            ];
+            $sale = $usesResilientFiscalIntent ? new Sale($saleAttributes) : Sale::create($saleAttributes);
+            $sale->setRelation('business', $business);
+            $sale->setRelation('branch', $branch);
+            $sale->setRelation('customer', $customer);
 
             $subtotalBeforeDiscount = 0;
             $saleLines = [];
@@ -590,7 +600,7 @@ class SaleController extends Controller
                 && $isCfInvoice
                 && round($total, 2) >= 2500;
 
-            if (($data['document_type'] ?? null) === 'invoice') {
+            if (($data['document_type'] ?? null) === 'invoice' && ! $usesResilientFiscalIntent) {
                 Log::info('GT FEL CF limit validation before certification', [
                     'business_id' => $businessId,
                     'sale_total' => round($total, 2),
@@ -621,16 +631,19 @@ class SaleController extends Controller
                 AccountsReceivable::assertCanCharge($customer, $total, $branch->id);
             }
 
-            $sale->update([
+            $totals = [
                 'total' => $total,
                 'subtotal_before_discount' => round($subtotalBeforeDiscount, 2),
                 'discount_type' => $discount['type'],
                 'discount_value' => $discount['value'],
                 'discount_amount' => $discount['amount'],
                 'discount_reason' => $discount['reason'],
-                'amount_paid' => $isCreditSale ? 0 : $total,
-                'credit_balance' => $isCreditSale ? $total : 0,
-            ]);
+                'amount_paid' => $usesResilientFiscalIntent ? 0 : ($isCreditSale ? 0 : $total),
+                'credit_balance' => $usesResilientFiscalIntent ? 0 : ($isCreditSale ? $total : 0),
+            ];
+            $usesResilientFiscalIntent ? $sale->fill($totals) : $sale->update($totals);
+
+            $intentItems = [];
 
             foreach ($saleLines as $index => $line) {
                 /** @var Product $product */
@@ -640,7 +653,7 @@ class SaleController extends Controller
                 $unitCost = round((float) $product->cost_price, 4);
                 $totalCost = round($unitCost * (int) $line['quantity'], 2);
 
-                $saleItem = $sale->items()->create([
+                $saleItemAttributes = [
                     'business_id' => $businessId,
                     'product_id' => $product->id,
                     'product_name' => $product->name,
@@ -657,8 +670,16 @@ class SaleController extends Controller
                     'discount_amount' => $lineDiscount,
                     'total_before_discount' => $line['line_total'],
                     'total_after_discount' => $lineTotalAfterDiscount,
-                ]);
+                ];
+                if ($usesResilientFiscalIntent) {
+                    $saleItem = new \App\Models\SaleItem($saleItemAttributes);
+                    $saleItem->setRelation('product', $product);
+                    $intentItems[] = $saleItem;
+                } else {
+                    $saleItem = $sale->items()->create($saleItemAttributes);
+                }
 
+                if (! $usesResilientFiscalIntent) {
                 [$previousStock, $newStock] = BranchInventory::decrease($product, $branch->id, $line['quantity']);
 
                 StockMovement::create([
@@ -689,8 +710,10 @@ class SaleController extends Controller
                         'amount' => $lineTotalAfterDiscount,
                     ]);
                 }
+                }
             }
 
+            if (! $usesResilientFiscalIntent) {
             foreach ($data['payments'] ?? [] as $payment) {
                 $details = $this->paymentDetails($payment['method'], $payment['details'] ?? []);
 
@@ -714,8 +737,9 @@ class SaleController extends Controller
                     $request->user()->id,
                 );
             }
+            }
 
-            if (($data['document_type'] ?? null) === 'invoice') {
+            if (($data['document_type'] ?? null) === 'invoice' && ! $usesResilientFiscalIntent) {
                 $document = ElectronicDocument::query()->create([
                     'business_id' => $businessId,
                     'sale_id' => $sale->id,
@@ -736,7 +760,7 @@ class SaleController extends Controller
                 AccountsReceivable::createCharge($sale->refresh(), $request->user()->id);
             }
 
-            if ($isCreditSale && ($data['document_type'] ?? null) === 'invoice') {
+            if ($isCreditSale && ($data['document_type'] ?? null) === 'invoice' && ! $usesResilientFiscalIntent) {
                 $invoiceService = app(DigifactInvoiceService::class);
                 $sale = $sale
                     ->refresh()
@@ -790,6 +814,29 @@ class SaleController extends Controller
                 }
             }
 
+            if ($usesResilientFiscalIntent) {
+                $sale->setRelation('items', collect($intentItems));
+                $intent = app(FiscalDocumentIntentService::class)->createForDraftSale(
+                    $sale,
+                    [
+                        'payments' => $data['payments'] ?? [],
+                        'cash_register_session_id' => $openSession?->id,
+                        'environment' => $felSettings?->environment ?? 'test',
+                        'credit_line_ids' => collect($data['items'] ?? [])
+                            ->mapWithKeys(fn (array $item) => [(int) $item['product_id'] => $item['credit_line_id'] ?? null])
+                            ->all(),
+                    ],
+                    $data['idempotency_key'],
+                    $request->user()->id,
+                );
+
+                return [
+                    'result_id' => $intent->id,
+                    'result_type' => 'fiscal_document_intent',
+                    'response_payload' => ['fiscal_intent_id' => $intent->id, 'document_type' => 'invoice'],
+                ];
+            }
+
             return [
                 'result_id' => $sale->id,
                 'response_payload' => [
@@ -814,11 +861,76 @@ class SaleController extends Controller
 
         Log::info('Sale transaction completed', [
             'business_id' => $business->id,
-            'sale_id' => $saleId,
+            'result_id' => $saleId,
+            'result_type' => $idempotencyResult->resultType,
             'document_type' => $data['document_type'],
             'idempotency_replayed' => $idempotencyResult->replayed,
             'sale_transaction_ms' => $saleTransactionMs,
         ]);
+
+        if ($idempotencyResult->resultType === 'fiscal_document_intent') {
+            $intent = FiscalDocumentIntent::query()
+                ->where('business_id', $business->id)
+                ->findOrFail($saleId);
+            $intentService = app(FiscalDocumentIntentService::class);
+
+            if ($intent->status === FiscalDocumentIntent::PENDING) {
+                $intent = $intentService->certify($intent);
+            } elseif ($intent->status === FiscalDocumentIntent::CERTIFIED) {
+                $intent = $intentService->finalize($intent);
+            }
+
+            if ($intent->status === FiscalDocumentIntent::UNKNOWN) {
+                return redirect()->route('sales.create')
+                    ->with('warning', 'La certificación FEL está en verificación. Puedes entregar el comprobante provisional no fiscal.')
+                    ->with('fiscal_intent_id', $intent->id)
+                    ->with('provisional_receipt_url', route('fiscal-intents.provisional-receipt', $intent));
+            }
+
+            if ($intent->status === FiscalDocumentIntent::REJECTED) {
+                throw ValidationException::withMessages([
+                    'document_type' => 'Digifact rechazó explícitamente la certificación. No se registraron efectos de venta.',
+                ]);
+            }
+
+            if ($intent->status !== FiscalDocumentIntent::FINALIZED) {
+                throw ValidationException::withMessages([
+                    'document_type' => 'La intención fiscal requiere revisión de Super Admin antes de finalizar la venta.',
+                ]);
+            }
+
+            if (! $idempotencyResult->replayed) {
+                OperationDrafts::markConverted($data['draft_id'] ?? null, 'pos_sale', 'sale', $intent->finalized_sale_id, $request);
+            }
+
+            $sale = $intent->finalizedSale()->firstOrFail();
+            $document = $sale->electronicDocument;
+            $message = 'Factura FEL certificada correctamente.';
+            if (filled($document?->series) || filled($document?->number)) {
+                $message .= ' Serie '.($document?->series ?: '-').' Número '.($document?->number ?: '-').'.';
+            }
+
+            return redirect()->route('sales.create')
+                ->with('success', $message)
+                ->with('fel_success_message', $message)
+                ->with('fel_print_sale_id', $sale->id)
+                ->with('fel_print_url', URL::temporarySignedRoute('sales.fel-document', now()->addMinutes(10), ['sale' => $sale->id]));
+        }
+
+        if ($idempotencyResult->resultType !== 'sale') {
+            throw ValidationException::withMessages([
+                'idempotency_key' => 'La operación idempotente tiene un tipo de resultado no compatible.',
+            ]);
+        }
+
+        if ($idempotencyResult->replayed && ! Sale::query()
+            ->where('business_id', $business->id)
+            ->whereKey($saleId)
+            ->exists()) {
+            throw ValidationException::withMessages([
+                'idempotency_key' => 'La venta asociada a esta operación ya no está disponible.',
+            ]);
+        }
 
         if (($data['document_type'] ?? null) === 'invoice' && $idempotencyResult->replayed) {
             $certifiedDocument = ElectronicDocument::query()
@@ -1152,6 +1264,16 @@ class SaleController extends Controller
         $this->ensureSaleBelongsToCurrentBusiness($sale);
         $this->authorizeSaleBranch($request, $sale);
         abort_unless($this->userCanCancelSale($request, $sale), 403);
+
+        $sale->loadMissing(['electronicDocument', 'fiscalDocumentIntent']);
+        $fiscalStatus = $sale->fiscalDocumentIntent?->status
+            ?: $sale->certification_status
+            ?: $sale->electronicDocument?->status;
+        if (in_array($fiscalStatus, [FiscalDocumentIntent::PENDING, FiscalDocumentIntent::UNKNOWN, 'pending', 'unknown'], true)) {
+            throw ValidationException::withMessages([
+                'sale' => 'No se puede anular una operación mientras su estado fiscal está pendiente o desconocido.',
+            ]);
+        }
 
         $data = $request->validate([
             'reason' => ['required', 'string', 'min:3', 'max:500'],
