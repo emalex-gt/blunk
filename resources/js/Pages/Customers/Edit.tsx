@@ -259,28 +259,6 @@ export default function Edit({ customer }: { customer: Customer }) {
 
                         </label>
 
-                        <label className="block text-sm font-medium text-slate-700 md:col-span-2">
-
-                            Referencia de ubicación
-
-                            <textarea
-
-                                value={form.data.address_reference}
-
-                                onChange={(event) => form.setData('address_reference', event.target.value)}
-
-                                rows={2}
-
-                                className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
-
-                            />
-
-                            <span className="mt-1 block text-xs text-slate-500">Indicaciones, punto de referencia o instrucciones de llegada.</span>
-
-                            {form.errors.address_reference && <span className="mt-1 block text-xs text-red-600">{form.errors.address_reference}</span>}
-
-                        </label>
-
                         <label className="block text-sm font-medium text-slate-700">
 
                             Nombre fiscal
@@ -497,6 +475,28 @@ export default function Edit({ customer }: { customer: Customer }) {
                             />
 
                             {form.errors.address && <span className="mt-1 block text-xs text-red-600">{form.errors.address}</span>}
+
+                        </label>
+
+                        <label className="block text-sm font-medium text-slate-700 md:col-span-2">
+
+                            Referencia de ubicación
+
+                            <textarea
+
+                                value={form.data.address_reference}
+
+                                onChange={(event) => form.setData('address_reference', event.target.value)}
+
+                                rows={2}
+
+                                className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
+
+                            />
+
+                            <span className="mt-1 block text-xs text-slate-500">Indicaciones prácticas para encontrar el negocio o punto de entrega.</span>
+
+                            {form.errors.address_reference && <span className="mt-1 block text-xs text-red-600">{form.errors.address_reference}</span>}
 
                         </label>
 
