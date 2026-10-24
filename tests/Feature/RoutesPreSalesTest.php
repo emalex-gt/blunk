@@ -103,6 +103,8 @@ class RoutesPreSalesTest extends TestCase
             $this->assertStringContainsString('disabled={customerForm.processing || nitLookupLoading || !customerIdentityReady}', $source);
             $this->assertStringContainsString("name: '',", $source);
             $this->assertStringContainsString("address: customerForm.data.address || customer.address || '',", $source);
+            $this->assertStringContainsString('address_reference: customerForm.data.address_reference || customer.address_reference || \'\'', $source);
+            $this->assertStringContainsString('Referencia de ubicación', $source);
         }
 
         $this->assertStringContainsString("const editCustomerIdentityReady = editCustomerForm.data.doc_type === 'CF' || Boolean(editCustomerForm.data.tax_lookup_verified_at);", $adminSource);
@@ -163,6 +165,7 @@ class RoutesPreSalesTest extends TestCase
                 'doc_number' => 'CF',
                 'phone' => '5555-1111',
                 'address' => 'Zona 1',
+                'address_reference' => 'Frente al parque',
                 'notes' => 'Frente al parque',
             ])
             ->assertSessionHasNoErrors()
@@ -181,6 +184,7 @@ class RoutesPreSalesTest extends TestCase
             'notes' => 'Frente al parque',
             'is_active' => true,
         ]);
+        $this->assertSame('Frente al parque', $customer->refresh()->address_reference);
     }
 
     public function test_route_customer_creation_persists_fiscal_commercial_and_contact_names(): void

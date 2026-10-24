@@ -4,7 +4,7 @@ import GuatemalaIdentityTypeSelector from '@/Components/GuatemalaIdentityTypeSel
 import { Head, Link, router, useForm } from '@inertiajs/react';
 import { FormEvent, useState } from 'react';
 
-type Customer = { id: number; name: string; commercial_name: string | null; contact_name: string | null; doc_type: string | null; doc_number: string | null; address: string | null; department: string | null; municipality: string | null; phone: string | null; name_locked: boolean; tax_lookup_verified_at: string | null };
+type Customer = { id: number; name: string; commercial_name: string | null; contact_name: string | null; doc_type: string | null; doc_number: string | null; address: string | null; address_reference: string | null; department: string | null; municipality: string | null; phone: string | null; name_locked: boolean; tax_lookup_verified_at: string | null };
 type Assignment = { id: number; customer: Customer; visit_order: number | null; notes: string | null; is_active: boolean };
 type Zone = { id: number; name: string; branch?: { name: string; department: string | null; municipality: string | null }; assigned_user?: { name: string } | null };
 
@@ -23,6 +23,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
         tax_lookup_verified_at: null as string | null,
         phone: '',
         address: '',
+        address_reference: '',
         department: branchDepartment,
         municipality: branchMunicipality,
         notes: '',
@@ -36,6 +37,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
         tax_lookup_verified_at: null as string | null,
         phone: '',
         address: '',
+        address_reference: '',
         department: '',
         municipality: '',
         notes: '',
@@ -86,6 +88,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                 : null,
             phone: assignment.customer.phone ?? '',
             address: assignment.customer.address ?? '',
+            address_reference: assignment.customer.address_reference ?? '',
             department: assignment.customer.department ?? '',
             municipality: assignment.customer.municipality ?? '',
             notes: assignment.notes ?? '',
@@ -142,6 +145,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                 doc_number: customer.doc_number ?? payload.doc_number ?? docNumber,
                 phone: customerForm.data.phone || customer.phone || '',
                 address: customerForm.data.address || customer.address || '',
+                address_reference: customerForm.data.address_reference || customer.address_reference || '',
                 department: customerForm.data.department || customer.department || '',
                 municipality: customerForm.data.municipality || customer.municipality || '',
                 tax_lookup_verified_at: customer.tax_lookup_verified_at ?? payload.tax_lookup_verified_at ?? null,
@@ -191,6 +195,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                 doc_number: customer.doc_number ?? payload.doc_number ?? docNumber,
                 phone: editCustomerForm.data.phone || customer.phone || '',
                 address: editCustomerForm.data.address || customer.address || '',
+                address_reference: editCustomerForm.data.address_reference || customer.address_reference || '',
                 department: editCustomerForm.data.department || customer.department || '',
                 municipality: editCustomerForm.data.municipality || customer.municipality || '',
                 tax_lookup_verified_at: customer.tax_lookup_verified_at ?? payload.tax_lookup_verified_at ?? null,
@@ -334,6 +339,16 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                     className="mt-1 w-full rounded-lg border-slate-200 text-sm"
                                 />
                             </label>
+                            <label className="text-sm font-medium text-slate-700 md:col-span-2">
+                                Referencia de ubicación
+                                <textarea
+                                    value={customerForm.data.address_reference}
+                                    onChange={(event) => customerForm.setData('address_reference', event.target.value)}
+                                    disabled={!customerIdentityReady}
+                                    className="mt-1 w-full rounded-lg border-slate-200 text-sm"
+                                    rows={2}
+                                />
+                            </label>
                             <GuatemalaLocationSelects
                                 department={customerForm.data.department}
                                 municipality={customerForm.data.municipality}
@@ -404,6 +419,7 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                             <div className="text-xs font-semibold text-slate-500">{[assignment.customer.department, assignment.customer.municipality].filter(Boolean).join(', ')}</div>
                                         ) : null}
                                         {assignment.customer.address ?? '-'}
+                                        {assignment.customer.address_reference && <div className="mt-1 text-xs text-slate-500">Ref.: {assignment.customer.address_reference}</div>}
                                     </td>
                                     <td className="px-4 py-3">{assignment.customer.phone ?? '-'}</td>
                                     <td className="px-4 py-3">{assignment.is_active ? 'Activo' : 'Inactivo'}</td>
@@ -477,6 +493,10 @@ export default function Customers({ zone, assignments, availableCustomers, filte
                                                     <label className="text-sm font-medium text-slate-700">
                                                         Dirección
                                                         <input value={editCustomerForm.data.address} disabled={!editCustomerIdentityReady} onChange={(event) => editCustomerForm.setData('address', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" />
+                                                    </label>
+                                                    <label className="text-sm font-medium text-slate-700 md:col-span-2">
+                                                        Referencia de ubicación
+                                                        <textarea value={editCustomerForm.data.address_reference} disabled={!editCustomerIdentityReady} onChange={(event) => editCustomerForm.setData('address_reference', event.target.value)} className="mt-1 w-full rounded-lg border-slate-200 text-sm" rows={2} />
                                                     </label>
                                                     <GuatemalaLocationSelects
                                                         department={editCustomerForm.data.department}

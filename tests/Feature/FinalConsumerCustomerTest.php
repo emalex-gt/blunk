@@ -48,6 +48,43 @@ class FinalConsumerCustomerTest extends TestCase
         $this->assertFalse(CustomerIdentity::isGenericFinalConsumer('CF', 'Consumidor Final', ['phone' => '5555-1234']));
     }
 
+    public function test_final_consumer_with_an_address_reference_is_not_reused_as_the_generic_customer(): void
+    {
+        $business = $this->business();
+        $namedCf = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Consumidor Final',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'commercial_name' => null,
+            'contact_name' => null,
+            'address' => null,
+            'address_reference' => 'Frente al mercado',
+            'phone' => null,
+            'postal_code' => null,
+            'department' => null,
+            'municipality' => null,
+            'country' => 'GT',
+            'is_final_consumer' => true,
+        ]);
+
+        $this->assertFalse(CustomerIdentity::isGenericFinalConsumer('CF', 'Consumidor Final', [
+            'commercial_name' => '',
+            'contact_name' => '',
+            'address' => '',
+            'address_reference' => 'Frente al mercado',
+            'phone' => '',
+            'postal_code' => '',
+            'department' => '',
+            'municipality' => '',
+        ]));
+
+        $generic = Customer::getOrCreateGenericFinalConsumer($business);
+
+        $this->assertNotSame($namedCf->id, $generic->id);
+        $this->assertSame(2, Customer::query()->where('business_id', $business->id)->count());
+    }
+
     public function test_database_rejects_duplicate_real_tax_id_after_normalization(): void
     {
         $business = $this->business();

@@ -23,6 +23,7 @@ class Customer extends Model
         'normalized_tax_id',
         'tax_condition',
         'address',
+        'address_reference',
         'postal_code',
         'municipality',
         'department',
@@ -80,7 +81,7 @@ class Customer extends Model
                 ->filter(fn (self $customer) => CustomerIdentity::isGenericFinalConsumer(
                     $customer->normalized_tax_id,
                     $customer->name,
-                    $customer->only(['commercial_name', 'contact_name', 'address', 'phone', 'postal_code', 'department', 'municipality']),
+                    $customer->only(['commercial_name', 'contact_name', 'address', 'address_reference', 'phone', 'postal_code', 'department', 'municipality']),
                 ));
 
             if ($candidates->isNotEmpty()) {
@@ -98,6 +99,7 @@ class Customer extends Model
                 'doc_number' => 'CF',
                 'tax_condition' => null,
                 'address' => null,
+                'address_reference' => null,
                 'postal_code' => null,
                 'municipality' => null,
                 'department' => null,

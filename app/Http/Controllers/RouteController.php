@@ -101,7 +101,7 @@ class RouteController extends Controller
             'assignments' => RouteZoneCustomer::query()
                 ->where('business_id', $businessId)
                 ->where('route_zone_id', $zone->id)
-                ->with('customer:id,name,commercial_name,contact_name,doc_type,doc_number,address,department,municipality,phone,name_locked,tax_lookup_verified_at')
+                ->with('customer:id,name,commercial_name,contact_name,doc_type,doc_number,address,address_reference,department,municipality,phone,name_locked,tax_lookup_verified_at')
                 ->orderByRaw('visit_order IS NULL, visit_order')
                 ->orderBy('id')
                 ->get(),
@@ -120,7 +120,7 @@ class RouteController extends Controller
                 })
                 ->orderBy('name')
                 ->limit(25)
-                ->get(['id', 'name', 'commercial_name', 'doc_type', 'doc_number', 'address', 'department', 'municipality', 'phone']),
+                ->get(['id', 'name', 'commercial_name', 'doc_type', 'doc_number', 'address', 'address_reference', 'department', 'municipality', 'phone']),
             'filters' => ['search' => $search],
         ]);
     }
@@ -640,7 +640,7 @@ class RouteController extends Controller
             'convertedSale:id,business_id,business_number,document_type,total,status,payment_status,amount_paid,payment_method,certification_status,fel_uuid,electronic_document_id',
             'convertedSale.electronicDocument:id,sale_id,status,error_message,uuid,certification_date',
             'convertedSale.routeOperationReturn:id,sale_id,status,reason,goods_received_at,completed_at',
-            'customer:id,name,commercial_name,contact_name,doc_number,address,phone',
+            'customer:id,name,commercial_name,contact_name,doc_number,address,address_reference,phone',
             'workDay:id,work_date,status,started_at,closed_at',
             'visit:id,status,visit_order,no_sale_reason,no_sale_note,started_at,finished_at',
             'items.product:id,business_id,name,code,barcode,image_url',
@@ -836,7 +836,7 @@ class RouteController extends Controller
             'branch:id,name',
             'zone:id,name',
             'seller:id,name',
-            'customer:id,name,commercial_name,contact_name,doc_number,address,phone',
+            'customer:id,name,commercial_name,contact_name,doc_number,address,address_reference,phone',
             'items.product:id,business_id,name,code,barcode,image_url',
         ]);
 
@@ -1040,7 +1040,7 @@ class RouteController extends Controller
             'visits' => RouteVisit::query()
                 ->where('route_work_day_id', $workDay->id)
                 ->with([
-                    'customer:id,name,commercial_name,contact_name,doc_number,address,department,municipality,phone',
+                    'customer:id,name,commercial_name,contact_name,doc_number,address,address_reference,department,municipality,phone',
                     'preSale' => fn ($query) => $query
                         ->select('id', 'route_visit_id', 'status', 'total')
                         ->where('status', '!=', 'cancelled')
@@ -1129,7 +1129,7 @@ class RouteController extends Controller
         }
 
         return Inertia::render('Routes/Mobile/Visit', [
-            'visit' => $visit->load(['customer:id,name,commercial_name,contact_name,doc_number,address,department,municipality,phone', 'workDay:id,status,work_date', 'zone:id,name']),
+            'visit' => $visit->load(['customer:id,name,commercial_name,contact_name,doc_number,address,address_reference,department,municipality,phone', 'workDay:id,status,work_date', 'zone:id,name']),
             'preSale' => $preSale,
             'products' => $search !== '' ? $this->preSaleProductResults($visit, $search) : collect(),
             'filters' => ['search' => $search],
@@ -1178,6 +1178,7 @@ class RouteController extends Controller
                     'doc_number' => $customer->doc_number,
                     'phone' => $customer->phone,
                     'address' => $customer->address,
+                    'address_reference' => $customer->address_reference,
                     'department' => $customer->department,
                     'municipality' => $customer->municipality,
                     'tax_lookup_verified_at' => $customer->tax_lookup_verified_at?->toIso8601String(),
@@ -2012,6 +2013,7 @@ class RouteController extends Controller
             'doc_number' => ['nullable', 'string', 'max:50'],
             'phone' => ['nullable', 'string', 'max:50'],
             'address' => ['nullable', 'string', 'max:255'],
+            'address_reference' => ['nullable', 'string', 'max:1000'],
             'department' => ['nullable', 'string', 'max:100'],
             'municipality' => ['nullable', 'string', 'max:100'],
             'notes' => ['nullable', 'string'],
@@ -2072,6 +2074,7 @@ class RouteController extends Controller
 
         $data['phone'] = trim((string) ($data['phone'] ?? ''));
         $data['address'] = trim((string) ($data['address'] ?? ''));
+        $data['address_reference'] = trim((string) ($data['address_reference'] ?? ''));
         $data['department'] = trim((string) ($data['department'] ?? ''));
         $data['municipality'] = trim((string) ($data['municipality'] ?? ''));
         $data['notes'] = trim((string) ($data['notes'] ?? ''));
@@ -2144,6 +2147,7 @@ class RouteController extends Controller
                 'doc_type' => $docType,
                 'doc_number' => $docNumber,
                 'address' => $data['address'] !== '' ? $data['address'] : null,
+                'address_reference' => $data['address_reference'] !== '' ? $data['address_reference'] : null,
                 'department' => $data['department'] !== '' ? $data['department'] : null,
                 'municipality' => $data['municipality'] !== '' ? $data['municipality'] : null,
                 'phone' => $data['phone'] !== '' ? $data['phone'] : null,
@@ -2166,6 +2170,7 @@ class RouteController extends Controller
                 'doc_type' => $docType,
                 'doc_number' => $docNumber,
                 'address' => $data['address'] !== '' ? $data['address'] : null,
+                'address_reference' => $data['address_reference'] !== '' ? $data['address_reference'] : null,
                 'department' => $data['department'] !== '' ? $data['department'] : null,
                 'municipality' => $data['municipality'] !== '' ? $data['municipality'] : null,
                 'phone' => $data['phone'] !== '' ? $data['phone'] : null,
@@ -2198,7 +2203,7 @@ class RouteController extends Controller
                     $payload['tax_lookup_payload'] = $data['tax_lookup_payload'];
                 }
 
-                foreach (['address', 'department', 'municipality', 'phone'] as $field) {
+                foreach (['address', 'address_reference', 'department', 'municipality', 'phone'] as $field) {
                     if (
                         in_array($field, ['department', 'municipality'], true)
                         && $data[$field] !== ''
@@ -2230,6 +2235,7 @@ class RouteController extends Controller
             'doc_type' => $docType,
             'doc_number' => $isFinalConsumer ? 'CF' : $docNumber,
             'address' => $data['address'] !== '' ? $data['address'] : null,
+            'address_reference' => $data['address_reference'] !== '' ? $data['address_reference'] : null,
             'department' => $data['department'] !== '' ? $data['department'] : null,
             'municipality' => $data['municipality'] !== '' ? $data['municipality'] : null,
             'phone' => $data['phone'] !== '' ? $data['phone'] : null,
@@ -2249,6 +2255,7 @@ class RouteController extends Controller
             'commercial_name' => $data['commercial_name'] !== '' ? $data['commercial_name'] : null,
             'contact_name' => $data['contact_name'] !== '' ? $data['contact_name'] : null,
             'address' => $data['address'] !== '' ? $data['address'] : null,
+            'address_reference' => $data['address_reference'] !== '' ? $data['address_reference'] : null,
             'department' => $data['department'] !== '' ? $data['department'] : null,
             'municipality' => $data['municipality'] !== '' ? $data['municipality'] : null,
             'phone' => $data['phone'] !== '' ? $data['phone'] : null,

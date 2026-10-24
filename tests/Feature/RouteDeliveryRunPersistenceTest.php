@@ -14,5 +14,6 @@ class RouteDeliveryRunPersistenceTest extends TestCase
         $this->assertTrue(Schema::hasTable('route_delivery_stop_revisions'));
         $this->assertTrue(Schema::hasColumn('route_delivery_collections', 'route_delivery_stop_id'));
         $this->assertTrue(Schema::hasColumn('route_delivery_collections', 'delivery_origin'));
+        $this->assertTrue(Schema::hasColumn('route_delivery_stops', 'customer_address_reference_snapshot'));
     }
 }

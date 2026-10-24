@@ -9,6 +9,7 @@ use App\Services\Fel\FelIdentityLookupException;
 use App\Support\CustomerIdentity;
 use App\Support\GuatemalaCustomerIdentityPolicy;
 use App\Support\GuatemalaCuiCustomerResolver;
+use App\Support\GuatemalaLocations;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\TextEncoding;
 use Illuminate\Http\JsonResponse;
@@ -76,13 +77,14 @@ class CustomerController extends Controller
                     ->orWhere('doc_number', 'ilike', "%{$search}%")
                     ->orWhere('phone', 'ilike', "%{$search}%")
                     ->orWhere('address', 'ilike', "%{$search}%")
+                    ->orWhere('address_reference', 'ilike', "%{$search}%")
                     ->orWhere('department', 'ilike', "%{$search}%")
                     ->orWhere('municipality', 'ilike', "%{$search}%");
             })
             ->with('creditAccount:id,customer_id,credit_limit,current_balance,is_blocked')
             ->orderBy('name')
             ->limit(10)
-            ->get(['id', 'name', 'commercial_name', 'contact_name', 'doc_type', 'doc_number', 'tax_condition', 'address', 'postal_code', 'department', 'municipality', 'phone', 'country', 'is_final_consumer', 'name_locked', 'tax_lookup_verified_at']);
+            ->get(['id', 'name', 'commercial_name', 'contact_name', 'doc_type', 'doc_number', 'tax_condition', 'address', 'address_reference', 'postal_code', 'department', 'municipality', 'phone', 'country', 'is_final_consumer', 'name_locked', 'tax_lookup_verified_at']);
 
         return response()->json([
             'customers' => $customers->map(fn (Customer $customer) => $this->customerPayload($customer))->values(),
@@ -108,6 +110,7 @@ class CustomerController extends Controller
         ]);
 
         $payload = $this->generalCustomerPayload($data);
+        $this->validateGuatemalaLocation($customer, $payload);
 
         if ($this->isCfCustomer($customer)) {
             $payload['name'] = trim((string) ($data['name'] ?? $customer->name));
@@ -179,9 +182,9 @@ class CustomerController extends Controller
 
         if ($docType === CustomerIdentity::NIT) {
             $addressParts = GuatemalaNitCustomerResolver::extractAddressParts(is_array($lookup['raw'] ?? null) ? $lookup['raw'] : null);
-            $payload['address'] = $addressParts['address'] ?: $customer->address;
-            $payload['department'] = $addressParts['department'] ?: $customer->department;
-            $payload['municipality'] = $addressParts['municipality'] ?: $customer->municipality;
+            $payload['address'] = $customer->address ?: $addressParts['address'];
+            $payload['department'] = $customer->department ?: $addressParts['department'];
+            $payload['municipality'] = $customer->municipality ?: $addressParts['municipality'];
         }
 
         $customer->forceFill($payload)->save();
@@ -447,6 +450,7 @@ class CustomerController extends Controller
             'doc_number' => $customer->doc_number,
             'tax_condition' => $customer->tax_condition,
             'address' => $customer->address,
+            'address_reference' => $customer->address_reference,
             'postal_code' => $customer->postal_code,
             'department' => $customer->department,
             'municipality' => $customer->municipality,
@@ -511,6 +515,7 @@ class CustomerController extends Controller
                 ->orWhere('doc_number', 'ilike', "%{$search}%")
                 ->orWhere('phone', 'ilike', "%{$search}%")
                 ->orWhere('address', 'ilike', "%{$search}%")
+                ->orWhere('address_reference', 'ilike', "%{$search}%")
                 ->orWhere('department', 'ilike', "%{$search}%")
                 ->orWhere('municipality', 'ilike', "%{$search}%");
 
@@ -551,6 +556,7 @@ class CustomerController extends Controller
             'contact_name' => ['nullable', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:50'],
             'address' => ['nullable', 'string', 'max:255'],
+            'address_reference' => ['nullable', 'string', 'max:1000'],
             'postal_code' => ['nullable', 'string', 'max:20'],
             'department' => ['nullable', 'string', 'max:100'],
             'municipality' => ['nullable', 'string', 'max:100'],
@@ -564,10 +570,27 @@ class CustomerController extends Controller
             'contact_name' => $this->nullableTrim($data['contact_name'] ?? null),
             'phone' => $this->nullableTrim($data['phone'] ?? null),
             'address' => $this->nullableTrim($data['address'] ?? null),
+            'address_reference' => $this->nullableTrim($data['address_reference'] ?? null),
             'postal_code' => $this->nullableTrim($data['postal_code'] ?? null),
             'department' => $this->nullableTrim($data['department'] ?? null),
             'municipality' => $this->nullableTrim($data['municipality'] ?? null),
         ];
+    }
+
+    private function validateGuatemalaLocation(Customer $customer, array $payload): void
+    {
+        if (strtoupper((string) $customer->country) !== 'GT'
+            || (blank($payload['department']) && blank($payload['municipality']))) {
+            return;
+        }
+
+        if (! GuatemalaLocations::isValidDepartment($payload['department'])) {
+            throw ValidationException::withMessages(['department' => 'Selecciona un departamento válido.']);
+        }
+
+        if (! GuatemalaLocations::isValidMunicipality($payload['department'], $payload['municipality'])) {
+            throw ValidationException::withMessages(['municipality' => 'Selecciona un municipio válido para el departamento.']);
+        }
     }
 
     private function rejectFiscalIdentityChanges(Request $request, Customer $customer): void

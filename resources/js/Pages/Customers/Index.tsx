@@ -11,6 +11,7 @@ type Customer = {
     doc_number: string | null;
     phone: string | null;
     address: string | null;
+    address_reference: string | null;
     department: string | null;
     municipality: string | null;
     fiscal_status: string;
@@ -177,6 +178,7 @@ export default function Index({ customers, filters }: { customers: Paginated<Cus
                                         <td className="px-4 py-3 text-slate-700">
                                             {[customer.department, customer.municipality].filter(Boolean).join(', ') || '-'}
                                             {customer.address && <div className="mt-0.5 max-w-64 text-xs text-slate-500">{customer.address}</div>}
+                                            {customer.address_reference && <div className="mt-0.5 max-w-64 text-xs text-slate-500">Ref.: {customer.address_reference}</div>}
                                         </td>
                                         <td className="px-4 py-3">
                                             <span className={`rounded-full px-2 py-1 text-xs font-semibold ${fiscalStatusClass(customer)}`}>

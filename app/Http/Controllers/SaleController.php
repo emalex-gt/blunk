@@ -129,7 +129,7 @@ class SaleController extends Controller
                 ->with('creditAccount:id,customer_id,credit_limit,current_balance,is_blocked')
                 ->latest()
                 ->limit(50)
-                ->get(['id', 'name', 'commercial_name', 'doc_type', 'doc_number', 'tax_condition', 'address', 'department', 'municipality', 'phone', 'country', 'is_final_consumer', 'name_locked', 'tax_lookup_verified_at']),
+                ->get(['id', 'name', 'commercial_name', 'doc_type', 'doc_number', 'tax_condition', 'address', 'address_reference', 'department', 'municipality', 'phone', 'country', 'is_final_consumer', 'name_locked', 'tax_lookup_verified_at']),
         ]);
     }
 
@@ -331,6 +331,7 @@ class SaleController extends Controller
             'customer.doc_number' => ['nullable', 'string', 'max:50'],
             'customer.tax_condition' => ['nullable', 'string', 'max:100'],
             'customer.address' => ['nullable', 'string', 'max:255'],
+            'customer.address_reference' => ['nullable', 'string', 'max:1000'],
             'customer.department' => ['nullable', 'string', 'max:100'],
             'customer.municipality' => ['nullable', 'string', 'max:100'],
             'customer.phone' => ['nullable', 'string', 'max:50'],
@@ -1138,12 +1139,14 @@ class SaleController extends Controller
                     'doc_type' => $sale->customer_doc_type ?: $sale->customer->doc_type,
                     'doc_number' => $sale->customer_doc_number ?: $sale->customer->doc_number,
                     'address' => $sale->customer_address ?: $sale->customer->address,
+                    'address_reference' => $sale->customer_address_reference ?: $sale->customer->address_reference,
                     'phone' => $sale->customer_phone ?: $sale->customer->phone,
                 ] : ($sale->customer_name ? [
                     'name' => $sale->customer_name,
                     'doc_type' => $sale->customer_doc_type,
                     'doc_number' => $sale->customer_doc_number,
                     'address' => $sale->customer_address,
+                    'address_reference' => $sale->customer_address_reference,
                     'phone' => $sale->customer_phone,
                 ] : null),
                 'items' => $sale->items->map(fn ($item) => [
@@ -2057,6 +2060,7 @@ class SaleController extends Controller
                     ?? '')
                 : $this->normalizeDocument($document),
             'customer_address' => trim((string) ($customerData['address'] ?? '')) ?: $customer?->address,
+            'customer_address_reference' => trim((string) ($customerData['address_reference'] ?? '')) ?: $customer?->address_reference,
             'customer_postal_code' => $customer?->postal_code,
             'customer_municipality' => trim((string) ($customerData['municipality'] ?? '')) ?: $customer?->municipality,
             'customer_department' => trim((string) ($customerData['department'] ?? '')) ?: $customer?->department,
@@ -2108,6 +2112,7 @@ class SaleController extends Controller
                 'doc_number' => 'CF',
                 'tax_condition' => null,
                 'address' => $customerData['address'] ?? null,
+                'address_reference' => $customerData['address_reference'] ?? null,
                 'department' => $department !== '' ? $department : null,
                 'municipality' => $municipality !== '' ? $municipality : null,
                 'phone' => $customerData['phone'] ?? null,
@@ -2227,6 +2232,7 @@ class SaleController extends Controller
                 'doc_number' => $docNumber,
                 'tax_condition' => $customerData['tax_condition'] ?? null,
                 'address' => $customerData['address'] ?? null,
+                'address_reference' => $customerData['address_reference'] ?? null,
                 'department' => $department !== '' ? $department : null,
                 'municipality' => $municipality !== '' ? $municipality : null,
                 'phone' => $customerData['phone'] ?? null,
@@ -2253,6 +2259,10 @@ class SaleController extends Controller
                 ? true
                 : false,
         ];
+
+        if (array_key_exists('address_reference', $customerData)) {
+            $payload['address_reference'] = trim((string) $customerData['address_reference']) ?: null;
+        }
 
         if ($customerCountry === 'GT' && in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)) {
             $payload['tax_lookup_payload'] = $identity['tax_lookup_payload'];

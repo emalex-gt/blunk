@@ -69,6 +69,7 @@ export default function Visit({
             contact_name: string | null;
             doc_number: string | null;
             address: string | null;
+            address_reference: string | null;
             department: string | null;
             municipality: string | null;
             phone: string | null;
@@ -145,6 +146,7 @@ export default function Visit({
         contact_name: visit.customer.contact_name ?? '',
         phone: visit.customer.phone ?? '',
         address: visit.customer.address ?? '',
+        address_reference: visit.customer.address_reference ?? '',
         department: visit.customer.department ?? '',
         municipality: visit.customer.municipality ?? '',
         notes: '',
@@ -475,6 +477,10 @@ export default function Visit({
                             <label className="block text-sm font-medium text-slate-700">
                                 Dirección
                                 <input value={customerForm.data.address} onChange={(event) => customerForm.setData('address', event.target.value)} className="mt-1 w-full rounded-xl border-slate-200 text-base" />
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                                Referencia de ubicación
+                                <textarea value={customerForm.data.address_reference} onChange={(event) => customerForm.setData('address_reference', event.target.value)} className="mt-1 w-full rounded-xl border-slate-200 text-base" rows={2} />
                             </label>
                             <GuatemalaLocationSelects
                                 department={customerForm.data.department}

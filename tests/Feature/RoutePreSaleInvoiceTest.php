@@ -70,6 +70,7 @@ class RoutePreSaleInvoiceTest extends TestCase
         $this->assertSame(100.0, (float) $line->unit_price);
         $this->assertSame(190.0, (float) $sale->total);
         $this->assertSame(190.0, (float) $line->total);
+        $this->assertSame('Frente al mercado', $sale->customer_address_reference);
         $this->assertSame(8.0, (float) ProductBranchStock::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('product_id', $product->id)->value('stock'));
         $this->assertDatabaseHas('stock_movements', ['business_id' => $business->id, 'product_id' => $product->id, 'type' => 'sale', 'quantity' => -2]);
         $this->assertDatabaseHas('cash_movements', ['business_id' => $business->id, 'reference_type' => 'sale', 'reference_id' => $sale->id, 'amount' => 190]);
@@ -790,6 +791,7 @@ class RoutePreSaleInvoiceTest extends TestCase
             'doc_type' => 'NIT',
             'doc_number' => (string) random_int(1000000, 9999999),
             'address' => 'Huehuetenango',
+            'address_reference' => 'Frente al mercado',
             'country' => 'GT',
             'name_locked' => true,
             'tax_lookup_verified_at' => now(),

@@ -12,7 +12,7 @@ type Visit = {
     no_sale_reason: string | null;
     no_sale_note: string | null;
     visit_order: number | null;
-    customer: { name: string; commercial_name: string | null; contact_name: string | null; doc_number: string | null; address: string | null; department: string | null; municipality: string | null; phone: string | null };
+    customer: { name: string; commercial_name: string | null; contact_name: string | null; doc_number: string | null; address: string | null; address_reference: string | null; department: string | null; municipality: string | null; phone: string | null };
     pre_sale?: { id: number; status: string; total: string; items_count?: number } | null;
 };
 
@@ -61,6 +61,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
         tax_lookup_verified_at: null as string | null,
         phone: '',
         address: '',
+        address_reference: '',
         department: branchDepartment,
         municipality: branchMunicipality,
         notes: '',
@@ -136,6 +137,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                 doc_number: customer.doc_number ?? payload.doc_number ?? docNumber,
                 phone: customerForm.data.phone || customer.phone || '',
                 address: customerForm.data.address || customer.address || '',
+                address_reference: customerForm.data.address_reference || customer.address_reference || '',
                 department: customerForm.data.department || customer.department || '',
                 municipality: customerForm.data.municipality || customer.municipality || '',
                 tax_lookup_verified_at: customer.tax_lookup_verified_at ?? payload.tax_lookup_verified_at ?? null,
@@ -329,6 +331,16 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                     onChange={(event) => customerForm.setData('address', event.target.value)}
                                     disabled={!customerIdentityReady}
                                     className="mt-1 w-full rounded-xl border-slate-200 text-base"
+                                />
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                                Referencia de ubicación
+                                <textarea
+                                    value={customerForm.data.address_reference}
+                                    onChange={(event) => customerForm.setData('address_reference', event.target.value)}
+                                    disabled={!customerIdentityReady}
+                                    className="mt-1 w-full rounded-xl border-slate-200 text-base"
+                                    rows={2}
                                 />
                             </label>
                             <GuatemalaLocationSelects

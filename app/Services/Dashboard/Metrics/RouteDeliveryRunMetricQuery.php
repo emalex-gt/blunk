@@ -62,6 +62,7 @@ final class RouteDeliveryRunMetricQuery implements DashboardMetricQuery
                 'position' => $nextStop->position,
                 'customer_name' => $nextStop->customer_name_snapshot,
                 'customer_address' => $nextStop->customer_address_snapshot,
+                'customer_address_reference' => $nextStop->customer_address_reference_snapshot,
                 'customer_phone' => $nextStop->customer_phone_snapshot,
                 'sale_number' => $nextStop->sale?->business_number,
                 'sale_total' => $nextStop->sale ? number_format((float) $nextStop->sale->total, 2, '.', '') : null,

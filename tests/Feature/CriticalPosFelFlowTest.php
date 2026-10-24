@@ -1819,6 +1819,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringContainsString("name: result.customer?.name || result.name || ''", $source);
         $this->assertStringContainsString('name_locked: Boolean(result.customer?.name_locked ?? result.name)', $source);
         $this->assertStringContainsString('address: result.customer?.address || result.address || data.customer.address', $source);
+        $this->assertStringContainsString('address_reference: result.customer?.address_reference || data.customer.address_reference', $source);
         $this->assertStringContainsString('department: result.customer?.department || data.customer.department', $source);
         $this->assertStringContainsString('municipality: result.customer?.municipality || data.customer.municipality', $source);
         $this->assertStringContainsString('Consultar {guatemalaDocumentLabel}', $source);
@@ -1932,6 +1933,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringNotContainsString('!customerSearchTerm || data.customer.consumidor_final || data.customer.id', $source);
         $this->assertStringContainsString('if (!docNumber || country !== \'GT\' || ![\'NIT\', \'CUI\'].includes(docType))', $source);
         $this->assertStringContainsString('id: customer.id,', $source);
+        $this->assertStringContainsString('address_reference: customer.address_reference ?? \'\'', $source);
         $this->assertStringContainsString("doc_type: customer.doc_type ?? (country === 'AR' ? 'DNI' : 'NIT')", $source);
     }
 

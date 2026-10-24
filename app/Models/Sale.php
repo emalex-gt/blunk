@@ -17,6 +17,7 @@ class Sale extends Model
         'customer_doc_type',
         'customer_doc_number',
         'customer_address',
+        'customer_address_reference',
         'customer_postal_code',
         'customer_municipality',
         'customer_department',

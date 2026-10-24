@@ -25,6 +25,8 @@ type Customer = {
 
     address: string | null;
 
+    address_reference: string | null;
+
     postal_code: string | null;
 
     department: string | null;
@@ -66,6 +68,8 @@ export default function Edit({ customer }: { customer: Customer }) {
         phone: customer.phone ?? '',
 
         address: customer.address ?? '',
+
+        address_reference: customer.address_reference ?? '',
 
         postal_code: customer.postal_code ?? '',
 
@@ -252,6 +256,28 @@ export default function Edit({ customer }: { customer: Customer }) {
                             </span>
 
                             {(refreshForm.errors.doc_number) && <span className="mt-1 block text-xs text-red-600">{refreshForm.errors.doc_number}</span>}
+
+                        </label>
+
+                        <label className="block text-sm font-medium text-slate-700 md:col-span-2">
+
+                            Referencia de ubicación
+
+                            <textarea
+
+                                value={form.data.address_reference}
+
+                                onChange={(event) => form.setData('address_reference', event.target.value)}
+
+                                rows={2}
+
+                                className="mt-1 block w-full rounded-xl border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
+
+                            />
+
+                            <span className="mt-1 block text-xs text-slate-500">Indicaciones, punto de referencia o instrucciones de llegada.</span>
+
+                            {form.errors.address_reference && <span className="mt-1 block text-xs text-red-600">{form.errors.address_reference}</span>}
 
                         </label>
 

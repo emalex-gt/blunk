@@ -676,6 +676,7 @@ class RoutePreSaleInvoiceService
             'customer_doc_type' => $customer?->doc_type,
             'customer_doc_number' => $this->normalizedDocument($customer?->doc_number),
             'customer_address' => $customer?->address,
+            'customer_address_reference' => $customer?->address_reference,
             'customer_postal_code' => $customer?->postal_code,
             'customer_municipality' => $customer?->municipality,
             'customer_department' => $customer?->department,

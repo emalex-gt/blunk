@@ -453,6 +453,7 @@ class CustomerManagementTest extends TestCase
             'doc_number' => '1234567890123',
             'country' => 'GT',
             'address' => 'Zona 1',
+            'address_reference' => 'Frente al parque central',
             'department' => 'Guatemala',
             'municipality' => 'Guatemala',
         ]);
@@ -476,6 +477,7 @@ class CustomerManagementTest extends TestCase
         $this->assertSame('1234567890123', $customer->doc_number);
         $this->assertSame('Nombre verificado CUI', $customer->name);
         $this->assertSame('Zona 1', $customer->address);
+        $this->assertSame('Frente al parque central', $customer->address_reference);
         $this->assertSame('Guatemala', $customer->department);
         $this->assertSame('Guatemala', $customer->municipality);
         $this->assertTrue((bool) $customer->name_locked);

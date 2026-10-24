@@ -92,6 +92,7 @@ type Customer = {
     doc_number: string | null;
     tax_condition: string | null;
     address: string | null;
+    address_reference: string | null;
     department: string | null;
     municipality: string | null;
     phone: string | null;
@@ -115,6 +116,7 @@ type CustomerForm = {
     name: string;
     commercial_name: string;
     address: string;
+    address_reference: string;
     department: string;
     municipality: string;
     phone: string;
@@ -283,6 +285,7 @@ function emptyCustomer(country: string, defaults: Partial<Pick<CustomerForm, 'de
         name: country === 'GT' ? 'Consumidor Final' : '',
         commercial_name: '',
         address: '',
+        address_reference: '',
         department: defaults.department ?? '',
         municipality: defaults.municipality ?? '',
         phone: '',
@@ -366,6 +369,7 @@ function isMeaningfulCustomer(customer: CustomerForm) {
         customer.name.trim() ||
         customer.commercial_name.trim() ||
         customer.address.trim() ||
+        customer.address_reference.trim() ||
         customer.department.trim() ||
         customer.municipality.trim() ||
         customer.phone.trim(),
@@ -1116,7 +1120,7 @@ export default function POS({
             data.customer.commercial_name,
             data.customer.name,
         ].join(' ').trim();
-    }, [country, data.customer.address, data.customer.commercial_name, data.customer.consumidor_final, data.customer.doc_number, data.customer.doc_type, data.customer.name, data.customer.phone]);
+    }, [country, data.customer.address, data.customer.address_reference, data.customer.commercial_name, data.customer.consumidor_final, data.customer.doc_number, data.customer.doc_type, data.customer.name, data.customer.phone]);
 
     const isPristineGenericFinalConsumer = useMemo(() => (
         country === 'GT' &&
@@ -1177,7 +1181,7 @@ export default function POS({
 
         return sourceCustomers
             .filter((customer) =>
-                [customer.commercial_name, customer.name, customer.doc_number, customer.phone, customer.address, customer.department, customer.municipality]
+                [customer.commercial_name, customer.name, customer.doc_number, customer.phone, customer.address, customer.address_reference, customer.department, customer.municipality]
                     .filter(Boolean)
                     .some((field) => field!.toLowerCase().includes(value)),
             )
@@ -1640,6 +1644,7 @@ export default function POS({
             name: customer.name,
             commercial_name: customer.commercial_name ?? '',
             address: customer.address ?? '',
+            address_reference: customer.address_reference ?? '',
             department: customer.department ?? '',
             municipality: customer.municipality ?? '',
             phone: customer.phone ?? '',
@@ -1706,6 +1711,7 @@ export default function POS({
                 name: result.customer?.name || result.name || '',
                 commercial_name: data.customer.commercial_name,
                 address: result.customer?.address || result.address || data.customer.address,
+                address_reference: result.customer?.address_reference || data.customer.address_reference,
                 department: result.customer?.department || data.customer.department,
                 municipality: result.customer?.municipality || data.customer.municipality,
                 phone: result.customer?.phone || result.phone || data.customer.phone,
@@ -2818,7 +2824,7 @@ export default function POS({
     const customerLocationSummary = [data.customer.department, data.customer.municipality]
         .filter(Boolean)
         .join(', ');
-    const customerDetailSummary = [data.customer.address, data.customer.phone]
+    const customerDetailSummary = [data.customer.address, data.customer.address_reference, data.customer.phone]
         .filter(Boolean)
         .join(' · ');
 
@@ -3008,6 +3014,12 @@ export default function POS({
                                                     className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                 />
                                                 <input
+                                                    value={data.customer.address_reference}
+                                                    onChange={(event) => setCustomerField('address_reference', event.target.value)}
+                                                    placeholder="Referencia de ubicación"
+                                                    className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+                                                />
+                                                <input
                                                     value={data.customer.phone}
                                                     onChange={(event) => setCustomerField('phone', event.target.value)}
                                                     placeholder="Teléfono"
@@ -3086,6 +3098,12 @@ export default function POS({
                                                         value={data.customer.address}
                                                         onChange={(event) => setCustomerField('address', event.target.value)}
                                                         placeholder="Dirección"
+                                                        className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+                                                    />
+                                                    <input
+                                                        value={data.customer.address_reference}
+                                                        onChange={(event) => setCustomerField('address_reference', event.target.value)}
+                                                        placeholder="Referencia de ubicación"
                                                         className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                     />
                                                     <input
@@ -3181,6 +3199,12 @@ export default function POS({
                                                 value={data.customer.address}
                                                 onChange={(event) => setCustomerField('address', event.target.value)}
                                                 placeholder="Dirección"
+                                                className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+                                            />
+                                            <input
+                                                value={data.customer.address_reference}
+                                                onChange={(event) => setCustomerField('address_reference', event.target.value)}
+                                                placeholder="Referencia de ubicación"
                                                 className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                             />
                                             <input

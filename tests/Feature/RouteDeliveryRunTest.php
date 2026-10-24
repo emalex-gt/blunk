@@ -67,6 +67,18 @@ class RouteDeliveryRunTest extends TestCase
         }
     }
 
+    public function test_delivery_stop_snapshots_the_customer_address_reference(): void
+    {
+        [$manager, $deliveryUser, $entries] = $this->inAppEntries();
+        $sale = $entries[0]->sale;
+        $sale->customer_address_reference = 'Portón verde, frente a la escuela';
+        $sale->save();
+
+        $run = app(RouteDeliveryRunAssignmentService::class)->createDraft($manager, $deliveryUser, [$entries[0]->id]);
+
+        $this->assertSame('Portón verde, frente a la escuela', $run->stops()->sole()->customer_address_reference_snapshot);
+    }
+
     public function test_in_app_return_http_preserves_stop_and_exposes_return_in_detail(): void
     {
         [$manager, $deliveryUser, $entries] = $this->inAppEntries();

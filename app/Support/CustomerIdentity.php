@@ -71,7 +71,7 @@ final class CustomerIdentity
             return false;
         }
 
-        foreach (['commercial_name', 'contact_name', 'address', 'phone', 'postal_code', 'department', 'municipality'] as $field) {
+        foreach (['commercial_name', 'contact_name', 'address', 'address_reference', 'phone', 'postal_code', 'department', 'municipality'] as $field) {
             if (filled($payload[$field] ?? null)) {
                 return false;
             }
