@@ -33,6 +33,7 @@ use App\Http\Controllers\RoutePreSaleFelController;
 use App\Http\Controllers\RoutePreSaleInvoiceController;
 use App\Http\Controllers\RouteGlobalOperationsController;
 use App\Http\Controllers\SaleController;
+use App\Http\Controllers\QuotationController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\TenantUserController;
 use App\Http\Controllers\SuperAdmin\DashboardController as SuperAdminDashboardController;
@@ -164,6 +165,11 @@ Route::middleware('auth')->group(function () {
             ->middleware(['module:pos', 'module:fel_gt', 'permission:pos.view'])
             ->name('sales.fel.prewarm-token');
         Route::post('/sales', [SaleController::class, 'store'])->middleware(['module:pos', 'permission:pos.sell'])->name('sales.store');
+        Route::get('/quotations', [QuotationController::class, 'index'])->middleware(['module:pos', 'permission:quotations.view'])->name('quotations.index');
+        Route::post('/quotations', [QuotationController::class, 'store'])->middleware(['module:pos', 'permission:quotations.create'])->name('quotations.store');
+        Route::get('/quotations/{quotation}', [QuotationController::class, 'show'])->middleware(['module:pos', 'permission:quotations.view'])->name('quotations.show');
+        Route::get('/quotations/{quotation}/print/{format}', [QuotationController::class, 'print'])->middleware(['module:pos', 'permission:quotations.print'])->name('quotations.print');
+        Route::post('/quotations/{quotation}/cancel', [QuotationController::class, 'cancel'])->middleware(['module:pos', 'permission:quotations.cancel'])->name('quotations.cancel');
         Route::get('/sales/cancelled', fn () => redirect()->route('reports.sales', ['status' => 'cancelled']))
             ->middleware(['module:reports', 'permission:reports.sales.view'])
             ->name('sales.cancelled');

@@ -749,6 +749,11 @@ export default function POS({
     const [recentProductIds, setRecentProductIds] = useState<number[]>([]);
     const [hasHeldSale, setHasHeldSale] = useState(false);
     const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+    const [showQuotationModal, setShowQuotationModal] = useState(false);
+    const [quotationValidUntil, setQuotationValidUntil] = useState('');
+    const [quotationNote, setQuotationNote] = useState('');
+    const [quotationSaving, setQuotationSaving] = useState(false);
+    const [quotationError, setQuotationError] = useState('');
     const [splitPayment, setSplitPayment] = useState(false);
     const [mainPaymentMethod, setMainPaymentMethod] = useState('cash');
     const [paymentCondition, setPaymentCondition] = useState<'paid' | 'credit'>('paid');
@@ -2238,6 +2243,17 @@ export default function POS({
         setSplitPayment(false);
         setPayments([paymentLine(mainPaymentMethod, total.toFixed(2))]);
         setShowCheckoutModal(true);
+    }
+
+    function saveQuotation() {
+        if (cart.length === 0 || !quotationValidUntil || quotationSaving || !validateCartQuantities() || !validateCartPrices() || !validateDiscount()) return;
+        setQuotationError('');
+        setQuotationSaving(true);
+        router.post(route('quotations.store'), { branch_id: activeBranchId, customer: data.customer, items: cart.map((item) => ({ product_id: item.product.id, quantity: Number(item.quantity), price_type_id: item.price_type_id, unit_price: Number(item.unit_price), price_source: item.price_source, manual_price: item.manual_price })), discount, valid_until: quotationValidUntil, note: quotationNote }, {
+            preserveScroll: true,
+            onError: (errors) => setQuotationError(Object.values(errors)[0] ?? 'No se pudo guardar la cotización.'),
+            onFinish: () => setQuotationSaving(false),
+        });
     }
 
     function submitSale() {
@@ -3747,6 +3763,7 @@ export default function POS({
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : (processing ? t('pos.finalizing') : t('pos.finalize_sale'))}
                             </button>
+                            {pageProps.enabled_modules?.includes('pos') && (pageProps.auth?.user?.is_super_admin || pageProps.auth?.permissions?.includes('quotations.create')) && <button type="button" onClick={() => setShowQuotationModal(true)} disabled={cart.length === 0 || processing || hasInvalidCartQuantities} className="mt-2 h-11 w-full rounded-xl border border-orange-300 bg-white text-sm font-semibold text-orange-700 disabled:opacity-50">Guardar cotización</button>}
                         </footer>
                     </form>
                 </div>
@@ -4278,6 +4295,8 @@ export default function POS({
                     </div>
                 </div>
             )}
+
+            {showQuotationModal && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 p-4"><div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl"><h2 className="text-xl font-semibold">Guardar cotización</h2><p className="mt-1 text-sm text-slate-600">{customerDisplayName} · {formatCurrency(total, country)}</p>{quotationError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">{quotationError}</p>}<label className="mt-4 block text-sm font-medium">Válida hasta<input type="date" min={new Date().toISOString().slice(0, 10)} value={quotationValidUntil} onChange={e => setQuotationValidUntil(e.target.value)} className="mt-1 block w-full rounded-xl border-slate-200" /></label><label className="mt-3 block text-sm font-medium">Observaciones<textarea value={quotationNote} onChange={e => setQuotationNote(e.target.value)} rows={3} className="mt-1 block w-full rounded-xl border-slate-200" /></label><div className="mt-5 flex justify-end gap-2"><button onClick={() => { setShowQuotationModal(false); setQuotationError(''); }} className="rounded-xl px-4 py-2">Cancelar</button><button disabled={!quotationValidUntil || quotationSaving} onClick={saveQuotation} className="rounded-xl bg-orange-600 px-4 py-2 font-semibold text-white">{quotationSaving ? 'Guardando...' : 'Guardar cotización'}</button></div></div></div>}
 
             {restoreDraft && (
                 <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">

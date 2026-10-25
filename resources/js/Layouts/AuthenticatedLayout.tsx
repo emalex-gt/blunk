@@ -11,7 +11,7 @@ type NavItem = {
     active: boolean;
 };
 
-type DropdownKey = 'management' | 'reports' | 'settings';
+type DropdownKey = 'sales' | 'management' | 'reports' | 'settings';
 
 type BranchOption = {
     id: number;
@@ -120,6 +120,11 @@ export default function Authenticated({
         hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Jornadas cerradas', href: route('routes.work-days.closed'), active: route().current('routes.work-days.*') } : null,
     ].filter(Boolean) as NavItem[];
 
+    const salesItems: NavItem[] = [
+        hasModule('pos') && can('sales.view') ? { label: 'Ventas', href: route('sales.index'), active: route().current('sales.index') || route().current('sales.show') } : null,
+        hasModule('pos') && can('quotations.view') ? { label: 'Cotizaciones', href: route('quotations.index'), active: route().current('quotations.*') } : null,
+    ].filter(Boolean) as NavItem[];
+
     const reportItems: NavItem[] = [
         hasModule('reports') && can('reports.sales.view') ? { label: 'Ventas', href: route('reports.sales'), active: route().current('reports.sales') } : null,
         hasModule('reports') && can('reports.inventory.view') ? { label: 'Inventario', href: route('reports.inventory'), active: route().current('reports.inventory') } : null,
@@ -201,6 +206,16 @@ export default function Authenticated({
                                             href: route('sales.create'),
                                             active: route().current('sales.create'),
                                         }}
+                                    />
+                                )}
+                                {salesItems.length > 0 && (
+                                    <TopNavDropdown
+                                        id="sales"
+                                        label="Ventas"
+                                        active={salesItems.some((item) => item.active)}
+                                        items={salesItems}
+                                        openDropdown={openDropdown}
+                                        setOpenDropdown={setOpenDropdown}
                                     />
                                 )}
                                 {managementItems.length > 0 && (
@@ -348,6 +363,17 @@ export default function Authenticated({
                             POS
                         </ResponsiveNavLink>
                         )}
+
+                        {salesItems.length > 0 && (
+                            <div className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                                Ventas
+                            </div>
+                        )}
+                        {salesItems.map((item) => (
+                            <ResponsiveNavLink key={item.label} href={item.href} active={item.active}>
+                                {item.label}
+                            </ResponsiveNavLink>
+                        ))}
 
                         {managementItems.length > 0 && (
                             <div className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">

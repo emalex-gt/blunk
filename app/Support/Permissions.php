@@ -18,6 +18,11 @@ class Permissions
     public const SALES_CANCEL = 'sales.cancel';
     public const SALES_PRINT = 'sales.print';
     public const SALES_DISCOUNT_APPLY = 'sales.discount.apply';
+    public const QUOTATIONS_VIEW = 'quotations.view';
+    public const QUOTATIONS_CREATE = 'quotations.create';
+    public const QUOTATIONS_CONVERT = 'quotations.convert';
+    public const QUOTATIONS_CANCEL = 'quotations.cancel';
+    public const QUOTATIONS_PRINT = 'quotations.print';
 
     public const PURCHASES_VIEW = 'purchases.view';
     public const PURCHASES_CREATE = 'purchases.create';
@@ -162,6 +167,11 @@ class Permissions
             self::SALES_CANCEL => ['name' => 'Anular ventas', 'group' => 'Ventas'],
             self::SALES_PRINT => ['name' => 'Imprimir ventas', 'group' => 'Ventas'],
             self::SALES_DISCOUNT_APPLY => ['name' => 'Aplicar descuento general', 'group' => 'Ventas'],
+            self::QUOTATIONS_VIEW => ['name' => 'Ver cotizaciones', 'group' => 'Cotizaciones'],
+            self::QUOTATIONS_CREATE => ['name' => 'Crear cotizaciones', 'group' => 'Cotizaciones'],
+            self::QUOTATIONS_CONVERT => ['name' => 'Convertir cotizaciones', 'group' => 'Cotizaciones'],
+            self::QUOTATIONS_CANCEL => ['name' => 'Anular cotizaciones', 'group' => 'Cotizaciones'],
+            self::QUOTATIONS_PRINT => ['name' => 'Imprimir cotizaciones', 'group' => 'Cotizaciones'],
             self::PURCHASES_VIEW => ['name' => 'Ver compras', 'group' => 'Compras'],
             self::PURCHASES_CREATE => ['name' => 'Crear compras', 'group' => 'Compras'],
             self::PURCHASES_CANCEL => ['name' => 'Anular compras', 'group' => 'Compras'],
@@ -304,6 +314,9 @@ class Permissions
             'cashier' => [
                 self::POS_VIEW,
                 self::POS_SELL,
+                self::QUOTATIONS_VIEW,
+                self::QUOTATIONS_CREATE,
+                self::QUOTATIONS_PRINT,
                 self::SALES_VIEW,
                 self::SALES_PRINT,
                 self::CUSTOMERS_VIEW,
