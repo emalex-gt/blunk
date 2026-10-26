@@ -23,6 +23,7 @@
         <strong>{{ $company['name'] ?? $business->name }}</strong>
         @if(!empty($company['address']))<div>{{ $company['address'] }}</div>@endif
         @if(!empty($company['phone']))<div>{{ $company['phone'] }}</div>@endif
+        @if($quotation->branch)<div>Sucursal: {{ $quotation->branch->name }}@if($quotation->branch->code) ({{ $quotation->branch->code }})@endif</div>@endif
         <h1>COTIZACIÓN</h1>
     </header>
     @if($quotation->status === \App\Models\Quotation::CANCELLED)<div class="cancelled">COTIZACIÓN ANULADA</div>@endif

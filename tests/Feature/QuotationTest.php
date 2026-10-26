@@ -222,16 +222,19 @@ class QuotationTest extends TestCase
     public function test_print_routes_are_available_in_ticket_and_document_formats_and_are_tenant_scoped(): void
     {
         [$business, $user, $product] = $this->tenant();
+        BranchInventory::defaultBranch($business->id)->update(['name' => 'Sucursal Central', 'code' => 'CENTRAL']);
         $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
         $quotation = Quotation::query()->sole();
 
         $this->actingAs($user)->get(route('quotations.print', ['quotation' => $quotation, 'format' => 'ticket']))
             ->assertOk()
             ->assertSee('Cotización sujeta a disponibilidad de existencias')
-            ->assertSee('no constituye factura ni comprobante fiscal');
+            ->assertSee('no constituye factura ni comprobante fiscal')
+            ->assertSee('Sucursal: Sucursal Central (CENTRAL)');
         $this->actingAs($user)->get(route('quotations.print', ['quotation' => $quotation, 'format' => 'document']))
             ->assertOk()
-            ->assertSee('Válida hasta');
+            ->assertSee('Válida hasta')
+            ->assertSee('Sucursal: Sucursal Central (CENTRAL)');
 
         [, $otherUser] = $this->tenant();
         $this->actingAs($otherUser)->get(route('quotations.show', $quotation))->assertNotFound();

@@ -6,7 +6,7 @@
     <title>Cotización {{ $quotation->visible_number }}</title>
     <style>
         @page { size: {{ ($business->country ?? 'GT') === 'GT' ? 'Letter' : 'A4' }}; margin: 16mm; }
-        body { color: #111827; font: 13px Arial, Helvetica, sans-serif; } .header { display:flex; justify-content:space-between; }
+        body { color: #111827; font: 13px Arial, Helvetica, sans-serif; } .header { display:flex; justify-content:space-between; gap:20px; } .company { display:flex; align-items:flex-start; gap:14px; } .company-logo { display:block; max-width:150px; max-height:64px; object-fit:contain; object-position:left top; }
         table { border-collapse:collapse; width:100%; margin-top:18px; } th,td { border-bottom:1px solid #d1d5db; padding:8px; text-align:left; }
         .right { text-align:right; } .total { font-size:18px; font-weight:bold; margin-top:14px; text-align:right; }
         .cancelled { border:2px solid #991b1b; color:#991b1b; font-size:20px; font-weight:bold; margin:14px 0; padding:8px; text-align:center; }
@@ -16,7 +16,10 @@
 <body>
 <div class="toolbar"><button onclick="window.close()">Cerrar</button> <button onclick="window.print()">Imprimir</button></div>
 <header class="header">
-    <div><h1>{{ $company['name'] ?? $business->name }}</h1><div>{{ $company['address'] ?? '' }}</div><div>{{ $company['phone'] ?? '' }}</div></div>
+    <div class="company">
+        @if(!empty($company['logo_url']))<img class="company-logo" src="{{ $company['logo_url'] }}" alt="{{ $company['name'] ?? $business->name }}">@endif
+        <div><h1>{{ $company['name'] ?? $business->name }}</h1><div>{{ $company['address'] ?? '' }}</div><div>{{ $company['phone'] ?? '' }}</div>@if($quotation->branch)<div>Sucursal: {{ $quotation->branch->name }}@if($quotation->branch->code) ({{ $quotation->branch->code }})@endif</div>@endif</div>
+    </div>
     <div class="right"><h1>COTIZACIÓN</h1><strong>{{ $quotation->visible_number }}</strong><div>Emisión: {{ $quotation->issued_at?->timezone($timezone)->format('d/m/Y H:i') }}</div><div>Válida hasta: {{ $quotation->valid_until?->format('d/m/Y') }}</div></div>
 </header>
 @if($quotation->status === \App\Models\Quotation::CANCELLED)<div class="cancelled">COTIZACIÓN ANULADA</div>@endif

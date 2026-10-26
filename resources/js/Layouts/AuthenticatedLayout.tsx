@@ -11,7 +11,7 @@ type NavItem = {
     active: boolean;
 };
 
-type DropdownKey = 'sales' | 'management' | 'reports' | 'settings';
+type DropdownKey = 'management' | 'reports' | 'settings';
 
 type BranchOption = {
     id: number;
@@ -85,6 +85,7 @@ export default function Authenticated({
     const can = (permission: string) => Boolean(user?.is_super_admin) || permissions.includes(permission);
 
     const managementActive =
+        (hasModule('pos') && can('quotations.view') && route().current('quotations.*')) ||
         (hasModule('inventory') && (route().current('products.*') || route().current('stock.*') || route().current('price-lists.*'))) ||
         (hasModule('inventory') && route().current('categories.*')) ||
         (hasModule('inventory') && route().current('brands.*')) ||
@@ -100,6 +101,7 @@ export default function Authenticated({
     const reportsActive = route().current('reports.*');
 
     const managementItems: NavItem[] = [
+        hasModule('pos') && can('quotations.view') ? { label: 'Cotizaciones', href: route('quotations.index'), active: route().current('quotations.*') } : null,
         hasModule('inventory') ? { label: t('nav.products'), href: route('products.index'), active: route().current('products.*') } : null,
         hasModule('customers') && can('customers.view') ? { label: 'Clientes', href: route('customers.index'), active: route().current('customers.*') } : null,
         canManageUsers ? { label: 'Usuarios', href: route('users.index'), active: route().current('users.*') } : null,
@@ -118,10 +120,6 @@ export default function Authenticated({
         hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Preparaciones', href: route('routes.preparation-batches.index'), active: route().current('routes.preparation-batches.*') } : null,
         hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Lotes de ventas de ruta', href: route('routes.delivery-batches.index'), active: route().current('routes.delivery-batches.*') } : null,
         hasModule('routes') && can('routes.pre_sales.admin_view') ? { label: 'Jornadas cerradas', href: route('routes.work-days.closed'), active: route().current('routes.work-days.*') } : null,
-    ].filter(Boolean) as NavItem[];
-
-    const salesItems: NavItem[] = [
-        hasModule('pos') && can('quotations.view') ? { label: 'Cotizaciones', href: route('quotations.index'), active: route().current('quotations.*') } : null,
     ].filter(Boolean) as NavItem[];
 
     const reportItems: NavItem[] = [
@@ -205,16 +203,6 @@ export default function Authenticated({
                                             href: route('sales.create'),
                                             active: route().current('sales.create'),
                                         }}
-                                    />
-                                )}
-                                {salesItems.length > 0 && (
-                                    <TopNavDropdown
-                                        id="sales"
-                                        label="Ventas"
-                                        active={salesItems.some((item) => item.active)}
-                                        items={salesItems}
-                                        openDropdown={openDropdown}
-                                        setOpenDropdown={setOpenDropdown}
                                     />
                                 )}
                                 {managementItems.length > 0 && (
@@ -362,17 +350,6 @@ export default function Authenticated({
                             POS
                         </ResponsiveNavLink>
                         )}
-
-                        {salesItems.length > 0 && (
-                            <div className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                                Ventas
-                            </div>
-                        )}
-                        {salesItems.map((item) => (
-                            <ResponsiveNavLink key={item.label} href={item.href} active={item.active}>
-                                {item.label}
-                            </ResponsiveNavLink>
-                        ))}
 
                         {managementItems.length > 0 && (
                             <div className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
