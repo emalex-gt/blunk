@@ -53,7 +53,9 @@ export default function Index({
     const [resetTarget, setResetTarget] = useState<User | null>(null);
     const reachedLimit = limits.active_users >= limits.max_users;
     const nearLimit = !reachedLimit && limits.max_users > 1 && limits.active_users >= limits.max_users - 1;
-
+    const hasSingleBranch = branches.length === 1;
+    const usesSimpleBranchSelector = branches.length > 1 && !branches_enabled;
+    const usesBranchAccessControls = branches.length > 1 && branches_enabled;
     const form = useForm({
         name: '',
         email: '',
@@ -65,6 +67,11 @@ export default function Index({
         branch_access_mode: 'all' as 'all' | 'selected',
         branch_ids: [] as number[],
     });
+    const activeBranchOptions = form.data.branch_access_mode === 'selected'
+        ? form.data.branch_ids
+            .map((branchId) => branches.find((branch) => branch.id === branchId))
+            .filter((branch): branch is Branch => Boolean(branch))
+        : branches;
 
     const passwordForm = useForm({
         password: '',
@@ -77,9 +84,9 @@ export default function Index({
         form.reset();
         form.setData('role', 'cashier');
         form.setData('is_active', true);
-        form.setData('current_branch_id', '');
-        form.setData('branch_access_mode', 'all');
-        form.setData('branch_ids', []);
+        form.setData('current_branch_id', branches[0] ? String(branches[0].id) : '');
+        form.setData('branch_access_mode', usesBranchAccessControls ? 'all' : 'selected');
+        form.setData('branch_ids', hasSingleBranch && branches[0] ? [branches[0].id] : []);
     }
 
     function startEdit(user: User) {
@@ -92,9 +99,11 @@ export default function Index({
             is_active: user.is_active,
             password: '',
             password_confirmation: '',
-            current_branch_id: user.current_branch_id ? String(user.current_branch_id) : '',
-            branch_access_mode: user.all_branches_access ? 'all' : 'selected',
-            branch_ids: user.branch_accesses.map((access) => access.branch_id),
+            current_branch_id: String(user.current_branch_id ?? branches[0]?.id ?? ''),
+            branch_access_mode: usesBranchAccessControls && user.all_branches_access ? 'all' : 'selected',
+            branch_ids: user.branch_accesses.length > 0
+                ? user.branch_accesses.map((access) => access.branch_id)
+                : (user.current_branch_id ? [user.current_branch_id] : []),
         });
     }
 
@@ -280,7 +289,32 @@ export default function Index({
                             )}
                         </div>
 
-                        {branches_enabled && (
+                        {hasSingleBranch && branches[0] && (
+                            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-sm text-slate-600">
+                                Este negocio opera con una sola sucursal: <span className="font-semibold text-slate-800">{branches[0].name}{branches[0].code ? ` (${branches[0].code})` : ''}</span>.
+                            </div>
+                        )}
+
+                        {usesSimpleBranchSelector && (
+                            <div className="mt-5 rounded-xl border border-slate-200 p-4">
+                                <Field label="Sucursal" error={form.errors.current_branch_id}>
+                                    <select
+                                        className={inputClass}
+                                        value={form.data.current_branch_id}
+                                        onChange={(e) => form.setData('current_branch_id', e.target.value)}
+                                    >
+                                        <option value="">Selecciona una sucursal</option>
+                                        {branches.map((branch) => (
+                                            <option key={branch.id} value={branch.id}>
+                                                {branch.name}{branch.code ? ` (${branch.code})` : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </Field>
+                            </div>
+                        )}
+
+                        {usesBranchAccessControls && (
                             <div className="mt-5 rounded-xl border border-slate-200 p-4">
                                 <p className="text-sm font-medium text-slate-700">Acceso a sucursales</p>
                                 <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-700">
@@ -319,25 +353,23 @@ export default function Index({
                                                 </label>
                                             ))}
                                         </div>
-                                        <Field label="Sucursal activa inicial" error={form.errors.current_branch_id}>
-                                            <select
-                                                className={inputClass}
-                                                value={form.data.current_branch_id}
-                                                onChange={(e) => form.setData('current_branch_id', e.target.value)}
-                                            >
-                                                {form.data.branch_ids.map((branchId) => {
-                                                    const branch = branches.find((item) => item.id === branchId);
-
-                                                    return branch ? (
-                                                        <option key={branch.id} value={branch.id}>
-                                                            {branch.name}{branch.code ? ` (${branch.code})` : ''}
-                                                        </option>
-                                                    ) : null;
-                                                })}
-                                            </select>
-                                        </Field>
                                     </div>
                                 )}
+                                <div className="mt-4">
+                                    <Field label="Sucursal activa inicial" error={form.errors.current_branch_id}>
+                                        <select
+                                            className={inputClass}
+                                            value={form.data.current_branch_id}
+                                            onChange={(e) => form.setData('current_branch_id', e.target.value)}
+                                        >
+                                            {activeBranchOptions.map((branch) => (
+                                                <option key={branch.id} value={branch.id}>
+                                                    {branch.name}{branch.code ? ` (${branch.code})` : ''}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </Field>
+                                </div>
                             </div>
                         )}
 

@@ -2712,23 +2712,23 @@ class RouteController extends Controller
     private function sellerBranch(Request $request): ?Branch
     {
         $user = $request->user();
-        $branchId = $user?->current_branch_id;
-
-        if (! $branchId) {
+        if (! $user) {
             return null;
         }
 
-        $branch = Branch::query()
+        $businessId = currentBusinessId();
+        $branch = $user->current_branch_id
+            ? Branch::query()
             ->where('business_id', currentBusinessId())
             ->where('is_active', true)
-            ->find($branchId);
+            ->find($user->current_branch_id)
+            : null;
 
-        if (! $branch) {
-            return null;
+        if (! BranchInventory::branchesEnabled($businessId)) {
+            return $branch ?? BranchInventory::defaultBranch($businessId);
         }
 
-        return ! BranchInventory::branchesEnabled(currentBusinessId())
-            || app(BranchAccessService::class)->canAccessBranch($user, $branch, currentBusinessId())
+        return $branch && app(BranchAccessService::class)->canAccessBranch($user, $branch, $businessId)
             ? $branch
             : null;
     }

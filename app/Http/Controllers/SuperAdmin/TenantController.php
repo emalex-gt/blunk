@@ -9,9 +9,12 @@ use App\Models\TenantModule;
 use App\Models\TenantFelSetting;
 use App\Models\TenantSetting;
 use App\Models\User;
+use App\Services\BranchAccessService;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
+use App\Support\BranchInventory;
 use App\Support\CloudinaryUploader;
 use App\Support\Credits;
+use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -110,16 +113,20 @@ class TenantController extends Controller
             $business->tenantSetting()->create($data['settings']);
             $this->syncModules($business, $data['modules']);
             $this->syncFelSettings($business, $data['fel'], $data['fel_phrases']);
+            $principal = BranchInventory::ensureDefaultBranch($business);
 
             if (filled($data['owner']['name']) && filled($data['owner']['email']) && filled($data['owner']['password'])) {
-                User::create([
+                $owner = User::create([
                     'business_id' => $business->id,
                     'name' => $data['owner']['name'],
                     'email' => $data['owner']['email'],
                     'password' => $data['owner']['password'],
                     'role' => 'owner',
                     'is_super_admin' => false,
+                    'current_branch_id' => $principal->id,
                 ]);
+                Permissions::assignRole($owner, 'owner');
+                app(BranchAccessService::class)->replaceAccess($owner, true, [], $principal->id);
             }
         });
 

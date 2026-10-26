@@ -265,6 +265,73 @@ class BranchAccessTest extends TestCase
         $this->assertTrue(app(BranchAccessService::class)->canAccessBranch($created, $a2));
     }
 
+    public function test_single_branch_tenant_user_creation_assigns_the_only_active_branch_even_when_branches_are_disabled(): void
+    {
+        Permissions::syncDefaults();
+        $business = $this->business('single');
+        TenantSetting::query()->create(['business_id' => $business->id, 'use_branches' => false, 'max_users' => 10]);
+        $main = BranchInventory::defaultBranch($business->id);
+        $foreign = $this->branch($this->business('foreign'), 'OTHER');
+        $owner = User::factory()->create([
+            'business_id' => $business->id,
+            'role' => 'owner',
+            'current_branch_id' => $main->id,
+            'all_branches_access' => true,
+            'is_active' => true,
+        ]);
+        Permissions::assignRole($owner, 'owner');
+
+        $this->actingAs($owner)
+            ->post(route('users.store'), [
+                'name' => 'Usuario único',
+                'email' => 'single-'.uniqid().'@test.test',
+                'role' => 'cashier',
+                'password' => 'password',
+                'password_confirmation' => 'password',
+                'current_branch_id' => $foreign->id,
+            ])
+            ->assertRedirect();
+
+        $created = User::query()->where('email', 'like', 'single-%')->firstOrFail();
+        $this->assertSame($main->id, $created->current_branch_id);
+        $this->assertFalse($created->all_branches_access);
+        $this->assertSame([$main->id], $created->branchAccesses()->pluck('branch_id')->all());
+    }
+
+    public function test_disabled_multi_branch_tenant_requires_and_persists_the_selected_current_branch(): void
+    {
+        Permissions::syncDefaults();
+        $business = $this->business('legacy');
+        TenantSetting::query()->create(['business_id' => $business->id, 'use_branches' => false, 'max_users' => 10]);
+        $main = BranchInventory::defaultBranch($business->id);
+        $secondary = $this->branch($business, 'SECONDARY');
+        $owner = User::factory()->create([
+            'business_id' => $business->id,
+            'role' => 'owner',
+            'current_branch_id' => $main->id,
+            'all_branches_access' => true,
+            'is_active' => true,
+        ]);
+        Permissions::assignRole($owner, 'owner');
+
+        $this->actingAs($owner)
+            ->post(route('users.store'), [
+                'name' => 'Usuario legado',
+                'email' => 'legacy-'.uniqid().'@test.test',
+                'role' => 'cashier',
+                'password' => 'password',
+                'password_confirmation' => 'password',
+                'current_branch_id' => $secondary->id,
+                'branch_access_mode' => 'all',
+            ])
+            ->assertRedirect();
+
+        $created = User::query()->where('email', 'like', 'legacy-%')->firstOrFail();
+        $this->assertSame($secondary->id, $created->current_branch_id);
+        $this->assertFalse($created->all_branches_access);
+        $this->assertSame([$secondary->id], $created->branchAccesses()->pluck('branch_id')->all());
+    }
+
     public function test_tenant_user_update_switches_selected_and_all_access_without_leaving_an_invalid_current_branch(): void
     {
         Permissions::syncDefaults();

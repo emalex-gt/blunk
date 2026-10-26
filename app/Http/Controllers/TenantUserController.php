@@ -9,6 +9,7 @@ use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
@@ -42,9 +43,7 @@ class TenantUserController extends Controller
             'roles' => Permissions::assignableTenantRoles(),
             'role_options' => $this->roleOptions(),
             'branches_enabled' => BranchInventory::branchesEnabled($businessId),
-            'branches' => BranchInventory::branchesEnabled($businessId)
-                ? BranchInventory::branchOptions($businessId)
-                : [],
+            'branches' => BranchInventory::branchOptions($businessId),
         ]);
     }
 
@@ -55,9 +54,11 @@ class TenantUserController extends Controller
 
         $businessId = currentBusinessId();
         $branchesEnabled = BranchInventory::branchesEnabled($businessId);
+        $branches = BranchInventory::branchOptions($businessId);
         $this->ensureUserLimitAllowsCreate($businessId);
 
-        $data = $request->validate($this->rules($request, $businessId, $branchesEnabled));
+        $data = $request->validate($this->rules($request, $businessId, $branchesEnabled, $branches->count()));
+        $branchAssignment = $this->branchAssignment($data, $branches, $branchesEnabled);
 
         $user = User::create([
             'business_id' => $businessId,
@@ -67,11 +68,11 @@ class TenantUserController extends Controller
             'password' => $data['password'],
             'is_super_admin' => false,
             'is_active' => true,
-            'current_branch_id' => $branchesEnabled ? ($data['current_branch_id'] ?? BranchInventory::defaultBranch($businessId)->id) : null,
+            'current_branch_id' => $branchAssignment['current_branch_id'],
         ]);
         Permissions::assignRole($user, $data['role']);
 
-        $this->persistBranchAccess($user, $data, $branchesEnabled);
+        $this->persistBranchAccess($user, $branchAssignment);
 
         return back()->with('success', 'Usuario creado.');
     }
@@ -84,8 +85,10 @@ class TenantUserController extends Controller
         $this->authorizeTenantUser($request, $user);
         $businessId = currentBusinessId();
         $branchesEnabled = BranchInventory::branchesEnabled($businessId);
+        $branches = BranchInventory::branchOptions($businessId);
 
-        $data = $request->validate($this->rules($request, $businessId, $branchesEnabled, $user));
+        $data = $request->validate($this->rules($request, $businessId, $branchesEnabled, $branches->count(), $user));
+        $branchAssignment = $this->branchAssignment($data, $branches, $branchesEnabled);
 
         if ($user->id === $request->user()->id && ! $data['is_active']) {
             throw ValidationException::withMessages([
@@ -109,15 +112,15 @@ class TenantUserController extends Controller
             'name' => $data['name'],
             'role' => $data['role'],
             'is_active' => $data['is_active'],
-            'current_branch_id' => $branchesEnabled ? $user->current_branch_id : null,
+            'current_branch_id' => $branchAssignment['current_branch_id'],
         ]);
         Permissions::assignRole($user, $data['role']);
-        $this->persistBranchAccess($user, $data, $branchesEnabled);
+        $this->persistBranchAccess($user, $branchAssignment);
 
         return back()->with('success', 'Usuario actualizado.');
     }
 
-    private function rules(Request $request, int $businessId, bool $branchesEnabled, ?User $user = null): array
+    private function rules(Request $request, int $businessId, bool $branchesEnabled, int $branchCount, ?User $user = null): array
     {
         $creating = $user === null;
 
@@ -130,25 +133,28 @@ class TenantUserController extends Controller
             'is_active' => $creating ? ['nullable', 'boolean'] : ['required', 'boolean'],
             'current_branch_id' => [
                 'nullable',
-                Rule::excludeIf(! $branchesEnabled),
+                Rule::excludeIf($branchCount === 1),
+                Rule::requiredIf($branchCount > 1),
                 'integer',
                 Rule::exists('branches', 'id')
                     ->where('business_id', $businessId)
                     ->where('is_active', true),
             ],
             'branch_access_mode' => [
-                Rule::excludeIf(! $branchesEnabled),
-                Rule::requiredIf($branchesEnabled),
+                'nullable',
+                Rule::excludeIf(! $branchesEnabled || $branchCount === 1),
+                Rule::requiredIf($branchesEnabled && $branchCount > 1),
                 Rule::in(['all', 'selected']),
             ],
             'branch_ids' => [
-                Rule::excludeIf(! $branchesEnabled),
-                Rule::requiredIf($branchesEnabled && $request->input('branch_access_mode') === 'selected'),
+                'nullable',
+                Rule::excludeIf(! $branchesEnabled || $branchCount === 1),
+                Rule::requiredIf($branchesEnabled && $branchCount > 1 && $request->input('branch_access_mode') === 'selected'),
                 'array',
                 'min:1',
             ],
             'branch_ids.*' => [
-                Rule::excludeIf(! $branchesEnabled),
+                Rule::excludeIf(! $branchesEnabled || $branchCount === 1),
                 'integer',
                 'distinct',
                 Rule::exists('branches', 'id')
@@ -158,23 +164,53 @@ class TenantUserController extends Controller
         ];
     }
 
-    private function persistBranchAccess(User $user, array $data, bool $branchesEnabled): void
+    private function branchAssignment(array $data, Collection $branches, bool $branchesEnabled): array
     {
-        if (! $branchesEnabled) {
-            return;
+        if ($branches->count() === 1) {
+            $branchId = (int) $branches->first()->id;
+
+            return [
+                'current_branch_id' => $branchId,
+                'all_branches_access' => false,
+                'branch_ids' => [$branchId],
+            ];
         }
 
-        $selected = ($data['branch_access_mode'] ?? null) === 'selected';
-        $branchIds = collect($data['branch_ids'] ?? [])->map(fn ($id) => (int) $id)->values()->all();
-        $preferredBranchId = isset($data['current_branch_id']) ? (int) $data['current_branch_id'] : null;
+        $currentBranchId = (int) ($data['current_branch_id'] ?? 0);
+        abort_unless($branches->contains('id', $currentBranchId), 422);
 
-        if ($selected && $preferredBranchId && ! in_array($preferredBranchId, $branchIds, true)) {
+        if (! $branchesEnabled) {
+            return [
+                'current_branch_id' => $currentBranchId,
+                'all_branches_access' => false,
+                'branch_ids' => [$currentBranchId],
+            ];
+        }
+
+        $allBranchesAccess = ($data['branch_access_mode'] ?? null) === 'all';
+        $branchIds = collect($data['branch_ids'] ?? [])->map(fn ($id) => (int) $id)->unique()->values()->all();
+
+        if (! $allBranchesAccess && ! in_array($currentBranchId, $branchIds, true)) {
             throw ValidationException::withMessages([
                 'current_branch_id' => 'La sucursal asignada debe estar dentro de las sucursales seleccionadas.',
             ]);
         }
 
-        app(BranchAccessService::class)->replaceAccess($user, ! $selected, $branchIds, $preferredBranchId);
+        return [
+            'current_branch_id' => $currentBranchId,
+            'all_branches_access' => $allBranchesAccess,
+            'branch_ids' => $branchIds,
+        ];
+    }
+
+    private function persistBranchAccess(User $user, array $branchAssignment): void
+    {
+        app(BranchAccessService::class)->replaceAccess(
+            $user,
+            $branchAssignment['all_branches_access'],
+            $branchAssignment['branch_ids'],
+            $branchAssignment['current_branch_id'],
+        );
     }
 
     public function toggleActive(Request $request, User $user): RedirectResponse
