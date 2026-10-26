@@ -270,6 +270,73 @@ class QuotationController extends Controller
     }
 
     /**
+     * Reuses only the commercial snapshot. A duplicate never inherits the
+     * lifecycle or conversion state of its source quotation.
+     */
+    public function duplicate(Request $request, Quotation $quotation): RedirectResponse
+    {
+        $business = $this->authorizeQuotation($request, $quotation);
+        abort_unless(Permissions::userHas($request->user(), Permissions::QUOTATIONS_CREATE), 403);
+
+        $duplicate = DB::transaction(function () use ($business, $quotation, $request) {
+            $source = Quotation::query()
+                ->where('business_id', $business->id)
+                ->with('items')
+                ->lockForUpdate()
+                ->findOrFail($quotation->id);
+
+            $timezone = tenantTimezone($business);
+            $issuedAt = $source->issued_at?->copy()->timezone($timezone)->startOfDay();
+            $validUntil = $source->valid_until;
+            $newValidUntil = $issuedAt && $validUntil
+                ? now($timezone)->startOfDay()->addDays($issuedAt->diffInDays($validUntil))->toDateString()
+                : null;
+
+            $copy = Quotation::query()->create([
+                ...collect($source->getAttributes())->only([
+                    'branch_id',
+                    'customer_id',
+                    'note',
+                    'customer_name',
+                    'customer_commercial_name',
+                    'customer_doc_type',
+                    'customer_doc_number',
+                    'customer_address',
+                    'customer_address_reference',
+                    'customer_postal_code',
+                    'customer_municipality',
+                    'customer_department',
+                    'customer_country',
+                    'customer_phone',
+                    'subtotal_before_discount',
+                    'discount_type',
+                    'discount_value',
+                    'discount_amount',
+                    'discount_reason',
+                    'total',
+                ])->all(),
+                'business_id' => $business->id,
+                'business_number' => BusinessCounter::next($business->id, 'quotations'),
+                'created_by' => $request->user()->id,
+                'status' => Quotation::OPEN,
+                'issued_at' => now(),
+                'valid_until' => $newValidUntil,
+            ]);
+
+            foreach ($source->items as $item) {
+                $copy->items()->create([
+                    ...collect($item->getAttributes())->except(['id', 'quotation_id', 'created_at', 'updated_at'])->all(),
+                    'business_id' => $business->id,
+                ]);
+            }
+
+            return $copy;
+        });
+
+        return redirect()->route('quotations.show', $duplicate)->with('success', 'Cotización duplicada.');
+    }
+
+    /**
      * Opens the normal POS with a server-authorized quotation source.  This is
      * deliberately only a preparation step: it never creates a Sale nor
      * changes the quotation status.

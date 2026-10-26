@@ -95,6 +95,130 @@ class QuotationTest extends TestCase
         $this->assertSame($business->id, $quotation->fresh()->business_id);
     }
 
+    public function test_duplicating_a_quotation_creates_a_new_open_commercial_snapshot_without_operational_effects(): void
+    {
+        [$business, $owner, $product] = $this->tenant();
+        $originalCreator = User::factory()->create([
+            'business_id' => $business->id,
+            'role' => 'owner',
+            'is_active' => true,
+            'all_branches_access' => true,
+        ]);
+        Permissions::assignRole($originalCreator, 'owner');
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Nombre fiscal original',
+            'commercial_name' => 'Comercial original',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'address' => 'Dirección original',
+            'address_reference' => 'Frente al mercado',
+            'country' => 'GT',
+        ]);
+
+        $this->actingAs($originalCreator)
+            ->post(route('quotations.store'), $this->payload($product, $customer->id))
+            ->assertRedirect();
+        $original = Quotation::query()->with('items')->sole();
+        $original->update([
+            'issued_at' => now(tenantTimezone($business))->subDays(15)->startOfDay(),
+            'valid_until' => now(tenantTimezone($business))->toDateString(),
+            'note' => 'Referencia comercial conservada',
+            'discount_type' => 'fixed',
+            'discount_value' => 1,
+            'discount_amount' => 1,
+            'discount_reason' => 'Condición comercial',
+            'subtotal_before_discount' => 10,
+            'total' => 9,
+        ]);
+        $original->items()->update([
+            'discount_amount' => 1,
+            'total_before_discount' => 10,
+            'total_after_discount' => 9,
+            'total' => 9,
+        ]);
+        $expectedValidUntil = now(tenantTimezone($business))->startOfDay()->addDays(15)->toDateString();
+        $originalStock = $product->fresh()->stock;
+
+        $this->actingAs($owner)
+            ->post(route('quotations.duplicate', $original))
+            ->assertRedirect();
+
+        $duplicate = Quotation::query()->with('items')->whereKeyNot($original->id)->sole();
+        $this->assertSame(2, $duplicate->business_number);
+        $this->assertSame(Quotation::OPEN, $duplicate->status);
+        $this->assertSame($owner->id, $duplicate->created_by);
+        $this->assertSame($expectedValidUntil, $duplicate->valid_until->toDateString());
+        $this->assertSame($original->customer_name, $duplicate->customer_name);
+        $this->assertSame($original->customer_commercial_name, $duplicate->customer_commercial_name);
+        $this->assertSame($original->customer_address_reference, $duplicate->customer_address_reference);
+        $this->assertSame($original->note, $duplicate->note);
+        $this->assertSame('1.00', $duplicate->discount_amount);
+        $this->assertSame($original->fresh()->items()->sole()->only(['product_id', 'quantity', 'unit_price', 'discount_amount', 'total']), $duplicate->items->sole()->only(['product_id', 'quantity', 'unit_price', 'discount_amount', 'total']));
+        $this->assertNull($duplicate->cancelled_at);
+        $this->assertNull($duplicate->cancelled_by);
+        $this->assertNull($duplicate->converted_at);
+        $this->assertSame(Quotation::OPEN, $original->fresh()->status);
+        $this->assertSame($originalCreator->id, $original->fresh()->created_by);
+        $this->assertSame($originalStock, $product->fresh()->stock);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('electronic_documents', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+    }
+
+    public function test_cancelled_and_converted_quotations_can_be_duplicated_without_copying_their_state(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $cancelled = Quotation::query()->sole();
+        $cancelled->update([
+            'status' => Quotation::CANCELLED,
+            'cancelled_at' => now(),
+            'cancelled_by' => $user->id,
+            'cancellation_reason' => 'No aceptada',
+        ]);
+
+        $this->actingAs($user)->post(route('quotations.duplicate', $cancelled))->assertRedirect();
+        $cancelledCopy = Quotation::query()->whereKeyNot($cancelled->id)->sole();
+        $this->assertSame(Quotation::OPEN, $cancelledCopy->status);
+        $this->assertNull($cancelledCopy->cancelled_at);
+        $this->assertSame(Quotation::CANCELLED, $cancelled->fresh()->status);
+
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $converted = Quotation::query()->whereNotIn('id', [$cancelled->id, $cancelledCopy->id])->sole();
+        $converted->update(['status' => Quotation::CONVERTED, 'converted_at' => now()]);
+
+        $this->actingAs($user)->post(route('quotations.duplicate', $converted))->assertRedirect();
+        $convertedCopy = Quotation::query()->whereNotIn('id', [$cancelled->id, $cancelledCopy->id, $converted->id])->sole();
+        $this->assertSame(Quotation::OPEN, $convertedCopy->status);
+        $this->assertNull($convertedCopy->converted_at);
+        $this->assertSame(Quotation::CONVERTED, $converted->fresh()->status);
+        $this->assertDatabaseCount('sales', 0);
+    }
+
+    public function test_quotation_duplication_is_tenant_scoped_and_requires_create_permission(): void
+    {
+        [$business, $owner, $product] = $this->tenant();
+        [$otherBusiness, $otherOwner, $otherProduct] = $this->tenant();
+        $this->actingAs($otherOwner)->post(route('quotations.store'), $this->payload($otherProduct))->assertRedirect();
+        $foreignQuotation = Quotation::query()->where('business_id', $otherBusiness->id)->sole();
+        $this->actingAs($owner)->post(route('quotations.duplicate', $foreignQuotation))->assertNotFound();
+
+        $this->actingAs($owner)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $ownQuotation = Quotation::query()->where('business_id', $business->id)->sole();
+        $stockManager = User::factory()->create([
+            'business_id' => $business->id,
+            'role' => 'stock_manager',
+            'is_active' => true,
+            'all_branches_access' => true,
+        ]);
+        Permissions::assignRole($stockManager, 'stock_manager');
+
+        $this->actingAs($stockManager)->post(route('quotations.duplicate', $ownQuotation))->assertForbidden();
+        $this->assertSame(1, Quotation::query()->where('business_id', $business->id)->count());
+    }
+
     public function test_print_routes_are_available_in_ticket_and_document_formats_and_are_tenant_scoped(): void
     {
         [$business, $user, $product] = $this->tenant();

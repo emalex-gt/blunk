@@ -53,6 +53,9 @@ export default function Show({ quotation }: { quotation: Quotation }) {
                     <div className="mt-4 flex flex-wrap gap-2">
                         {can('quotations.print') && <a href={route('quotations.print', { quotation: quotation.id, format: 'ticket' })} target="_blank" className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700">Imprimir ticket</a>}
                         {can('quotations.print') && <a href={route('quotations.print', { quotation: quotation.id, format: 'document' })} target="_blank" className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700">Imprimir documento</a>}
+                        {can('quotations.create') && (
+                            <button type="button" onClick={() => router.post(route('quotations.duplicate', quotation.id))} className="rounded-xl border border-orange-300 px-3 py-2 text-sm font-semibold text-orange-700 hover:bg-orange-50">Duplicar cotización</button>
+                        )}
                         {quotation.status === 'open' && can('quotations.convert') && (
                             <button
                                 type="button"
