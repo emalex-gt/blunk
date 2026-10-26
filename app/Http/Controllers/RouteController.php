@@ -1223,7 +1223,7 @@ class RouteController extends Controller
         $this->assertVisitEditable($visit);
         app(RouteCashOperationGuard::class)->requireOpen(currentBusinessId(), (int) $visit->branch_id);
 
-        $preSale = DB::transaction(function () use ($request, $visit, $data, $reservations) {
+        $draft = DB::transaction(function () use ($request, $visit, $data, $reservations) {
             $workDay = RouteWorkDay::query()
                 ->where('business_id', currentBusinessId())
                 ->whereKey($visit->route_work_day_id)
@@ -1279,7 +1279,7 @@ class RouteController extends Controller
 
             $products = $this->activePreSaleProducts($data['items']);
             $resolved = $this->resolvePreSaleLines($lockedVisit, $data['items'], $products);
-            $this->syncPreSaleDraftItems($preSale, $lockedVisit, $products, $resolved['lines'], $reservations);
+            $affectedProductIds = $this->syncPreSaleDraftItems($preSale, $lockedVisit, $products, $resolved['lines'], $reservations);
 
             $preSale->update([
                 'subtotal' => $resolved['subtotal'],
@@ -1287,10 +1287,15 @@ class RouteController extends Controller
                 'total' => $resolved['total'],
             ]);
 
-            return $preSale->fresh(['items.product:id,name,code,barcode']);
+            return [
+                'pre_sale' => $preSale->fresh(['items.product:id,name,code,barcode']),
+                'affected_product_ids' => $affectedProductIds,
+            ];
         });
 
-        $productIds = $preSale->items->pluck('product_id')->map(fn ($id) => (int) $id)->all();
+        /** @var PreSale $preSale */
+        $preSale = $draft['pre_sale'];
+        $productIds = $draft['affected_product_ids'];
         $stockBreakdown = StockAvailability::getBreakdownForProducts((int) $visit->business_id, (int) $visit->branch_id, $productIds);
 
         return response()->json([
@@ -1307,11 +1312,11 @@ class RouteController extends Controller
                     ];
                 })->values(),
             ],
-            'products' => $preSale->items->map(function (PreSaleItem $item) use ($stockBreakdown) {
-                $breakdown = $stockBreakdown->get((int) $item->product_id, []);
+            'products' => collect($productIds)->map(function (int $productId) use ($stockBreakdown) {
+                $breakdown = $stockBreakdown->get($productId, []);
 
                 return [
-                    'id' => $item->product_id,
+                    'id' => $productId,
                     'stock' => (float) ($breakdown['physical_stock'] ?? 0),
                     'reserved_stock' => (float) ($breakdown['reserved_total'] ?? 0),
                     'available_stock' => (float) ($breakdown['available_stock'] ?? 0),
@@ -2105,7 +2110,7 @@ class RouteController extends Controller
      *
      * @param array<int, array<string, mixed>> $lines
      */
-    private function syncPreSaleDraftItems(PreSale $preSale, RouteVisit $visit, \Illuminate\Support\Collection $products, array $lines, StockReservationService $reservations): void
+    private function syncPreSaleDraftItems(PreSale $preSale, RouteVisit $visit, \Illuminate\Support\Collection $products, array $lines, StockReservationService $reservations): array
     {
         $existingItems = PreSaleItem::query()
             ->where('business_id', currentBusinessId())
@@ -2162,6 +2167,8 @@ class RouteController extends Controller
 
             $reservations->reservePreSaleItem($item);
         }
+
+        return $allProductIds;
     }
 
     private function preSalePriceTypeId(int $businessId): ?int

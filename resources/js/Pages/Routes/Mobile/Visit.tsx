@@ -190,7 +190,7 @@ export default function Visit({
         });
     };
 
-    const syncDraftCart = (items: Item[]) => {
+    const syncDraftCart = (items: Item[], immediate = false) => {
         if (!canModifyPreSale) {
             return;
         }
@@ -205,7 +205,7 @@ export default function Visit({
 
         setDraftSyncing(true);
         setDraftSyncError(null);
-        draftSyncTimerRef.current = window.setTimeout(async () => {
+        const synchronize = async () => {
             const controller = new AbortController();
             draftSyncControllerRef.current = controller;
 
@@ -229,16 +229,32 @@ export default function Visit({
                     }),
                     signal: controller.signal,
                 });
-                const payload = await response.json();
+                let payload: { errors?: { items?: string[] }; message?: string; pre_sale?: { items?: { product_id: number; maximum_quantity: number }[] }; products?: Product[] } | null = null;
+
+                try {
+                    payload = await response.json();
+                } catch {
+                    // A non-JSON response cannot prove that the server rolled back.
+                }
 
                 if (draftSyncRequestRef.current !== requestId) {
                     return;
                 }
 
                 if (!response.ok) {
-                    const message = payload?.errors?.items?.[0] ?? payload?.message ?? 'No se pudo reservar el stock. Inténtalo nuevamente.';
-                    setDraftSyncError(message);
-                    form.setData('items', confirmedItemsRef.current);
+                    if (response.status === 422 || response.status === 403) {
+                        const message = payload?.errors?.items?.[0] ?? payload?.message ?? 'No se pudo reservar el stock. Inténtalo nuevamente.';
+                        setDraftSyncError(message);
+                        form.setData('items', confirmedItemsRef.current);
+                    } else {
+                        setDraftSyncError('No pudimos confirmar la reserva. Actualizando el carrito desde el servidor…');
+                        router.visit(window.location.href, {
+                            method: 'get',
+                            only: ['visit', 'preSale', 'products'],
+                            preserveScroll: true,
+                            preserveState: false,
+                        });
+                    }
                     return;
                 }
 
@@ -258,22 +274,35 @@ export default function Visit({
                     ...product,
                     ...(stockByProduct.get(product.id) ?? {}),
                 })));
-            } catch (error) {
+            } catch {
                 if (!controller.signal.aborted && draftSyncRequestRef.current === requestId) {
-                    setDraftSyncError('No se pudo reservar el stock. Revisa tu conexión e inténtalo nuevamente.');
-                    form.setData('items', confirmedItemsRef.current);
+                    setDraftSyncError('No pudimos confirmar la reserva. Actualizando el carrito desde el servidor…');
+                    router.visit(window.location.href, {
+                        method: 'get',
+                        only: ['visit', 'preSale', 'products'],
+                        preserveScroll: true,
+                        preserveState: false,
+                    });
                 }
             } finally {
                 if (!controller.signal.aborted && draftSyncRequestRef.current === requestId) {
                     setDraftSyncing(false);
                 }
             }
-        }, 350);
+        };
+
+        if (immediate) {
+            void synchronize();
+        } else {
+            draftSyncTimerRef.current = window.setTimeout(() => {
+                void synchronize();
+            }, 350);
+        }
     };
 
-    const setCartItems = (items: Item[]) => {
+    const setCartItems = (items: Item[], immediate = false) => {
         form.setData('items', items);
-        syncDraftCart(items);
+        syncDraftCart(items, immediate);
     };
 
     useEffect(() => () => {
@@ -359,7 +388,7 @@ export default function Visit({
             manual_price: false,
             discount: 0,
             notes: null,
-        }]);
+        }], true);
         setPriceTexts((prices) => ({ ...prices, [product.id]: formatMoneyValue(product.sale_price) }));
     };
 
@@ -707,7 +736,7 @@ export default function Visit({
                                         <p className="line-clamp-2 font-medium leading-5 text-slate-900" title={item.name}>{item.name}</p>
                                     </div>
                                     {canModifyPreSale && (
-                                        <button type="button" onClick={() => setCartItems(form.data.items.filter((_, i) => i !== index))} className="text-sm font-semibold text-red-600">
+                                        <button type="button" onClick={() => setCartItems(form.data.items.filter((_, i) => i !== index), true)} className="text-sm font-semibold text-red-600">
                                             Eliminar
                                         </button>
                                     )}
