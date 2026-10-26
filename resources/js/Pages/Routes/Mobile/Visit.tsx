@@ -28,6 +28,8 @@ type Item = {
     maximum_quantity: number | null;
     unit_price: number;
     manual_price?: boolean;
+    discount?: number;
+    notes?: string | null;
 };
 
 type ExistingItem = {
@@ -36,6 +38,8 @@ type ExistingItem = {
     unit_price: string;
     maximum_quantity?: number | null;
     manual_price?: boolean;
+    discount?: string | number;
+    notes?: string | null;
     product?: { name: string; code: string | null; barcode: string | null };
 };
 
@@ -96,6 +100,8 @@ export default function Visit({
         maximum_quantity: item.maximum_quantity === null || item.maximum_quantity === undefined ? null : Number(item.maximum_quantity),
         unit_price: Number(item.unit_price ?? 0),
         manual_price: Boolean(item.manual_price),
+        discount: Number(item['discount'] ?? 0),
+        notes: item['notes'] ?? null,
     }));
     const [preSaleKey, setPreSaleKey] = useState(() => makeOperationKey('route-pre-sale'));
     const submitLockedRef = useRef(false);
@@ -137,10 +143,16 @@ export default function Visit({
     const [searchLoading, setSearchLoading] = useState(false);
     const [searchTouched, setSearchTouched] = useState(Boolean(filters.search));
     const [quantityMessages, setQuantityMessages] = useState<Record<number, string>>({});
+    const [draftSyncing, setDraftSyncing] = useState(false);
+    const [draftSyncError, setDraftSyncError] = useState<string | null>(null);
     const [priceTexts, setPriceTexts] = useState<Record<number, string>>(() => Object.fromEntries(
         initialItems.map((item) => [item.product_id, formatMoneyValue(item.unit_price)]),
     ));
     const searchRequestRef = useRef(0);
+    const draftSyncRequestRef = useRef(0);
+    const draftSyncTimerRef = useRef<number | null>(null);
+    const draftSyncControllerRef = useRef<AbortController | null>(null);
+    const confirmedItemsRef = useRef<Item[]>(initialItems);
     const customerForm = useForm({
         commercial_name: visit.customer.commercial_name ?? '',
         contact_name: visit.customer.contact_name ?? '',
@@ -177,6 +189,99 @@ export default function Visit({
             return next;
         });
     };
+
+    const syncDraftCart = (items: Item[]) => {
+        if (!canModifyPreSale) {
+            return;
+        }
+
+        const requestId = draftSyncRequestRef.current + 1;
+        draftSyncRequestRef.current = requestId;
+        draftSyncControllerRef.current?.abort();
+
+        if (draftSyncTimerRef.current !== null) {
+            window.clearTimeout(draftSyncTimerRef.current);
+        }
+
+        setDraftSyncing(true);
+        setDraftSyncError(null);
+        draftSyncTimerRef.current = window.setTimeout(async () => {
+            const controller = new AbortController();
+            draftSyncControllerRef.current = controller;
+
+            try {
+                const response = await fetch(route('routes.mobile.visits.pre-sale.draft', visit.id), {
+                    method: 'PATCH',
+                    headers: {
+                        Accept: 'application/json',
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '',
+                    },
+                    body: JSON.stringify({
+                        items: items.map((item) => ({
+                            product_id: item.product_id,
+                            quantity: item.quantity,
+                            unit_price: item.unit_price,
+                            manual_price: Boolean(item.manual_price),
+                            discount: Number(item['discount'] ?? 0),
+                            notes: item['notes'] ?? null,
+                        })),
+                    }),
+                    signal: controller.signal,
+                });
+                const payload = await response.json();
+
+                if (draftSyncRequestRef.current !== requestId) {
+                    return;
+                }
+
+                if (!response.ok) {
+                    const message = payload?.errors?.items?.[0] ?? payload?.message ?? 'No se pudo reservar el stock. Inténtalo nuevamente.';
+                    setDraftSyncError(message);
+                    form.setData('items', confirmedItemsRef.current);
+                    return;
+                }
+
+                const maximumByProduct = new Map<number, number>(
+                    (payload?.pre_sale?.items ?? []).map((item: { product_id: number; maximum_quantity: number }) => [item.product_id, Number(item.maximum_quantity)]),
+                );
+                const confirmed = items.map((item) => ({
+                    ...item,
+                    maximum_quantity: allowNegativeStock ? null : maximumByProduct.get(item.product_id) ?? item.maximum_quantity,
+                }));
+                confirmedItemsRef.current = confirmed;
+                form.setData('items', confirmed);
+                const stockByProduct = new Map<number, Pick<Product, 'stock' | 'reserved_stock' | 'available_stock'>>(
+                    (payload?.products ?? []).map((product: Product) => [product.id, product]),
+                );
+                setProductResults((results) => results.map((product) => ({
+                    ...product,
+                    ...(stockByProduct.get(product.id) ?? {}),
+                })));
+            } catch (error) {
+                if (!controller.signal.aborted && draftSyncRequestRef.current === requestId) {
+                    setDraftSyncError('No se pudo reservar el stock. Revisa tu conexión e inténtalo nuevamente.');
+                    form.setData('items', confirmedItemsRef.current);
+                }
+            } finally {
+                if (!controller.signal.aborted && draftSyncRequestRef.current === requestId) {
+                    setDraftSyncing(false);
+                }
+            }
+        }, 350);
+    };
+
+    const setCartItems = (items: Item[]) => {
+        form.setData('items', items);
+        syncDraftCart(items);
+    };
+
+    useEffect(() => () => {
+        if (draftSyncTimerRef.current !== null) {
+            window.clearTimeout(draftSyncTimerRef.current);
+        }
+        draftSyncControllerRef.current?.abort();
+    }, []);
 
     useEffect(() => {
         const value = searchTerm.trim();
@@ -237,13 +342,13 @@ export default function Visit({
             }
 
             setQuantityMessage(product.id);
-            form.setData('items', form.data.items.map((item) => (
+            setCartItems(form.data.items.map((item) => (
                 item.product_id === product.id ? { ...item, quantity: item.quantity + 1 } : item
             )));
             return;
         }
 
-        form.setData('items', [...form.data.items, {
+        setCartItems([...form.data.items, {
             product_id: product.id,
             name: product.name,
             code: product.code,
@@ -252,12 +357,14 @@ export default function Visit({
             maximum_quantity: allowNegativeStock ? null : Math.max(0, Math.floor(product.available_stock)),
             unit_price: Number(product.sale_price ?? 0),
             manual_price: false,
+            discount: 0,
+            notes: null,
         }]);
         setPriceTexts((prices) => ({ ...prices, [product.id]: formatMoneyValue(product.sale_price) }));
     };
 
     const updateItem = (index: number, payload: Partial<Item>) => {
-        form.setData('items', form.data.items.map((row, rowIndex) => (
+        setCartItems(form.data.items.map((row, rowIndex) => (
             rowIndex === index ? { ...row, ...payload } : row
         )));
     };
@@ -310,7 +417,7 @@ export default function Visit({
     };
 
     const submit = () => {
-        if (!canModifyPreSale || form.processing || submitLockedRef.current || form.data.items.length === 0) {
+        if (!canModifyPreSale || draftSyncing || draftSyncError || form.processing || submitLockedRef.current || form.data.items.length === 0) {
             return;
         }
 
@@ -600,7 +707,7 @@ export default function Visit({
                                         <p className="line-clamp-2 font-medium leading-5 text-slate-900" title={item.name}>{item.name}</p>
                                     </div>
                                     {canModifyPreSale && (
-                                        <button type="button" onClick={() => form.setData('items', form.data.items.filter((_, i) => i !== index))} className="text-sm font-semibold text-red-600">
+                                        <button type="button" onClick={() => setCartItems(form.data.items.filter((_, i) => i !== index))} className="text-sm font-semibold text-red-600">
                                             Eliminar
                                         </button>
                                     )}
@@ -652,6 +759,8 @@ export default function Visit({
                         ))}
                     </div>
                     {form.errors.items && <p className="mt-3 text-sm font-medium text-red-600">{form.errors.items}</p>}
+                    {draftSyncError && <p className="mt-3 text-sm font-medium text-red-600">{draftSyncError}</p>}
+                    {draftSyncing && <p className="mt-3 text-sm font-medium text-slate-500">Reservando stock…</p>}
                     {(form.errors as Record<string, string>).pre_sale && <p className="mt-3 text-sm font-medium text-red-600">{(form.errors as Record<string, string>).pre_sale}</p>}
                 </div>
 
@@ -662,7 +771,7 @@ export default function Visit({
                             <span className="text-xl font-bold text-slate-950">Q {total.toFixed(2)}</span>
                         </div>
                         <button
-                            disabled={form.processing || form.data.items.length === 0 || !canModifyPreSale}
+                            disabled={form.processing || draftSyncing || Boolean(draftSyncError) || form.data.items.length === 0 || !canModifyPreSale}
                             onClick={requestSavePreSale}
                             className="w-full rounded-xl bg-orange-600 px-4 py-3 text-base font-semibold text-white disabled:opacity-50"
                         >

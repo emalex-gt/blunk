@@ -440,6 +440,9 @@ Route::middleware('auth')->group(function () {
             Route::post('/mobile/visits/{visit}/pre-sale', [RouteController::class, 'savePreSale'])
                 ->middleware('permission:any:routes.pre_sales.create|routes.pre_sales.edit')
                 ->name('mobile.visits.pre-sale.store');
+            Route::patch('/mobile/visits/{visit}/pre-sale/draft', [RouteController::class, 'syncPreSaleDraft'])
+                ->middleware('permission:any:routes.pre_sales.create|routes.pre_sales.edit')
+                ->name('mobile.visits.pre-sale.draft');
             Route::post('/mobile/visits/{visit}/without-sale', [RouteController::class, 'withoutSale'])
                 ->middleware('permission:routes.work')
                 ->name('mobile.visits.without-sale');

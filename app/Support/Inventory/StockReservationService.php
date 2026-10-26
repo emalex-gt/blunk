@@ -77,6 +77,20 @@ class StockReservationService
             ]);
     }
 
+    /** Release only the reservation belonging to one mutable draft line. */
+    public function releasePreSaleItemReservations(PreSaleItem $item): void
+    {
+        StockReservation::query()
+            ->where('business_id', $item->business_id)
+            ->where('source_type', self::SOURCE_PRE_SALE)
+            ->where('source_item_id', $item->id)
+            ->where('status', 'active')
+            ->update([
+                'status' => 'released',
+                'released_at' => now(),
+            ]);
+    }
+
     public function syncPreSaleItemPickedReservation(PreSaleItem $item, int|float $pickedQuantity): void
     {
         $preSale = $item->preSale()->firstOrFail();

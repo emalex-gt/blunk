@@ -1167,6 +1167,103 @@ class RoutesPreSalesTest extends TestCase
         $this->assertSame(10.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->where('branch_id', $branch->id)->value('stock'));
     }
 
+    public function test_mobile_cart_draft_reserves_stock_immediately_and_allows_its_own_hold_to_grow(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner', allowNegativeStock: false);
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10, salePrice: 100);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)
+            ->patchJson(route('routes.mobile.visits.pre-sale.draft', $visit), [
+                'items' => [['product_id' => $product->id, 'quantity' => 7]],
+            ])
+            ->assertOk()
+            ->assertJsonPath('pre_sale.items.0.quantity', 7);
+
+        $this->assertSame(7.0, (float) StockReservation::query()->where('product_id', $product->id)->where('status', 'active')->sum('quantity'));
+        $this->assertSame(3.0, StockAvailability::availableStock($product, null, $branch->id));
+
+        $this->actingAs($seller)
+            ->patchJson(route('routes.mobile.visits.pre-sale.draft', $visit), [
+                'items' => [['product_id' => $product->id, 'quantity' => 9]],
+            ])
+            ->assertOk();
+
+        $this->assertSame(9.0, (float) StockReservation::query()->where('product_id', $product->id)->where('status', 'active')->sum('quantity'));
+        $this->assertSame(1.0, StockAvailability::availableStock($product, null, $branch->id));
+    }
+
+    public function test_mobile_cart_draft_rejects_competing_hold_and_releases_stock_when_reduced_or_removed(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner', allowNegativeStock: false);
+        $sellerA = $this->user($business, $branch, 'pre_seller');
+        $sellerB = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10, salePrice: 100);
+        $visitA = $this->startedVisit($business, $branch, $sellerA, 'Cliente A');
+        $visitB = $this->startedVisit($business, $branch, $sellerB, 'Cliente B');
+
+        $this->actingAs($sellerA)
+            ->patchJson(route('routes.mobile.visits.pre-sale.draft', $visitA), [
+                'items' => [['product_id' => $product->id, 'quantity' => 7]],
+            ])
+            ->assertOk();
+
+        $this->actingAs($sellerB)
+            ->patchJson(route('routes.mobile.visits.pre-sale.draft', $visitB), [
+                'items' => [['product_id' => $product->id, 'quantity' => 4]],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('items');
+
+        $this->actingAs($sellerB)
+            ->patchJson(route('routes.mobile.visits.pre-sale.draft', $visitB), [
+                'items' => [['product_id' => $product->id, 'quantity' => 3]],
+            ])
+            ->assertOk();
+
+        $this->actingAs($sellerA)
+            ->patchJson(route('routes.mobile.visits.pre-sale.draft', $visitA), [
+                'items' => [['product_id' => $product->id, 'quantity' => 4]],
+            ])
+            ->assertOk();
+
+        $this->assertSame(7.0, (float) StockReservation::query()->where('product_id', $product->id)->where('status', 'active')->sum('quantity'));
+
+        $this->actingAs($sellerA)
+            ->patchJson(route('routes.mobile.visits.pre-sale.draft', $visitA), ['items' => []])
+            ->assertOk();
+
+        $this->assertSame(3.0, (float) StockReservation::query()->where('product_id', $product->id)->where('status', 'active')->sum('quantity'));
+        $this->assertSame(7.0, StockAvailability::availableStock($product, null, $branch->id));
+    }
+
+    public function test_final_route_pre_sale_save_reuses_the_draft_reservation_without_duplicate_lines_or_holds(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner', allowNegativeStock: false);
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10, salePrice: 100);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        $this->actingAs($seller)
+            ->patchJson(route('routes.mobile.visits.pre-sale.draft', $visit), [
+                'items' => [['product_id' => $product->id, 'quantity' => 5]],
+            ])
+            ->assertOk();
+
+        $this->actingAs($seller)
+            ->post(route('routes.mobile.visits.pre-sale.store', $visit), [
+                'idempotency_key' => 'test-route-draft-final-'.str_replace('.', '-', uniqid('', true)),
+                'items' => [['product_id' => $product->id, 'quantity' => 5]],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $preSale = PreSale::query()->where('route_visit_id', $visit->id)->firstOrFail();
+        $this->assertSame(1, $preSale->items()->count());
+        $this->assertSame(1, StockReservation::query()->where('source_id', $preSale->id)->where('status', 'active')->count());
+        $this->assertSame(5.0, (float) StockReservation::query()->where('source_id', $preSale->id)->where('status', 'active')->sum('quantity'));
+    }
+
     public function test_route_pre_sale_rejects_fractional_product_quantities(): void
     {
         [$business, , $branch] = $this->tenant(role: 'owner', allowNegativeStock: false);
@@ -1854,6 +1951,10 @@ class RoutesPreSalesTest extends TestCase
         $this->assertStringContainsString('Jornada cerrada. Ya no se puede editar la visita.', $visitSource);
         $this->assertStringContainsString("only: ['visit', 'preSale']", $visitSource);
         $this->assertStringContainsString('preserveState: false', $visitSource);
+        $this->assertStringContainsString("route('routes.mobile.visits.pre-sale.draft', visit.id)", $visitSource);
+        $this->assertStringContainsString('draftSyncRequestRef', $visitSource);
+        $this->assertStringContainsString('confirmedItemsRef', $visitSource);
+        $this->assertStringContainsString('Reservando stock…', $visitSource);
         $this->assertStringNotContainsString('window.history.back()', $visitSource);
         $this->assertStringContainsString("route('routes.mobile.work-days.show', visit.route_work_day_id)", $visitSource);
         $this->assertStringContainsString('¿Cerrar la jornada?', $workDaySource);

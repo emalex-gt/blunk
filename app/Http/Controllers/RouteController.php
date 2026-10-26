@@ -1197,6 +1197,129 @@ class RouteController extends Controller
         }
     }
 
+    /**
+     * Persist the seller's in-progress cart and its stock holds before the
+     * pre-sale is submitted.  This intentionally has no visit-finalization or
+     * collection side effects.
+     */
+    public function syncPreSaleDraft(Request $request, RouteVisit $visit, StockReservationService $reservations): JsonResponse
+    {
+        $this->authorizeSellerVisit($request, $visit);
+
+        $data = $request->validate([
+            'items' => ['present', 'array'],
+            'items.*.product_id' => ['required', 'integer'],
+            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.price_type_id' => ['nullable', 'integer'],
+            'items.*.unit_price' => ['nullable', 'numeric', 'gt:0'],
+            'items.*.manual_price' => ['nullable', 'boolean'],
+            'items.*.discount' => ['nullable', 'numeric', 'min:0'],
+            'items.*.notes' => ['nullable', 'string'],
+        ], [
+            'items.*.quantity.integer' => 'La cantidad debe ser un número entero.',
+            'items.*.quantity.min' => 'La cantidad debe ser al menos 1.',
+        ]);
+
+        $this->assertVisitEditable($visit);
+        app(RouteCashOperationGuard::class)->requireOpen(currentBusinessId(), (int) $visit->branch_id);
+
+        $preSale = DB::transaction(function () use ($request, $visit, $data, $reservations) {
+            $workDay = RouteWorkDay::query()
+                ->where('business_id', currentBusinessId())
+                ->whereKey($visit->route_work_day_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($workDay->status !== 'open') {
+                throw ValidationException::withMessages([
+                    'pre_sale' => 'La jornada está cerrada. La preventa ya no se puede editar.',
+                ]);
+            }
+
+            $lockedVisit = RouteVisit::query()
+                ->where('business_id', currentBusinessId())
+                ->whereKey($visit->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (PreSale::query()->where('business_id', currentBusinessId())
+                ->where('route_visit_id', $lockedVisit->id)
+                ->whereIn('status', [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING, PreSale::STATUS_PICKED, PreSale::STATUS_CONVERTED])
+                ->exists()) {
+                throw ValidationException::withMessages(['pre_sale' => 'La preventa ya fue enviada y no se puede editar.']);
+            }
+
+            $preSale = PreSale::query()
+                ->where('business_id', currentBusinessId())
+                ->where('route_visit_id', $lockedVisit->id)
+                ->where('status', PreSale::STATUS_DRAFT)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $preSale) {
+                abort_unless(Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_CREATE), 403);
+                $preSale = PreSale::query()->create([
+                    'business_id' => currentBusinessId(),
+                    'branch_id' => $lockedVisit->branch_id,
+                    'route_work_day_id' => $lockedVisit->route_work_day_id,
+                    'route_visit_id' => $lockedVisit->id,
+                    'route_zone_id' => $lockedVisit->route_zone_id,
+                    'customer_id' => $lockedVisit->customer_id,
+                    'seller_id' => $request->user()->id,
+                    'status' => PreSale::STATUS_DRAFT,
+                ]);
+            } else {
+                abort_unless(
+                    Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_EDIT)
+                    || ((int) $preSale->seller_id === (int) $request->user()->id
+                        && Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_CREATE)),
+                    403,
+                );
+            }
+
+            $products = $this->activePreSaleProducts($data['items']);
+            $resolved = $this->resolvePreSaleLines($lockedVisit, $data['items'], $products);
+            $this->syncPreSaleDraftItems($preSale, $lockedVisit, $products, $resolved['lines'], $reservations);
+
+            $preSale->update([
+                'subtotal' => $resolved['subtotal'],
+                'discount_total' => $resolved['discount_total'],
+                'total' => $resolved['total'],
+            ]);
+
+            return $preSale->fresh(['items.product:id,name,code,barcode']);
+        });
+
+        $productIds = $preSale->items->pluck('product_id')->map(fn ($id) => (int) $id)->all();
+        $stockBreakdown = StockAvailability::getBreakdownForProducts((int) $visit->business_id, (int) $visit->branch_id, $productIds);
+
+        return response()->json([
+            'pre_sale' => [
+                'id' => $preSale->id,
+                'status' => $preSale->status,
+                'items' => $preSale->items->map(function (PreSaleItem $item) use ($stockBreakdown) {
+                    $breakdown = $stockBreakdown->get((int) $item->product_id, []);
+
+                    return [
+                        'product_id' => $item->product_id,
+                        'quantity' => (float) $item->quantity,
+                        'maximum_quantity' => (float) ($breakdown['available_stock'] ?? 0) + (float) $item->quantity,
+                    ];
+                })->values(),
+            ],
+            'products' => $preSale->items->map(function (PreSaleItem $item) use ($stockBreakdown) {
+                $breakdown = $stockBreakdown->get((int) $item->product_id, []);
+
+                return [
+                    'id' => $item->product_id,
+                    'stock' => (float) ($breakdown['physical_stock'] ?? 0),
+                    'reserved_stock' => (float) ($breakdown['reserved_total'] ?? 0),
+                    'available_stock' => (float) ($breakdown['available_stock'] ?? 0),
+                ];
+            })->values(),
+        ]);
+    }
+
     public function savePreSale(Request $request, RouteVisit $visit, StockReservationService $reservations, RoutePreSalePaymentMethodPolicy $paymentMethodPolicy): RedirectResponse
     {
         $this->authorizeSellerVisit($request, $visit);
@@ -1297,87 +1420,17 @@ class RouteController extends Controller
                     'status' => 'draft',
                 ]);
             } else {
-                abort_unless(Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_EDIT), 403);
+                abort_unless(
+                    Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_EDIT)
+                    || ((int) $preSale->seller_id === (int) $request->user()->id
+                        && Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_CREATE)),
+                    403,
+                );
             }
 
-            $reservations->releasePreSaleReservations($preSale);
-            $preSale->items()->delete();
-
-            $products = Product::query()
-                ->where('business_id', currentBusinessId())
-                ->whereIn('id', collect($data['items'])->pluck('product_id')->all())
-                ->where('is_active', true)
-                ->get()
-                ->keyBy('id');
-
-            $quantitiesByProduct = collect($data['items'])
-                ->groupBy(fn ($item) => (int) $item['product_id'])
-                ->map(fn ($items) => $items->sum(fn ($item) => (float) $item['quantity']));
-
-            if ($products->count() !== $quantitiesByProduct->count()) {
-                throw ValidationException::withMessages(['items' => 'Uno de los productos no existe o está inactivo.']);
-            }
-
-            $reservations->lockStockRowsForReservation(
-                currentBusinessId(),
-                $visit->branch_id,
-                $quantitiesByProduct->keys()->all(),
-            );
-
-            foreach ($quantitiesByProduct as $productId => $quantity) {
-                $product = $products->get($productId);
-                if (! $product) {
-                    throw ValidationException::withMessages(['items' => 'Uno de los productos no existe o está inactivo.']);
-                }
-
-                BranchInventory::ensureProductInBranch($product, $visit->branch_id);
-                $reservations->assertAvailableForReservation(currentBusinessId(), $visit->branch_id, $product, $quantity);
-            }
-
-            $subtotal = 0.0;
-            $discountTotal = 0.0;
-            $configuredPriceTypeId = $this->preSalePriceTypeId(currentBusinessId());
-            $manualPriceEnabled = $this->preSaleManualPriceEnabled(currentBusinessId());
-
-            foreach ($data['items'] as $row) {
-                $product = $products->get((int) $row['product_id']);
-                $price = PriceLists::priceForProduct($product, $configuredPriceTypeId, $visit->branch_id);
-                $quantity = (float) $row['quantity'];
-                $discount = round((float) ($row['discount'] ?? 0), 2);
-                $manualPrice = (bool) ($row['manual_price'] ?? false);
-                $unitPrice = round((float) ($price['price'] ?? $product->sale_price), 2);
-
-                if ($manualPrice) {
-                    if (! $manualPriceEnabled) {
-                        throw ValidationException::withMessages([
-                            'items' => 'El precio manual no está permitido para preventas.',
-                        ]);
-                    }
-
-                    $unitPrice = round((float) ($row['unit_price'] ?? 0), 2);
-                    $this->validatePreSaleManualPrice($product, $unitPrice);
-                }
-
-                $lineSubtotal = round($quantity * $unitPrice, 2);
-                $lineTotal = max(0, round($lineSubtotal - $discount, 2));
-
-                $item = $preSale->items()->create([
-                    'business_id' => currentBusinessId(),
-                    'product_id' => $product->id,
-                    'price_type_id' => $price['price_type_id'],
-                    'quantity' => $quantity,
-                    'unit_price' => $unitPrice,
-                    'original_price' => $price['price'],
-                    'manual_price' => $manualPrice,
-                    'discount' => $discount,
-                    'total' => $lineTotal,
-                    'notes' => $row['notes'] ?? null,
-                ]);
-                $reservations->reservePreSaleItem($item);
-
-                $subtotal += $lineSubtotal;
-                $discountTotal += $discount;
-            }
+            $products = $this->activePreSaleProducts($data['items']);
+            $resolved = $this->resolvePreSaleLines($visit, $data['items'], $products);
+            $this->syncPreSaleDraftItems($preSale, $visit, $products, $resolved['lines'], $reservations);
 
             $paymentMethod = $paymentMethodPolicy->resolveForSave(
                 (int) currentBusinessId(),
@@ -1394,9 +1447,9 @@ class RouteController extends Controller
                 'agreed_payment_method' => $paymentMethod,
                 'payment_method_set_at' => $paymentMethod ? now() : null,
                 'payment_method_set_by' => $paymentMethod ? $request->user()->id : null,
-                'subtotal' => round($subtotal, 2),
-                'discount_total' => round($discountTotal, 2),
-                'total' => round(max(0, $subtotal - $discountTotal), 2),
+                'subtotal' => $resolved['subtotal'],
+                'discount_total' => $resolved['discount_total'],
+                'total' => $resolved['total'],
                 'status' => $collectNow ? PreSale::STATUS_SUBMITTED : PreSale::STATUS_DRAFT,
                 'submitted_at' => $collectNow ? now() : null,
             ]);
@@ -1955,6 +2008,160 @@ class RouteController extends Controller
                 'available_stock' => (float) ($breakdown['available_stock'] ?? ($stock - $reserved)),
             ];
         });
+    }
+
+    /** @return \Illuminate\Support\Collection<int, Product> */
+    private function activePreSaleProducts(array $rows): \Illuminate\Support\Collection
+    {
+        $productIds = collect($rows)
+            ->pluck('product_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        $products = Product::query()
+            ->where('business_id', currentBusinessId())
+            ->whereIn('id', $productIds)
+            ->where('is_active', true)
+            ->get()
+            ->keyBy('id');
+
+        if ($products->count() !== $productIds->count()) {
+            throw ValidationException::withMessages(['items' => 'Uno de los productos no existe o está inactivo.']);
+        }
+
+        return $products;
+    }
+
+    /**
+     * Resolve the commercial values server-side for both cart drafts and the
+     * final save. The browser only proposes a cart; it is never authoritative
+     * for availability or the configured price.
+     *
+     * @return array{lines: array<int, array<string, mixed>>, subtotal: float, discount_total: float, total: float}
+     */
+    private function resolvePreSaleLines(RouteVisit $visit, array $rows, \Illuminate\Support\Collection $products): array
+    {
+        $configuredPriceTypeId = $this->preSalePriceTypeId(currentBusinessId());
+        $manualPriceEnabled = $this->preSaleManualPriceEnabled(currentBusinessId());
+        $lines = [];
+        $subtotal = 0.0;
+        $discountTotal = 0.0;
+
+        foreach ($rows as $row) {
+            $productId = (int) $row['product_id'];
+            if (isset($lines[$productId])) {
+                throw ValidationException::withMessages(['items' => 'Un producto solo puede aparecer una vez en la preventa.']);
+            }
+
+            /** @var Product $product */
+            $product = $products->get($productId);
+            $price = PriceLists::priceForProduct($product, $configuredPriceTypeId, (int) $visit->branch_id);
+            $quantity = (float) $row['quantity'];
+            $discount = round((float) ($row['discount'] ?? 0), 2);
+            $manualPrice = (bool) ($row['manual_price'] ?? false);
+            $unitPrice = round((float) ($price['price'] ?? $product->sale_price), 2);
+
+            if ($manualPrice) {
+                if (! $manualPriceEnabled) {
+                    throw ValidationException::withMessages([
+                        'items' => 'El precio manual no está permitido para preventas.',
+                    ]);
+                }
+
+                $unitPrice = round((float) ($row['unit_price'] ?? 0), 2);
+                $this->validatePreSaleManualPrice($product, $unitPrice);
+            }
+
+            $lineSubtotal = round($quantity * $unitPrice, 2);
+            $lineTotal = max(0, round($lineSubtotal - $discount, 2));
+            $lines[$productId] = [
+                'product_id' => $productId,
+                'price_type_id' => $price['price_type_id'],
+                'quantity' => $quantity,
+                'unit_price' => $unitPrice,
+                'original_price' => $price['price'],
+                'manual_price' => $manualPrice,
+                'discount' => $discount,
+                'total' => $lineTotal,
+                'notes' => $row['notes'] ?? null,
+            ];
+            $subtotal += $lineSubtotal;
+            $discountTotal += $discount;
+        }
+
+        return [
+            'lines' => array_values($lines),
+            'subtotal' => round($subtotal, 2),
+            'discount_total' => round($discountTotal, 2),
+            'total' => round(max(0, $subtotal - $discountTotal), 2),
+        ];
+    }
+
+    /**
+     * Update draft lines in place while their current reservations are still
+     * active. This makes an edit account for its own existing hold and avoids
+     * the release/recreate window from the old final-save implementation.
+     *
+     * @param array<int, array<string, mixed>> $lines
+     */
+    private function syncPreSaleDraftItems(PreSale $preSale, RouteVisit $visit, \Illuminate\Support\Collection $products, array $lines, StockReservationService $reservations): void
+    {
+        $existingItems = PreSaleItem::query()
+            ->where('business_id', currentBusinessId())
+            ->where('pre_sale_id', $preSale->id)
+            ->lockForUpdate()
+            ->get();
+        $existingByProduct = $existingItems->keyBy('product_id');
+        $lineProductIds = collect($lines)->pluck('product_id')->map(fn ($id) => (int) $id)->all();
+        $allProductIds = collect($existingItems->pluck('product_id'))
+            ->merge($lineProductIds)
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $reservations->lockStockRowsForReservation(
+            currentBusinessId(),
+            (int) $visit->branch_id,
+            $allProductIds,
+        );
+
+        foreach ($lines as $line) {
+            /** @var Product $product */
+            $product = $products->get((int) $line['product_id']);
+            $existing = $existingByProduct->get((int) $line['product_id']);
+            BranchInventory::ensureProductInBranch($product, (int) $visit->branch_id);
+            $reservations->assertAvailableForReservation(
+                currentBusinessId(),
+                (int) $visit->branch_id,
+                $product,
+                (float) $line['quantity'],
+                $existing?->id,
+            );
+        }
+
+        $lineIds = collect($lineProductIds)->flip();
+        foreach ($existingItems as $existing) {
+            if (! $lineIds->has((int) $existing->product_id)) {
+                $reservations->releasePreSaleItemReservations($existing);
+                $existing->delete();
+            }
+        }
+
+        foreach ($lines as $line) {
+            $existing = $existingByProduct->get((int) $line['product_id']);
+            $attributes = ['business_id' => currentBusinessId(), ...$line];
+
+            if ($existing) {
+                $existing->update($attributes);
+                $item = $existing->fresh();
+            } else {
+                $item = $preSale->items()->create($attributes);
+            }
+
+            $reservations->reservePreSaleItem($item);
+        }
     }
 
     private function preSalePriceTypeId(int $businessId): ?int
