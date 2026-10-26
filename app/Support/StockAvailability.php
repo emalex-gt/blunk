@@ -153,6 +153,7 @@ class StockAvailability
             ...$breakdown,
             'pre_sale_reservations' => self::preSaleReservationRows($businessId, $branchId, $productId),
             'credit_reservations' => self::creditReservationRows($businessId, $branchId, $productId),
+            'other_reservations' => self::otherReservationRows($businessId, $branchId, $productId),
             'orphan_or_ignored_reservations' => self::ignoredPreSaleReservationRows($businessId, $branchId, $productId),
         ];
     }
@@ -262,6 +263,33 @@ class StockAvailability
                 'customer_doc_number' => $row->customer_doc_number,
                 'status' => $row->status,
                 'quantity' => (float) min((int) $row->qty_reserved, (int) $row->qty_pending),
+                'created_at' => (string) $row->created_at,
+            ])
+            ->all();
+    }
+
+    private static function otherReservationRows(int $businessId, int $branchId, int $productId): array
+    {
+        return DB::table('stock_reservations')
+            ->where('business_id', $businessId)
+            ->where('branch_id', $branchId)
+            ->where('product_id', $productId)
+            ->where('status', 'active')
+            ->whereNotIn('source_type', ['pre_sale', 'credit_receipt'])
+            ->orderBy('created_at')
+            ->limit(100)
+            ->get([
+                'id as reservation_id',
+                'source_type',
+                'source_id',
+                'quantity',
+                'created_at',
+            ])
+            ->map(fn ($row) => [
+                'reservation_id' => (int) $row->reservation_id,
+                'source_type' => $row->source_type,
+                'source_id' => $row->source_id ? (int) $row->source_id : null,
+                'quantity' => (float) $row->quantity,
                 'created_at' => (string) $row->created_at,
             ])
             ->all();

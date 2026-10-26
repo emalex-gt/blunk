@@ -12,6 +12,7 @@ use App\Models\StockMovement;
 use App\Support\BranchInventory;
 use App\Support\PriceLists;
 use App\Support\ProductSupplierCostHistory;
+use App\Support\Permissions;
 use App\Support\StockAvailability;
 use Cloudinary\Cloudinary;
 use Illuminate\Http\JsonResponse;
@@ -347,6 +348,8 @@ class ProductController extends Controller
                 ],
             ],
             'movements' => $movements,
+            'can_view_reservations' => Permissions::userHas($request->user(), Permissions::INVENTORY_VIEW)
+                || Permissions::userHas($request->user(), Permissions::REPORTS_INVENTORY_VIEW),
         ]);
     }
 

@@ -654,6 +654,8 @@ export default function Visit({
                 <div className="space-y-2">
                     {productResults.map((product) => {
                         const disabled = !allowNegativeStock && product.available_stock <= 0;
+                        const reservedStock = Number(product.reserved_stock ?? 0);
+                        const availableStock = Number(product.available_stock ?? 0);
                         return (
                             <button
                                 type="button"
@@ -667,6 +669,13 @@ export default function Visit({
                                         <h2 className="line-clamp-2 font-semibold leading-5 text-slate-950" title={product.name}>{product.name}</h2>
                                         <p className="truncate text-xs text-slate-500" title={product.code ?? product.barcode ?? ''}>{product.code ?? product.barcode ?? '-'}</p>
                                         <p className="mt-1 text-xs text-slate-500">Existencia: {product.stock} · Reservado: {product.reserved_stock} · Disponible: {product.available_stock}</p>
+                                        {reservedStock > 0 && (
+                                            <p className="mt-1 text-xs font-semibold text-amber-700">
+                                                {availableStock <= 0
+                                                    ? `Sin disponibilidad: ${reservedStock} unidades están reservadas temporalmente.`
+                                                    : `${reservedStock} unidades están reservadas temporalmente; quedan ${availableStock} disponibles.`}
+                                            </p>
+                                        )}
                                     </div>
                                     <span className="shrink-0 text-sm font-semibold text-orange-700">Q {Number(product.sale_price).toFixed(2)}</span>
                                 </div>
