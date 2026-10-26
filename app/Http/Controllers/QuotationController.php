@@ -93,7 +93,7 @@ class QuotationController extends Controller
 
         return Inertia::render('Quotations/Show', [
             'quotation' => $this->payload(
-                $quotation->load(['items', 'branch:id,name', 'createdBy:id,name', 'cancelledBy:id,name']),
+                $quotation->load(['items', 'branch:id,name', 'createdBy:id,name', 'cancelledBy:id,name', 'convertedSale:id,quotation_id']),
                 tenantTimezone($business),
             ),
         ]);
@@ -269,6 +269,33 @@ class QuotationController extends Controller
         return back()->with('success', 'Cotización anulada.');
     }
 
+    /**
+     * Opens the normal POS with a server-authorized quotation source.  This is
+     * deliberately only a preparation step: it never creates a Sale nor
+     * changes the quotation status.
+     */
+    public function convert(Request $request, Quotation $quotation): RedirectResponse
+    {
+        $business = $this->authorizeQuotation($request, $quotation);
+        abort_unless(Permissions::userHas($request->user(), Permissions::QUOTATIONS_CONVERT), 403);
+        $data = $request->validate(['confirm_expired' => ['nullable', 'boolean']]);
+
+        if ($quotation->status !== Quotation::OPEN) {
+            throw ValidationException::withMessages(['quotation' => 'Esta cotización ya no puede convertirse en una venta.']);
+        }
+
+        if ($quotation->isExpired(tenantTimezone($business)) && ! ($data['confirm_expired'] ?? false)) {
+            throw ValidationException::withMessages([
+                'quotation' => 'Esta cotización ha vencido. Confirma explícitamente para continuar con sus precios cotizados.',
+            ]);
+        }
+
+        return redirect()->route('sales.create', [
+            'quotation_id' => $quotation->id,
+            'confirm_expired' => (bool) ($data['confirm_expired'] ?? false),
+        ]);
+    }
+
     public function print(Request $request, Quotation $quotation, string $format)
     {
         $business = $this->authorizeQuotation($request, $quotation);
@@ -401,6 +428,7 @@ class QuotationController extends Controller
             'created_by' => $quotation->createdBy?->only('id', 'name'),
             'cancelled_by' => $quotation->cancelledBy?->only('id', 'name'),
             'cancellation_reason' => $quotation->cancellation_reason,
+            'converted_sale_id' => $quotation->convertedSale?->id,
             'items' => $quotation->relationLoaded('items')
                 ? $quotation->items->map(fn ($item) => $item->only('id', 'product_name', 'product_code', 'quantity', 'unit_price', 'discount_amount', 'total'))
                 : null,

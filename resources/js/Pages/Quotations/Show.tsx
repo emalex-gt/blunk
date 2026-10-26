@@ -15,6 +15,7 @@ type Quotation = {
     discount_reason?: string;
     note?: string;
     cancellation_reason?: string;
+    converted_sale_id?: number | null;
     customer: Record<string, string | undefined>;
     branch?: { name: string };
     created_by?: { name: string };
@@ -52,6 +53,22 @@ export default function Show({ quotation }: { quotation: Quotation }) {
                     <div className="mt-4 flex flex-wrap gap-2">
                         {can('quotations.print') && <a href={route('quotations.print', { quotation: quotation.id, format: 'ticket' })} target="_blank" className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700">Imprimir ticket</a>}
                         {can('quotations.print') && <a href={route('quotations.print', { quotation: quotation.id, format: 'document' })} target="_blank" className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700">Imprimir documento</a>}
+                        {quotation.status === 'open' && can('quotations.convert') && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const confirmExpired = quotation.expired;
+                                    if (confirmExpired && !window.confirm('Esta cotización ha vencido. Los precios y condiciones cotizados pueden no estar vigentes. ¿Deseas continuar?')) return;
+                                    router.post(route('quotations.convert', quotation.id), { confirm_expired: confirmExpired });
+                                }}
+                                className="rounded-xl bg-orange-600 px-3 py-2 text-sm font-semibold text-white hover:bg-orange-700"
+                            >
+                                Convertir a venta
+                            </button>
+                        )}
+                        {quotation.status === 'converted' && quotation.converted_sale_id && can('sales.view') && (
+                            <Link href={route('sales.show', quotation.converted_sale_id)} className="rounded-xl border border-orange-300 px-3 py-2 text-sm font-semibold text-orange-700">Ver venta</Link>
+                        )}
                     </div>
 
                     <div className="mt-5 rounded-xl bg-slate-50 p-4">

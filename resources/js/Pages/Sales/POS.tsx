@@ -154,6 +154,7 @@ type CartItem = {
     max_quantity?: number | null;
     credit_receipt_number?: string | null;
     locked_credit_line?: boolean;
+    quotation_item_id?: number | null;
 };
 
 type ManualPriceDraft = {
@@ -175,6 +176,25 @@ type CreditInvoicePayload = {
         unit_price: number;
         receipt_number: string;
     }[];
+};
+
+type QuotationSource = {
+    id: number;
+    number: string;
+    branch_id: number | null;
+    expired: boolean;
+    expired_confirmed: boolean;
+    note: string | null;
+    customer: Partial<CustomerForm>;
+    items: Array<{
+        quotation_item_id: number;
+        product_id: number;
+        quantity: number;
+        unit_price: number;
+        original_price: number;
+        price_type_id: number | null;
+    }>;
+    discount: SaleDiscount | null;
 };
 
 type SaleDiscount = {
@@ -208,6 +228,7 @@ type PosDraft = {
         max_quantity?: number | null;
         credit_receipt_number?: string | null;
         locked_credit_line?: boolean;
+        quotation_item_id?: number | null;
     }[];
     customer: CustomerForm;
     note: string;
@@ -642,6 +663,7 @@ export default function POS({
     credit_sales_available = false,
     allow_negative_stock = false,
     credit_invoice = null,
+    quotation_source = null,
     use_product_images = true,
 }: {
     products?: Product[];
@@ -666,6 +688,7 @@ export default function POS({
     allow_negative_stock?: boolean;
     show_other_branches_stock_in_pos?: boolean;
     credit_invoice?: CreditInvoicePayload | null;
+    quotation_source?: QuotationSource | null;
     fel?: {
         module_enabled: boolean;
         enabled: boolean;
@@ -806,6 +829,7 @@ export default function POS({
     const latestSubmitSucceededRef = useRef(false);
     const latestSubmitFailureHandledRef = useRef(false);
     const creditInvoiceLoadedRef = useRef(false);
+    const quotationLoadedRef = useRef(false);
     const draftLoadInitializedRef = useRef(false);
     const latestDraftRef = useRef<PosDraft | null>(null);
     const productSearchRequestRef = useRef(0);
@@ -1068,6 +1092,20 @@ export default function POS({
     }, [credit_invoice, fetchPosProducts, productsById]);
 
     useEffect(() => {
+        if (!quotation_source || quotationLoadedRef.current) {
+            return;
+        }
+
+        const missingIds = quotation_source.items
+            .map((line) => line.product_id)
+            .filter((id) => !productsById.has(id));
+
+        if (missingIds.length > 0) {
+            void fetchPosProducts({ ids: missingIds, limit: 50 }).catch(() => undefined);
+        }
+    }, [fetchPosProducts, productsById, quotation_source]);
+
+    useEffect(() => {
         if (!credit_invoice || creditInvoiceLoadedRef.current || productsById.size === 0) {
             return;
         }
@@ -1109,6 +1147,58 @@ export default function POS({
         setDocumentType(singleDocumentType ?? (available_document_types[0] ?? 'receipt'));
         showMessage('Facturando productos a crédito.');
     }, [activeBranchLocationDefaults, available_document_types, country, credit_invoice, productsById, setData, singleDocumentType]);
+
+    useEffect(() => {
+        if (!quotation_source || quotationLoadedRef.current || productsById.size === 0) {
+            return;
+        }
+
+        const quotationItems = quotation_source.items.reduce<CartItem[]>((items, line) => {
+            const product = productsById.get(line.product_id);
+            if (!product) {
+                return items;
+            }
+
+            items.push({
+                product,
+                quantity: String(line.quantity),
+                unit_price: Number(line.unit_price).toFixed(2),
+                original_price: Number(line.original_price).toFixed(2),
+                price_type_id: line.price_type_id,
+                price_source: 'price_list',
+                manual_price: false,
+                price_warning: null,
+                quotation_item_id: line.quotation_item_id,
+            });
+
+            return items;
+        }, []);
+
+        if (quotationItems.length !== quotation_source.items.length) {
+            showError('Uno o más productos de la cotización ya no están disponibles para la venta.');
+            return;
+        }
+
+        const quotedCustomer = normalizeCustomerValidationState({
+            ...defaultCustomer,
+            ...quotation_source.customer,
+            id: quotation_source.customer.id ?? null,
+            consumidor_final: quotation_source.customer.doc_type === 'CF',
+            name_locked: false,
+            tax_lookup_verified_at: null,
+            tax_lookup_verified_doc_number: null,
+        }, country, activeBranchLocationDefaults);
+
+        quotationLoadedRef.current = true;
+        setCart(quotationItems);
+        cartRef.current = quotationItems;
+        setData('customer', quotedCustomer);
+        setData('note', quotation_source.note ?? '');
+        setDiscount(quotation_source.discount);
+        setErrorMessage('');
+        setMessage(`Carrito cargado desde ${quotation_source.number}. Revisa la venta antes de confirmar.`);
+        toast.info(`Carrito cargado desde ${quotation_source.number}.`);
+    }, [activeBranchLocationDefaults, country, defaultCustomer, productsById, quotation_source, setData, toast]);
 
     const customerSearchTerm = useMemo(() => {
         if (country === 'GT' && data.customer.consumidor_final && data.customer.doc_type === 'CF') {
@@ -1333,6 +1423,7 @@ export default function POS({
                 price_type_id: item.price_type_id,
                 price_source: item.price_source,
                 manual_price: item.manual_price,
+                quotation_item_id: item.quotation_item_id ?? null,
                 credit_line_id: item.credit_line_id ?? null,
                 max_quantity: item.max_quantity ?? null,
                 credit_receipt_number: item.credit_receipt_number ?? null,
@@ -1399,6 +1490,7 @@ export default function POS({
                     max_quantity: item.max_quantity ?? null,
                     credit_receipt_number: item.credit_receipt_number ?? null,
                     locked_credit_line: item.locked_credit_line ?? false,
+                    quotation_item_id: item.quotation_item_id ?? null,
                 };
             })
             .filter((item): item is CartItem => Boolean(item));
@@ -2401,6 +2493,8 @@ export default function POS({
             note: data.note,
             branch_id: activeBranchId,
             draft_id: activeOperationDraftId,
+            quotation_id: quotation_source?.id ?? null,
+            quotation_expired_confirmed: Boolean(quotation_source?.expired_confirmed),
             customer: fiscalCustomerPayload(data.customer),
             document_type: effectiveDocumentType,
             payment_condition: paymentCondition,
@@ -2417,6 +2511,7 @@ export default function POS({
                 unit_price: Number(item.unit_price),
                 price_source: item.price_source,
                 manual_price: item.manual_price,
+                quotation_item_id: item.quotation_item_id ?? null,
                 credit_line_id: item.credit_line_id ?? null,
             })),
             discount: discount ? {
@@ -2866,6 +2961,14 @@ export default function POS({
                             {credit_invoice && (
                                 <div className="mb-4 rounded-xl border border-orange-100 bg-orange-50 px-4 py-3 text-sm font-semibold text-orange-700">
                                     Facturando productos a crédito.
+                                </div>
+                            )}
+                            {quotation_source && (
+                                <div className={`mb-4 rounded-xl border px-4 py-3 text-sm font-semibold ${quotation_source.expired ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-orange-100 bg-orange-50 text-orange-700'}`}>
+                                    Carrito cargado desde {quotation_source.number}.
+                                    {quotation_source.expired
+                                        ? ' Esta cotización ha vencido. Los precios y condiciones cotizados pueden no estar vigentes.'
+                                        : ' Los precios y descuentos cotizados se conservarán hasta que los modifiques.'}
                                 </div>
                             )}
                             <div className="flex flex-wrap items-center justify-between gap-3">

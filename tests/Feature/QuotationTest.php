@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Business;
+use App\Models\CashRegisterSession;
 use App\Models\Customer;
 use App\Models\Product;
 use App\Models\PriceType;
@@ -234,6 +235,265 @@ class QuotationTest extends TestCase
 
         [, $withoutPosUser] = $this->tenant(false);
         $this->actingAs($withoutPosUser)->get(route('quotations.index'))->assertForbidden();
+    }
+
+    public function test_opening_a_quotation_conversion_does_not_change_it_and_expired_requires_confirmation(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $quotation = Quotation::query()->sole();
+
+        $this->actingAs($user)
+            ->post(route('quotations.convert', $quotation))
+            ->assertRedirect(route('sales.create', ['quotation_id' => $quotation->id, 'confirm_expired' => false]));
+        $this->assertSame(Quotation::OPEN, $quotation->fresh()->status);
+
+        $quotation->update(['valid_until' => now(tenantTimezone($business))->subDay()->toDateString()]);
+        $this->actingAs($user)
+            ->post(route('quotations.convert', $quotation))
+            ->assertSessionHasErrors('quotation');
+        $this->actingAs($user)
+            ->post(route('quotations.convert', $quotation), ['confirm_expired' => true])
+            ->assertRedirect(route('sales.create', ['quotation_id' => $quotation->id, 'confirm_expired' => true]));
+        $this->assertSame(Quotation::OPEN, $quotation->fresh()->status);
+    }
+
+    public function test_sale_checkout_reconstructs_quoted_price_and_marks_quotation_converted_only_after_success(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $quotation = Quotation::query()->with('items')->sole();
+        $product->update(['sale_price' => 25]);
+        BranchInventory::adjust($product->fresh(), BranchInventory::defaultBranch($business->id)->id, 5);
+        $this->openCash($business, $user);
+
+        $salePayload = [
+            'idempotency_key' => 'quotation-sale-'.uniqid(),
+            'branch_id' => $quotation->branch_id,
+            'quotation_id' => $quotation->id,
+            'quotation_expired_confirmed' => false,
+            'document_type' => 'receipt',
+            'payment_condition' => 'paid',
+            'customer' => ['name' => 'Cliente de mostrador', 'doc_type' => 'CF', 'doc_number' => 'CF'],
+            'payments' => [['method' => 'cash', 'amount' => 10]],
+            'items' => [[
+                'product_id' => $product->id,
+                'quotation_item_id' => $quotation->items->sole()->id,
+                'quantity' => 1,
+                'unit_price' => 10,
+                'price_source' => 'price_list',
+                'manual_price' => false,
+            ]],
+        ];
+
+        $this->actingAs($user)->post(route('sales.store'), $salePayload)->assertSessionHasNoErrors();
+        $sale = \App\Models\Sale::query()->sole();
+        $this->assertSame($quotation->id, $sale->quotation_id);
+        $this->assertSame('10.00', $sale->items()->sole()->unit_price);
+        $this->assertSame(Quotation::CONVERTED, $quotation->fresh()->status);
+        $this->assertNotNull($quotation->fresh()->converted_at);
+        $this->assertSame($sale->id, $quotation->fresh()->convertedSale()->sole()->id);
+        $this->assertSame($quotation->id, $sale->fresh()->quotation()->sole()->id);
+
+        $salePayload['idempotency_key'] = 'quotation-sale-second-'.uniqid();
+        $this->actingAs($user)->post(route('sales.store'), $salePayload)->assertSessionHasErrors('quotation_id');
+        $this->assertDatabaseCount('sales', 1);
+    }
+
+    public function test_manual_quotation_id_from_another_tenant_or_cancelled_quotation_is_rejected(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        [, $otherUser, $otherProduct] = $this->tenant();
+        $this->actingAs($otherUser)->post(route('quotations.store'), $this->payload($otherProduct))->assertRedirect();
+        $foreign = Quotation::query()->where('business_id', '!=', $business->id)->sole();
+        BranchInventory::adjust($product->fresh(), BranchInventory::defaultBranch($business->id)->id, 5);
+        $this->openCash($business, $user);
+
+        $payload = [
+            'idempotency_key' => 'foreign-quote-'.uniqid(), 'quotation_id' => $foreign->id,
+            'document_type' => 'receipt', 'payment_condition' => 'paid',
+            'customer' => ['doc_type' => 'CF', 'doc_number' => 'CF', 'name' => 'Consumidor Final'],
+            'payments' => [['method' => 'cash', 'amount' => 10]],
+            'items' => [['product_id' => $product->id, 'quantity' => 1, 'unit_price' => 10, 'price_source' => 'price_list']],
+        ];
+        $this->actingAs($user)->post(route('sales.store'), $payload)->assertNotFound();
+        $this->assertDatabaseCount('sales', 0);
+    }
+
+    public function test_changing_a_quoted_price_uses_the_normal_manual_price_policy(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $quotation = Quotation::query()->sole();
+        BranchInventory::adjust($product->fresh(), BranchInventory::defaultBranch($business->id)->id, 5);
+        $this->openCash($business, $user);
+
+        $this->actingAs($user)->post(route('sales.store'), [
+            'idempotency_key' => 'quoted-price-change-'.uniqid(),
+            'quotation_id' => $quotation->id,
+            'document_type' => 'receipt',
+            'payment_condition' => 'paid',
+            'customer' => ['doc_type' => 'CF', 'doc_number' => 'CF', 'name' => 'Consumidor Final'],
+            'payments' => [['method' => 'cash', 'amount' => 9]],
+            'items' => [[
+                'product_id' => $product->id,
+                'quotation_item_id' => $quotation->items()->sole()->id,
+                'quantity' => 1,
+                'unit_price' => 9,
+                'price_source' => 'manual',
+                'manual_price' => true,
+            ]],
+        ])->assertForbidden();
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertSame(Quotation::OPEN, $quotation->fresh()->status);
+    }
+
+    public function test_removing_another_quoted_line_keeps_the_matching_line_price(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $quotation = Quotation::query()->with('items')->sole();
+        $quotedA = $quotation->items->sole();
+        $productB = $this->additionalProduct($business, 'Producto B', 30);
+        $this->appendQuotedItem($quotation, $productB, 1, 12);
+        $product->update(['sale_price' => 25]);
+        BranchInventory::adjust($product->fresh(), BranchInventory::defaultBranch($business->id)->id, 5);
+        $this->openCash($business, $user);
+
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload($quotation, [[
+            'product_id' => $product->id,
+            'quotation_item_id' => $quotedA->id,
+            'quantity' => 1,
+            'unit_price' => 10,
+        ]], 10))->assertSessionHasNoErrors();
+
+        $this->assertSame('10.00', \App\Models\Sale::query()->sole()->items()->sole()->unit_price);
+    }
+
+    public function test_adding_a_non_quoted_line_keeps_each_matching_quoted_line_price(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $quotation = Quotation::query()->with('items')->sole();
+        $quotedA = $quotation->items->sole();
+        $productC = $this->additionalProduct($business, 'Producto C', 20);
+        $product->update(['sale_price' => 25]);
+        BranchInventory::adjust($product->fresh(), BranchInventory::defaultBranch($business->id)->id, 5);
+        BranchInventory::adjust($productC, BranchInventory::defaultBranch($business->id)->id, 5);
+        $this->openCash($business, $user);
+
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload($quotation, [
+            ['product_id' => $product->id, 'quotation_item_id' => $quotedA->id, 'quantity' => 1, 'unit_price' => 10],
+            ['product_id' => $productC->id, 'quantity' => 1, 'unit_price' => 20],
+        ], 30))->assertSessionHasNoErrors();
+
+        $prices = \App\Models\Sale::query()->sole()->items()->pluck('unit_price', 'product_id');
+        $this->assertSame('10.00', $prices[$product->id]);
+        $this->assertSame('20.00', $prices[$productC->id]);
+    }
+
+    public function test_changing_a_quoted_quantity_does_not_reuse_the_quoted_price(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $quotation = Quotation::query()->with('items')->sole();
+        $quotedA = $quotation->items->sole();
+        $product->update(['sale_price' => 25]);
+        BranchInventory::adjust($product->fresh(), BranchInventory::defaultBranch($business->id)->id, 5);
+        $this->openCash($business, $user);
+
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload($quotation, [[
+            'product_id' => $product->id,
+            'quotation_item_id' => $quotedA->id,
+            'quantity' => 2,
+            'unit_price' => 10,
+        ]], 50))->assertSessionHasNoErrors();
+
+        $item = \App\Models\Sale::query()->sole()->items()->sole();
+        $this->assertSame(2, $item->quantity);
+        $this->assertSame('25.00', $item->unit_price);
+    }
+
+    public function test_duplicate_product_quotation_lines_are_trusted_by_their_own_snapshot_id(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $quotation = Quotation::query()->with('items')->sole();
+        $first = $quotation->items->sole();
+        $second = $this->appendQuotedItem($quotation, $product, 1, 8);
+        $product->update(['sale_price' => 25]);
+        BranchInventory::adjust($product->fresh(), BranchInventory::defaultBranch($business->id)->id, 5);
+        $this->openCash($business, $user);
+
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload($quotation, [
+            ['product_id' => $product->id, 'quotation_item_id' => $first->id, 'quantity' => 1, 'unit_price' => 10],
+            ['product_id' => $product->id, 'quotation_item_id' => $second->id, 'quantity' => 1, 'unit_price' => 8],
+        ], 18))->assertSessionHasNoErrors();
+
+        $this->assertSame(['8.00', '10.00'], \App\Models\Sale::query()->sole()->items()->orderBy('unit_price')->pluck('unit_price')->all());
+    }
+
+    private function salePayload(Quotation $quotation, array $items, int|float $total): array
+    {
+        return [
+            'idempotency_key' => 'quotation-line-'.uniqid(),
+            'quotation_id' => $quotation->id,
+            'document_type' => 'receipt',
+            'payment_condition' => 'paid',
+            'customer' => ['doc_type' => 'CF', 'doc_number' => 'CF', 'name' => 'Consumidor Final'],
+            'payments' => [['method' => 'cash', 'amount' => $total]],
+            'items' => array_map(fn (array $item) => [
+                ...$item,
+                'price_source' => 'price_list',
+                'manual_price' => false,
+            ], $items),
+        ];
+    }
+
+    private function additionalProduct(Business $business, string $name, int|float $salePrice): Product
+    {
+        return Product::query()->create([
+            'business_id' => $business->id,
+            'name' => $name,
+            'code' => 'COT-'.uniqid(),
+            'cost_price' => 5,
+            'sale_price' => $salePrice,
+            'stock' => 5,
+            'min_stock' => 0,
+            'is_active' => true,
+        ]);
+    }
+
+    private function appendQuotedItem(Quotation $quotation, Product $product, int $quantity, int|float $unitPrice): \App\Models\QuotationItem
+    {
+        return $quotation->items()->create([
+            'business_id' => $quotation->business_id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'product_code' => $product->code,
+            'quantity' => $quantity,
+            'unit_price' => $unitPrice,
+            'original_price' => $unitPrice,
+            'price_source' => 'price_list',
+            'manual_price' => false,
+            'discount_amount' => 0,
+            'total_before_discount' => $quantity * $unitPrice,
+            'total_after_discount' => $quantity * $unitPrice,
+            'total' => $quantity * $unitPrice,
+        ]);
+    }
+
+    private function openCash(Business $business, User $user): void
+    {
+        CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => BranchInventory::defaultBranch($business->id)->id,
+            'opened_by' => $user->id,
+            'status' => 'open',
+            'opening_amount' => 0,
+            'opened_at' => now(),
+        ]);
     }
 
     private function payload(Product $product, ?int $customerId = null, int $quantity = 1): array

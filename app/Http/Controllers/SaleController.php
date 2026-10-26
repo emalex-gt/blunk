@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Product;
+use App\Models\Quotation;
 use App\Models\PriceType;
 use App\Models\Sale;
 use App\Models\Business;
@@ -74,6 +75,7 @@ class SaleController extends Controller
         $priceTypes = PriceLists::active($businessId);
         $defaultPriceType = $priceTypes->firstWhere('is_default', true) ?: $priceTypes->first();
         $creditInvoice = $this->creditInvoicePayload($request, $businessId);
+        $quotationSource = $this->quotationSource($request, $business, $activeBranch);
 
         return Inertia::render('Sales/POS', [
             'fel' => [
@@ -119,6 +121,7 @@ class SaleController extends Controller
             'allow_negative_stock' => (bool) ($tenantSettings?->allow_negative_stock ?? false),
             'show_other_branches_stock_in_pos' => (bool) ($tenantSettings?->show_other_branches_stock_in_pos ?? false),
             'credit_invoice' => $creditInvoice,
+            'quotation_source' => $quotationSource,
             'products' => [],
             'categories' => Category::query()
                 ->where('business_id', $businessId)
@@ -310,6 +313,8 @@ class SaleController extends Controller
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'branch_id' => ['nullable', 'integer'],
             'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
+            'quotation_id' => ['nullable', 'integer'],
+            'quotation_expired_confirmed' => ['nullable', 'boolean'],
             'document_type' => ['nullable', 'in:invoice,receipt'],
             'payment_condition' => ['nullable', 'in:paid,credit'],
             'due_date' => ['nullable', 'date'],
@@ -346,6 +351,7 @@ class SaleController extends Controller
             'items.*.unit_price' => ['nullable', 'numeric', 'gt:0'],
             'items.*.price_source' => ['nullable', 'in:price_list,last_customer_price,manual'],
             'items.*.manual_price' => ['nullable', 'boolean'],
+            'items.*.quotation_item_id' => ['nullable', 'integer'],
             'items.*.credit_line_id' => ['nullable', 'integer', 'exists:credit_receipt_lines,id'],
             'discount' => ['nullable', 'array'],
             'discount.type' => ['required_with:discount', 'in:fixed,percent'],
@@ -366,6 +372,10 @@ class SaleController extends Controller
         $availableDocumentTypes = $this->availableDocumentTypes($business, $tenantSettings, $felSettings, $felModuleEnabled);
         $activeBranch = BranchInventory::activeBranch($business->id);
         $isCreditSale = ($data['payment_condition'] ?? 'paid') === 'credit';
+
+        if (filled($data['quotation_id'] ?? null)) {
+            $this->assertQuotationCanBeUsed($request, $business, $activeBranch, (int) $data['quotation_id'], (bool) ($data['quotation_expired_confirmed'] ?? false));
+        }
 
         if ($isCreditSale) {
             if (! Credits::salesEnabled($business->id)) {
@@ -461,6 +471,9 @@ class SaleController extends Controller
             return DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
             $businessId = currentBusinessId();
             $branch = $activeBranch;
+            $quotation = filled($data['quotation_id'] ?? null)
+                ? $this->lockedQuotationForCheckout($request, $business, $branch, (int) $data['quotation_id'], (bool) ($data['quotation_expired_confirmed'] ?? false))
+                : null;
             $openSession = $isCreditSale ? null : CashRegister::requireOpenSession(
                 $businessId,
                 'Debes abrir caja antes de registrar ventas.',
@@ -486,6 +499,7 @@ class SaleController extends Controller
                 'business_id' => $businessId,
                 'business_number' => $usesResilientFiscalIntent ? null : BusinessCounter::next($businessId, 'sales'),
                 'branch_id' => $branch->id,
+                'quotation_id' => $quotation?->id,
                 'customer_id' => $customer?->id,
                 ...$customerSnapshot,
                 'payment_method' => $isCreditSale ? 'credit' : $data['payments'][0]['method'],
@@ -507,6 +521,7 @@ class SaleController extends Controller
 
             $subtotalBeforeDiscount = 0;
             $saleLines = [];
+            $usedQuotationItemIds = [];
 
             foreach ($data['items'] as $item) {
                 $quantity = (int) $item['quantity'];
@@ -554,13 +569,12 @@ class SaleController extends Controller
                     ]);
                 }
 
-                $resolvedPrice = $this->resolveLinePrice(
-                    $request,
-                    $product,
-                    $item,
-                    $customer,
-                    $branch->id,
-                );
+                $trustedQuotationLine = $quotation
+                    ? $this->trustedQuotationLine($quotation, $item, $usedQuotationItemIds)
+                    : null;
+                $resolvedPrice = $trustedQuotationLine
+                    ? $this->quotedLinePrice($trustedQuotationLine)
+                    : $this->resolveLinePrice($request, $product, $item, $customer, $branch->id);
 
                 if ($creditLine) {
                     $resolvedPrice = [
@@ -588,11 +602,8 @@ class SaleController extends Controller
                 ];
             }
 
-            $discount = $this->resolveSaleDiscount(
-                $request,
-                $data['discount'] ?? null,
-                round($subtotalBeforeDiscount, 2),
-            );
+            $discount = $this->trustedQuotationDiscount($quotation, $data, round($subtotalBeforeDiscount, 2))
+                ?? $this->resolveSaleDiscount($request, $data['discount'] ?? null, round($subtotalBeforeDiscount, 2));
             $lineDiscounts = $this->distributeDiscount($saleLines, $discount['amount'], round($subtotalBeforeDiscount, 2));
             $total = round($subtotalBeforeDiscount - $discount['amount'], 2);
             $isCfInvoice = $this->isFinalConsumerSaleData($data['customer'] ?? null, $customer, $customerSnapshot);
@@ -836,6 +847,10 @@ class SaleController extends Controller
                     'result_type' => 'fiscal_document_intent',
                     'response_payload' => ['fiscal_intent_id' => $intent->id, 'document_type' => 'invoice'],
                 ];
+            }
+
+            if ($quotation) {
+                $this->markQuotationConverted($quotation, $sale);
             }
 
             return [
@@ -1629,10 +1644,12 @@ class SaleController extends Controller
                     'unit_price' => isset($item['unit_price']) ? round((float) $item['unit_price'], 4) : null,
                     'price_source' => $item['price_source'] ?? null,
                     'manual_price' => (bool) ($item['manual_price'] ?? false),
+                    'quotation_item_id' => $item['quotation_item_id'] ?? null,
                     'credit_line_id' => $item['credit_line_id'] ?? null,
                 ])
                 ->sortBy(fn (array $item) => implode('|', [
                     $item['product_id'],
+                    $item['quotation_item_id'] ?? '',
                     $item['credit_line_id'] ?? '',
                     $item['price_type_id'] ?? '',
                     $item['unit_price'] ?? '',
@@ -1641,7 +1658,196 @@ class SaleController extends Controller
                 ->values()
                 ->all(),
             'discount' => $data['discount'] ?? null,
+            'quotation_id' => $data['quotation_id'] ?? null,
+            'quotation_expired_confirmed' => (bool) ($data['quotation_expired_confirmed'] ?? false),
         ];
+    }
+
+    /** The POS only receives a server-authenticated, immutable quotation snapshot. */
+    private function quotationSource(Request $request, Business $business, Branch $activeBranch): ?array
+    {
+        $quotationId = $request->integer('quotation_id');
+        if (! $quotationId) {
+            return null;
+        }
+
+        $quotation = $this->assertQuotationCanBeUsed(
+            $request,
+            $business,
+            $activeBranch,
+            $quotationId,
+            $request->boolean('confirm_expired'),
+        )->load('items');
+
+        return [
+            'id' => $quotation->id,
+            'number' => $quotation->visible_number,
+            'branch_id' => $quotation->branch_id,
+            'expired' => $quotation->isExpired(tenantTimezone($business)),
+            'expired_confirmed' => $request->boolean('confirm_expired'),
+            'note' => $quotation->note,
+            'customer' => [
+                'id' => $quotation->customer_id,
+                'name' => $quotation->customer_name,
+                'commercial_name' => $quotation->customer_commercial_name,
+                'doc_type' => $quotation->customer_doc_type,
+                'doc_number' => $quotation->customer_doc_number,
+                'address' => $quotation->customer_address,
+                'address_reference' => $quotation->customer_address_reference,
+                'postal_code' => $quotation->customer_postal_code,
+                'department' => $quotation->customer_department,
+                'municipality' => $quotation->customer_municipality,
+                'country' => $quotation->customer_country,
+                'phone' => $quotation->customer_phone,
+            ],
+            'items' => $quotation->items->map(fn ($item) => [
+                'quotation_item_id' => $item->id,
+                'product_id' => $item->product_id,
+                'quantity' => (int) $item->quantity,
+                'unit_price' => (float) $item->unit_price,
+                'original_price' => (float) ($item->original_price ?? $item->unit_price),
+                'price_type_id' => $item->price_type_id,
+            ])->values(),
+            'discount' => $quotation->discount_amount > 0 ? [
+                'type' => $quotation->discount_type,
+                'value' => (float) $quotation->discount_value,
+                'reason' => $quotation->discount_reason,
+            ] : null,
+        ];
+    }
+
+    private function assertQuotationCanBeUsed(Request $request, Business $business, Branch $activeBranch, int $quotationId, bool $expiredConfirmed): Quotation
+    {
+        abort_unless(Permissions::userHas($request->user(), Permissions::QUOTATIONS_CONVERT), 403);
+        $quotation = Quotation::query()
+            ->where('business_id', $business->id)
+            ->findOrFail($quotationId);
+        app(BranchAccessService::class)->assertCanAccessBranch($request->user(), (int) $quotation->branch_id, $business->id);
+
+        if ((int) $quotation->branch_id !== (int) $activeBranch->id) {
+            throw ValidationException::withMessages(['quotation_id' => 'La cotización pertenece a otra sucursal. Cambia a su sucursal antes de convertirla.']);
+        }
+        if ($quotation->status !== Quotation::OPEN) {
+            throw ValidationException::withMessages(['quotation_id' => 'Esta cotización ya no puede convertirse en una venta.']);
+        }
+        if ($quotation->isExpired(tenantTimezone($business)) && ! $expiredConfirmed) {
+            throw ValidationException::withMessages(['quotation_id' => 'Esta cotización ha vencido. Confirma explícitamente para continuar.']);
+        }
+
+        return $quotation;
+    }
+
+    private function lockedQuotationForCheckout(Request $request, Business $business, Branch $activeBranch, int $quotationId, bool $expiredConfirmed): Quotation
+    {
+        $this->assertQuotationCanBeUsed($request, $business, $activeBranch, $quotationId, $expiredConfirmed);
+        $quotation = Quotation::query()
+            ->where('business_id', $business->id)
+            ->with('items')
+            ->lockForUpdate()
+            ->findOrFail($quotationId);
+
+        if ($quotation->status !== Quotation::OPEN) {
+            throw ValidationException::withMessages(['quotation_id' => 'Esta cotización ya no puede convertirse en una venta.']);
+        }
+        if ((int) $quotation->branch_id !== (int) $activeBranch->id) {
+            throw ValidationException::withMessages(['quotation_id' => 'La cotización pertenece a otra sucursal.']);
+        }
+        if ($quotation->isExpired(tenantTimezone($business)) && ! $expiredConfirmed) {
+            throw ValidationException::withMessages(['quotation_id' => 'Esta cotización ha vencido. Confirma explícitamente para continuar.']);
+        }
+
+        return $quotation;
+    }
+
+    /** A trusted quoted unit price can only be reconstructed from the locked DB snapshot. */
+    private function trustedQuotationLine(Quotation $quotation, array $item, array &$usedQuotationItemIds): ?\App\Models\QuotationItem
+    {
+        $quotationItemId = (int) ($item['quotation_item_id'] ?? 0);
+        if ($quotationItemId < 1 || in_array($quotationItemId, $usedQuotationItemIds, true)) {
+            return null;
+        }
+
+        $productId = (int) ($item['product_id'] ?? 0);
+        $quantity = (int) ($item['quantity'] ?? 0);
+        $submittedUnitPrice = round((float) ($item['unit_price'] ?? 0), 2);
+
+        $line = $quotation->items->firstWhere('id', $quotationItemId);
+        if (! $line
+            || (int) $line->product_id !== $productId
+            || (int) $line->quantity !== $quantity
+            || round((float) $line->unit_price, 2) !== $submittedUnitPrice) {
+            return null;
+        }
+
+        $usedQuotationItemIds[] = $quotationItemId;
+
+        return $line;
+    }
+
+    private function quotationCartIsExact(Quotation $quotation, array $submittedItems): bool
+    {
+        if (count($submittedItems) !== $quotation->items->count()) {
+            return false;
+        }
+
+        $snapshot = $quotation->items
+            ->map(fn ($item) => implode('|', [(int) $item->id, (int) $item->product_id, (int) $item->quantity, number_format((float) $item->unit_price, 2, '.', '')]))
+            ->sort()->values()->all();
+        $submitted = collect($submittedItems)
+            ->map(fn (array $item) => implode('|', [(int) ($item['quotation_item_id'] ?? 0), (int) ($item['product_id'] ?? 0), (int) ($item['quantity'] ?? 0), number_format((float) ($item['unit_price'] ?? 0), 2, '.', '')]))
+            ->sort()->values()->all();
+
+        return $snapshot === $submitted;
+    }
+
+    private function quotedLinePrice(\App\Models\QuotationItem $line): array
+    {
+        return [
+            'unit_price' => round((float) $line->unit_price, 2),
+            'original_price' => round((float) ($line->original_price ?? $line->unit_price), 2),
+            'price_type_id' => $line->price_type_id,
+            'price_source' => 'quotation',
+            'manual_price' => false,
+        ];
+    }
+
+    /** A quotation discount is trusted only when the original cart and terms are reproduced exactly. */
+    private function trustedQuotationDiscount(?Quotation $quotation, array $data, float $subtotal): ?array
+    {
+        if (! $quotation) {
+            return null;
+        }
+
+        $submitted = $data['discount'] ?? null;
+        $quotationDiscounted = round((float) $quotation->discount_amount, 2) > 0;
+        if (! $quotationDiscounted && ! $submitted) {
+            return ['type' => null, 'value' => 0.0, 'amount' => 0.0, 'reason' => null];
+        }
+        if (! $quotationDiscounted || ! is_array($submitted) || count($data['items'] ?? []) !== $quotation->items->count()) {
+            return null;
+        }
+
+        if (! $this->quotationCartIsExact($quotation, $data['items'] ?? [])
+            || ($submitted['type'] ?? null) !== $quotation->discount_type
+            || round((float) ($submitted['value'] ?? 0), 2) !== round((float) $quotation->discount_value, 2)
+            || trim((string) ($submitted['reason'] ?? '')) !== trim((string) $quotation->discount_reason)) {
+            return null;
+        }
+
+        return [
+            'type' => $quotation->discount_type,
+            'value' => round((float) $quotation->discount_value, 2),
+            'amount' => round((float) $quotation->discount_amount, 2),
+            'reason' => $quotation->discount_reason,
+        ];
+    }
+
+    private function markQuotationConverted(Quotation $quotation, Sale $sale): void
+    {
+        if ($quotation->status !== Quotation::OPEN) {
+            throw ValidationException::withMessages(['quotation_id' => 'La cotización ya fue convertida o anulada por otra operación.']);
+        }
+        $quotation->update(['status' => Quotation::CONVERTED, 'converted_at' => now()]);
     }
 
     private function resolveSaleDiscount(Request $request, ?array $discountData, float $subtotal): array

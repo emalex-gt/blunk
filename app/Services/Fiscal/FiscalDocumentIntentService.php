@@ -8,6 +8,7 @@ use App\Models\CreditReceiptLineInvoice;
 use App\Models\ElectronicDocument;
 use App\Models\FiscalDocumentIntent;
 use App\Models\Product;
+use App\Models\Quotation;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\StockReservation;
@@ -409,6 +410,8 @@ class FiscalDocumentIntentService
                 'is_credit_sale' => $isCreditSale,
                 'due_date' => $isCreditSale ? ($payload['sale']['due_date'] ?? null) : null,
             ]);
+
+            $this->markQuotationConverted($sale);
             $this->consumeStockReservations($intent);
             $intent->update(['status' => FiscalDocumentIntent::FINALIZED, 'finalized_at' => now(), 'last_finalization_error' => null]);
 
@@ -595,6 +598,30 @@ class FiscalDocumentIntentService
         ]);
 
         return $sale->refresh();
+    }
+
+    private function markQuotationConverted(Sale $sale): void
+    {
+        if (! $sale->quotation_id) {
+            return;
+        }
+
+        $quotation = Quotation::query()
+            ->where('business_id', $sale->business_id)
+            ->lockForUpdate()
+            ->findOrFail($sale->quotation_id);
+
+        if ($quotation->status === Quotation::CONVERTED) {
+            if ($quotation->convertedSale()->whereKey($sale->id)->exists()) {
+                return;
+            }
+            throw new \LogicException('La cotización ya fue utilizada por otra venta.');
+        }
+        if ($quotation->status !== Quotation::OPEN) {
+            throw new \LogicException('La cotización ya no puede finalizarse como venta.');
+        }
+
+        $quotation->update(['status' => Quotation::CONVERTED, 'converted_at' => now()]);
     }
 
     private function claimForCertification(FiscalDocumentIntent $intent): FiscalDocumentIntent

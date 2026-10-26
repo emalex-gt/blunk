@@ -12,6 +12,7 @@ class Sale extends Model
         'business_id',
         'business_number',
         'branch_id',
+        'quotation_id',
         'customer_id',
         'customer_name',
         'customer_doc_type',
@@ -87,6 +88,11 @@ class Sale extends Model
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
+    }
+
+    public function quotation(): BelongsTo
+    {
+        return $this->belongsTo(Quotation::class);
     }
 
     public function items(): HasMany
