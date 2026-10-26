@@ -121,7 +121,6 @@ export default function Authenticated({
     ].filter(Boolean) as NavItem[];
 
     const salesItems: NavItem[] = [
-        hasModule('pos') && can('sales.view') ? { label: 'Ventas', href: route('sales.index'), active: route().current('sales.index') || route().current('sales.show') } : null,
         hasModule('pos') && can('quotations.view') ? { label: 'Cotizaciones', href: route('quotations.index'), active: route().current('quotations.*') } : null,
     ].filter(Boolean) as NavItem[];
 
