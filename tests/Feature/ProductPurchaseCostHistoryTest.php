@@ -12,6 +12,7 @@ use App\Models\Purchase;
 use App\Models\PurchaseItem;
 use App\Models\Supplier;
 use App\Support\ProductSupplierCostHistory;
+use App\Support\ProductPurchaseCostHistory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
