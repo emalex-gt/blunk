@@ -2208,20 +2208,26 @@ export default function POS({
                 ].forEach((product) => restoreProductMap.set(product.id, product));
             } catch {
                 productRecoveryFailed = true;
-                const errorMessage = 'No se pudieron recuperar todos los productos del borrador.';
-                showError(errorMessage);
-                toast.error(errorMessage);
             }
+        }
+
+        const unresolvedProductIds = missingProductIds.filter((productId) => !restoreProductMap.has(productId));
+
+        if (productRecoveryFailed || unresolvedProductIds.length > 0) {
+            const errorMessage = productRecoveryFailed
+                ? 'No se pudieron recuperar todos los productos del borrador. Inténtalo nuevamente.'
+                : 'Algunos productos del borrador ya no están disponibles para recuperarse.';
+            showError(errorMessage);
+            toast.error(errorMessage);
+            return;
         }
 
         restorePosDraft(draft.payload, restoreProductMap);
         setActiveOperationDraftId(draft.id);
         setSavedDraftsOpen(false);
         setSearch('');
-        if (!productRecoveryFailed) {
-            showMessage(t('pos.sale_recovered'));
-            toast.success('Borrador recuperado.');
-        }
+        showMessage(t('pos.sale_recovered'));
+        toast.success('Borrador recuperado.');
         focusSearch();
     }
 
