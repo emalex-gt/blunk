@@ -197,6 +197,30 @@
 
         .no-print { display: none !important; }
 
+        th {
+            background: #fff !important;
+            color: #000 !important;
+            border-top: 1px solid #000;
+            border-bottom: 1px solid #000;
+        }
+
+        .label,
+        .total,
+        .document-company h1,
+        .document-title h1,
+        .document-title h2 {
+            color: #000;
+        }
+
+        .document-header,
+        .document-info,
+        .document-box,
+        .document-note,
+        .document-warning,
+        .certifier {
+            border-color: #000;
+        }
+
         .document-page {
             max-width: none;
             min-height: 0;
