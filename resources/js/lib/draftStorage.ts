@@ -8,7 +8,7 @@ type DraftEnvelope<T> = {
 };
 
 export function makeDraftKey(
-    type: 'pos' | 'purchase',
+    type: 'pos' | 'purchase' | 'transfer',
     businessId: number | string | null | undefined,
     userId?: number | string | null,
     branchId?: number | string | null,

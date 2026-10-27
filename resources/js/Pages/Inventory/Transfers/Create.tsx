@@ -1,7 +1,8 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import { clearDraft, loadDraft, makeDraftKey, saveDraft } from '@/lib/draftStorage';
 import { makeOperationKey } from '@/lib/idempotency';
 import { discardOperationDraft, formatOperationDraftUpdatedAt, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
-import { Head, Link, router } from '@inertiajs/react';
+import { Head, Link, router, usePage } from '@inertiajs/react';
 import axios from 'axios';
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -27,6 +28,13 @@ export default function Create({
     products: Product[];
     allow_negative_stock?: boolean;
 }) {
+    const business = usePage().props.business as { id?: number | null } | null;
+    const businessId = (usePage().props.current_business_id as number | null) ?? business?.id ?? null;
+    const userId = (usePage().props.auth as { user?: { id?: number | null } } | undefined)?.user?.id ?? null;
+    const draftKey = useMemo(
+        () => makeDraftKey('transfer', businessId, userId, activeBranch?.id ?? null),
+        [activeBranch?.id, businessId, userId],
+    );
     const [fromBranchId, setFromBranchId] = useState(activeBranch?.id ?? branches[0]?.id ?? null);
     const [toBranchId, setToBranchId] = useState(branches.find((branch) => branch.id !== activeBranch?.id)?.id ?? null);
     const [notes, setNotes] = useState('');
@@ -44,9 +52,12 @@ export default function Create({
     const [productSearchLoading, setProductSearchLoading] = useState(false);
     const [confirmTransferOpen, setConfirmTransferOpen] = useState(false);
     const [idempotencyKey, setIdempotencyKey] = useState(() => makeOperationKey('transfer'));
+    const [restoreDraft, setRestoreDraft] = useState<TransferDraft | null>(null);
+    const [draftReady, setDraftReady] = useState(false);
     const submitLockedRef = useRef(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const previousFromBranchId = useRef<number | null>(fromBranchId);
+    const previousDraftKeyRef = useRef<string | null>(null);
     const productsById = useMemo(() => new Map(loadedProducts.map((product) => [product.id, product])), [loadedProducts]);
     const filteredProducts = productResults;
 
@@ -135,6 +146,37 @@ export default function Create({
         requestAnimationFrame(() => searchInputRef.current?.focus());
     }
 
+    async function restoreLocalTransferDraft(payload: TransferDraft): Promise<boolean> {
+        const sourceBranchId = payload.from_branch_id ?? activeBranch?.id ?? null;
+
+        if (!sourceBranchId || sourceBranchId !== activeBranch?.id) {
+            setMessage('El trabajo guardado no corresponde a la sucursal origen activa.');
+            return false;
+        }
+
+        const draftItems = payload.items ?? [];
+        const missingIds = draftItems
+            .map((item) => Number(item.product_id))
+            .filter((productId) => !productsById.has(productId));
+        const hydratedProducts = await hydrateTransferProducts(missingIds, sourceBranchId).catch(() => []);
+        const productMap = new Map(productsById);
+        hydratedProducts.forEach((product) => productMap.set(product.id, product));
+        const restoredItems = draftItems.filter((item) => productMap.has(Number(item.product_id)));
+
+        setFromBranchId(sourceBranchId);
+        setToBranchId(payload.to_branch_id ?? null);
+        setNotes(payload.notes ?? '');
+        setItems(restoredItems);
+        setRestoreDraft(null);
+        setDraftReady(true);
+        setMessage(restoredItems.length < draftItems.length
+            ? 'Se descartaron productos inválidos del trabajo guardado.'
+            : 'Trabajo pendiente recuperado.');
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+
+        return true;
+    }
+
     async function saveTransferDraft() {
         const payload = buildTransferDraft();
 
@@ -156,6 +198,7 @@ export default function Create({
                 payload,
                 payload_version: 1,
             });
+            clearDraft(draftKey);
             clearTransferState();
             setMessage('Borrador guardado.');
         } catch (error) {
@@ -243,7 +286,10 @@ export default function Create({
             })),
         }, {
             preserveScroll: true,
-            onSuccess: () => setIdempotencyKey(makeOperationKey('transfer')),
+            onSuccess: () => {
+                clearDraft(draftKey);
+                setIdempotencyKey(makeOperationKey('transfer'));
+            },
             onFinish: () => {
                 submitLockedRef.current = false;
                 setProcessing(false);
@@ -312,6 +358,48 @@ export default function Create({
             itemIndex === index ? { ...item, [field]: String(value).replace(/\D/g, '') } : item
         )));
     }
+
+    useEffect(() => {
+        const draftKeyChanged = previousDraftKeyRef.current !== null && previousDraftKeyRef.current !== draftKey;
+        previousDraftKeyRef.current = draftKey;
+
+        if (draftKeyChanged) {
+            setFromBranchId(activeBranch?.id ?? branches[0]?.id ?? null);
+            setToBranchId(branches.find((branch) => branch.id !== activeBranch?.id)?.id ?? null);
+            setNotes('');
+            setItems([]);
+            setSearch('');
+            setActiveDraftId(null);
+            setMessage('');
+        }
+
+        setDraftReady(false);
+        const draft = loadDraft<TransferDraft>(draftKey);
+
+        if (draft && isMeaningfulTransferDraft(draft)) {
+            setRestoreDraft(draft);
+        } else {
+            setRestoreDraft(null);
+            setDraftReady(true);
+        }
+    }, [draftKey]);
+
+    useEffect(() => {
+        if (!draftReady || restoreDraft) {
+            return;
+        }
+
+        const draft = buildTransferDraft();
+        const timer = window.setTimeout(() => {
+            if (isMeaningfulTransferDraft(draft)) {
+                saveDraft(draftKey, draft);
+            } else {
+                clearDraft(draftKey);
+            }
+        }, 500);
+
+        return () => window.clearTimeout(timer);
+    }, [draftKey, draftReady, fromBranchId, items, notes, restoreDraft, toBranchId]);
 
     useEffect(() => {
         const term = search.trim();
@@ -509,6 +597,38 @@ export default function Create({
                                 className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50"
                             >
                                 Sí, guardar traslado
+                            </button>
+                        </div>
+                    </section>
+                </div>
+            )}
+
+            {restoreDraft && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+                    <section className="w-full max-w-md rounded-2xl border border-amber-100 bg-white p-6 shadow-2xl">
+                        <h2 className="text-lg font-semibold text-slate-950">Trabajo pendiente encontrado</h2>
+                        <p className="mt-2 text-sm text-slate-600">
+                            Se encontró un traslado en proceso guardado automáticamente.
+                        </p>
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    clearDraft(draftKey);
+                                    setRestoreDraft(null);
+                                    setDraftReady(true);
+                                    requestAnimationFrame(() => searchInputRef.current?.focus());
+                                }}
+                                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                                Descartar
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void restoreLocalTransferDraft(restoreDraft)}
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
+                            >
+                                Continuar
                             </button>
                         </div>
                     </section>
