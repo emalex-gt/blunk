@@ -32,7 +32,6 @@ class QuotationController extends Controller
             'search' => ['nullable', 'string', 'max:255'],
             'status' => ['nullable', 'in:open,conversion_pending,converted,cancelled'],
             'branch_id' => ['nullable', 'integer'],
-            'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
             'issued_from' => ['nullable', 'date'],
             'issued_to' => ['nullable', 'date'],
             'valid_from' => ['nullable', 'date'],
@@ -109,6 +108,7 @@ class QuotationController extends Controller
         $business = Business::query()->findOrFail(currentBusinessId());
         $data = $request->validate([
             'branch_id' => ['nullable', 'integer'],
+            'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
             'customer' => ['nullable', 'array'],
             'customer.id' => ['nullable', 'integer'],
             'customer.name' => ['nullable', 'string', 'max:255'],
