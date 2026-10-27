@@ -64,6 +64,8 @@ type PosProductSearchPayload = {
     message?: string;
 };
 
+type ProductViewMode = 'grid' | 'list';
+
 type PriceType = {
     id: number;
     name: string;
@@ -285,6 +287,16 @@ function loadJson<T>(key: string, fallback: T): T {
         return value ? (JSON.parse(value) as T) : fallback;
     } catch {
         return fallback;
+    }
+}
+
+function loadProductViewMode(key: string): ProductViewMode {
+    try {
+        const value = localStorage.getItem(key);
+
+        return value === 'grid' || value === 'list' ? value : 'list';
+    } catch {
+        return 'list';
     }
 }
 
@@ -762,6 +774,10 @@ export default function POS({
         () => `pos_recent_products:${businessId ?? 'unknown'}:${userId ?? 'unknown'}:${activeBranchId ?? 'default'}`,
         [activeBranchId, businessId, userId],
     );
+    const productViewModeKey = useMemo(
+        () => `pos_product_view:${businessId ?? 'unknown'}:${userId ?? 'unknown'}`,
+        [businessId, userId],
+    );
     const heldSaleKey = useMemo(() => `${draftKey}_held`, [draftKey]);
     const draftBranchId = activeBranchId ?? 'default';
     const [search, setSearch] = useState('');
@@ -770,6 +786,7 @@ export default function POS({
     const [message, setMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
     const [recentProductIds, setRecentProductIds] = useState<number[]>([]);
+    const [productViewMode, setProductViewMode] = useState<ProductViewMode>(() => loadProductViewMode(productViewModeKey));
     const [hasHeldSale, setHasHeldSale] = useState(false);
     const [showCheckoutModal, setShowCheckoutModal] = useState(false);
     const [showQuotationModal, setShowQuotationModal] = useState(false);
@@ -2316,6 +2333,16 @@ export default function POS({
         addProduct(product);
     }
 
+    function changeProductViewMode(mode: ProductViewMode) {
+        setProductViewMode(mode);
+
+        try {
+            localStorage.setItem(productViewModeKey, mode);
+        } catch {
+            // Keep the in-memory preference when browser storage is unavailable.
+        }
+    }
+
     function selectDuplicateProduct(product: Product) {
         const added = addProduct(product);
 
@@ -2628,6 +2655,10 @@ export default function POS({
         setRecentProductIds(uniqueRecentProductIds(loadJson<Array<number | { id?: number | string | null }>>(recentProductsKey, [])));
         setHasHeldSale(Boolean(localStorage.getItem(heldSaleKey)));
     }, [heldSaleKey, recentProductsKey]);
+
+    useEffect(() => {
+        setProductViewMode(loadProductViewMode(productViewModeKey));
+    }, [productViewModeKey]);
 
     useEffect(() => {
         setData('branch_id', activeBranchId);
@@ -3510,6 +3541,37 @@ export default function POS({
                                 </div>
                             )}
 
+                            <div className="mb-3 flex justify-end">
+                                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1" role="group" aria-label="Vista de productos">
+                                    <button
+                                        type="button"
+                                        onClick={() => changeProductViewMode('grid')}
+                                        aria-pressed={productViewMode === 'grid'}
+                                        title="Ver productos como tarjetas"
+                                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                                            productViewMode === 'grid'
+                                                ? 'bg-orange-600 text-white shadow-sm'
+                                                : 'text-slate-600 hover:bg-orange-50 hover:text-orange-700'
+                                        }`}
+                                    >
+                                        Tarjetas
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => changeProductViewMode('list')}
+                                        aria-pressed={productViewMode === 'list'}
+                                        title="Ver productos como lista"
+                                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                                            productViewMode === 'list'
+                                                ? 'bg-orange-600 text-white shadow-sm'
+                                                : 'text-slate-600 hover:bg-orange-50 hover:text-orange-700'
+                                        }`}
+                                    >
+                                        Lista
+                                    </button>
+                                </div>
+                            </div>
+
                             {showingRecentProducts && (
                                 <h2 className="mb-3 text-sm font-semibold uppercase text-slate-500">
                                     {t('pos.recent_products')}
@@ -3534,7 +3596,9 @@ export default function POS({
                                 </div>
                             )}
 
-                            <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                            <div className={productViewMode === 'grid'
+                                ? 'grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-3 min-[1700px]:grid-cols-4'
+                                : 'divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white'}>
                                 {productsToShow.map((product) => {
                                     const availableStock = Math.floor(product.available_stock ?? product.stock);
                                     const reservedStock = Math.floor(product.reserved_stock ?? 0);
@@ -3544,7 +3608,70 @@ export default function POS({
                                         availableStock > 0 && availableStock <= product.min_stock;
                                     const otherBranchesSummary = otherBranchStockSummary(product);
 
-                                    return (
+                                    const stockLabel = disabledByStock
+                                        ? t('stock_warning.out_of_stock')
+                                        : outOfStock
+                                          ? `Disponible ${availableStock}`
+                                          : lowStock
+                                          ? `${t('stock_warning.low_stock')} (${availableStock})`
+                                          : `Disponible ${availableStock}`;
+                                    const stockClass = disabledByStock
+                                        ? 'font-semibold text-red-600'
+                                        : outOfStock
+                                          ? 'font-semibold text-amber-600'
+                                          : lowStock
+                                          ? 'font-semibold text-orange-600'
+                                          : 'text-slate-700';
+
+                                    return productViewMode === 'grid' ? (
+                                        <button
+                                            key={product.id}
+                                            type="button"
+                                            disabled={disabledByStock || processing}
+                                            onClick={() => handleProductResultClick(product)}
+                                            className="flex items-stretch gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-70"
+                                        >
+                                            {use_product_images && product.image_url ? (
+                                                <img
+                                                    src={getProductImageUrl(product.image_url, 200) ?? ''}
+                                                    alt={product.name}
+                                                    loading="lazy"
+                                                    className="h-20 w-20 shrink-0 rounded-xl object-cover 2xl:h-24 2xl:w-24"
+                                                />
+                                            ) : null}
+
+                                            <div className="flex min-w-0 flex-1 flex-col justify-between">
+                                                <div>
+                                                    <h3 className="line-clamp-2 text-sm font-semibold leading-5 text-slate-900" title={product.name}>
+                                                        {product.name}
+                                                    </h3>
+                                                    <div className="mt-1 whitespace-nowrap text-right text-sm font-bold text-slate-900">
+                                                        {formatCurrency(product.sale_price, country)}
+                                                    </div>
+                                                </div>
+
+                                                <div className="truncate text-xs text-slate-500" title={product.barcode || product.code || ''}>
+                                                    {product.barcode || product.code || t('common.code')}
+                                                </div>
+
+                                                <div className="flex items-center justify-between gap-2 text-xs">
+                                                    <span className={stockClass}>{stockLabel}</span>
+                                                    {reservedStock > 0 && <span className="text-slate-500">Reservado {reservedStock}</span>}
+                                                    {product.location && <span className="truncate text-slate-500">{product.location}</span>}
+                                                </div>
+                                                {otherBranchesSummary && (
+                                                    <>
+                                                        <div className="mt-1 truncate text-[11px] font-medium text-orange-900" title="Disponibilidad Sucursales">
+                                                            Disponibilidad Sucursales:
+                                                        </div>
+                                                        <div className="mt-1 truncate text-[11px] font-medium text-orange-600" title={otherBranchesSummary}>
+                                                            {otherBranchesSummary}
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </button>
+                                    ) : (
                                         <button
                                             key={product.id}
                                             type="button"
@@ -3576,33 +3703,9 @@ export default function POS({
                                                 </div>
 
                                                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
-                                                    <span
-                                                        className={
-                                                            disabledByStock
-                                                                ? 'font-semibold text-red-600'
-                                                                : outOfStock
-                                                                  ? 'font-semibold text-amber-600'
-                                                                : lowStock
-                                                                  ? 'font-semibold text-orange-600'
-                                                                  : 'text-slate-700'
-                                                        }
-                                                    >
-                                                        {disabledByStock
-                                                            ? t('stock_warning.out_of_stock')
-                                                            : outOfStock
-                                                              ? `Disponible ${availableStock}`
-                                                            : lowStock
-                                                              ? `${t('stock_warning.low_stock')} (${availableStock})`
-                                                              : `Disponible ${availableStock}`}
-                                                    </span>
-                                                    {reservedStock > 0 && (
-                                                        <span className="text-slate-500">Reservado {reservedStock}</span>
-                                                    )}
-                                                    {product.location && (
-                                                        <span className="truncate text-slate-500">
-                                                            {product.location}
-                                                        </span>
-                                                    )}
+                                                    <span className={stockClass}>{stockLabel}</span>
+                                                    {reservedStock > 0 && <span className="text-slate-500">Reservado {reservedStock}</span>}
+                                                    {product.location && <span className="truncate text-slate-500">{product.location}</span>}
                                                 </div>
                                                 {otherBranchesSummary && (
                                                     <div className="mt-1 truncate text-[11px] font-medium text-orange-700" title={otherBranchesSummary}>
