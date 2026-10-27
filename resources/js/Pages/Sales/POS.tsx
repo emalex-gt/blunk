@@ -2195,17 +2195,33 @@ export default function POS({
         const missingProductIds = (draft.payload.cart ?? [])
             .map((item) => item.product_id)
             .filter((productId) => !productsByIdRef.current.has(productId));
+        const restoreProductMap = new Map(productsByIdRef.current);
+        let productRecoveryFailed = false;
 
         if (missingProductIds.length > 0) {
-            await fetchPosProducts({ ids: missingProductIds, limit: 50 }).catch(() => undefined);
+            try {
+                const payload = await fetchPosProducts({ ids: missingProductIds, limit: 50 });
+                [
+                    ...(payload.products ?? []),
+                    ...(payload.exact_barcode_matches ?? []),
+                    ...(payload.exact_code_matches ?? []),
+                ].forEach((product) => restoreProductMap.set(product.id, product));
+            } catch {
+                productRecoveryFailed = true;
+                const errorMessage = 'No se pudieron recuperar todos los productos del borrador.';
+                showError(errorMessage);
+                toast.error(errorMessage);
+            }
         }
 
-        restorePosDraft(draft.payload, productsByIdRef.current);
+        restorePosDraft(draft.payload, restoreProductMap);
         setActiveOperationDraftId(draft.id);
         setSavedDraftsOpen(false);
         setSearch('');
-        showMessage(t('pos.sale_recovered'));
-        toast.success('Borrador recuperado.');
+        if (!productRecoveryFailed) {
+            showMessage(t('pos.sale_recovered'));
+            toast.success('Borrador recuperado.');
+        }
         focusSearch();
     }
 
