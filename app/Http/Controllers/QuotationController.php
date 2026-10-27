@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Business;
 use App\Models\Customer;
+use App\Models\OperationDraft;
 use App\Models\PriceType;
 use App\Models\Product;
 use App\Models\Quotation;
@@ -12,6 +13,7 @@ use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\DocumentCompanyHeader;
 use App\Support\ManualPricePolicy;
+use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\PriceLists;
 use App\Services\BranchAccessService;
@@ -30,6 +32,7 @@ class QuotationController extends Controller
             'search' => ['nullable', 'string', 'max:255'],
             'status' => ['nullable', 'in:open,conversion_pending,converted,cancelled'],
             'branch_id' => ['nullable', 'integer'],
+            'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
             'issued_from' => ['nullable', 'date'],
             'issued_to' => ['nullable', 'date'],
             'valid_from' => ['nullable', 'date'],
@@ -243,6 +246,14 @@ class QuotationController extends Controller
                     'total' => round($line['lineTotal'] - $lineDiscount, 2),
                 ]);
             }
+
+            OperationDrafts::markConverted(
+                $data['draft_id'] ?? null,
+                OperationDraft::TYPE_POS_SALE,
+                'quotation',
+                $quotation->id,
+                $request,
+            );
 
             return $quotation;
         });

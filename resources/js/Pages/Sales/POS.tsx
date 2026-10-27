@@ -1541,6 +1541,7 @@ export default function POS({
         setPaymentCondition('paid');
         setDocumentType(singleDocumentType ?? (availableCheckoutTypes[0] ?? 'receipt'));
         setPayments([paymentLine(mainPaymentMethod, '0.00')]);
+        setCashReceived('');
         setDiscount(null);
         setCustomerEditing(false);
         setActiveOperationDraftId(null);
@@ -1590,6 +1591,14 @@ export default function POS({
         clearDraft(draftKey);
         latestDraftRef.current = null;
         focusSearch();
+    }
+
+    function closeQuotationStateAfterSave() {
+        clearPosDraftAndState();
+        setShowQuotationModal(false);
+        setQuotationError('');
+        setQuotationNote('');
+        setQuotationValidUntil('');
     }
 
     function requestClearSale() {
@@ -2341,8 +2350,9 @@ export default function POS({
         if (cart.length === 0 || !quotationValidUntil || quotationSaving || !validateCartQuantities() || !validateCartPrices() || !validateDiscount()) return;
         setQuotationError('');
         setQuotationSaving(true);
-        router.post(route('quotations.store'), { branch_id: activeBranchId, customer: data.customer, items: cart.map((item) => ({ product_id: item.product.id, quantity: Number(item.quantity), price_type_id: item.price_type_id, unit_price: Number(item.unit_price), price_source: item.price_source, manual_price: item.manual_price })), discount, valid_until: quotationValidUntil, note: quotationNote }, {
+        router.post(route('quotations.store'), { branch_id: activeBranchId, draft_id: activeOperationDraftId, customer: data.customer, items: cart.map((item) => ({ product_id: item.product.id, quantity: Number(item.quantity), price_type_id: item.price_type_id, unit_price: Number(item.unit_price), price_source: item.price_source, manual_price: item.manual_price })), discount, valid_until: quotationValidUntil, note: quotationNote }, {
             preserveScroll: true,
+            onSuccess: closeQuotationStateAfterSave,
             onError: (errors) => setQuotationError(Object.values(errors)[0] ?? 'No se pudo guardar la cotización.'),
             onFinish: () => setQuotationSaving(false),
         });
