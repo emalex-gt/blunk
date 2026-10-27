@@ -27,6 +27,8 @@ type Product = {
     supplier_costs: SupplierCost[];
 };
 
+type ProductViewMode = 'grid' | 'list';
+
 type Supplier = {
     id: number;
     name: string;
@@ -105,6 +107,16 @@ function sanitizeQuantityInput(value: string): string | null {
     return value.replace(/\D/g, '');
 }
 
+function loadProductViewMode(key: string): ProductViewMode {
+    try {
+        const value = localStorage.getItem(key);
+
+        return value === 'grid' || value === 'list' ? value : 'list';
+    } catch {
+        return 'list';
+    }
+}
+
 export default function Create({
     products,
     suppliers,
@@ -127,6 +139,10 @@ export default function Create({
     const userId = (usePage().props.auth as { user?: { id?: number | null } } | undefined)?.user?.id ?? null;
     const country = business?.country ?? 'GT';
     const draftKey = useMemo(() => makeDraftKey('purchase', businessId, userId, active_branch?.id ?? null), [active_branch?.id, businessId, userId]);
+    const productViewModeKey = useMemo(
+        () => `purchase_product_view:${businessId ?? 'unknown'}:${userId ?? 'unknown'}`,
+        [businessId, userId],
+    );
     const [search, setSearch] = useState('');
     const [supplierName, setSupplierName] = useState('');
     const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
@@ -160,6 +176,7 @@ export default function Create({
     const submitLockedRef = useRef(false);
     const [loadedProducts, setLoadedProducts] = useState<Product[]>(products);
     const [productResults, setProductResults] = useState<Product[]>(products);
+    const [productViewMode, setProductViewMode] = useState<ProductViewMode>(() => loadProductViewMode(productViewModeKey));
     const [productSearchLoading, setProductSearchLoading] = useState(false);
     const [supplierResults, setSupplierResults] = useState<Supplier[]>([]);
     const [supplierSearchLoading, setSupplierSearchLoading] = useState(false);
@@ -518,6 +535,16 @@ export default function Create({
         addProduct(product);
     }
 
+    function changeProductViewMode(mode: ProductViewMode) {
+        setProductViewMode(mode);
+
+        try {
+            localStorage.setItem(productViewModeKey, mode);
+        } catch {
+            // Keep the in-memory preference when browser storage is unavailable.
+        }
+    }
+
     function validatePurchaseBeforeSubmit(): boolean {
         setMessage('');
 
@@ -672,6 +699,10 @@ export default function Create({
             setDraftReady(true);
         }
     }, [draftKey]);
+
+    useEffect(() => {
+        setProductViewMode(loadProductViewMode(productViewModeKey));
+    }, [productViewModeKey]);
 
     useEffect(() => {
         if (!draftReady || restoreDraft) {
@@ -1007,8 +1038,119 @@ export default function Create({
                                     Escribe al menos 2 caracteres para buscar productos.
                                 </div>
                             )}
-                            <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
-                                {filteredProducts.map((product) => (
+                            <div className="mb-3 flex justify-end">
+                                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1" role="group" aria-label="Vista de productos">
+                                    <button
+                                        type="button"
+                                        onClick={() => changeProductViewMode('grid')}
+                                        aria-pressed={productViewMode === 'grid'}
+                                        title="Ver productos como tarjetas"
+                                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                                            productViewMode === 'grid'
+                                                ? 'bg-orange-600 text-white shadow-sm'
+                                                : 'text-slate-600 hover:bg-orange-50 hover:text-orange-700'
+                                        }`}
+                                    >
+                                        Tarjetas
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => changeProductViewMode('list')}
+                                        aria-pressed={productViewMode === 'list'}
+                                        title="Ver productos como lista"
+                                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                                            productViewMode === 'list'
+                                                ? 'bg-orange-600 text-white shadow-sm'
+                                                : 'text-slate-600 hover:bg-orange-50 hover:text-orange-700'
+                                        }`}
+                                    >
+                                        Lista
+                                    </button>
+                                </div>
+                            </div>
+                            <div className={productViewMode === 'grid'
+                                ? 'grid grid-cols-1 gap-3 min-[1180px]:grid-cols-2'
+                                : 'divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white'}>
+                                {filteredProducts.map((product) => productViewMode === 'grid' ? (
+                                    <div
+                                        key={product.id}
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => addProduct(product)}
+                                        onKeyDown={(event) => handleProductCardKeyDown(event, product)}
+                                        className="relative flex min-h-[148px] cursor-pointer gap-4 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] focus:outline-none focus:ring-4 focus:ring-orange-100"
+                                    >
+                                        <button
+                                            type="button"
+                                            title="Ver últimos costos"
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                setCostHistoryProduct(product);
+                                            }}
+                                            className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-xs font-bold text-slate-500 shadow-sm transition hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700"
+                                        >
+                                            i
+                                        </button>
+
+                                        {use_product_images && product.image_url ? (
+                                            <img
+                                                src={getProductImageUrl(product.image_url, 200) ?? ''}
+                                                alt={product.name}
+                                                loading="lazy"
+                                                className="h-24 w-24 shrink-0 rounded-xl object-cover"
+                                            />
+                                        ) : null}
+
+                                        <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
+                                            <div>
+                                                <h3 className="line-clamp-2 pr-7 text-sm font-semibold leading-5 text-slate-950 sm:text-base">
+                                                    {product.name}
+                                                </h3>
+                                                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                                                    <span>Código: <span className="font-semibold text-slate-700">{product.code || '-'}</span></span>
+                                                    <span>Código de barras: <span className="font-semibold text-slate-700">{product.barcode || '-'}</span></span>
+                                                    <span>Stock: <span className="font-semibold text-slate-700">{product.stock}</span></span>
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-wrap items-end justify-between gap-3">
+                                                <div className="space-y-1 text-xs text-slate-500">
+                                                    <div>
+                                                        Costo actual:{' '}
+                                                        <span className="font-semibold text-slate-900">
+                                                            {formatCurrency(product.cost_price, country)}
+                                                        </span>
+                                                    </div>
+                                                    {product.supplier_costs?.[0] && (
+                                                        <div>
+                                                            Último costo:{' '}
+                                                            <span className="font-semibold text-slate-700">
+                                                                {formatCurrency(product.supplier_costs[0].unit_cost, country)}
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                    {product.sale_price && (
+                                                        <div>
+                                                            Precio venta:{' '}
+                                                            <span className="font-semibold text-slate-700">
+                                                                {formatCurrency(product.sale_price, country)}
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        addProduct(product);
+                                                    }}
+                                                    className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
+                                                >
+                                                    Agregar
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
                                     <div
                                         key={product.id}
                                         role="button"
