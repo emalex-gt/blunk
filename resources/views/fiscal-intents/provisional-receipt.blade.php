@@ -17,6 +17,11 @@
     </style>
 </head>
 <body>
+    <div class="toolbar no-print">
+        <button type="button" onclick="window.close()">Cerrar</button>
+        @include('print.partials.pdf-download-button', ['target' => '.ticket', 'filename' => 'comprobante-provisional-'.$intent->id.'.pdf', 'kind' => 'ticket', 'widthMm' => 80, 'marginMm' => 4])
+        <button type="button" onclick="window.print()">Imprimir</button>
+    </div>
     <main class="ticket">
         <div class="provisional-warning">COMPROBANTE PROVISIONAL<br>NO ES FACTURA NI DOCUMENTO TRIBUTARIO FEL</div>
         <div class="line"></div>

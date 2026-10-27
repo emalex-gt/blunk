@@ -9,7 +9,7 @@
     <style>.quotation-customer { grid-template-columns: 1fr; } .quotation-total { margin-top: 14px; text-align: right; }</style>
 </head>
 <body>
-<div class="toolbar no-print"><button type="button" onclick="window.close()">Cerrar</button> <button type="button" class="primary" onclick="window.print()">Imprimir</button></div>
+<div class="toolbar no-print"><button type="button" onclick="window.close()">Cerrar</button> @include('print.partials.pdf-download-button', ['target' => '.document-page', 'filename' => 'cotizacion-'.$quotation->visible_number.'.pdf', 'kind' => 'document', 'paper' => ($business->country ?? 'GT') === 'GT' ? 'letter' : 'a4', 'marginMm' => 12]) <button type="button" class="primary" onclick="window.print()">Imprimir</button></div>
 <main class="document-page">
 <header class="document-header">
     <div class="document-brand">

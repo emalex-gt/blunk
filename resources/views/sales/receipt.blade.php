@@ -48,6 +48,7 @@
 
 <div class="toolbar no-print">
     <button type="button" onclick="window.close()">Cerrar</button>
+    @include('print.partials.pdf-download-button', ['target' => '.document-page', 'filename' => 'venta-'.format_sale_number($sale).'.pdf', 'kind' => 'document', 'paper' => $paperSize, 'marginMm' => 12])
     <button type="button" class="primary" onclick="window.print()">Imprimir</button>
 </div>
 

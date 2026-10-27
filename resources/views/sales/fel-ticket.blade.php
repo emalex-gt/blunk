@@ -50,6 +50,7 @@
 @endphp
 <div class="toolbar no-print">
     <button type="button" onclick="window.close()">Cerrar</button>
+    @include('print.partials.pdf-download-button', ['target' => '.ticket', 'filename' => 'factura-fel-'.$fel['series'].'-'.$fel['number'].'.pdf', 'kind' => 'ticket', 'widthMm' => 80, 'marginMm' => 4])
     <button type="button" onclick="window.print()">Imprimir</button>
 </div>
 <main class="ticket">

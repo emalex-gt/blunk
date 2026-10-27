@@ -51,6 +51,7 @@
 </head>
 <body>
     <div class="no-print">
+        @include('print.partials.pdf-download-button', ['target' => '.page', 'filename' => 'cierre-caja-'.$session->id.'.pdf', 'kind' => $receiptFormat === 'ticket' ? 'ticket' : 'document', 'paper' => $receiptFormat === 'ticket' ? null : $paperSize, 'widthMm' => $receiptFormat === 'ticket' ? 80 : null, 'marginMm' => $receiptFormat === 'ticket' ? 3 : 12, 'class' => 'print-button'])
         <button class="print-button" onclick="window.print()">Imprimir cierre</button>
     </div>
 

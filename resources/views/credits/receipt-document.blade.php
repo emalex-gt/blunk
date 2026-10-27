@@ -10,6 +10,7 @@
 <body>
 <div class="toolbar no-print">
     <button type="button" onclick="window.close()">Cerrar</button>
+    @include('print.partials.pdf-download-button', ['target' => '.document-page', 'filename' => 'recibo-credito-'.$number.'.pdf', 'kind' => 'document', 'paper' => 'letter', 'marginMm' => 12])
     <button type="button" class="primary" onclick="window.print()">Imprimir</button>
 </div>
 <main class="document-page">

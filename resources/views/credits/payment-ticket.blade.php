@@ -6,6 +6,11 @@
     @include('print.partials.ticket-styles')
 </head>
 <body>
+    <div class="toolbar no-print">
+        <button type="button" onclick="window.close()">Cerrar</button>
+        @include('print.partials.pdf-download-button', ['target' => '.ticket', 'filename' => 'abono-'.format_credit_payment_number($payment).'.pdf', 'kind' => 'ticket', 'widthMm' => 80, 'marginMm' => 4])
+        <button type="button" onclick="window.print()">Imprimir</button>
+    </div>
     <main class="ticket">
     <div class="center">
         @if($logoUrl)<img class="logo" src="{{ $logoUrl }}" alt="Logo">@endif

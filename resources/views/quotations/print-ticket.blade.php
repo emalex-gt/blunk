@@ -7,7 +7,7 @@
     @include('print.partials.ticket-styles')
 </head>
 <body>
-<div class="toolbar"><button onclick="window.close()">Cerrar</button> <button onclick="window.print()">Imprimir</button></div>
+<div class="toolbar no-print"><button type="button" onclick="window.close()">Cerrar</button> @include('print.partials.pdf-download-button', ['target' => '.ticket', 'filename' => 'cotizacion-'.$quotation->visible_number.'.pdf', 'kind' => 'ticket', 'widthMm' => 80, 'marginMm' => 4]) <button type="button" onclick="window.print()">Imprimir</button></div>
 <main class="ticket">
     <header class="center">
         <strong>{{ $company['name'] ?? $business->name }}@if($quotation->branch) - {{ $quotation->branch->name }}@endif</strong>
