@@ -102,6 +102,24 @@ class NavigationFeatureVisibilityTest extends TestCase
         $this->assertStringNotContainsString("route('fel.reconciliation.index')", $source);
     }
 
+    public function test_tenant_navigation_source_requires_the_route_permissions_for_each_operational_item(): void
+    {
+        $source = file_get_contents(resource_path('js/Layouts/AuthenticatedLayout.tsx'));
+
+        $this->assertStringContainsString("hasModule('pos') && can('pos.view')", $source);
+        $this->assertStringContainsString("hasModule('inventory') && can('products.view')", $source);
+        $this->assertStringContainsString("hasModule('customers') && can('customers.view')", $source);
+        $this->assertStringContainsString("can('users.view')", $source);
+        $this->assertStringContainsString("hasModule('inventory') && can('price_lists.view')", $source);
+        $this->assertStringContainsString("hasModule('purchases') && can('purchases.view')", $source);
+        $this->assertStringContainsString("hasModule('inventory') && can('inventory.view')", $source);
+        $this->assertStringContainsString("hasModule('branches') && can('inventory.transfers.view')", $source);
+        $this->assertStringContainsString("hasModule('cash_register') && can('cash_register.view')", $source);
+        $this->assertStringNotContainsString('canManageUsers', $source);
+        $this->assertStringContainsString('const managementActive = managementItems.some((item) => item.active);', $source);
+        $this->assertStringContainsString('const reportsActive = reportItems.some((item) => item.active);', $source);
+    }
+
     private function tenantUser(array $modules, array $settings): array
     {
         Permissions::syncDefaults();

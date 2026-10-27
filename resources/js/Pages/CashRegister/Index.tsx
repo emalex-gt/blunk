@@ -53,6 +53,12 @@ export default function Index({
     expenseCategories: ExpenseCategory[];
 }) {
     const business = usePage().props.business as { country?: string | null } | null;
+    const auth = usePage().props.auth as { user?: { is_super_admin?: boolean }; permissions?: string[] };
+    const permissions = auth?.permissions ?? [];
+    const can = (permission: string) => Boolean(auth?.user?.is_super_admin) || permissions.includes(permission);
+    const canOpenCashRegister = can('cash_register.open');
+    const canRegisterExpenses = can('cash_register.expenses');
+    const canCloseCashRegister = can('cash_register.close');
     const country = business?.country ?? 'GT';
     const toast = useToast();
     const [openingModalOpen, setOpeningModalOpen] = useState(false);
@@ -154,7 +160,7 @@ export default function Index({
                                 >
                                     Cierres de caja
                                 </Link>
-                                {!openSession && (
+                                {!openSession && canOpenCashRegister && (
                                     <button
                                         type="button"
                                         onClick={() => setOpeningModalOpen(true)}
@@ -170,14 +176,20 @@ export default function Index({
                     {!openSession ? (
                         <section className="rounded-2xl border border-dashed border-slate-300 bg-white/80 p-10 text-center shadow-sm">
                             <div className="text-lg font-semibold text-slate-950">No hay caja abierta</div>
-                            <p className="mt-2 text-sm text-slate-500">Abre caja para registrar pagos en efectivo, gastos y compras desde caja.</p>
-                            <button
-                                type="button"
-                                onClick={() => setOpeningModalOpen(true)}
-                                className="mt-5 rounded-xl bg-orange-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
-                            >
-                                Abrir caja
-                            </button>
+                            <p className="mt-2 text-sm text-slate-500">
+                                {canOpenCashRegister
+                                    ? 'Abre caja para registrar pagos en efectivo, gastos y compras desde caja.'
+                                    : 'No hay una caja abierta actualmente.'}
+                            </p>
+                            {canOpenCashRegister && (
+                                <button
+                                    type="button"
+                                    onClick={() => setOpeningModalOpen(true)}
+                                    className="mt-5 rounded-xl bg-orange-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
+                                >
+                                    Abrir caja
+                                </button>
+                            )}
                         </section>
                     ) : (
                         <>
@@ -198,24 +210,27 @@ export default function Index({
                                 </div>
 
                                 <div className="mt-5 flex flex-wrap gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => setExpenseModalOpen(true)}
-                                        disabled={!openSession}
-                                        className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
-                                    >
-                                        Registrar gasto
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            closeForm.setData('counted_cash', String(openSession.expected_cash));
-                                            setCloseModalOpen(true);
-                                        }}
-                                        className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700"
-                                    >
-                                        Cerrar caja
-                                    </button>
+                                    {canRegisterExpenses && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setExpenseModalOpen(true)}
+                                            className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
+                                        >
+                                            Registrar gasto
+                                        </button>
+                                    )}
+                                    {canCloseCashRegister && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                closeForm.setData('counted_cash', String(openSession.expected_cash));
+                                                setCloseModalOpen(true);
+                                            }}
+                                            className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700"
+                                        >
+                                            Cerrar caja
+                                        </button>
+                                    )}
                                     <button
                                         type="button"
                                         onClick={() => setShowMovements((current) => !current)}
@@ -234,7 +249,7 @@ export default function Index({
                 </div>
             </div>
 
-            {openingModalOpen && (
+            {openingModalOpen && canOpenCashRegister && (
                 <Modal title="Abrir caja" onClose={() => setOpeningModalOpen(false)}>
                     <form onSubmit={submitOpening} className="space-y-4">
                         <Field label="Monto inicial" type="number" step="0.01" value={openingForm.data.opening_amount} onChange={(value) => openingForm.setData('opening_amount', value)} error={openingForm.errors.opening_amount} />
@@ -244,7 +259,7 @@ export default function Index({
                 </Modal>
             )}
 
-            {expenseModalOpen && (
+            {expenseModalOpen && canRegisterExpenses && (
                 <Modal title="Registrar gasto" onClose={() => setExpenseModalOpen(false)}>
                     <form onSubmit={submitExpense} className="space-y-4">
                         {!openSession && (
@@ -275,7 +290,7 @@ export default function Index({
                 </Modal>
             )}
 
-            {closeModalOpen && openSession && (
+            {closeModalOpen && openSession && canCloseCashRegister && (
                 <Modal title="Cerrar caja" onClose={() => setCloseModalOpen(false)}>
                     <form onSubmit={submitClose} className="space-y-4">
                         <div className="rounded-2xl bg-slate-50 p-4">

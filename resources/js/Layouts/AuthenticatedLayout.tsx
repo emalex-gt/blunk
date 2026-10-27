@@ -67,8 +67,8 @@ export default function Authenticated({
     const sessionExpired = false;
     const sessionExpiredInPos = false;
     const navRef = useRef<HTMLDivElement>(null);
-    const canManageUsers = Boolean(user?.is_super_admin) || ['owner', 'admin'].includes(user?.role ?? '');
-    const canViewCredits = Boolean(user?.is_super_admin) || permissions.includes('credits.view');
+    const can = (permission: string) => Boolean(user?.is_super_admin) || permissions.includes(permission);
+    const canViewCredits = can('credits.view');
     const hasModule = (module: string) => enabledModules.includes(module);
     const featureEnabled = (feature: keyof TenantFeatures, module?: string) => {
         const explicit = features[feature];
@@ -82,34 +82,18 @@ export default function Authenticated({
     const creditSalesEnabled = featureEnabled('enable_credit_sales', 'credits');
     const creditReservationsEnabled = featureEnabled('enable_credit_reservations', 'credits');
     const settingsVisible = false;
-    const can = (permission: string) => Boolean(user?.is_super_admin) || permissions.includes(permission);
-
-    const managementActive =
-        (hasModule('pos') && can('quotations.view') && route().current('quotations.*')) ||
-        (hasModule('inventory') && (route().current('products.*') || route().current('stock.*') || route().current('price-lists.*'))) ||
-        (hasModule('inventory') && route().current('categories.*')) ||
-        (hasModule('inventory') && route().current('brands.*')) ||
-        (hasModule('inventory') && route().current('product-locations.*')) ||
-        (hasModule('customers') && route().current('customers.*')) ||
-        (canManageUsers && route().current('users.*')) ||
-        (hasModule('branches') && route().current('inventory.transfers.*')) ||
-        (hasModule('purchases') && route().current('purchases.*')) ||
-        (hasModule('cash_register') && route().current('cash-register.*')) ||
-        ((creditSalesEnabled || creditReservationsEnabled) && route().current('credits.*')) ||
-        (hasModule('routes') && route().current('routes.*'));
     const settingsActive = false;
-    const reportsActive = route().current('reports.*');
 
     const managementItems: NavItem[] = [
         hasModule('pos') && can('quotations.view') ? { label: 'Cotizaciones', href: route('quotations.index'), active: route().current('quotations.*') } : null,
-        hasModule('inventory') ? { label: t('nav.products'), href: route('products.index'), active: route().current('products.*') } : null,
+        hasModule('inventory') && can('products.view') ? { label: t('nav.products'), href: route('products.index'), active: route().current('products.*') } : null,
         hasModule('customers') && can('customers.view') ? { label: 'Clientes', href: route('customers.index'), active: route().current('customers.*') } : null,
-        canManageUsers ? { label: 'Usuarios', href: route('users.index'), active: route().current('users.*') } : null,
-        hasModule('inventory') && canManageUsers ? { label: 'Listas de precios', href: route('price-lists.index'), active: route().current('price-lists.*') } : null,
-        hasModule('purchases') ? { label: 'Compras', href: route('purchases.index'), active: route().current('purchases.*') } : null,
-        hasModule('inventory') ? { label: t('nav.stock'), href: route('stock.index'), active: route().current('stock.*') } : null,
-        hasModule('branches') ? { label: 'Traslados', href: route('inventory.transfers.index'), active: route().current('inventory.transfers.*') } : null,
-        hasModule('cash_register') ? { label: 'Caja', href: route('cash-register.index'), active: route().current('cash-register.*') } : null,
+        can('users.view') ? { label: 'Usuarios', href: route('users.index'), active: route().current('users.*') } : null,
+        hasModule('inventory') && can('price_lists.view') ? { label: 'Listas de precios', href: route('price-lists.index'), active: route().current('price-lists.*') } : null,
+        hasModule('purchases') && can('purchases.view') ? { label: 'Compras', href: route('purchases.index'), active: route().current('purchases.*') } : null,
+        hasModule('inventory') && can('inventory.view') ? { label: t('nav.stock'), href: route('stock.index'), active: route().current('stock.*') } : null,
+        hasModule('branches') && can('inventory.transfers.view') ? { label: 'Traslados', href: route('inventory.transfers.index'), active: route().current('inventory.transfers.*') } : null,
+        hasModule('cash_register') && can('cash_register.view') ? { label: 'Caja', href: route('cash-register.index'), active: route().current('cash-register.*') } : null,
         creditSalesEnabled && can('credits.accounts.view') ? { label: 'Cuentas por cobrar', href: route('credits.accounts.index'), active: route().current('credits.accounts.*') } : null,
         creditSalesEnabled && (can('credits.payments.view') || can('credits.payments.create')) ? { label: 'Abonos', href: route('credits.payments.index'), active: route().current('credits.payments.*') } : null,
         creditReservationsEnabled && canViewCredits ? { label: 'Reservas pendientes', href: route('credits.index'), active: route().current('credits.index') || route().current('credits.customers.*') || route().current('credits.receipts.*') } : null,
@@ -137,6 +121,9 @@ export default function Authenticated({
         hasModule('reports') && can('reports.products_sold_detailed.view') ? { label: 'Productos vendidos detallado', href: route('reports.products-sold-detailed'), active: route().current('reports.products-sold-detailed') } : null,
         hasModule('reports') && can('reports.products_sold_summary.view') ? { label: 'Productos vendidos resumido', href: route('reports.products-sold-summary'), active: route().current('reports.products-sold-summary') } : null,
     ].filter(Boolean) as NavItem[];
+
+    const managementActive = managementItems.some((item) => item.active);
+    const reportsActive = reportItems.some((item) => item.active);
 
     const settingsItems: NavItem[] = [];
 
@@ -196,7 +183,7 @@ export default function Authenticated({
                                 className="hidden min-w-0 flex-1 flex-wrap items-center gap-2 lg:-my-px lg:ms-6 xl:flex"
                             >
                                 <HomeNavLink active={route().current('dashboard')} />
-                                {hasModule('pos') && (
+                                {hasModule('pos') && can('pos.view') && (
                                     <TopNavLink
                                         item={{
                                             label: 'POS',
@@ -345,7 +332,7 @@ export default function Authenticated({
                         <ResponsiveNavLink href={route('dashboard')} active={route().current('dashboard')}>
                             Inicio
                         </ResponsiveNavLink>
-                        {hasModule('pos') && (
+                        {hasModule('pos') && can('pos.view') && (
                         <ResponsiveNavLink href={route('sales.create')} active={route().current('sales.create')}>
                             POS
                         </ResponsiveNavLink>

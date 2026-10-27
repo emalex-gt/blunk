@@ -23,8 +23,6 @@ class CashRegisterController extends Controller
 {
     public function index(Request $request): Response
     {
-        $this->authorizeCashRegister($request);
-
         $businessId = currentBusinessId();
         $timezone = tenantTimezone($businessId);
         $session = CashRegister::currentOpenSession($businessId);
@@ -41,8 +39,6 @@ class CashRegisterController extends Controller
 
     public function open(Request $request): RedirectResponse
     {
-        $this->authorizeCashRegister($request);
-
         $data = $request->validate([
             'opening_amount' => ['required', 'numeric', 'min:0'],
             'notes' => ['nullable', 'string', 'max:2000'],
@@ -80,8 +76,6 @@ class CashRegisterController extends Controller
 
     public function expense(Request $request): RedirectResponse
     {
-        $this->authorizeCashRegister($request);
-
         $data = $request->validate([
             'category_id' => ['nullable', 'integer'],
             'category_name' => ['nullable', 'string', 'max:255'],
@@ -129,8 +123,6 @@ class CashRegisterController extends Controller
 
     public function close(Request $request): RedirectResponse
     {
-        $this->authorizeCashRegister($request);
-
         $data = $request->validate([
             'counted_cash' => ['required', 'numeric', 'min:0'],
             'closing_notes' => ['nullable', 'string', 'max:2000'],
@@ -176,8 +168,6 @@ class CashRegisterController extends Controller
 
     public function closings(Request $request): Response
     {
-        $this->authorizeCashRegister($request);
-
         $businessId = currentBusinessId();
         $timezone = tenantTimezone($businessId);
 
@@ -195,7 +185,6 @@ class CashRegisterController extends Controller
 
     public function closingShow(Request $request, CashRegisterSession $session): Response
     {
-        $this->authorizeCashRegister($request);
         $this->ensureSessionBelongsToCurrentBusiness($session);
         $this->ensureSessionBelongsToActiveBranch($request, $session);
 
@@ -209,7 +198,6 @@ class CashRegisterController extends Controller
 
     public function closingPrint(Request $request, CashRegisterSession $session)
     {
-        $this->authorizeCashRegister($request);
         $this->ensureSessionBelongsToCurrentBusiness($session);
         $this->ensureSessionBelongsToActiveBranch($request, $session);
 
@@ -328,16 +316,6 @@ class CashRegisterController extends Controller
             'name' => $categoryName,
             'is_active' => true,
         ]);
-    }
-
-    private function authorizeCashRegister(Request $request): void
-    {
-        $user = $request->user();
-
-        abort_unless(
-            $user && ($user->is_super_admin || in_array($user->role, ['owner', 'admin', 'cashier'], true)),
-            403,
-        );
     }
 
     private function ensureSessionBelongsToCurrentBusiness(CashRegisterSession $session): void
