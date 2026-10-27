@@ -30,7 +30,7 @@
 
 <div class="toolbar no-print">
     <button type="button" onclick="window.close()">Cerrar</button>
-    <button type="button" onclick="window.print()">Imprimir</button>
+    <button type="button" class="primary" onclick="window.print()">Imprimir</button>
 </div>
 
 <main class="document-page">
@@ -52,15 +52,39 @@
     </header>
 
     <section class="document-info">
-        <div><span class="label">Fecha</span>{{ $purchase->created_at?->timezone($timezone)->format('d/m/Y H:i') }}</div>
-        <div><span class="label">Sucursal destino</span>{{ $purchase->branch?->name ?: '-' }}</div>
-        <div><span class="label">Proveedor</span>{{ $purchase->supplier?->name ?: '-' }}</div>
-        <div><span class="label">Número interno de compra</span>{{ $purchaseNumber }}</div>
-        <div><span class="label">Factura proveedor</span>{{ $purchase->supplier_invoice_number ?: '-' }}</div>
-        <div><span class="label">Método de pago</span>{{ $paymentMethodLabel }}</div>
-        <div><span class="label">Creado por</span>{{ $purchase->createdBy?->name ?: '-' }}</div>
+        <div>
+            <span class="label">Fecha</span>
+            <div>{{ $purchase->created_at?->timezone($timezone)->format('d/m/Y H:i') }}</div>
+        </div>
+        <div>
+            <span class="label">Sucursal destino</span>
+            <div>{{ $purchase->branch?->name ?: '-' }}</div>
+        </div>
+        <div>
+            <span class="label">Proveedor</span>
+            <div>{{ $purchase->supplier?->name ?: '-' }}</div>
+        </div>
+        <div>
+            <span class="label">Número interno de compra</span>
+            <div>{{ $purchaseNumber }}</div>
+        </div>
+        <div>
+            <span class="label">Factura proveedor</span>
+            <div>{{ $purchase->supplier_invoice_number ?: '-' }}</div>
+        </div>
+        <div>
+            <span class="label">Método de pago</span>
+            <div>{{ $paymentMethodLabel }}</div>
+        </div>
+        <div>
+            <span class="label">Creado por</span>
+            <div>{{ $purchase->createdBy?->name ?: '-' }}</div>
+        </div>
         @if ($purchase->note)
-            <div><span class="label">Nota</span>{{ $purchase->note }}</div>
+            <div>
+                <span class="label">Nota</span>
+                <div>{{ $purchase->note }}</div>
+            </div>
         @endif
     </section>
 
@@ -80,8 +104,8 @@
                     <td>{{ $item->product?->code ?: $item->product?->barcode ?: '-' }}</td>
                     <td>{{ $item->product_name }}</td>
                     <td class="right">{{ number_format((float) $item->quantity, 2) }}</td>
-                    <td class="right">Q{{ number_format((float) $item->unit_cost, 2) }}</td>
-                    <td class="right">Q{{ number_format((float) $item->total, 2) }}</td>
+                    <td class="right">{{ formatMoney($item->unit_cost, $business->country) }}</td>
+                    <td class="right">{{ formatMoney($item->total, $business->country) }}</td>
                 </tr>
             @endforeach
         </tbody>
@@ -90,8 +114,8 @@
     <section class="document-summary">
         <div></div>
         <table>
-            <tr><td>Subtotal</td><td class="right">Q{{ number_format($subtotal, 2) }}</td></tr>
-            <tr><td><strong>Total</strong></td><td class="right total">Q{{ number_format((float) $purchase->total, 2) }}</td></tr>
+            <tr><td>Subtotal</td><td class="right">{{ formatMoney($subtotal, $business->country) }}</td></tr>
+            <tr><td><strong>Total</strong></td><td class="right total">{{ formatMoney($purchase->total, $business->country) }}</td></tr>
         </table>
     </section>
 

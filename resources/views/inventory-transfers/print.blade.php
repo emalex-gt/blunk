@@ -21,7 +21,7 @@
 
 <div class="toolbar no-print">
     <button type="button" onclick="window.close()">Cerrar</button>
-    <button type="button" onclick="window.print()">Imprimir</button>
+    <button type="button" class="primary" onclick="window.print()">Imprimir</button>
 </div>
 
 <main class="document-page">
@@ -43,13 +43,31 @@
     </header>
 
     <section class="document-info">
-        <div><span class="label">Fecha</span>{{ optional($transfer->created_at)->timezone($timezone)->format('d/m/Y H:i') }}</div>
-        <div><span class="label">Estado</span>{{ $transfer->status === 'completed' ? 'Completado' : $transfer->status }}</div>
-        <div><span class="label">Origen</span>{{ $transfer->fromBranch?->name ?: '-' }}</div>
-        <div><span class="label">Destino</span>{{ $transfer->toBranch?->name ?: '-' }}</div>
-        <div><span class="label">Creado por</span>{{ $transfer->createdBy?->name ?: '-' }}</div>
+        <div>
+            <span class="label">Fecha</span>
+            <div>{{ optional($transfer->created_at)->timezone($timezone)->format('d/m/Y H:i') }}</div>
+        </div>
+        <div>
+            <span class="label">Estado</span>
+            <div>{{ $transfer->status === 'completed' ? 'Completado' : $transfer->status }}</div>
+        </div>
+        <div>
+            <span class="label">Origen</span>
+            <div>{{ $transfer->fromBranch?->name ?: '-' }}</div>
+        </div>
+        <div>
+            <span class="label">Destino</span>
+            <div>{{ $transfer->toBranch?->name ?: '-' }}</div>
+        </div>
+        <div>
+            <span class="label">Creado por</span>
+            <div>{{ $transfer->createdBy?->name ?: '-' }}</div>
+        </div>
         @if ($transfer->notes)
-            <div><span class="label">Nota / motivo</span>{{ $transfer->notes }}</div>
+            <div>
+                <span class="label">Nota / motivo</span>
+                <div>{{ $transfer->notes }}</div>
+            </div>
         @endif
     </section>
 
