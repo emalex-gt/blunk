@@ -319,7 +319,7 @@ class CashRegisterController extends Controller
                 ->get()
                 ->keyBy('id');
 
-            $payload['movements'] = $movements->map(function ($movement) use ($expenses) {
+            $payload['movements'] = $movements->map(function ($movement) use ($expenses, $timezone) {
                 $expense = $movement->reference_type === 'cash_expense'
                     ? $expenses->get((int) $movement->reference_id)
                     : null;
