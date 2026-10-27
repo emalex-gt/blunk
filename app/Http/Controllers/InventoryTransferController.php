@@ -17,7 +17,6 @@ use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\Reports\ReportDateRange;
 use App\Support\StockAvailability;
-use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -25,6 +24,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
+use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class InventoryTransferController extends Controller
@@ -265,7 +265,7 @@ class InventoryTransferController extends Controller
         ]);
     }
 
-    public function pdf(Request $request, InventoryTransfer $transfer): SymfonyResponse
+    public function print(Request $request, InventoryTransfer $transfer): View
     {
         $this->authorizePermission($request, Permissions::INVENTORY_TRANSFERS_VIEW);
         abort_unless((int) $transfer->business_id === (int) currentBusinessId(), 403);
@@ -279,15 +279,13 @@ class InventoryTransferController extends Controller
             'lines.product:id,name,code,barcode',
         ]);
 
-        return Pdf::loadView('pdf.inventory-transfers.show', [
+        return view('inventory-transfers.print', [
             'transfer' => $transfer,
             'business' => $transfer->business,
             'tenantSetting' => $transfer->business?->tenantSetting,
             'company' => DocumentCompanyHeader::make($transfer->business, $transfer->fromBranch, $transfer->business?->tenantSetting),
             'timezone' => tenantTimezone($transfer->business),
-        ])
-            ->setPaper('letter', 'portrait')
-            ->stream('traslado-'.str((string) $transfer->id)->slug().'.pdf');
+        ]);
     }
 
     private function transferListQuery(Request $request, ReportDateRange $range)

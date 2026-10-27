@@ -544,7 +544,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/inventory/transfers/products/search', [InventoryTransferController::class, 'productSearch'])->middleware('permission:inventory.transfers.create')->name('inventory.transfers.products.search');
             Route::get('/inventory/transfers/create', [InventoryTransferController::class, 'create'])->middleware('permission:inventory.transfers.create')->name('inventory.transfers.create');
             Route::post('/inventory/transfers', [InventoryTransferController::class, 'store'])->middleware('permission:inventory.transfers.create')->name('inventory.transfers.store');
-            Route::get('/inventory/transfers/{transfer}/pdf', [InventoryTransferController::class, 'pdf'])->middleware('permission:inventory.transfers.view')->name('inventory.transfers.pdf');
+            Route::get('/inventory/transfers/{transfer}/print', [InventoryTransferController::class, 'print'])->middleware('permission:inventory.transfers.view')->name('inventory.transfers.print');
             Route::get('/inventory/transfers/{transfer}', [InventoryTransferController::class, 'show'])->middleware('permission:inventory.transfers.view')->name('inventory.transfers.show');
         });
 
@@ -566,7 +566,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/purchases/suppliers/search', [PurchaseController::class, 'supplierSearch'])->middleware('permission:purchases.create')->name('purchases.suppliers.search');
             Route::get('/purchases/create', [PurchaseController::class, 'create'])->middleware('permission:purchases.create')->name('purchases.create');
             Route::post('/purchases', [PurchaseController::class, 'store'])->middleware('permission:purchases.create')->name('purchases.store');
-            Route::get('/purchases/{purchase}/pdf', [PurchaseController::class, 'pdf'])->middleware('permission:purchases.view')->name('purchases.pdf');
+            Route::get('/purchases/{purchase}/print', [PurchaseController::class, 'print'])->middleware('permission:purchases.view')->name('purchases.print');
             Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->middleware('permission:purchases.view')->name('purchases.show');
         });
 

@@ -18,7 +18,6 @@ use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\ProductSupplierCostHistory;
 use App\Support\Reports\ReportDateRange;
-use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,6 +25,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
+use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class PurchaseController extends Controller
@@ -363,7 +363,7 @@ class PurchaseController extends Controller
         ]);
     }
 
-    public function pdf(Request $request, Purchase $purchase): SymfonyResponse
+    public function print(Request $request, Purchase $purchase): View
     {
         abort_unless($purchase->business_id === currentBusinessId(), 403);
         $this->authorizePurchaseBranch($request, $purchase);
@@ -376,16 +376,14 @@ class PurchaseController extends Controller
             'items.product:id,code,barcode',
         ]);
 
-        return Pdf::loadView('pdf.purchases.show', [
+        return view('purchases.print', [
             'purchase' => $purchase,
             'business' => $purchase->business,
             'tenantSetting' => $purchase->business?->tenantSetting,
             'company' => DocumentCompanyHeader::make($purchase->business, $purchase->branch, $purchase->business?->tenantSetting),
             'purchaseNumber' => format_purchase_number($purchase),
             'timezone' => tenantTimezone($purchase->business),
-        ])
-            ->setPaper('letter', 'portrait')
-            ->stream('compra-'.str((string) ($purchase->business_number ?? $purchase->id))->slug().'.pdf');
+        ]);
     }
 
     private function purchaseListQuery(Request $request, ReportDateRange $range)

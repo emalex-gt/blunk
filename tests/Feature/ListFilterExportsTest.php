@@ -113,7 +113,7 @@ class ListFilterExportsTest extends TestCase
                 ->where('purchases.data.0.supplier_invoice_number', 'FAC-VISIBLE'));
     }
 
-    public function test_purchase_show_and_pdf_include_supplier_invoice_number_and_are_scoped(): void
+    public function test_purchase_show_and_print_include_supplier_invoice_number_and_are_scoped(): void
     {
         [$business, $user, $branch] = $this->tenant('purchases', ['purchases']);
         $business->forceFill(['logo_url' => 'https://cdn.example.test/business-logo.png'])->save();
@@ -138,7 +138,7 @@ class ListFilterExportsTest extends TestCase
                 ->component('Purchases/Show')
                 ->where('purchase.supplier_invoice_number', 'FAC-PDF-1'));
 
-        $html = view('pdf.purchases.show', [
+        $html = view('purchases.print', [
             'purchase' => $purchase->load(['business.tenantSetting', 'supplier', 'branch', 'createdBy', 'items.product']),
             'business' => $business,
             'tenantSetting' => $business->tenantSetting,
@@ -156,21 +156,21 @@ class ListFilterExportsTest extends TestCase
         $this->assertStringNotContainsString('NIT/documento proveedor', $html);
 
         $this->actingAs($user)
-            ->get(route('purchases.pdf', $purchase))
+            ->get(route('purchases.print', $purchase))
             ->assertOk()
-            ->assertHeader('content-type', 'application/pdf');
+            ->assertSee('Comprobante de compra');
 
         $cashier = $this->user($business, $branch, 'cashier');
 
         $this->actingAs($cashier)
-            ->get(route('purchases.pdf', $purchase))
+            ->get(route('purchases.print', $purchase))
             ->assertForbidden();
 
         [$otherBusiness, $otherUser] = $this->tenant('purchases', ['purchases']);
         $this->assertNotSame($business->id, $otherBusiness->id);
 
         $this->actingAs($otherUser)
-            ->get(route('purchases.pdf', $purchase))
+            ->get(route('purchases.print', $purchase))
             ->assertForbidden();
     }
 
@@ -211,14 +211,14 @@ class ListFilterExportsTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_transfer_pdf_is_letter_internal_document_and_is_scoped(): void
+    public function test_transfer_print_is_letter_internal_document_and_is_scoped(): void
     {
         [$business, $user, $branch, $otherBranch] = $this->tenant('stock_manager', ['branches']);
         $business->forceFill(['logo_url' => 'https://cdn.example.test/business-logo.png'])->save();
         $product = $this->product($business, 'Producto traslado PDF');
         $transfer = $this->transfer($business, $branch, $otherBranch, $user, $product, 4);
 
-        $html = view('pdf.inventory-transfers.show', [
+        $html = view('inventory-transfers.print', [
             'transfer' => $transfer->load(['business.tenantSetting', 'fromBranch', 'toBranch', 'createdBy', 'lines.product']),
             'business' => $business,
             'tenantSetting' => $business->tenantSetting,
@@ -233,25 +233,25 @@ class ListFilterExportsTest extends TestCase
         $this->assertStringContainsString('5555-0001', $html);
         $this->assertStringContainsString('https://cdn.example.test/business-logo.png', $html);
         $this->assertCompanyHeaderLabelsAreHidden($html);
-        $this->assertStringContainsString('Documento interno generado por Kodbli/BlunkStock', $html);
+        $this->assertStringContainsString('Documento interno generado por Blunk', $html);
         $this->assertStringNotContainsString('NIT:', $html);
 
         $this->actingAs($user)
-            ->get(route('inventory.transfers.pdf', $transfer))
+            ->get(route('inventory.transfers.print', $transfer))
             ->assertOk()
-            ->assertHeader('content-type', 'application/pdf');
+            ->assertSee('Traslado de inventario');
 
         $cashier = $this->user($business, $branch, 'cashier');
 
         $this->actingAs($cashier)
-            ->get(route('inventory.transfers.pdf', $transfer))
+            ->get(route('inventory.transfers.print', $transfer))
             ->assertForbidden();
 
         [$otherBusiness, $otherUser] = $this->tenant('stock_manager', ['branches']);
         $this->assertNotSame($business->id, $otherBusiness->id);
 
         $this->actingAs($otherUser)
-            ->get(route('inventory.transfers.pdf', $transfer))
+            ->get(route('inventory.transfers.print', $transfer))
             ->assertForbidden();
     }
 
@@ -379,7 +379,7 @@ class ListFilterExportsTest extends TestCase
             ->assertDontSee('Logo');
     }
 
-    public function test_purchase_and_transfer_pdf_omit_logo_placeholders_when_logo_is_missing(): void
+    public function test_purchase_and_transfer_print_omit_logo_placeholders_when_logo_is_missing(): void
     {
         [$business, $user, $branch, $otherBranch] = $this->tenant('owner', ['purchases', 'inventory', 'branches']);
         $supplier = Supplier::query()->create(['business_id' => $business->id, 'name' => 'Proveedor sin logo']);
@@ -397,14 +397,14 @@ class ListFilterExportsTest extends TestCase
         ]);
         $transfer = $this->transfer($business, $branch, $otherBranch, $user, $product, 1);
 
-        $purchaseHtml = view('pdf.purchases.show', [
+        $purchaseHtml = view('purchases.print', [
             'purchase' => $purchase->load(['business.tenantSetting', 'supplier', 'branch', 'createdBy', 'items.product']),
             'business' => $business,
             'tenantSetting' => $business->tenantSetting,
             'purchaseNumber' => format_purchase_number($purchase),
             'timezone' => tenantTimezone($business),
         ])->render();
-        $transferHtml = view('pdf.inventory-transfers.show', [
+        $transferHtml = view('inventory-transfers.print', [
             'transfer' => $transfer->load(['business.tenantSetting', 'fromBranch', 'toBranch', 'createdBy', 'lines.product']),
             'business' => $business,
             'tenantSetting' => $business->tenantSetting,

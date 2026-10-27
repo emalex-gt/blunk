@@ -31,7 +31,7 @@ export default function Show({ transfer }: { transfer: Transfer }) {
                         </div>
                         <div className="flex flex-wrap gap-2">
                             <a
-                                href={route('inventory.transfers.pdf', transfer.id)}
+                                href={route('inventory.transfers.print', transfer.id)}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"

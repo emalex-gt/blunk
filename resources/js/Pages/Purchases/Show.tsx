@@ -41,7 +41,7 @@ export default function Show({ purchase }: { purchase: Purchase }) {
                     <h2 className="text-xl font-semibold text-slate-950">Ver compra</h2>
                     <div className="flex flex-wrap gap-2">
                         <a
-                            href={route('purchases.pdf', purchase.id)}
+                            href={route('purchases.print', purchase.id)}
                             target="_blank"
                             rel="noreferrer"
                             className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
