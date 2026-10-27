@@ -2727,10 +2727,12 @@ export default function POS({
         };
         const restoreDraftWithProducts = (productMap = productsByIdRef.current) => {
             if (isBranchChange) {
-                restorePosDraft(draft as PosDraft, productMap);
+                const restored = restorePosDraft(draft as PosDraft, productMap);
                 setDraftReady(true);
-                showMessage('Sucursal cambiada. Se cargó el borrador de esta sucursal.');
-                toast.success('Sucursal cambiada. Se cargó el borrador de esta sucursal.');
+                if (restored) {
+                    showMessage('Sucursal cambiada. Se cargó el borrador de esta sucursal.');
+                    toast.success('Sucursal cambiada. Se cargó el borrador de esta sucursal.');
+                }
             } else {
                 setRestoreDraft(draft);
             }
@@ -2763,15 +2765,6 @@ export default function POS({
 
             restoreDraftWithProducts(productMap);
             return;
-
-            if (isBranchChange) {
-                restorePosDraft(draft as PosDraft);
-                setDraftReady(true);
-                showMessage('Sucursal cambiada. Se cargó el borrador de esta sucursal.');
-                toast.success('Sucursal cambiada. Se cargó el borrador de esta sucursal.');
-            } else {
-                setRestoreDraft(draft);
-            }
         } else {
             clearSaleState();
             setDraftReady(true);
@@ -4612,7 +4605,11 @@ export default function POS({
                             <button
                                 type="button"
                                 onClick={() => {
-                                    restorePosDraft(restoreDraft);
+                                    const restored = restorePosDraft(restoreDraft);
+                                    if (!restored) {
+                                        return;
+                                    }
+
                                     setRestoreDraft(null);
                                     setDraftReady(true);
                                     focusSearch();
