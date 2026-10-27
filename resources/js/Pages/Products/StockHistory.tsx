@@ -307,8 +307,8 @@ export default function StockHistory({
                                 <tr className="text-left text-gray-500">
                                     <th className="py-2 pr-3">Fecha</th>
                                     <th className="px-3 py-2">Tipo</th>
-                                    <th className="px-3 py-2 text-right">Cantidad</th>
                                     <th className="px-3 py-2 text-right">Stock anterior</th>
+                                    <th className="px-3 py-2 text-right">Cantidad</th>
                                     <th className="px-3 py-2 text-right">Stock nuevo</th>
                                     <th className="px-3 py-2">Nota</th>
                                     <th className="py-2 pl-3">Usuario</th>
@@ -323,11 +323,11 @@ export default function StockHistory({
                                         <td className="px-3 py-3 font-medium text-gray-900">
                                             {typeLabels[movement.type] ?? movement.type}
                                         </td>
-                                        <td className="px-3 py-3 text-right font-semibold text-gray-900">
-                                            {movement.quantity}
-                                        </td>
                                         <td className="px-3 py-3 text-right text-gray-700">
                                             {movement.previous_stock ?? '-'}
+                                        </td>
+                                        <td className="px-3 py-3 text-right font-semibold text-gray-900">
+                                            {movement.quantity}
                                         </td>
                                         <td className="px-3 py-3 text-right text-gray-700">
                                             {movement.new_stock ?? '-'}
