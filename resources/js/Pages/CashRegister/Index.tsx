@@ -13,6 +13,12 @@ type Movement = {
     amount: number;
     created_at: string | null;
     created_by: string | null;
+    reference_type?: string | null;
+    reference_id?: number | null;
+    expense_status?: string | null;
+    expense_cancelled_at?: string | null;
+    expense_cancelled_by?: string | null;
+    expense_cancellation_note?: string | null;
 };
 
 type CashSession = {
@@ -34,6 +40,7 @@ type CashSession = {
         cash_refunds: number;
         cash_sale_cancellations: number;
         expenses: number;
+        expense_cancellations: number;
         cash_purchases: number;
         expected_cash: number;
     };
@@ -58,6 +65,7 @@ export default function Index({
     const can = (permission: string) => Boolean(auth?.user?.is_super_admin) || permissions.includes(permission);
     const canOpenCashRegister = can('cash_register.open');
     const canRegisterExpenses = can('cash_register.expenses');
+    const canCancelExpenses = can('cash_register.expenses.cancel');
     const canCloseCashRegister = can('cash_register.close');
     const country = business?.country ?? 'GT';
     const toast = useToast();
@@ -67,10 +75,12 @@ export default function Index({
     const [selectedExpenseCategory, setSelectedExpenseCategory] = useState<ExpenseCategory | null>(null);
     const [closeModalOpen, setCloseModalOpen] = useState(false);
     const [showMovements, setShowMovements] = useState(false);
+    const [expenseToCancel, setExpenseToCancel] = useState<Movement | null>(null);
 
     const openingForm = useForm({ opening_amount: '0.00', notes: '' });
     const expenseForm = useForm({ category_id: null as number | null, category_name: '', description: '', amount: '' });
     const closeForm = useForm({ counted_cash: openSession ? String(openSession.expected_cash) : '', closing_notes: '' });
+    const cancellationForm = useForm({ cancellation_note: '' });
 
     const closeDifference = useMemo(() => {
         if (!openSession) {
@@ -133,6 +143,23 @@ export default function Index({
         event.preventDefault();
         closeForm.post(route('cash-register.close'), {
             preserveScroll: true,
+        });
+    }
+
+    function submitExpenseCancellation(event: FormEvent) {
+        event.preventDefault();
+
+        if (!expenseToCancel?.reference_id) {
+            return;
+        }
+
+        cancellationForm.post(route('cash-register.expenses.cancel', expenseToCancel.reference_id), {
+            preserveScroll: true,
+            onSuccess: () => {
+                setExpenseToCancel(null);
+                cancellationForm.reset();
+                toast.success('Gasto anulado correctamente.');
+            },
         });
     }
 
@@ -201,11 +228,12 @@ export default function Index({
                             </section>
 
                             <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
-                                <div className="grid gap-4 md:grid-cols-5">
+                                <div className="grid gap-4 md:grid-cols-6">
                                     <Summary label="Ventas en efectivo" value={formatCurrency(openSession.summary.cash_sales, country)} />
                                     <Summary label="Reembolsos en efectivo" value={formatCurrency(openSession.summary.cash_refunds, country)} />
                                     <Summary label="Anulaciones en efectivo" value={formatCurrency(openSession.summary.cash_sale_cancellations, country)} />
                                     <Summary label="Gastos" value={formatCurrency(openSession.summary.expenses, country)} />
+                                    <Summary label="Anulaciones de gastos" value={formatCurrency(openSession.summary.expense_cancellations, country)} />
                                     <Summary label="Compras pagadas de caja" value={formatCurrency(openSession.summary.cash_purchases, country)} />
                                 </div>
 
@@ -242,7 +270,16 @@ export default function Index({
                             </section>
 
                             {showMovements && (
-                                <MovementsTable movements={openSession.movements ?? []} country={country} />
+                                <MovementsTable
+                                    movements={openSession.movements ?? []}
+                                    country={country}
+                                    canCancelExpenses={canCancelExpenses}
+                                    onCancelExpense={(movement) => {
+                                        cancellationForm.reset();
+                                        cancellationForm.clearErrors();
+                                        setExpenseToCancel(movement);
+                                    }}
+                                />
                             )}
                         </>
                     )}
@@ -311,6 +348,27 @@ export default function Index({
                     </form>
                 </Modal>
             )}
+
+            {expenseToCancel && openSession && canCancelExpenses && (
+                <Modal title="Anular gasto" onClose={() => setExpenseToCancel(null)}>
+                    <form onSubmit={submitExpenseCancellation} className="space-y-4">
+                        <div className="rounded-2xl bg-slate-50 p-4 text-sm">
+                            <div><span className="font-semibold text-slate-700">Descripción:</span> {expenseToCancel.description ?? '-'}</div>
+                            <div className="mt-2"><span className="font-semibold text-slate-700">Importe:</span> {formatCurrency(Math.abs(expenseToCancel.amount), country)}</div>
+                        </div>
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                            La anulación no elimina el gasto. Se registrará un movimiento positivo por el mismo importe y quedará trazabilidad de ambos movimientos.
+                        </div>
+                        <TextArea
+                            label="Motivo / observación de la anulación"
+                            value={cancellationForm.data.cancellation_note}
+                            onChange={(value) => cancellationForm.setData('cancellation_note', value)}
+                            error={cancellationForm.errors.cancellation_note}
+                        />
+                        <ModalActions processing={cancellationForm.processing} submitLabel="Confirmar anulación" danger onCancel={() => setExpenseToCancel(null)} />
+                    </form>
+                </Modal>
+            )}
         </AuthenticatedLayout>
     );
 }
@@ -333,7 +391,17 @@ function Summary({ label, value }: { label: string; value: string }) {
     );
 }
 
-function MovementsTable({ movements, country }: { movements: Movement[]; country: string }) {
+function MovementsTable({
+    movements,
+    country,
+    canCancelExpenses,
+    onCancelExpense,
+}: {
+    movements: Movement[];
+    country: string;
+    canCancelExpenses: boolean;
+    onCancelExpense: (movement: Movement) => void;
+}) {
     return (
         <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
             <div className="overflow-x-auto">
@@ -345,21 +413,46 @@ function MovementsTable({ movements, country }: { movements: Movement[]; country
                             <th className="px-4 py-3">Descripción</th>
                             <th className="px-4 py-3">Usuario</th>
                             <th className="px-4 py-3 text-right">Monto</th>
+                            <th className="px-4 py-3 text-right">Acción</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                         {movements.length === 0 ? (
                             <tr>
-                                <td colSpan={5} className="px-4 py-10 text-center text-slate-500">Sin movimientos</td>
+                                <td colSpan={6} className="px-4 py-10 text-center text-slate-500">Sin movimientos</td>
                             </tr>
                         ) : movements.map((movement) => (
                             <tr key={movement.id} className="hover:bg-orange-50/30">
                                 <td className="px-4 py-3 text-slate-600">{movement.created_at ?? '-'}</td>
-                                <td className="px-4 py-3 font-semibold text-slate-800">{movement.type_label}</td>
-                                <td className="px-4 py-3 text-slate-600">{movement.description ?? '-'}</td>
+                                <td className="px-4 py-3 font-semibold text-slate-800">
+                                    {movement.type_label}
+                                    {movement.type === 'expense' && movement.expense_status === 'cancelled' && (
+                                        <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold tracking-wide text-red-700">ANULADO</span>
+                                    )}
+                                </td>
+                                <td className="px-4 py-3 text-slate-600">
+                                    <div>{movement.description ?? '-'}</div>
+                                    {movement.type === 'expense' && movement.expense_status === 'cancelled' && (
+                                        <div className="mt-1 text-xs text-slate-500">
+                                            {movement.expense_cancelled_by && <>Anulado por: {movement.expense_cancelled_by}. </>}
+                                            {movement.expense_cancellation_note && <>Motivo: {movement.expense_cancellation_note}</>}
+                                        </div>
+                                    )}
+                                </td>
                                 <td className="px-4 py-3 text-slate-600">{movement.created_by ?? '-'}</td>
                                 <td className={`whitespace-nowrap px-4 py-3 text-right font-semibold ${movement.amount < 0 ? 'text-red-600' : 'text-emerald-700'}`}>
                                     {formatCurrency(movement.amount, country)}
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                    {movement.type === 'expense' && movement.expense_status === 'active' && canCancelExpenses && (
+                                        <button
+                                            type="button"
+                                            onClick={() => onCancelExpense(movement)}
+                                            className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
+                                        >
+                                            Anular
+                                        </button>
+                                    )}
                                 </td>
                             </tr>
                         ))}

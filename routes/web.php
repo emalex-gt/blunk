@@ -552,6 +552,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/cash-register', [CashRegisterController::class, 'index'])->middleware('permission:cash_register.view')->name('cash-register.index');
             Route::post('/cash-register/open', [CashRegisterController::class, 'open'])->middleware('permission:cash_register.open')->name('cash-register.open');
             Route::post('/cash-register/expenses', [CashRegisterController::class, 'expense'])->middleware('permission:cash_register.expenses')->name('cash-register.expenses.store');
+            Route::post('/cash-register/expenses/{expense}/cancel', [CashRegisterController::class, 'cancelExpense'])->middleware('permission:cash_register.expenses.cancel')->name('cash-register.expenses.cancel');
             Route::post('/cash-register/close', [CashRegisterController::class, 'close'])->middleware('permission:cash_register.close')->name('cash-register.close');
             Route::get('/cash-register/closings', [CashRegisterController::class, 'closings'])->middleware('permission:cash_register.view')->name('cash-register.closings.index');
             Route::get('/cash-register/closings/{session}', [CashRegisterController::class, 'closingShow'])->middleware('permission:cash_register.view')->name('cash-register.closings.show');

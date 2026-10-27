@@ -92,6 +92,7 @@
                 <tr><td>Ventas en efectivo</td><td class="right positive">{{ formatMoney($summary['cash_sales'], $business?->country) }}</td></tr>
                 <tr><td>Anulaciones en efectivo</td><td class="right negative">-{{ formatMoney($summary['cash_sale_cancellations'], $business?->country) }}</td></tr>
                 <tr><td>Gastos</td><td class="right negative">-{{ formatMoney($summary['expenses'], $business?->country) }}</td></tr>
+                <tr><td>Anulaciones de gastos</td><td class="right positive">{{ formatMoney($summary['expense_cancellations'], $business?->country) }}</td></tr>
                 <tr><td>Compras pagadas de caja</td><td class="right negative">-{{ formatMoney($summary['cash_purchases'], $business?->country) }}</td></tr>
                 <tr><td class="total">Efectivo esperado</td><td class="right total">{{ formatMoney($session->expected_cash, $business?->country) }}</td></tr>
                 <tr><td class="total">Efectivo contado</td><td class="right total">{{ formatMoney($session->counted_cash, $business?->country) }}</td></tr>
@@ -133,6 +134,7 @@
                             'sale_refund_cash' => 'Reembolso de venta',
                             'sale_cash_cancel' => 'Anulación',
                             'expense' => 'Gasto',
+                            'expense_cancel' => 'Anulación de gasto',
                             'purchase_cash' => 'Compra',
                             default => 'Movimiento',
                         } }}</td>

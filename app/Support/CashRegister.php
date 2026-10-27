@@ -104,6 +104,7 @@ class CashRegister
             'credit_payment_cancellations' => abs($sum('credit_payment_cash_cancel')),
             'cash_sale_cancellations' => abs($sum('sale_cash_cancel')),
             'expenses' => abs($sum('expense')),
+            'expense_cancellations' => $sum('expense_cancel'),
             'cash_purchases' => abs($sum('purchase_cash')),
             'closing_adjustments' => $sum('closing_adjustment'),
             'expected_cash' => round((float) $movements->sum(fn ($movement) => (float) $movement->amount), 2),

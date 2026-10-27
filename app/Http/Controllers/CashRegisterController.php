@@ -121,6 +121,65 @@ class CashRegisterController extends Controller
         return back()->with('success', 'Gasto registrado correctamente.');
     }
 
+    public function cancelExpense(Request $request, CashExpense $expense): RedirectResponse
+    {
+        $data = $request->validate([
+            'cancellation_note' => ['required', 'string', 'min:3', 'max:2000'],
+        ], [
+            'cancellation_note.required' => 'Indica el motivo de la anulación.',
+        ]);
+
+        DB::transaction(function () use ($request, $expense, $data) {
+            $businessId = currentBusinessId();
+            $session = CashRegister::requireOpenSession(
+                $businessId,
+                'No hay una caja abierta. Sólo puedes anular gastos de la caja actual.',
+                true,
+            );
+
+            $lockedExpense = CashExpense::query()
+                ->where('business_id', $businessId)
+                ->whereKey($expense->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ((int) $lockedExpense->branch_id !== (int) $session->branch_id) {
+                abort(403);
+            }
+
+            if ((int) $lockedExpense->cash_register_session_id !== (int) $session->id) {
+                throw ValidationException::withMessages([
+                    'cash_register' => 'Este gasto pertenece a una caja anterior y ya no puede anularse.',
+                ]);
+            }
+
+            if ($lockedExpense->status === CashExpense::STATUS_CANCELLED) {
+                throw ValidationException::withMessages([
+                    'expense' => 'Este gasto ya fue anulado.',
+                ]);
+            }
+
+            $lockedExpense->update([
+                'status' => CashExpense::STATUS_CANCELLED,
+                'cancelled_at' => now(),
+                'cancelled_by' => $request->user()->id,
+                'cancellation_note' => $data['cancellation_note'],
+            ]);
+
+            CashRegister::recordMovement(
+                $session,
+                'expense_cancel',
+                (float) $lockedExpense->amount,
+                'cash_expense',
+                $lockedExpense->id,
+                "Anulación de gasto: {$lockedExpense->description} — Motivo: {$data['cancellation_note']}",
+                $request->user()->id,
+            );
+        });
+
+        return back()->with('success', 'Gasto anulado correctamente.');
+    }
+
     public function close(Request $request): RedirectResponse
     {
         $data = $request->validate([
@@ -246,7 +305,26 @@ class CashRegisterController extends Controller
         ];
 
         if ($includeMovements) {
-            $payload['movements'] = CashRegister::movements($session)->map(fn ($movement) => [
+            $movements = CashRegister::movements($session);
+            $expenseIds = $movements
+                ->where('reference_type', 'cash_expense')
+                ->pluck('reference_id')
+                ->filter()
+                ->unique()
+                ->values();
+            $expenses = CashExpense::query()
+                ->where('business_id', $session->business_id)
+                ->whereIn('id', $expenseIds)
+                ->with('cancelledBy:id,name')
+                ->get()
+                ->keyBy('id');
+
+            $payload['movements'] = $movements->map(function ($movement) use ($expenses) {
+                $expense = $movement->reference_type === 'cash_expense'
+                    ? $expenses->get((int) $movement->reference_id)
+                    : null;
+
+                return [
                 'id' => $movement->id,
                 'type' => $movement->type,
                 'type_label' => $this->movementLabel($movement->type),
@@ -254,7 +332,14 @@ class CashRegisterController extends Controller
                 'amount' => (float) $movement->amount,
                 'created_at' => $this->formatDateTime($movement->created_at, $timezone),
                 'created_by' => $movement->createdBy?->name,
-            ])->values();
+                'reference_type' => $movement->reference_type,
+                'reference_id' => $movement->reference_id,
+                'expense_status' => $expense?->status,
+                'expense_cancelled_at' => $this->formatDateTime($expense?->cancelled_at, $timezone),
+                'expense_cancelled_by' => $expense?->cancelledBy?->name,
+                'expense_cancellation_note' => $expense?->cancellation_note,
+            ];
+            })->values();
         }
 
         return $payload;
@@ -273,6 +358,7 @@ class CashRegisterController extends Controller
             'sale_refund_cash' => 'Reembolso de venta',
             'sale_cash_cancel' => 'Anulación de venta',
             'expense' => 'Gasto',
+            'expense_cancel' => 'Anulación de gasto',
             'purchase_cash' => 'Compra desde caja',
             'closing_adjustment' => 'Ajuste de cierre',
             default => 'Movimiento',

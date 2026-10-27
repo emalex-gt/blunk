@@ -30,6 +30,7 @@ type Session = {
         cash_refunds: number;
         cash_sale_cancellations: number;
         expenses: number;
+        expense_cancellations: number;
         cash_purchases: number;
     };
     movements: Movement[];
@@ -81,11 +82,12 @@ export default function Show({ session }: { session: Session }) {
                             <Detail label="Abierta por" value={session.opened_by ?? '-'} />
                             <Detail label="Cerrada por" value={session.closed_by ?? '-'} />
                         </div>
-                        <div className="mt-5 grid gap-4 md:grid-cols-5">
+                        <div className="mt-5 grid gap-4 md:grid-cols-6">
                             <Detail label="Ventas en efectivo" value={formatCurrency(session.summary.cash_sales, country)} />
                             <Detail label="Reembolsos" value={formatCurrency(session.summary.cash_refunds, country)} />
                             <Detail label="Anulaciones" value={formatCurrency(session.summary.cash_sale_cancellations, country)} />
                             <Detail label="Gastos" value={formatCurrency(session.summary.expenses, country)} />
+                            <Detail label="Anulaciones de gastos" value={formatCurrency(session.summary.expense_cancellations, country)} />
                             <Detail label="Compras desde caja" value={formatCurrency(session.summary.cash_purchases, country)} />
                         </div>
                         {(session.notes || session.closing_notes) && (

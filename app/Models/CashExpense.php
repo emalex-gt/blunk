@@ -7,6 +7,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class CashExpense extends Model
 {
+    public const STATUS_ACTIVE = 'active';
+    public const STATUS_CANCELLED = 'cancelled';
+
     protected $fillable = [
         'business_id',
         'branch_id',
@@ -16,10 +19,15 @@ class CashExpense extends Model
         'description',
         'amount',
         'created_by',
+        'status',
+        'cancelled_at',
+        'cancelled_by',
+        'cancellation_note',
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
+        'cancelled_at' => 'datetime',
     ];
 
     public function business(): BelongsTo
@@ -45,5 +53,10 @@ class CashExpense extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function cancelledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cancelled_by');
     }
 }

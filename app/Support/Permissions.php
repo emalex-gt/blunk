@@ -50,6 +50,7 @@ class Permissions
     public const CASH_REGISTER_OPEN = 'cash_register.open';
     public const CASH_REGISTER_CLOSE = 'cash_register.close';
     public const CASH_REGISTER_EXPENSES = 'cash_register.expenses';
+    public const CASH_REGISTER_EXPENSES_CANCEL = 'cash_register.expenses.cancel';
 
     public const REPORTS_SALES_VIEW = 'reports.sales.view';
     public const REPORTS_STOCK_VIEW = 'reports.stock.view';
@@ -195,6 +196,7 @@ class Permissions
             self::CASH_REGISTER_OPEN => ['name' => 'Abrir caja', 'group' => 'Caja'],
             self::CASH_REGISTER_CLOSE => ['name' => 'Cerrar caja', 'group' => 'Caja'],
             self::CASH_REGISTER_EXPENSES => ['name' => 'Registrar gastos de caja', 'group' => 'Caja'],
+            self::CASH_REGISTER_EXPENSES_CANCEL => ['name' => 'Anular gastos de caja', 'group' => 'Caja'],
             self::REPORTS_SALES_VIEW => ['name' => 'Ver reporte de ventas', 'group' => 'Reportes'],
             self::REPORTS_STOCK_VIEW => ['name' => 'Ver reporte de stock', 'group' => 'Reportes'],
             self::REPORTS_LOW_STOCK_VIEW => ['name' => 'Ver reporte de stock bajo', 'group' => 'Reportes'],
