@@ -41,10 +41,28 @@ function errorMessage(error: unknown): string {
     return String(firstValidationError ?? payload?.message ?? 'No se pudo completar la operación.');
 }
 
-export async function listOperationDrafts<TPayload>(type: OperationDraftType) {
+export function formatOperationDraftUpdatedAt(value: string | null): string {
+    if (!value || Number.isNaN(Date.parse(value))) {
+        return 'Fecha no disponible';
+    }
+
+    return new Intl.DateTimeFormat('es-GT', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+    }).format(new Date(value)).replace(', ', ' · ');
+}
+
+export async function listOperationDrafts<TPayload>(type: OperationDraftType, options: { branchId?: number | null } = {}) {
     try {
         const response = await axios.get<{ drafts: OperationDraftRecord<TPayload>[] }>('/operation-drafts', {
-            params: { type },
+            params: {
+                type,
+                ...(options.branchId !== null && options.branchId !== undefined ? { branch_id: options.branchId } : {}),
+            },
             headers: {
                 Accept: 'application/json',
             },

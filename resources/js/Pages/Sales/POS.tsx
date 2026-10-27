@@ -5,7 +5,7 @@ import { getProductImageUrl } from '@/lib/cloudinary';
 import { useToast } from '@/hooks/useToast';
 import { t } from '@/lib/i18n';
 import { clearDraft, loadDraft, makeDraftKey, saveDraft } from '@/lib/draftStorage';
-import { discardOperationDraft, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
+import { discardOperationDraft, formatOperationDraftUpdatedAt, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import {
@@ -2210,7 +2210,7 @@ export default function POS({
         setSavedDraftsOpen(true);
 
         try {
-            const payload = await listOperationDrafts<PosDraft>('pos_sale');
+            const payload = await listOperationDrafts<PosDraft>('pos_sale', { branchId: activeBranchId });
             setSavedDrafts(payload.drafts);
             setHasHeldSale(payload.drafts.length > 0);
         } catch (error) {
@@ -4628,7 +4628,7 @@ export default function POS({
                                     <div>
                                         <div className="text-sm font-semibold text-slate-900">{draft.title ?? 'Borrador de venta'}</div>
                                         <div className="mt-1 text-xs text-slate-500">
-                                            {draft.customer?.name ?? draft.payload.customer?.name ?? 'Consumidor final'} · {draft.item_count} productos · Total estimado {formatCurrency(Number(draft.total ?? 0), country)} · Sucursal: {draft.branch?.name ?? pageProps.active_branch?.name ?? '-'} · Usuario: {draft.user?.name ?? '-'}
+                                            {draft.customer?.name ?? draft.payload.customer?.name ?? 'Consumidor final'} · {draft.item_count} productos · Total estimado {formatCurrency(Number(draft.total ?? 0), country)} · Sucursal: {draft.branch?.name ?? pageProps.active_branch?.name ?? '-'} · Usuario: {draft.user?.name ?? '-'} · Guardado: {formatOperationDraftUpdatedAt(draft.updated_at)}
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">

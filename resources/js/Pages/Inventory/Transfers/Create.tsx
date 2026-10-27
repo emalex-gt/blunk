@@ -1,6 +1,6 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { makeOperationKey } from '@/lib/idempotency';
-import { discardOperationDraft, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
+import { discardOperationDraft, formatOperationDraftUpdatedAt, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
 import { Head, Link, router } from '@inertiajs/react';
 import axios from 'axios';
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
@@ -171,7 +171,7 @@ export default function Create({
         setMessage('');
 
         try {
-            const payload = await listOperationDrafts<TransferDraft>('transfer');
+            const payload = await listOperationDrafts<TransferDraft>('transfer', { branchId: fromBranchId });
             setDrafts(payload.drafts);
         } catch (error) {
             setMessage(error instanceof Error ? error.message : 'No se pudieron cargar los borradores.');
@@ -530,7 +530,7 @@ export default function Create({
                                     <div>
                                         <div className="text-sm font-semibold text-slate-900">{draft.title ?? 'Borrador de traslado'}</div>
                                         <div className="mt-1 text-xs text-slate-500">
-                                            {draft.source_branch?.name ?? 'Origen'} → {draft.destination_branch?.name ?? 'Destino'} · {draft.item_count} productos · Usuario: {draft.user?.name ?? '-'}
+                                            {draft.source_branch?.name ?? 'Origen'} → {draft.destination_branch?.name ?? 'Destino'} · {draft.item_count} productos · Usuario: {draft.user?.name ?? '-'} · Guardado: {formatOperationDraftUpdatedAt(draft.updated_at)}
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">

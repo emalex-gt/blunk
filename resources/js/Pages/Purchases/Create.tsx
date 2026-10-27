@@ -4,7 +4,7 @@ import Toast from '@/Components/Toast';
 import { getProductImageUrl } from '@/lib/cloudinary';
 import { clearDraft, loadDraft, makeDraftKey, saveDraft } from '@/lib/draftStorage';
 import { makeOperationKey } from '@/lib/idempotency';
-import { discardOperationDraft, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
+import { discardOperationDraft, formatOperationDraftUpdatedAt, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, router, usePage } from '@inertiajs/react';
@@ -484,7 +484,7 @@ export default function Create({
         setMessage('');
 
         try {
-            const payload = await listOperationDrafts<PurchaseDraft>('purchase');
+            const payload = await listOperationDrafts<PurchaseDraft>('purchase', { branchId });
             setSavedDrafts(payload.drafts);
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'No se pudieron cargar los borradores.';
@@ -1490,7 +1490,7 @@ export default function Create({
                                     <div>
                                         <div className="text-sm font-semibold text-slate-900">{draft.title ?? 'Borrador de compra'}</div>
                                         <div className="mt-1 text-xs text-slate-500">
-                                            {draft.supplier?.name ?? draft.payload.supplier_name ?? 'Sin proveedor'} · {draft.item_count} productos · Total estimado {formatCurrency(Number(draft.total ?? 0), country)} · Usuario: {draft.user?.name ?? '-'}
+                                            {draft.supplier?.name ?? draft.payload.supplier_name ?? 'Sin proveedor'} · {draft.item_count} productos · Total estimado {formatCurrency(Number(draft.total ?? 0), country)} · Usuario: {draft.user?.name ?? '-'} · Guardado: {formatOperationDraftUpdatedAt(draft.updated_at)}
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">

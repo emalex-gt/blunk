@@ -206,6 +206,69 @@ class OperationDraftTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_pos_draft_listing_is_scoped_to_the_requested_branch(): void
+    {
+        [$business, $user, $branchA] = $this->tenant('admin');
+        $branchB = $this->branch($business, 'Sucursal B');
+        $draftA = $this->activeDraft($business, $user, $branchA, 'pos_sale');
+        $this->activeDraft($business, $user, $branchB, 'pos_sale');
+
+        $this->actingAs($user)
+            ->getJson(route('operation-drafts.index', ['type' => 'pos_sale', 'branch_id' => $branchA->id]))
+            ->assertOk()
+            ->assertJsonCount(1, 'drafts')
+            ->assertJsonPath('drafts.0.id', $draftA->id)
+            ->assertJsonPath('drafts.0.branch.id', $branchA->id);
+    }
+
+    public function test_purchase_draft_listing_is_scoped_to_the_requested_branch(): void
+    {
+        [$business, $user, $branchA] = $this->tenant('admin');
+        $branchB = $this->branch($business, 'Sucursal B');
+        $draftA = $this->activeDraft($business, $user, $branchA, 'purchase');
+        $this->activeDraft($business, $user, $branchB, 'purchase');
+
+        $this->actingAs($user)
+            ->getJson(route('operation-drafts.index', ['type' => 'purchase', 'branch_id' => $branchA->id]))
+            ->assertOk()
+            ->assertJsonCount(1, 'drafts')
+            ->assertJsonPath('drafts.0.id', $draftA->id)
+            ->assertJsonPath('drafts.0.branch.id', $branchA->id);
+    }
+
+    public function test_transfer_draft_listing_is_scoped_to_its_source_branch_context(): void
+    {
+        [$business, $user, $branchA] = $this->tenant('admin');
+        $branchB = $this->branch($business, 'Sucursal B');
+        $branchC = $this->branch($business, 'Sucursal C');
+        $draftA = $this->activeDraft($business, $user, $branchA, 'transfer', [
+            'source_branch_id' => $branchA->id,
+            'destination_branch_id' => $branchB->id,
+        ]);
+        $this->activeDraft($business, $user, $branchC, 'transfer', [
+            'source_branch_id' => $branchC->id,
+            'destination_branch_id' => $branchB->id,
+        ]);
+
+        $this->actingAs($user)
+            ->getJson(route('operation-drafts.index', ['type' => 'transfer', 'branch_id' => $branchA->id]))
+            ->assertOk()
+            ->assertJsonCount(1, 'drafts')
+            ->assertJsonPath('drafts.0.id', $draftA->id)
+            ->assertJsonPath('drafts.0.source_branch.id', $branchA->id);
+    }
+
+    public function test_branch_filter_rejects_a_branch_from_another_business(): void
+    {
+        [$businessA, $userA] = $this->tenant('admin', 'Tenant A');
+        [, , $branchB] = $this->tenant('admin', 'Tenant B');
+
+        $this->actingAs($userA)
+            ->getJson(route('operation-drafts.index', ['type' => 'pos_sale', 'branch_id' => $branchB->id]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('branch_id');
+    }
+
     private function tenant(string $role = 'cashier', string $name = 'Tenant drafts'): array
     {
         $business = Business::query()->create([
@@ -248,5 +311,26 @@ class OperationDraftTest extends TestCase
         Permissions::assignRole($user, $role);
 
         return $user;
+    }
+
+    private function branch(Business $business, string $name): Branch
+    {
+        return Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => $name,
+            'is_active' => true,
+        ]);
+    }
+
+    private function activeDraft(Business $business, User $user, Branch $branch, string $type, array $attributes = []): OperationDraft
+    {
+        return OperationDraft::query()->create(array_merge([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'user_id' => $user->id,
+            'type' => $type,
+            'payload' => ['cart' => []],
+            'status' => OperationDraft::STATUS_ACTIVE,
+        ], $attributes));
     }
 }

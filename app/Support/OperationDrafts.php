@@ -42,7 +42,7 @@ class OperationDrafts
         return (bool) $user->is_super_admin || Permissions::userHas($user, Permissions::USERS_VIEW);
     }
 
-    public static function activeQueryFor(Request $request, string $type): Builder
+    public static function activeQueryFor(Request $request, string $type, ?int $branchId = null): Builder
     {
         $user = $request->user();
         self::assertTypePermission($user, $type);
@@ -51,6 +51,10 @@ class OperationDrafts
             ->where('business_id', currentBusinessId())
             ->where('type', $type)
             ->where('status', OperationDraft::STATUS_ACTIVE);
+
+        if ($branchId !== null) {
+            $query->where('branch_id', $branchId);
+        }
 
         if (! self::canManageOthers($user)) {
             $query->where('user_id', $user->id);

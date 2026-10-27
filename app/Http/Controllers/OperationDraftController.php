@@ -17,9 +17,12 @@ class OperationDraftController extends Controller
     {
         $data = $request->validate([
             'type' => ['required', 'string', Rule::in(OperationDrafts::allowedTypes())],
+            'branch_id' => ['nullable', 'integer'],
         ]);
 
-        $drafts = OperationDrafts::activeQueryFor($request, $data['type'])
+        $branchId = OperationDrafts::validateBusinessReference($data['branch_id'] ?? null, Branch::class, 'branch_id');
+
+        $drafts = OperationDrafts::activeQueryFor($request, $data['type'], $branchId)
             ->with(['branch:id,name', 'sourceBranch:id,name', 'destinationBranch:id,name', 'customer:id,name,doc_number', 'supplier:id,name', 'user:id,name'])
             ->latest('updated_at')
             ->limit(50)
