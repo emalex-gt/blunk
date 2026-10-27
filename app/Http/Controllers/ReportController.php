@@ -167,7 +167,6 @@ class ReportController extends Controller
                 'total' => (float) $sale->total,
                 'status' => $sale->status === 'cancelled' ? 'Anulada' : 'Completada',
                 'detail_url' => route('sales.show', $sale),
-                'print_url' => route('sales.receipt', $sale),
             ]);
 
         return $this->report('Ventas', 'reports.sales', [
@@ -181,7 +180,6 @@ class ReportController extends Controller
             ['key' => 'total', 'label' => 'Total', 'type' => 'money'],
             ['key' => 'status', 'label' => 'Estado'],
             ['key' => 'detail_url', 'label' => 'Ver detalle', 'type' => 'link', 'link_label' => 'Ver'],
-            ['key' => 'print_url', 'label' => 'Imprimir', 'type' => 'link', 'link_label' => 'Imprimir'],
         ], $rows, [
             'filters' => [
                 'date_from' => $range->dateFrom,
