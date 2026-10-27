@@ -281,6 +281,7 @@ class ReportController extends Controller
                 'date_to' => $dateTo,
             ],
             'maxRangeLabel' => 'Historial completo; rango de fechas opcional.',
+            'exportBranchName' => 'Todas las sucursales',
         ]);
     }
 
@@ -1119,6 +1120,7 @@ class ReportController extends Controller
             'customers' => $extra['customers'] ?? [],
             'sellers' => $extra['sellers'] ?? [],
             'branch' => $extra['branch'] ?? null,
+            'exportBranchName' => $extra['exportBranchName'] ?? null,
             'maxRangeLabel' => $extra['maxRangeLabel'] ?? 'Rango máximo: 3 meses',
         ]);
     }
@@ -1236,7 +1238,9 @@ class ReportController extends Controller
                 ->all())
             ->all();
 
-        $branchName = $props['branch']['name'] ?? BranchReportScope::current(currentBusinessId())->branch->name;
+        $branchName = $props['exportBranchName']
+            ?? $props['branch']['name']
+            ?? BranchReportScope::current(currentBusinessId())->branch->name;
 
         return [
             'title' => $props['title'] ?? 'Reporte',
