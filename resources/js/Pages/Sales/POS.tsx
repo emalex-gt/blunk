@@ -1484,57 +1484,65 @@ export default function POS({
         };
     }
 
-    function restorePosDraft(draft: PosDraft, productMap = productsById) {
-        let discardedInvalidLines = false;
+    function preparePosDraftRestore(draft: PosDraft, productMap = productsById) {
+        const issues: string[] = [];
+        const customer = normalizeCustomerValidationState(draft.customer, country, activeBranchLocationDefaults);
 
         if (String(draft.branch_id ?? 'default') !== String(draftBranchId)) {
-            toast.warning('Se descartaron productos inválidos del borrador.');
-            return;
+            return {
+                cart: [] as CartItem[],
+                customer,
+                issues: ['Este borrador pertenece a otra sucursal.'],
+            };
         }
-        const restoredCart = draft.cart
-            .map<CartItem | null>((item) => {
-                const product = productMap.get(item.product_id);
 
-                if (!product) {
-                    discardedInvalidLines = true;
-                    return null;
-                }
+        const cart = (draft.cart ?? []).reduce<CartItem[]>((items, item) => {
+            const product = productMap.get(item.product_id);
 
-                if (quantityError(item.quantity)) {
-                    discardedInvalidLines = true;
-                    return null;
-                }
+            if (!product) {
+                issues.push(`Producto ${item.product_id} ya no está disponible.`);
+                return items;
+            }
 
-                const quantity = Number(normalizeQuantity(item.quantity));
-                const availableStock = Number(product.available_stock ?? product.stock ?? 0);
+            if (quantityError(item.quantity)) {
+                issues.push(`Producto ${product.name} tiene una cantidad inválida en el borrador.`);
+                return items;
+            }
 
-                if (!allow_negative_stock && !item.credit_line_id && quantity > availableStock) {
-                    discardedInvalidLines = true;
-                    return null;
-                }
+            const quantity = Number(normalizeQuantity(item.quantity));
+            const availableStock = Number(product.available_stock ?? product.stock ?? 0);
 
-                const price = priceFromList(product, item.price_type_id ?? default_price_type_id, default_price_type_id);
-                const manualPrice = Boolean(item.manual_price);
-                const unitPrice = manualPrice ? (item.unit_price ?? price.price) : price.price;
-                const originalPrice = manualPrice ? (item.original_price ?? price.price) : price.price;
+            if (!allow_negative_stock && !item.credit_line_id && quantity > availableStock) {
+                issues.push(`Producto ${product.name}: cantidad guardada ${quantity}, disponible ${Math.floor(availableStock)}.`);
+                return items;
+            }
 
-                return {
-                    product,
-                    quantity: String(quantity),
-                    unit_price: unitPrice,
-                    original_price: originalPrice,
-                    price_type_id: item.price_type_id ?? price.priceTypeId ?? null,
-                    price_source: item.price_source ?? 'price_list',
-                    manual_price: manualPrice,
-                    price_warning: price.warning,
-                    credit_line_id: item.credit_line_id ?? null,
-                    max_quantity: item.max_quantity ?? null,
-                    credit_receipt_number: item.credit_receipt_number ?? null,
-                    locked_credit_line: item.locked_credit_line ?? false,
-                    quotation_item_id: item.quotation_item_id ?? null,
-                };
-            })
-            .filter((item): item is CartItem => Boolean(item));
+            const price = priceFromList(product, item.price_type_id ?? default_price_type_id, default_price_type_id);
+            const manualPrice = Boolean(item.manual_price);
+
+            items.push({
+                product,
+                quantity: String(quantity),
+                unit_price: manualPrice ? (item.unit_price ?? price.price) : price.price,
+                original_price: manualPrice ? (item.original_price ?? price.price) : price.price,
+                price_type_id: item.price_type_id ?? price.priceTypeId ?? null,
+                price_source: item.price_source ?? 'price_list',
+                manual_price: manualPrice,
+                price_warning: price.warning,
+                credit_line_id: item.credit_line_id ?? null,
+                max_quantity: item.max_quantity ?? null,
+                credit_receipt_number: item.credit_receipt_number ?? null,
+                locked_credit_line: item.locked_credit_line ?? false,
+                quotation_item_id: item.quotation_item_id ?? null,
+            });
+
+            return items;
+        }, []);
+
+        return { cart, customer, issues };
+    }
+
+    function applyPosDraftRestore(draft: PosDraft, prepared: ReturnType<typeof preparePosDraftRestore>) {
         const restoredDiscount = draft.discount_type && draft.discount_value
             ? {
                 type: draft.discount_type,
@@ -1543,9 +1551,10 @@ export default function POS({
             }
             : null;
 
-        setCart(restoredCart);
-        setDiscount(restoredDiscount && !discountError(restoredDiscount, cartSubtotal(restoredCart)) ? restoredDiscount : null);
-        setData('customer', normalizeCustomerValidationState(draft.customer, country, activeBranchLocationDefaults));
+        cartRef.current = prepared.cart;
+        setCart(prepared.cart);
+        setDiscount(restoredDiscount && !discountError(restoredDiscount, cartSubtotal(prepared.cart)) ? restoredDiscount : null);
+        setData('customer', prepared.customer);
         setData('note', draft.note ?? '');
         setIdempotencyKey(draft.idempotency_key || makeOperationKey());
         setFailedSubmission(Boolean(draft.failed_submission));
@@ -1554,7 +1563,7 @@ export default function POS({
             amount: payment.amount ?? '0.00',
             reference: payment.reference ?? '',
             details: { ...emptyPaymentDetails(), ...(payment.details ?? {}) },
-        })) : [paymentLine('cash', total.toFixed(2))]);
+        })) : [paymentLine('cash', cartSubtotal(prepared.cart).toFixed(2))]);
         const restoredCheckoutType = draft.checkout_type ?? draft.document_type;
         setDocumentType(singleDocumentType ?? (
             availableCheckoutTypes.includes(restoredCheckoutType) ? restoredCheckoutType : (availableCheckoutTypes[0] ?? 'receipt')
@@ -1563,10 +1572,19 @@ export default function POS({
         setMainPaymentMethod(draft.main_payment_method ?? 'cash');
         setPaymentCondition(draft.payment_condition === 'credit' && credit_sales_available ? 'credit' : 'paid');
         setSplitPayment(Boolean(draft.split_payment));
+    }
 
-        if (discardedInvalidLines) {
-            toast.warning('Se descartaron productos inválidos del borrador.');
+    function restorePosDraft(draft: PosDraft, productMap = productsById) {
+        const prepared = preparePosDraftRestore(draft, productMap);
+
+        if (prepared.issues.length > 0 || prepared.cart.length !== (draft.cart ?? []).length) {
+            toast.warning(prepared.issues[0] ?? 'No se pudo recuperar el borrador completo.');
+            return false;
         }
+
+        applyPosDraftRestore(draft, prepared);
+
+        return true;
     }
 
     function clearSaleState() {
@@ -2263,12 +2281,22 @@ export default function POS({
             return;
         }
 
-        restorePosDraft(draft.payload, restoreProductMap);
+        const prepared = preparePosDraftRestore(draft.payload, restoreProductMap);
+
+        if (prepared.issues.length > 0 || prepared.cart.length !== (draft.payload.cart ?? []).length) {
+            const errorMessage = prepared.issues[0] ?? 'No se pudo recuperar el borrador completo.';
+            showError(errorMessage);
+            toast.error(errorMessage);
+            return;
+        }
+
+        applyPosDraftRestore(draft.payload, prepared);
         setActiveOperationDraftId(draft.id);
         setSavedDraftsOpen(false);
         setSearch('');
-        showMessage(t('pos.sale_recovered'));
-        toast.success('Borrador recuperado.');
+        const recoveredMessage = `Borrador recuperado: ${prepared.cart.length} productos.`;
+        showMessage(recoveredMessage);
+        toast.success(recoveredMessage);
         focusSearch();
     }
 

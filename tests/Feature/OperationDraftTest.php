@@ -269,6 +269,47 @@ class OperationDraftTest extends TestCase
             ->assertJsonValidationErrors('branch_id');
     }
 
+    public function test_pos_final_consumer_draft_round_trips_without_changing_its_payload(): void
+    {
+        [$business, $user, $branch] = $this->tenant();
+
+        $this->actingAs($user)
+            ->postJson(route('operation-drafts.store'), [
+                'type' => 'pos_sale',
+                'branch_id' => $branch->id,
+                'payload_version' => OperationDrafts::PAYLOAD_VERSION,
+                'payload' => [
+                    'branch_id' => $branch->id,
+                    'customer' => [
+                        'id' => null,
+                        'consumidor_final' => true,
+                        'doc_type' => 'CF',
+                        'doc_number' => 'CF',
+                        'name' => 'Consumidor Final',
+                    ],
+                    'cart' => [[
+                        'product_id' => 123,
+                        'quantity' => '2',
+                        'unit_price' => '10.00',
+                    ]],
+                ],
+            ])
+            ->assertCreated();
+
+        $this->actingAs($user)
+            ->getJson(route('operation-drafts.index', ['type' => 'pos_sale', 'branch_id' => $branch->id]))
+            ->assertOk()
+            ->assertJsonCount(1, 'drafts')
+            ->assertJsonPath('drafts.0.payload.customer.id', null)
+            ->assertJsonPath('drafts.0.payload.customer.consumidor_final', true)
+            ->assertJsonPath('drafts.0.payload.customer.doc_type', 'CF')
+            ->assertJsonPath('drafts.0.payload.customer.doc_number', 'CF')
+            ->assertJsonPath('drafts.0.payload.customer.name', 'Consumidor Final')
+            ->assertJsonPath('drafts.0.payload.cart.0.product_id', 123)
+            ->assertJsonPath('drafts.0.payload.cart.0.quantity', '2')
+            ->assertJsonPath('drafts.0.payload.cart.0.unit_price', '10.00');
+    }
+
     private function tenant(string $role = 'cashier', string $name = 'Tenant drafts'): array
     {
         $business = Business::query()->create([
