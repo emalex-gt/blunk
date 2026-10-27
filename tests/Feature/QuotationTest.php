@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Business;
+use App\Models\Branch;
 use App\Models\CashRegisterSession;
 use App\Models\Customer;
 use App\Models\Product;
@@ -72,6 +73,130 @@ class QuotationTest extends TestCase
         $this->assertSame(2, Quotation::query()->where('business_id', $business->id)->count());
         $this->assertSame($originalStock, $product->fresh()->stock);
         $this->assertSame(0, StockReservation::query()->count());
+    }
+
+    public function test_open_quotation_can_be_updated_without_creating_a_second_quotation(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $quotation = Quotation::query()->with('items')->sole();
+        $originalId = $quotation->id;
+        $originalNumber = $quotation->business_number;
+        $originalCreator = $quotation->created_by;
+        $originalIssuedAt = $quotation->issued_at?->toDateTimeString();
+
+        $payload = $this->payload($product);
+        $payload['note'] = 'Cotización actualizada';
+        $payload['valid_until'] = now(tenantTimezone($business))->addDays(7)->toDateString();
+        $payload['items'][0]['quotation_item_id'] = $quotation->items->sole()->id;
+        $payload['items'][0]['quantity'] = 2;
+
+        $this->actingAs($user)
+            ->patch(route('quotations.update', $quotation), $payload)
+            ->assertRedirect(route('quotations.show', $quotation));
+
+        $quotation->refresh();
+        $this->assertSame(1, Quotation::query()->where('business_id', $business->id)->count());
+        $this->assertSame($originalId, $quotation->id);
+        $this->assertSame($originalNumber, $quotation->business_number);
+        $this->assertSame($originalCreator, $quotation->created_by);
+        $this->assertSame($originalIssuedAt, $quotation->issued_at?->toDateTimeString());
+        $this->assertSame(Quotation::OPEN, $quotation->status);
+        $this->assertSame('Cotización actualizada', $quotation->note);
+        $this->assertSame(2, $quotation->items()->sole()->quantity);
+    }
+
+    public function test_editing_an_existing_line_preserves_its_historical_price_snapshot(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $quotation = Quotation::query()->with('items')->sole();
+        $line = $quotation->items->sole();
+        $product->update(['sale_price' => 12]);
+
+        $payload = $this->payload($product, null, 2);
+        $payload['items'][0]['quotation_item_id'] = $line->id;
+        $payload['items'][0]['price_type_id'] = $line->price_type_id;
+
+        $this->actingAs($user)->patch(route('quotations.update', $quotation), $payload)->assertRedirect();
+
+        $line->refresh();
+        $this->assertSame(2, $line->quantity);
+        $this->assertSame('10.00', $line->unit_price);
+        $this->assertSame('20.00', $line->total);
+    }
+
+    public function test_explicit_price_change_re_resolves_the_current_price_policy_when_editing_a_quotation(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $quotation = Quotation::query()->with('items')->sole();
+        $product->update(['sale_price' => 12]);
+
+        $payload = $this->payload($product);
+        $line = $quotation->items->sole();
+        $payload['items'][0]['quotation_item_id'] = $line->id;
+        $payload['items'][0]['price_type_id'] = $line->price_type_id;
+        $payload['items'][0]['unit_price'] = 9;
+
+        $this->actingAs($user)->patch(route('quotations.update', $quotation), $payload)->assertRedirect();
+
+        $this->assertSame('12.00', $quotation->fresh()->items()->sole()->unit_price);
+    }
+
+    public function test_only_open_quotations_from_the_current_tenant_and_branch_can_be_edited(): void
+    {
+        [$business, $user, $product] = $this->tenant(withBranches: true);
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $quotation = Quotation::query()->sole();
+
+        $quotation->update(['status' => Quotation::CANCELLED]);
+        $this->actingAs($user)->patch(route('quotations.update', $quotation), $this->payload($product))->assertSessionHasErrors('quotation');
+
+        $quotation->update(['status' => Quotation::CONVERTED]);
+        $this->actingAs($user)->patch(route('quotations.update', $quotation), $this->payload($product))->assertSessionHasErrors('quotation');
+
+        $quotation->update(['status' => Quotation::CONVERSION_PENDING]);
+        $this->actingAs($user)->patch(route('quotations.update', $quotation), $this->payload($product))->assertSessionHasErrors('quotation');
+
+        $quotation->update(['status' => Quotation::OPEN]);
+        TenantSetting::query()->where('business_id', $business->id)->update(['use_branches' => true]);
+        $otherBranch = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Otra sucursal',
+            'code' => 'OTHER-'.uniqid(),
+            'is_active' => true,
+        ]);
+        $user->forceFill(['current_branch_id' => $otherBranch->id])->save();
+        $branchPayload = $this->payload($product);
+        $branchPayload['note'] = 'No debe actualizarse desde otra sucursal';
+        $this->actingAs($user->fresh())
+            ->patch(route('quotations.update', $quotation), $branchPayload)
+            ->assertRedirect();
+        $this->assertSame('Cotización de prueba', $quotation->fresh()->note);
+
+        [, $otherUser, $otherProduct] = $this->tenant();
+        $this->actingAs($otherUser)->post(route('quotations.store'), $this->payload($otherProduct))->assertRedirect();
+        $foreign = Quotation::query()->where('business_id', '!=', $business->id)->sole();
+        $this->actingAs($user)->patch(route('quotations.update', $foreign), $this->payload($product))->assertNotFound();
+    }
+
+    public function test_editing_rejects_a_quotation_line_from_another_quotation(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $first = Quotation::query()->with('items')->sole();
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product))->assertRedirect();
+        $second = Quotation::query()->with('items')->whereKeyNot($first->id)->sole();
+
+        $payload = $this->payload($product);
+        $payload['items'][0]['quotation_item_id'] = $second->items->sole()->id;
+
+        $this->actingAs($user)
+            ->patch(route('quotations.update', $first), $payload)
+            ->assertSessionHasErrors('items');
+
+        $this->assertSame('10.00', $first->fresh()->items()->sole()->unit_price);
     }
 
     public function test_quotations_have_business_scoped_counters_and_can_be_cancelled_without_stock_effects(): void
@@ -641,7 +766,7 @@ class QuotationTest extends TestCase
     }
 
     /** @return array{Business, User, Product} */
-    private function tenant(bool $withPos = true): array
+    private function tenant(bool $withPos = true, bool $withBranches = false): array
     {
         $business = Business::query()->create([
             'name' => 'Quotation '.uniqid(),
@@ -666,6 +791,9 @@ class QuotationTest extends TestCase
         ]);
         if ($withPos) {
             TenantModule::query()->create(['business_id' => $business->id, 'module' => 'pos', 'is_enabled' => true, 'enabled_at' => now()]);
+        }
+        if ($withBranches) {
+            TenantModule::query()->create(['business_id' => $business->id, 'module' => 'branches', 'is_enabled' => true, 'enabled_at' => now()]);
         }
         $user = User::factory()->create([
             'business_id' => $business->id,

@@ -75,7 +75,10 @@ class SaleController extends Controller
         $priceTypes = PriceLists::active($businessId);
         $defaultPriceType = $priceTypes->firstWhere('is_default', true) ?: $priceTypes->first();
         $creditInvoice = $this->creditInvoicePayload($request, $businessId);
-        $quotationSource = $this->quotationSource($request, $business, $activeBranch);
+        $quotationEditSource = $this->quotationEditSource($request, $business, $activeBranch);
+        $quotationSource = $quotationEditSource
+            ? null
+            : $this->quotationSource($request, $business, $activeBranch);
 
         return Inertia::render('Sales/POS', [
             'fel' => [
@@ -122,6 +125,7 @@ class SaleController extends Controller
             'show_other_branches_stock_in_pos' => (bool) ($tenantSettings?->show_other_branches_stock_in_pos ?? false),
             'credit_invoice' => $creditInvoice,
             'quotation_source' => $quotationSource,
+            'quotation_edit_source' => $quotationEditSource,
             'products' => [],
             'categories' => Category::query()
                 ->where('business_id', $businessId)
@@ -1707,6 +1711,66 @@ class SaleController extends Controller
                 'unit_price' => (float) $item->unit_price,
                 'original_price' => (float) ($item->original_price ?? $item->unit_price),
                 'price_type_id' => $item->price_type_id,
+            ])->values(),
+            'discount' => $quotation->discount_amount > 0 ? [
+                'type' => $quotation->discount_type,
+                'value' => (float) $quotation->discount_value,
+                'reason' => $quotation->discount_reason,
+            ] : null,
+        ];
+    }
+
+    /** The edit source is separate from quotation conversion and remains mutable only through quotations.update. */
+    private function quotationEditSource(Request $request, Business $business, Branch $activeBranch): ?array
+    {
+        $quotationId = $request->integer('edit_quotation_id');
+        if (! $quotationId) {
+            return null;
+        }
+
+        abort_unless(Permissions::userHas($request->user(), Permissions::QUOTATIONS_CREATE), 403);
+        $quotation = Quotation::query()
+            ->where('business_id', $business->id)
+            ->with('items')
+            ->findOrFail($quotationId);
+        app(BranchAccessService::class)->assertCanAccessBranch($request->user(), (int) $quotation->branch_id, $business->id);
+
+        if ((int) $quotation->branch_id !== (int) $activeBranch->id) {
+            throw ValidationException::withMessages(['edit_quotation_id' => 'Cambia a la sucursal de la cotización antes de editarla.']);
+        }
+        if ($quotation->status !== Quotation::OPEN) {
+            throw ValidationException::withMessages(['edit_quotation_id' => 'Sólo se puede editar una cotización abierta.']);
+        }
+
+        return [
+            'id' => $quotation->id,
+            'number' => $quotation->visible_number,
+            'branch_id' => $quotation->branch_id,
+            'valid_until' => $quotation->valid_until?->toDateString(),
+            'note' => $quotation->note,
+            'customer' => [
+                'id' => $quotation->customer_id,
+                'name' => $quotation->customer_name,
+                'commercial_name' => $quotation->customer_commercial_name,
+                'doc_type' => $quotation->customer_doc_type,
+                'doc_number' => $quotation->customer_doc_number,
+                'address' => $quotation->customer_address,
+                'address_reference' => $quotation->customer_address_reference,
+                'postal_code' => $quotation->customer_postal_code,
+                'department' => $quotation->customer_department,
+                'municipality' => $quotation->customer_municipality,
+                'country' => $quotation->customer_country,
+                'phone' => $quotation->customer_phone,
+            ],
+            'items' => $quotation->items->map(fn ($item) => [
+                'quotation_item_id' => $item->id,
+                'product_id' => $item->product_id,
+                'quantity' => (int) $item->quantity,
+                'unit_price' => (float) $item->unit_price,
+                'original_price' => (float) ($item->original_price ?? $item->unit_price),
+                'price_type_id' => $item->price_type_id,
+                'price_source' => $item->price_source,
+                'manual_price' => (bool) $item->manual_price,
             ])->values(),
             'discount' => $quotation->discount_amount > 0 ? [
                 'type' => $quotation->discount_type,

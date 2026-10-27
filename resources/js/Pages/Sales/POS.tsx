@@ -8,6 +8,7 @@ import { clearDraft, loadDraft, makeDraftKey, saveDraft } from '@/lib/draftStora
 import { discardOperationDraft, formatOperationDraftUpdatedAt, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
 import { formatCurrency } from '@/utils/currency';
 import { limitDecimalPlaces } from '@/utils/decimalInput';
+import type { Errors } from '@inertiajs/core';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import {
     FormEvent,
@@ -196,6 +197,26 @@ type QuotationSource = {
         unit_price: number;
         original_price: number;
         price_type_id: number | null;
+    }>;
+    discount: SaleDiscount | null;
+};
+
+type QuotationEditSource = {
+    id: number;
+    number: string;
+    branch_id: number | null;
+    valid_until: string | null;
+    note: string | null;
+    customer: Partial<CustomerForm>;
+    items: Array<{
+        quotation_item_id: number;
+        product_id: number;
+        quantity: number;
+        unit_price: number;
+        original_price: number;
+        price_type_id: number | null;
+        price_source: CartItem['price_source'];
+        manual_price: boolean;
     }>;
     discount: SaleDiscount | null;
 };
@@ -701,6 +722,7 @@ export default function POS({
     allow_negative_stock = false,
     credit_invoice = null,
     quotation_source = null,
+    quotation_edit_source = null,
     use_product_images = true,
 }: {
     products?: Product[];
@@ -726,6 +748,7 @@ export default function POS({
     show_other_branches_stock_in_pos?: boolean;
     credit_invoice?: CreditInvoicePayload | null;
     quotation_source?: QuotationSource | null;
+    quotation_edit_source?: QuotationEditSource | null;
     fel?: {
         module_enabled: boolean;
         enabled: boolean;
@@ -795,6 +818,7 @@ export default function POS({
         [activeBranchLocationDefaults, country],
     );
     const draftKey = useMemo(() => makeDraftKey('pos', businessId, userId, activeBranchId), [activeBranchId, businessId, userId]);
+    const isQuotationEditMode = Boolean(quotation_edit_source);
     const recentProductsKey = useMemo(
         () => `pos_recent_products:${businessId ?? 'unknown'}:${userId ?? 'unknown'}:${activeBranchId ?? 'default'}`,
         [activeBranchId, businessId, userId],
@@ -872,6 +896,7 @@ export default function POS({
     const latestSubmitFailureHandledRef = useRef(false);
     const creditInvoiceLoadedRef = useRef(false);
     const quotationLoadedRef = useRef(false);
+    const quotationEditLoadedRef = useRef(false);
     const draftLoadInitializedRef = useRef(false);
     const latestDraftRef = useRef<PosDraft | null>(null);
     const productSearchRequestRef = useRef(0);
@@ -1148,6 +1173,20 @@ export default function POS({
     }, [fetchPosProducts, productsById, quotation_source]);
 
     useEffect(() => {
+        if (!quotation_edit_source || quotationEditLoadedRef.current) {
+            return;
+        }
+
+        const missingIds = quotation_edit_source.items
+            .map((line) => line.product_id)
+            .filter((id) => !productsById.has(id));
+
+        if (missingIds.length > 0) {
+            void fetchPosProducts({ ids: missingIds, limit: 50 }).catch(() => undefined);
+        }
+    }, [fetchPosProducts, productsById, quotation_edit_source]);
+
+    useEffect(() => {
         if (!credit_invoice || creditInvoiceLoadedRef.current || productsById.size === 0) {
             return;
         }
@@ -1241,6 +1280,59 @@ export default function POS({
         setMessage(`Carrito cargado desde ${quotation_source.number}. Revisa la venta antes de confirmar.`);
         toast.info(`Carrito cargado desde ${quotation_source.number}.`);
     }, [activeBranchLocationDefaults, country, defaultCustomer, productsById, quotation_source, setData, toast]);
+
+    useEffect(() => {
+        if (!quotation_edit_source || quotationEditLoadedRef.current || productsById.size === 0) {
+            return;
+        }
+
+        const quotationItems = quotation_edit_source.items.reduce<CartItem[]>((items, line) => {
+            const product = productsById.get(line.product_id);
+            if (!product) {
+                return items;
+            }
+
+            items.push({
+                product,
+                quantity: String(line.quantity),
+                unit_price: Number(line.unit_price).toFixed(2),
+                original_price: Number(line.original_price).toFixed(2),
+                price_type_id: line.price_type_id,
+                price_source: line.price_source,
+                manual_price: line.manual_price,
+                price_warning: null,
+                quotation_item_id: line.quotation_item_id,
+            });
+
+            return items;
+        }, []);
+
+        if (quotationItems.length !== quotation_edit_source.items.length) {
+            showError('No se puede editar la cotización porque uno o más productos ya no están disponibles.');
+            return;
+        }
+
+        const quotedCustomer = normalizeCustomerValidationState({
+            ...defaultCustomer,
+            ...quotation_edit_source.customer,
+            id: quotation_edit_source.customer.id ?? null,
+            consumidor_final: quotation_edit_source.customer.doc_type === 'CF',
+            name_locked: false,
+            tax_lookup_verified_at: null,
+            tax_lookup_verified_doc_number: null,
+        }, country, activeBranchLocationDefaults);
+
+        quotationEditLoadedRef.current = true;
+        setCart(quotationItems);
+        cartRef.current = quotationItems;
+        setData('customer', quotedCustomer);
+        setData('note', quotation_edit_source.note ?? '');
+        setDiscount(quotation_edit_source.discount);
+        setQuotationValidUntil(quotation_edit_source.valid_until ?? '');
+        setQuotationNote(quotation_edit_source.note ?? '');
+        setErrorMessage('');
+        setMessage(`Editando cotización ${quotation_edit_source.number}.`);
+    }, [activeBranchLocationDefaults, country, defaultCustomer, productsById, quotation_edit_source, setData]);
 
     const customerSearchTerm = useMemo(() => {
         if (country === 'GT' && data.customer.consumidor_final && data.customer.doc_type === 'CF') {
@@ -2454,12 +2546,35 @@ export default function POS({
         if (cart.length === 0 || !quotationValidUntil || quotationSaving || !validateCartQuantities() || !validateCartPrices() || !validateDiscount()) return;
         setQuotationError('');
         setQuotationSaving(true);
-        router.post(route('quotations.store'), { branch_id: activeBranchId, draft_id: activeOperationDraftId, customer: data.customer, items: cart.map((item) => ({ product_id: item.product.id, quantity: Number(item.quantity), price_type_id: item.price_type_id, unit_price: Number(item.unit_price), price_source: item.price_source, manual_price: item.manual_price })), discount, valid_until: quotationValidUntil, note: quotationNote }, {
+        const payload = {
+            branch_id: activeBranchId,
+            ...(quotation_edit_source ? {} : { draft_id: activeOperationDraftId }),
+            customer: data.customer,
+            items: cart.map((item) => ({
+                quotation_item_id: item.quotation_item_id ?? null,
+                product_id: item.product.id,
+                quantity: Number(item.quantity),
+                price_type_id: item.price_type_id,
+                unit_price: Number(item.unit_price),
+                price_source: item.price_source,
+                manual_price: item.manual_price,
+            })),
+            discount,
+            valid_until: quotationValidUntil,
+            note: quotationNote,
+        };
+        const options = {
             preserveScroll: true,
-            onSuccess: closeQuotationStateAfterSave,
-            onError: (errors) => setQuotationError(Object.values(errors)[0] ?? 'No se pudo guardar la cotización.'),
+            onSuccess: quotation_edit_source ? undefined : closeQuotationStateAfterSave,
+            onError: (errors: Errors) => setQuotationError(Object.values(errors)[0] ?? 'No se pudo guardar la cotización.'),
             onFinish: () => setQuotationSaving(false),
-        });
+        };
+
+        if (quotation_edit_source) {
+            router.patch(route('quotations.update', quotation_edit_source.id), payload, options);
+        } else {
+            router.post(route('quotations.store'), payload, options);
+        }
     }
 
     function submitSale() {
@@ -2720,6 +2835,12 @@ export default function POS({
     }, [activeBranchId, setData]);
 
     useEffect(() => {
+        if (quotation_edit_source) {
+            setRestoreDraft(null);
+            setDraftReady(true);
+            return;
+        }
+
         const isBranchChange = draftLoadInitializedRef.current;
         setRestoreDraft(null);
         setDraftReady(false);
@@ -2779,10 +2900,10 @@ export default function POS({
 
         draftLoadInitializedRef.current = true;
         focusSearch();
-    }, [draftKey, fetchPosProducts]);
+    }, [draftKey, fetchPosProducts, quotation_edit_source]);
 
     useEffect(() => {
-        if (!draftReady || restoreDraft) {
+        if (quotation_edit_source || !draftReady || restoreDraft) {
             return;
         }
 
@@ -2816,17 +2937,18 @@ export default function POS({
         selectedCategoryId,
         splitPayment,
         userId,
+        quotation_edit_source,
     ]);
 
     useEffect(() => {
         return () => {
             const draft = latestDraftRef.current;
 
-            if (draft && isMeaningfulPosDraft(draft)) {
+            if (!quotation_edit_source && draft && isMeaningfulPosDraft(draft)) {
                 saveDraft(draftKey, draft);
             }
         };
-    }, [draftKey]);
+    }, [draftKey, quotation_edit_source]);
 
     useEffect(() => {
         cartRef.current = cart;
@@ -3082,6 +3204,11 @@ export default function POS({
                                         : ' Los precios y descuentos cotizados se conservarán hasta que los modifiques.'}
                                 </div>
                             )}
+                            {quotation_edit_source && (
+                                <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-semibold text-orange-800">
+                                    Editando cotización {quotation_edit_source.number}. Los cambios actualizarán esta misma cotización.
+                                </div>
+                            )}
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div>
                                     <h1 className="text-2xl font-semibold text-slate-900">
@@ -3092,7 +3219,7 @@ export default function POS({
                                     </p>
                                 </div>
 
-                                <div className="flex gap-2">
+                                {!isQuotationEditMode && <div className="flex gap-2">
                                     <button
                                         type="button"
                                         onClick={holdSale}
@@ -3109,7 +3236,7 @@ export default function POS({
                                     >
                                         {t('pos.recover_sale')}
                                     </button>
-                                </div>
+                                </div>}
                             </div>
 
                             <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
@@ -4039,15 +4166,15 @@ export default function POS({
                                 </div>
                             )}
 
-                            <button
+                            {!isQuotationEditMode && <button
                                 type="button"
                                 onClick={openCheckout}
                                 disabled={cart.length === 0 || processing || (!hasOpenCashRegister && !credit_available && !credit_sales_available) || hasInvalidCartQuantities || noAvailableDocumentTypes}
                                 className="mt-4 h-14 w-full rounded-xl bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 text-lg font-semibold text-white shadow-lg shadow-orange-200 transition-all duration-200 hover:-translate-y-0.5 hover:from-orange-700 hover:via-orange-600 hover:to-amber-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : (processing ? t('pos.finalizing') : t('pos.finalize_sale'))}
-                            </button>
-                            {pageProps.enabled_modules?.includes('pos') && (pageProps.auth?.user?.is_super_admin || pageProps.auth?.permissions?.includes('quotations.create')) && <button type="button" onClick={() => setShowQuotationModal(true)} disabled={cart.length === 0 || processing || hasInvalidCartQuantities} className="mt-2 h-11 w-full rounded-xl border border-orange-300 bg-white text-sm font-semibold text-orange-700 disabled:opacity-50">Guardar cotización</button>}
+                            </button>}
+                            {pageProps.enabled_modules?.includes('pos') && (pageProps.auth?.user?.is_super_admin || pageProps.auth?.permissions?.includes('quotations.create')) && <button type="button" onClick={() => setShowQuotationModal(true)} disabled={cart.length === 0 || processing || hasInvalidCartQuantities} className="mt-2 h-11 w-full rounded-xl border border-orange-300 bg-white text-sm font-semibold text-orange-700 disabled:opacity-50">{isQuotationEditMode ? 'Guardar cambios' : 'Guardar cotización'}</button>}
                         </footer>
                     </form>
                 </div>
@@ -4580,7 +4707,7 @@ export default function POS({
                 </div>
             )}
 
-            {showQuotationModal && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 p-4"><div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl"><h2 className="text-xl font-semibold">Guardar cotización</h2><p className="mt-1 text-sm text-slate-600">{customerDisplayName} · {formatCurrency(total, country)}</p>{quotationError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">{quotationError}</p>}<label className="mt-4 block text-sm font-medium">Válida hasta<input type="date" min={new Date().toISOString().slice(0, 10)} value={quotationValidUntil} onChange={e => setQuotationValidUntil(e.target.value)} className="mt-1 block w-full rounded-xl border-slate-200" /></label><label className="mt-3 block text-sm font-medium">Observaciones<textarea value={quotationNote} onChange={e => setQuotationNote(e.target.value)} rows={3} className="mt-1 block w-full rounded-xl border-slate-200" /></label><div className="mt-5 flex justify-end gap-2"><button onClick={() => { setShowQuotationModal(false); setQuotationError(''); }} className="rounded-xl px-4 py-2">Cancelar</button><button disabled={!quotationValidUntil || quotationSaving} onClick={saveQuotation} className="rounded-xl bg-orange-600 px-4 py-2 font-semibold text-white">{quotationSaving ? 'Guardando...' : 'Guardar cotización'}</button></div></div></div>}
+            {showQuotationModal && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 p-4"><div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl"><h2 className="text-xl font-semibold">{quotation_edit_source ? `Editar ${quotation_edit_source.number}` : 'Guardar cotización'}</h2><p className="mt-1 text-sm text-slate-600">{customerDisplayName} · {formatCurrency(total, country)}</p>{quotationError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">{quotationError}</p>}<label className="mt-4 block text-sm font-medium">Válida hasta<input type="date" min={new Date().toISOString().slice(0, 10)} value={quotationValidUntil} onChange={e => setQuotationValidUntil(e.target.value)} className="mt-1 block w-full rounded-xl border-slate-200" /></label><label className="mt-3 block text-sm font-medium">Observaciones<textarea value={quotationNote} onChange={e => setQuotationNote(e.target.value)} rows={3} className="mt-1 block w-full rounded-xl border-slate-200" /></label><div className="mt-5 flex justify-end gap-2"><button onClick={() => { setShowQuotationModal(false); setQuotationError(''); }} className="rounded-xl px-4 py-2">Cancelar</button><button disabled={!quotationValidUntil || quotationSaving} onClick={saveQuotation} className="rounded-xl bg-orange-600 px-4 py-2 font-semibold text-white">{quotationSaving ? 'Guardando...' : (quotation_edit_source ? 'Guardar cambios' : 'Guardar cotización')}</button></div></div></div>}
 
             {restoreDraft && (
                 <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">

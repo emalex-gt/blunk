@@ -167,6 +167,8 @@ Route::middleware('auth')->group(function () {
         Route::post('/sales', [SaleController::class, 'store'])->middleware(['module:pos', 'permission:pos.sell'])->name('sales.store');
         Route::get('/quotations', [QuotationController::class, 'index'])->middleware(['module:pos', 'permission:quotations.view'])->name('quotations.index');
         Route::post('/quotations', [QuotationController::class, 'store'])->middleware(['module:pos', 'permission:quotations.create'])->name('quotations.store');
+        Route::get('/quotations/{quotation}/edit', [QuotationController::class, 'edit'])->middleware(['module:pos', 'permission:quotations.create', 'permission:pos.view'])->name('quotations.edit');
+        Route::patch('/quotations/{quotation}', [QuotationController::class, 'update'])->middleware(['module:pos', 'permission:quotations.create'])->name('quotations.update');
         Route::post('/quotations/{quotation}/duplicate', [QuotationController::class, 'duplicate'])->middleware(['module:pos', 'permission:quotations.create'])->name('quotations.duplicate');
         Route::get('/quotations/{quotation}', [QuotationController::class, 'show'])->middleware(['module:pos', 'permission:quotations.view'])->name('quotations.show');
         Route::post('/quotations/{quotation}/convert', [QuotationController::class, 'convert'])->middleware(['module:pos', 'permission:quotations.convert', 'permission:pos.view'])->name('quotations.convert');

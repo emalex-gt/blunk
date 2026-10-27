@@ -261,6 +261,202 @@ class QuotationController extends Controller
         return redirect()->route('quotations.show', $quotation)->with('success', 'Cotización guardada.');
     }
 
+    public function edit(Request $request, Quotation $quotation): RedirectResponse
+    {
+        $business = $this->authorizeQuotation($request, $quotation);
+
+        if ($quotation->status !== Quotation::OPEN) {
+            throw ValidationException::withMessages(['quotation' => 'Sólo se puede editar una cotización abierta.']);
+        }
+
+        $activeBranch = BranchInventory::activeBranch($business->id);
+        if ((int) $quotation->branch_id !== (int) $activeBranch->id) {
+            throw ValidationException::withMessages(['quotation' => 'Cambia a la sucursal de la cotización antes de editarla.']);
+        }
+
+        return redirect()->route('sales.create', ['edit_quotation_id' => $quotation->id]);
+    }
+
+    public function update(Request $request, Quotation $quotation): RedirectResponse
+    {
+        $business = $this->authorizeQuotation($request, $quotation);
+        abort_unless(Permissions::userHas($request->user(), Permissions::QUOTATIONS_CREATE), 403);
+        if ($quotation->status !== Quotation::OPEN) {
+            throw ValidationException::withMessages(['quotation' => 'Sólo se puede editar una cotización abierta.']);
+        }
+        $data = $request->validate([
+            'branch_id' => ['nullable', 'integer'],
+            'customer' => ['nullable', 'array'],
+            'customer.id' => ['nullable', 'integer'],
+            'customer.name' => ['nullable', 'string', 'max:255'],
+            'customer.commercial_name' => ['nullable', 'string', 'max:255'],
+            'customer.doc_type' => ['nullable', 'string', 'max:50'],
+            'customer.doc_number' => ['nullable', 'string', 'max:50'],
+            'customer.address' => ['nullable', 'string', 'max:255'],
+            'customer.address_reference' => ['nullable', 'string', 'max:1000'],
+            'customer.postal_code' => ['nullable', 'string', 'max:50'],
+            'customer.municipality' => ['nullable', 'string', 'max:100'],
+            'customer.department' => ['nullable', 'string', 'max:100'],
+            'customer.country' => ['nullable', 'string', 'max:10'],
+            'customer.phone' => ['nullable', 'string', 'max:50'],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.quotation_item_id' => ['nullable', 'integer'],
+            'items.*.product_id' => ['required', 'integer'],
+            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.price_type_id' => ['nullable', 'integer'],
+            'items.*.unit_price' => ['nullable', 'numeric', 'decimal:0,2', 'gt:0'],
+            'items.*.price_source' => ['nullable', 'in:price_list,last_customer_price,manual'],
+            'items.*.manual_price' => ['nullable', 'boolean'],
+            'discount' => ['nullable', 'array'],
+            'discount.type' => ['required_with:discount', 'in:fixed,percent'],
+            'discount.value' => ['required_with:discount', 'numeric', 'decimal:0,2', 'gt:0'],
+            'discount.reason' => ['required_with:discount', 'string', 'max:1000'],
+            'valid_until' => ['required', 'date'],
+            'note' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $activeBranch = BranchInventory::activeBranch($business->id);
+        if (now(tenantTimezone($business))->startOfDay()->gt($data['valid_until'])) {
+            throw ValidationException::withMessages(['valid_until' => 'La vigencia no puede ser anterior a la fecha actual.']);
+        }
+        if (filled($data['branch_id'] ?? null) && (int) $data['branch_id'] !== (int) $activeBranch->id) {
+            throw ValidationException::withMessages(['branch_id' => 'La sucursal de la cotización no coincide con la sucursal activa.']);
+        }
+
+        $customerId = data_get($data, 'customer.id');
+        $customer = $customerId
+            ? Customer::query()->where('business_id', $business->id)->find($customerId)
+            : null;
+        if ($customerId && ! $customer) {
+            throw ValidationException::withMessages(['customer.id' => 'El cliente no pertenece al negocio activo.']);
+        }
+
+        DB::transaction(function () use ($request, $quotation, $business, $activeBranch, $data, $customer) {
+            $locked = Quotation::query()
+                ->where('business_id', $business->id)
+                ->with('items')
+                ->lockForUpdate()
+                ->findOrFail($quotation->id);
+
+            if ($locked->status !== Quotation::OPEN) {
+                throw ValidationException::withMessages(['quotation' => 'Sólo se puede editar una cotización abierta.']);
+            }
+            if ((int) $locked->branch_id !== (int) $activeBranch->id) {
+                throw ValidationException::withMessages(['quotation' => 'Cambia a la sucursal de la cotización antes de editarla.']);
+            }
+
+            $existingLines = $locked->items->keyBy('id');
+            $usedLineIds = [];
+            $lines = [];
+            $subtotal = 0.0;
+
+            foreach ($data['items'] as $item) {
+                $lineId = (int) ($item['quotation_item_id'] ?? 0);
+                $existingLine = $lineId > 0 ? $existingLines->get($lineId) : null;
+                if ($lineId > 0 && (! $existingLine || in_array($lineId, $usedLineIds, true) || (int) $existingLine->product_id !== (int) $item['product_id'])) {
+                    throw ValidationException::withMessages(['items' => 'La línea de cotización no pertenece a esta cotización.']);
+                }
+                if ($lineId > 0) {
+                    $usedLineIds[] = $lineId;
+                }
+
+                $product = Product::query()->where('business_id', $business->id)->find($item['product_id']);
+                if (! $product) {
+                    throw ValidationException::withMessages(['items' => 'Un producto no pertenece al negocio activo.']);
+                }
+
+                $preserveSnapshot = $existingLine && $this->isUnchangedQuotationLine($existingLine, $item);
+                $resolvedPrice = $preserveSnapshot
+                    ? [
+                        'unit_price' => (float) $existingLine->unit_price,
+                        'original_price' => (float) ($existingLine->original_price ?? $existingLine->unit_price),
+                        'price_type_id' => $existingLine->price_type_id,
+                        'price_source' => $existingLine->price_source,
+                        'manual_price' => (bool) $existingLine->manual_price,
+                        'price_type_name' => $existingLine->price_type_name,
+                    ]
+                    : $this->resolveLinePrice($request, $product, $item, $customer, $activeBranch->id);
+                $priceType = $preserveSnapshot ? null : PriceType::query()
+                    ->where('business_id', $business->id)
+                    ->findOrFail($resolvedPrice['price_type_id']);
+                $lineTotal = round($resolvedPrice['unit_price'] * (int) $item['quantity'], 2);
+                $subtotal += $lineTotal;
+                $lines[] = compact('existingLine', 'product', 'priceType', 'item', 'resolvedPrice', 'lineTotal');
+            }
+
+            $discount = $data['discount'] ?? null;
+            $discountValue = (float) data_get($discount, 'value', 0);
+            $discountAmount = $discount
+                ? ($discount['type'] === 'percent' ? round($subtotal * $discountValue / 100, 2) : $discountValue)
+                : 0.0;
+            if ($discountAmount >= $subtotal) {
+                throw ValidationException::withMessages(['discount.value' => 'El descuento no puede ser mayor o igual al total.']);
+            }
+            if ($discount) {
+                abort_unless(module_enabled('discounts'), 403, 'Este modulo no esta habilitado para esta empresa.');
+                abort_unless(Permissions::canApplyDiscounts($request->user()), 403);
+            }
+
+            $snapshot = $data['customer'] ?? [];
+            $locked->update([
+                'customer_id' => $customer?->id,
+                'valid_until' => $data['valid_until'],
+                'note' => $data['note'] ?? null,
+                'customer_name' => $snapshot['name'] ?? $customer?->name,
+                'customer_commercial_name' => $snapshot['commercial_name'] ?? $customer?->commercial_name,
+                'customer_doc_type' => $snapshot['doc_type'] ?? $customer?->doc_type,
+                'customer_doc_number' => $snapshot['doc_number'] ?? $customer?->doc_number,
+                'customer_address' => $snapshot['address'] ?? $customer?->address,
+                'customer_address_reference' => $snapshot['address_reference'] ?? $customer?->address_reference,
+                'customer_postal_code' => $snapshot['postal_code'] ?? $customer?->postal_code,
+                'customer_municipality' => $snapshot['municipality'] ?? $customer?->municipality,
+                'customer_department' => $snapshot['department'] ?? $customer?->department,
+                'customer_country' => $snapshot['country'] ?? $customer?->country,
+                'customer_phone' => $snapshot['phone'] ?? $customer?->phone,
+                'subtotal_before_discount' => round($subtotal, 2),
+                'discount_type' => $discount['type'] ?? null,
+                'discount_value' => round($discountValue, 2),
+                'discount_amount' => round($discountAmount, 2),
+                'discount_reason' => $discount['reason'] ?? null,
+                'total' => round($subtotal - $discountAmount, 2),
+            ]);
+
+            $locked->items()->whereNotIn('id', $usedLineIds)->delete();
+            $allocatedDiscount = 0.0;
+            foreach ($lines as $index => $line) {
+                $lineDiscount = $discountAmount === 0.0 ? 0.0 : ($index === array_key_last($lines)
+                    ? round($discountAmount - $allocatedDiscount, 2)
+                    : round($line['lineTotal'] / $subtotal * $discountAmount, 2));
+                $allocatedDiscount += $lineDiscount;
+                $attributes = [
+                    'business_id' => $business->id,
+                    'product_id' => $line['product']->id,
+                    'price_type_id' => $line['resolvedPrice']['price_type_id'],
+                    'product_name' => $line['product']->name,
+                    'product_code' => $line['product']->code,
+                    'product_barcode' => $line['product']->barcode,
+                    'price_type_name' => $line['resolvedPrice']['price_type_name'] ?? $line['priceType']?->name,
+                    'quantity' => (int) $line['item']['quantity'],
+                    'unit_price' => $line['resolvedPrice']['unit_price'],
+                    'original_price' => $line['resolvedPrice']['original_price'],
+                    'price_source' => $line['resolvedPrice']['price_source'],
+                    'manual_price' => $line['resolvedPrice']['manual_price'],
+                    'discount_amount' => $lineDiscount,
+                    'total_before_discount' => $line['lineTotal'],
+                    'total_after_discount' => round($line['lineTotal'] - $lineDiscount, 2),
+                    'total' => round($line['lineTotal'] - $lineDiscount, 2),
+                ];
+                if ($line['existingLine']) {
+                    $line['existingLine']->update($attributes);
+                } else {
+                    $locked->items()->create($attributes);
+                }
+            }
+        });
+
+        return redirect()->route('quotations.show', $quotation)->with('success', 'Cotización actualizada.');
+    }
+
     public function cancel(Request $request, Quotation $quotation): RedirectResponse
     {
         $this->authorizeQuotation($request, $quotation);
@@ -450,6 +646,14 @@ class QuotationController extends Controller
             'price_source' => PriceLists::SOURCE_PRICE_LIST,
             'manual_price' => false,
         ];
+    }
+
+    private function isUnchangedQuotationLine($line, array $item): bool
+    {
+        return round((float) ($item['unit_price'] ?? 0), 2) === round((float) $line->unit_price, 2)
+            && (int) ($item['price_type_id'] ?? 0) === (int) ($line->price_type_id ?? 0)
+            && ($item['price_source'] ?? PriceLists::SOURCE_PRICE_LIST) === $line->price_source
+            && (bool) ($item['manual_price'] ?? false) === (bool) $line->manual_price;
     }
 
     private function authorizeQuotation(Request $request, Quotation $quotation): Business
