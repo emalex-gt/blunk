@@ -69,6 +69,7 @@ class Permissions
     public const REPORTS_ACCOUNTS_RECEIVABLE_VIEW = 'reports.accounts_receivable.view';
     public const REPORTS_CREDIT_PAYMENTS_VIEW = 'reports.credit_payments.view';
     public const REPORTS_EXPORT = 'reports.export';
+    public const REPORTS_PURCHASE_COST_HISTORY_VIEW = 'reports.purchase_cost_history.view';
 
     public const CUSTOMERS_VIEW = 'customers.view';
     public const CUSTOMERS_CREATE = 'customers.create';
@@ -218,6 +219,7 @@ class Permissions
             self::REPORTS_ACCOUNTS_RECEIVABLE_VIEW => ['name' => 'Ver reporte de cuentas por cobrar', 'group' => 'Reportes'],
             self::REPORTS_CREDIT_PAYMENTS_VIEW => ['name' => 'Ver reporte de abonos', 'group' => 'Reportes'],
             self::REPORTS_EXPORT => ['name' => 'Exportar reportes', 'group' => 'Reportes'],
+            self::REPORTS_PURCHASE_COST_HISTORY_VIEW => ['name' => 'Ver historial de precios de compra', 'group' => 'Reportes'],
             self::CUSTOMERS_VIEW => ['name' => 'Ver clientes', 'group' => 'Clientes'],
             self::CUSTOMERS_CREATE => ['name' => 'Crear clientes', 'group' => 'Clientes'],
             self::CUSTOMERS_UPDATE => ['name' => 'Editar clientes', 'group' => 'Clientes'],
@@ -386,6 +388,7 @@ class Permissions
                 self::REPORTS_PRODUCTS_SOLD_DETAILED_VIEW,
                 self::REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW,
                 self::REPORTS_EXPORT,
+                self::REPORTS_PURCHASE_COST_HISTORY_VIEW,
                 self::CREDITS_VIEW,
                 self::CREDITS_ACCOUNTS_VIEW,
                 self::CREDITS_PAYMENTS_VIEW,

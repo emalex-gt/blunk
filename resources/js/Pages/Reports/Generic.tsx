@@ -273,6 +273,9 @@ export default function GenericReport({
                             {filterKeys.includes('product_search') && (
                                 <TextField label="Producto" value={form.product_search ?? ''} onChange={(value) => setField('product_search', value)} />
                             )}
+                            {filterKeys.includes('supplier_search') && (
+                                <TextField label="Proveedor" value={form.supplier_search ?? ''} onChange={(value) => setField('supplier_search', value)} />
+                            )}
                             {filterKeys.includes('only_below_minimum') && (
                                 <SelectField label="Stock bajo" value={form.only_below_minimum ?? '1'} onChange={(value) => setField('only_below_minimum', value)}>
                                     <option value="1">Solo bajo mínimo</option>

@@ -6,6 +6,7 @@ use App\Models\Business;
 use App\Models\Branch;
 use App\Models\CashExpense;
 use App\Models\CashRegisterSession;
+use App\Models\HistoricalProductPurchaseCost;
 use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
 use App\Models\Customer;
@@ -16,7 +17,9 @@ use App\Models\Product;
 use App\Models\ProductBranchStock;
 use App\Models\ProductPrice;
 use App\Models\StockReservation;
+use App\Models\Supplier;
 use App\Models\Purchase;
+use App\Models\PurchaseItem;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\SalePayment;
@@ -511,6 +514,64 @@ class TenantReportsTest extends TestCase
             ]);
     }
 
+    public function test_purchase_cost_history_report_combines_sources_filters_without_a_three_month_limit_and_exports(): void
+    {
+        [$business, $user, $main] = $this->tenant();
+        $product = $this->product($business, $main, name: 'Martillo histórico');
+        $supplier = Supplier::query()->create(['business_id' => $business->id, 'name' => 'Proveedor histórico']);
+        HistoricalProductPurchaseCost::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $main->id,
+            'product_id' => $product->id,
+            'supplier_id' => $supplier->id,
+            'acquired_at' => '2020-01-01 08:00:00',
+            'quantity' => 2,
+            'unit_cost' => 10,
+            'source_system' => 'ferrymas',
+            'source_record_id' => 'report-history-1',
+            'imported_at' => now(),
+        ]);
+        $purchase = Purchase::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $main->id,
+            'supplier_id' => $supplier->id,
+            'purchase_number' => 'P-REPORT',
+            'status' => 'completed',
+            'total' => 12,
+        ]);
+        $purchase->forceFill(['created_at' => '2026-01-01 08:00:00', 'updated_at' => '2026-01-01 08:00:00'])->save();
+        PurchaseItem::query()->create([
+            'business_id' => $business->id,
+            'purchase_id' => $purchase->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_cost' => 12,
+            'previous_cost' => 10,
+            'new_average_cost' => 12,
+            'total' => 12,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('reports.purchase-cost-history', [
+                'date_from' => '2020-01-01',
+                'date_to' => '2026-01-01',
+                'product_search' => 'Martillo',
+                'supplier_search' => 'histórico',
+            ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('rows.total', 2)
+                ->where('rows.data.0.source', 'Blunk')
+                ->where('rows.data.1.source', 'Ferrymas')
+                ->where('maxRangeLabel', 'Historial completo; rango de fechas opcional.'));
+
+        $this->actingAs($user)
+            ->get(route('reports.export', ['report' => 'purchase-cost-history', 'format' => 'excel']))
+            ->assertOk();
+    }
+
     public function test_report_permission_is_required(): void
     {
         [$business, $user] = $this->tenant(role: 'cashier');
@@ -528,6 +589,15 @@ class TenantReportsTest extends TestCase
             ->get(route('reports.profit'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page->component('Reports/Generic'));
+    }
+
+    public function test_purchase_cost_history_permission_is_required(): void
+    {
+        [, $user] = $this->tenant(role: 'cashier');
+
+        $this->actingAs($user)
+            ->get(route('reports.purchase-cost-history'))
+            ->assertForbidden();
     }
 
     private function tenant(string $role = 'reports'): array

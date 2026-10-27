@@ -92,8 +92,11 @@ type SupplierCostHistory = {
     unit_cost: string | number;
     created_at: string;
     created_at_formatted: string | null;
-    purchase_id: number;
+    purchase_id: number | null;
     purchase_number: string | null;
+    acquired_at?: string;
+    source_system?: string;
+    source_record_id?: string;
 };
 
 type ProductForm = {

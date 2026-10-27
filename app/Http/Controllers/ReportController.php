@@ -20,6 +20,7 @@ use App\Support\Inventory\DraftReservationLease;
 use App\Support\Exports\TableExporter;
 use App\Support\Permissions;
 use App\Support\PriceLists;
+use App\Support\ProductPurchaseCostHistory;
 use App\Support\Reports\BranchReportScope;
 use App\Support\Reports\ReportDateRange;
 use App\Support\StockAvailability;
@@ -54,6 +55,7 @@ class ReportController extends Controller
         'products-sold-summary' => ['method' => 'productsSoldSummary', 'permission' => Permissions::REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW, 'title' => 'Productos vendidos resumido'],
         'low-stock' => ['method' => 'lowStock', 'permission' => Permissions::REPORTS_LOW_STOCK_VIEW, 'title' => 'Stock bajo'],
         'top-products' => ['method' => 'topProducts', 'permission' => Permissions::REPORTS_TOP_PRODUCTS_VIEW, 'title' => 'Productos más vendidos'],
+        'purchase-cost-history' => ['method' => 'purchaseCostHistory', 'permission' => Permissions::REPORTS_PURCHASE_COST_HISTORY_VIEW, 'title' => 'Historial de precios de compra'],
     ];
 
     public function dashboard(Request $request): Response|RedirectResponse
@@ -204,6 +206,81 @@ class ReportController extends Controller
             ],
             'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
             'branch' => $scope->payload(),
+        ]);
+    }
+
+    public function purchaseCostHistory(Request $request): Response
+    {
+        $businessId = currentBusinessId();
+        $business = Business::query()->select('id', 'country')->findOrFail($businessId);
+        $data = $request->validate([
+            'product_search' => ['nullable', 'string', 'max:255'],
+            'supplier_search' => ['nullable', 'string', 'max:255'],
+            'date_from' => ['nullable', 'date'],
+            'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+        ]);
+        $productSearch = trim((string) ($data['product_search'] ?? ''));
+        $supplierSearch = trim((string) ($data['supplier_search'] ?? ''));
+        $dateFrom = $data['date_from'] ?? null;
+        $dateTo = $data['date_to'] ?? null;
+        $timezone = tenantTimezone($business);
+
+        $rows = ProductPurchaseCostHistory::reportRows($businessId)
+            ->when($productSearch !== '', function ($query) use ($productSearch) {
+                $query->where(function ($query) use ($productSearch) {
+                    $query->where('products.name', 'ilike', "%{$productSearch}%")
+                        ->orWhere('products.code', 'ilike', "%{$productSearch}%")
+                        ->orWhere('products.barcode', 'ilike', "%{$productSearch}%");
+                });
+            })
+            ->when($supplierSearch !== '', fn ($query) => $query->where('suppliers.name', 'ilike', "%{$supplierSearch}%"))
+            ->when($dateFrom, fn ($query) => $query->where('cost_history.acquired_at', '>=', Carbon::parse($dateFrom, $timezone)->startOfDay()->utc()))
+            ->when($dateTo, fn ($query) => $query->where('cost_history.acquired_at', '<=', Carbon::parse($dateTo, $timezone)->endOfDay()->utc()))
+            ->orderByDesc('cost_history.acquired_at')
+            ->orderByDesc('cost_history.source_priority')
+            ->orderByDesc('cost_history.source_row_id')
+            ->paginate($this->reportPerPage($request), [
+                'cost_history.acquired_at',
+                'cost_history.quantity',
+                'cost_history.unit_cost',
+                'cost_history.supplier_invoice_number',
+                'cost_history.source_system',
+                'products.name as product_name',
+                'products.code as product_code',
+                'suppliers.name as supplier_name',
+                'branches.name as branch_name',
+            ])
+            ->withQueryString()
+            ->through(fn ($row) => [
+                'acquired_at' => Carbon::parse($row->acquired_at)->timezone($timezone)->format('Y-m-d H:i'),
+                'product_name' => $row->product_name,
+                'product_code' => $row->product_code,
+                'supplier_name' => $row->supplier_name,
+                'quantity' => (float) $row->quantity,
+                'unit_cost' => (float) $row->unit_cost,
+                'supplier_invoice_number' => $row->supplier_invoice_number,
+                'branch_name' => $row->branch_name,
+                'source' => $this->purchaseCostSourceLabel((string) $row->source_system),
+            ]);
+
+        return $this->report('Historial de precios de compra', 'reports.purchase-cost-history', [
+            ['key' => 'acquired_at', 'label' => 'Fecha'],
+            ['key' => 'product_name', 'label' => 'Producto'],
+            ['key' => 'product_code', 'label' => 'Código'],
+            ['key' => 'supplier_name', 'label' => 'Proveedor'],
+            ['key' => 'quantity', 'label' => 'Cantidad', 'type' => 'number'],
+            ['key' => 'unit_cost', 'label' => 'Costo unitario', 'type' => 'money'],
+            ['key' => 'supplier_invoice_number', 'label' => 'Factura proveedor'],
+            ['key' => 'branch_name', 'label' => 'Sucursal'],
+            ['key' => 'source', 'label' => 'Origen'],
+        ], $rows, [
+            'filters' => [
+                'product_search' => $productSearch,
+                'supplier_search' => $supplierSearch,
+                'date_from' => $dateFrom,
+                'date_to' => $dateTo,
+            ],
+            'maxRangeLabel' => 'Historial completo; rango de fechas opcional.',
         ]);
     }
 
@@ -1042,8 +1119,18 @@ class ReportController extends Controller
             'customers' => $extra['customers'] ?? [],
             'sellers' => $extra['sellers'] ?? [],
             'branch' => $extra['branch'] ?? null,
-            'maxRangeLabel' => 'Rango máximo: 3 meses',
+            'maxRangeLabel' => $extra['maxRangeLabel'] ?? 'Rango máximo: 3 meses',
         ]);
+    }
+
+    private function purchaseCostSourceLabel(string $source): string
+    {
+        return match ($source) {
+            'blunk' => 'Blunk',
+            'ferrymas' => 'Ferrymas',
+            'myj' => 'MYJ',
+            default => ucwords(str_replace(['-', '_'], ' ', $source)),
+        };
     }
 
     private function branchFilter(Request $request, int $businessId): ?int

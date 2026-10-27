@@ -120,6 +120,7 @@ export default function Authenticated({
         hasModule('reports') && can('reports.sales_detailed.view') ? { label: 'Ventas detalladas', href: route('reports.sales-detailed'), active: route().current('reports.sales-detailed') } : null,
         hasModule('reports') && can('reports.products_sold_detailed.view') ? { label: 'Productos vendidos detallado', href: route('reports.products-sold-detailed'), active: route().current('reports.products-sold-detailed') } : null,
         hasModule('reports') && can('reports.products_sold_summary.view') ? { label: 'Productos vendidos resumido', href: route('reports.products-sold-summary'), active: route().current('reports.products-sold-summary') } : null,
+        hasModule('reports') && can('reports.purchase_cost_history.view') ? { label: 'Historial precios compra', href: route('reports.purchase-cost-history'), active: route().current('reports.purchase-cost-history') } : null,
     ].filter(Boolean) as NavItem[];
 
     const managementActive = managementItems.some((item) => item.active);

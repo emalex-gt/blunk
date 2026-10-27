@@ -581,6 +581,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/reports/sales-detailed', [ReportController::class, 'salesDetailed'])->middleware('permission:reports.sales_detailed.view')->name('reports.sales-detailed');
             Route::get('/reports/products-sold-detailed', [ReportController::class, 'productsSoldDetailed'])->middleware('permission:reports.products_sold_detailed.view')->name('reports.products-sold-detailed');
             Route::get('/reports/products-sold-summary', [ReportController::class, 'productsSoldSummary'])->middleware('permission:reports.products_sold_summary.view')->name('reports.products-sold-summary');
+            Route::get('/reports/purchase-cost-history', [ReportController::class, 'purchaseCostHistory'])->middleware('permission:reports.purchase_cost_history.view')->name('reports.purchase-cost-history');
             Route::get('/reports/{report}/export/{format}', [ReportController::class, 'export'])->middleware('permission:reports.export')->name('reports.export');
             Route::get('/reports/sales', [ReportController::class, 'sales'])->middleware('permission:reports.sales.view')->name('reports.sales');
             Route::get('/reports/sales/export/excel', [ReportController::class, 'salesExportExcel'])->middleware(['permission:reports.sales.view', 'permission:reports.export'])->name('reports.sales.export.excel');
