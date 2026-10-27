@@ -3,16 +3,10 @@
 <head>
     <meta charset="utf-8">
     <title>{{ format_credit_payment_number($payment) }} - Recibo de abono</title>
-    <style>
-        @page { size: 80mm auto; margin: 4mm; }
-        body { font-family: Arial, sans-serif; margin: 0; color: #111827; font-size: 12px; }
-        .center { text-align: center; } .right { text-align: right; } .muted { color: #4b5563; }
-        .logo { max-width: 52mm; max-height: 24mm; object-fit: contain; margin-bottom: 6px; }
-        .line { border-top: 1px dashed #9ca3af; margin: 8px 0; }
-        table { width: 100%; border-collapse: collapse; } td { padding: 3px 0; }
-    </style>
+    @include('print.partials.ticket-styles')
 </head>
 <body>
+    <main class="ticket">
     <div class="center">
         @if($logoUrl)<img class="logo" src="{{ $logoUrl }}" alt="Logo">@endif
         <div><strong>{{ $business->name }}</strong></div>
@@ -34,6 +28,7 @@
     </table>
     <div class="line"></div>
     <div class="center muted">Registrado por {{ $payment->createdBy?->name ?: '-' }}</div>
+    </main>
     <script>window.addEventListener('load', () => setTimeout(() => window.print(), 300));</script>
 </body>
 </html>

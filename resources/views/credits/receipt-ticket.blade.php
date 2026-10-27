@@ -3,22 +3,10 @@
 <head>
     <meta charset="utf-8">
     <title>{{ $number }} - Recibo de crédito</title>
-    <style>
-        @page { size: 80mm auto; margin: 4mm; }
-        body { font-family: Arial, sans-serif; margin: 0; color: #111827; font-size: 12px; }
-        .center { text-align: center; }
-        .logo { max-width: 52mm; max-height: 24mm; object-fit: contain; margin-bottom: 6px; }
-        .title { font-weight: 800; font-size: 13px; line-height: 1.25; margin: 8px 0; }
-        .muted { color: #4b5563; }
-        .line { border-top: 1px dashed #9ca3af; margin: 8px 0; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 3px 0; vertical-align: top; }
-        th { border-bottom: 1px solid #d1d5db; font-size: 11px; text-align: left; }
-        .right { text-align: right; }
-        .note { border: 1px solid #d1d5db; padding: 6px; margin-top: 8px; font-weight: 700; }
-    </style>
+    @include('print.partials.ticket-styles')
 </head>
 <body>
+<main class="ticket">
     <div class="center">
         @if($logoUrl)
             <img class="logo" src="{{ $logoUrl }}" alt="Logo">
@@ -77,6 +65,7 @@
     <div class="note center">
         Este documento no es factura. Los productos quedan reservados hasta su facturación.
     </div>
+</main>
 
     <script>
         window.addEventListener('load', function () {

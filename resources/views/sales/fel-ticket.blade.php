@@ -4,44 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Factura FEL {{ $fel['series'] }}-{{ $fel['number'] }}</title>
+    @include('print.partials.ticket-styles')
     <style>
-        @page { size: 80mm auto; margin: 2mm; }
-        * { box-sizing: border-box; }
-        body {
-            margin: 0;
-            background: #e5e7eb;
-            color: #111;
-            font: 10px Arial, Helvetica, sans-serif;
-        }
-        .toolbar {
-            display: flex;
-            justify-content: center;
-            gap: 6px;
-            margin: 10px auto;
-            width: 76mm;
-        }
-        button {
-            border: 1px solid #9ca3af;
-            border-radius: 5px;
-            background: white;
-            cursor: pointer;
-            font-weight: bold;
-            padding: 7px 10px;
-        }
-        .ticket {
-            background: #fff;
-            margin: 0 auto 16px;
-            padding: 2mm;
-            width: 76mm;
-        }
-        .center { text-align: center; }
-        .right { text-align: right; }
-        h1 { font-size: 15px; margin: 2px 0; }
-        p { margin: 1px 0; }
-        .separator {
-            border-top: 1px dashed #111;
-            margin: 7px 0;
-        }
         .section-title {
             font-weight: bold;
             margin: 5px 0;
@@ -59,37 +23,8 @@
             justify-content: space-between;
             gap: 6px;
         }
-        .break { overflow-wrap: anywhere; }
-        table {
-            border-collapse: collapse;
-            font-size: 10px;
-            width: 100%;
-        }
-        th {
-            border-bottom: 1px solid #111;
-            padding: 3px 1px;
-            text-align: left;
-        }
-        td { padding: 3px 1px; vertical-align: top; }
-        .money { text-align: right; white-space: nowrap; }
-        .total {
-            font-size: 12px;
-            font-weight: bold;
-        }
-        .logo {
-            display: block;
-            max-height: 42px;
-            max-width: 120px;
-            margin: 0 auto 4px;
-            object-fit: contain;
-        }
-        .muted { color: #374151; font-size: 9px; }
+        .money { white-space: nowrap; }
         .qr { display: block; height: 80px; margin: 6px auto; width: 80px; }
-        @media print {
-            body { background: #fff; }
-            .no-print { display: none !important; }
-            .ticket { margin: 0; padding: 0; width: 100%; }
-        }
     </style>
 </head>
 <body>

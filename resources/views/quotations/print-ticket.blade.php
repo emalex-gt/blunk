@@ -4,17 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Cotización {{ $quotation->visible_number }}</title>
-    <style>
-        @page { size: 80mm auto; margin: 3mm; }
-        body { color: #111827; font: 12px Arial, Helvetica, sans-serif; margin: 0; }
-        .ticket { margin: 0 auto; max-width: 80mm; padding: 4mm; }
-        .center { text-align: center; } .row { display: flex; gap: 8px; justify-content: space-between; }
-        .line { border-top: 1px dashed #9ca3af; margin: 8px 0; } .item { margin: 7px 0; }
-        .right { text-align: right; } .total { font-size: 17px; font-weight: bold; }
-        .cancelled { border: 1px dashed #991b1b; color: #991b1b; font-weight: bold; margin: 8px 0; padding: 6px; text-align: center; }
-        .toolbar { margin: 10px auto; text-align: center; } button { padding: 6px 10px; }
-        @media print { .toolbar { display: none; } .ticket { padding: 0; } }
-    </style>
+    @include('print.partials.ticket-styles')
 </head>
 <body>
 <div class="toolbar"><button onclick="window.close()">Cerrar</button> <button onclick="window.print()">Imprimir</button></div>
