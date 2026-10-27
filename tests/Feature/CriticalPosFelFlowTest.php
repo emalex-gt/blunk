@@ -2821,6 +2821,26 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertSessionHasErrors(['items.0.unit_price']);
     }
 
+    public function test_sale_rejects_discount_with_more_than_two_decimals(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register'], role: 'owner');
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                discount: [
+                    'type' => 'fixed',
+                    'value' => '0.255',
+                    'reason' => 'Prueba',
+                ],
+            ))
+            ->assertSessionHasErrors(['discount.value']);
+    }
+
     public function test_sales_receive_business_correlatives_per_business(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);

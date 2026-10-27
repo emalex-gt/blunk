@@ -1683,7 +1683,7 @@ export default function POS({
     function applyDiscount() {
         const nextDiscount = {
             ...discountForm,
-            value: discountForm.value.trim(),
+            value: limitDecimalPlaces(discountForm.value.trim(), 2),
             reason: discountForm.reason.trim(),
         };
         const error = discountError(nextDiscount, subtotalBeforeDiscount);
@@ -4781,7 +4781,7 @@ export default function POS({
                                     value={discountForm.value}
                                     onChange={(event) => setDiscountForm((current) => ({
                                         ...current,
-                                        value: event.target.value,
+                                        value: limitDecimalPlaces(event.target.value, 2),
                                     }))}
                                     className="mt-1 h-11 w-full rounded-xl border-slate-300 text-right text-sm font-semibold text-slate-900 focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                 />

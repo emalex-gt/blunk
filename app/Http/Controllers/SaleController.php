@@ -355,7 +355,7 @@ class SaleController extends Controller
             'items.*.credit_line_id' => ['nullable', 'integer', 'exists:credit_receipt_lines,id'],
             'discount' => ['nullable', 'array'],
             'discount.type' => ['required_with:discount', 'in:fixed,percent'],
-            'discount.value' => ['required_with:discount', 'numeric', 'gt:0'],
+            'discount.value' => ['required_with:discount', 'numeric', 'decimal:0,2', 'gt:0'],
             'discount.reason' => ['required_with:discount', 'string', 'max:1000'],
         ], [
             'items.*.quantity.required' => 'La cantidad debe ser un número entero.',
