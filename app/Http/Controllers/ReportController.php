@@ -16,6 +16,7 @@ use App\Support\CashRegister;
 use App\Support\BranchInventory;
 use App\Services\BranchAccessService;
 use App\Support\Credits;
+use App\Support\Inventory\DraftReservationLease;
 use App\Support\Exports\TableExporter;
 use App\Support\Permissions;
 use App\Support\PriceLists;
@@ -238,6 +239,7 @@ class ReportController extends Controller
             ->where('stock_reservations.status', 'active')
             ->whereIn('pre_sales.status', ['draft', 'submitted'])
             ->where(fn ($query) => $query->whereNull('route_visits.id')->orWhere('route_visits.status', '!=', 'without_sale'))
+            ->tap(fn ($query) => DraftReservationLease::applyEffectivePreSaleReservationLease($query))
             ->groupBy('stock_reservations.product_id')
             ->selectRaw('stock_reservations.product_id, SUM(stock_reservations.quantity) as reserved');
 

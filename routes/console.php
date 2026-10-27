@@ -10,6 +10,7 @@ use App\Models\Customer;
 use App\Models\CustomerTaxLookup;
 use App\Models\DeployRun;
 use App\Models\FiscalDocumentIntent;
+use App\Models\StockReservation;
 use App\Models\TenantFelSetting;
 use App\Models\User;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
@@ -18,6 +19,7 @@ use App\Support\FinalConsumerAuditor;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\IdempotencyHealthMonitor;
 use App\Support\IdempotencyKeyPruner;
+use App\Support\Inventory\DraftReservationLease;
 use App\Support\Products\MainPriceAuditor;
 use App\Support\SalesDuplicateAuditor;
 use App\Support\SystemIntegrityAuditor;
@@ -50,6 +52,57 @@ Artisan::command('fel:reconcile-unknown-intents {--limit=100}', function (Fiscal
 })->purpose('Reconcile due unknown fiscal intents without issuing a replacement document');
 
 Schedule::command('fel:reconcile-unknown-intents')->everyFiveMinutes()->withoutOverlapping();
+
+Artisan::command('routes:release-expired-draft-reservations {--limit=100}', function () {
+    $cutoff = DraftReservationLease::cutoff();
+    $batchSize = max(1, min((int) $this->option('limit'), 500));
+    $released = 0;
+
+    do {
+        $ids = StockReservation::query()
+            ->join('pre_sales', function ($join) {
+                $join->on('pre_sales.id', '=', 'stock_reservations.source_id')
+                    ->whereColumn('pre_sales.business_id', 'stock_reservations.business_id')
+                    ->whereColumn('pre_sales.branch_id', 'stock_reservations.branch_id');
+            })
+            ->where('stock_reservations.source_type', 'pre_sale')
+            ->where('stock_reservations.status', 'active')
+            ->where('pre_sales.status', 'draft')
+            ->where('stock_reservations.updated_at', '<', $cutoff)
+            ->orderBy('stock_reservations.id')
+            ->limit($batchSize)
+            ->pluck('stock_reservations.id');
+
+        if ($ids->isEmpty()) {
+            break;
+        }
+
+        $released += StockReservation::query()
+            ->whereIn('id', $ids)
+            ->where('source_type', 'pre_sale')
+            ->where('status', 'active')
+            ->where('updated_at', '<', $cutoff)
+            ->whereExists(function ($query) {
+                $query->selectRaw('1')
+                    ->from('pre_sales')
+                    ->whereColumn('pre_sales.id', 'stock_reservations.source_id')
+                    ->whereColumn('pre_sales.business_id', 'stock_reservations.business_id')
+                    ->whereColumn('pre_sales.branch_id', 'stock_reservations.branch_id')
+                    ->where('pre_sales.status', 'draft');
+            })
+            ->update([
+                'status' => 'released',
+                'released_at' => now(),
+                'updated_at' => now(),
+            ]);
+    } while ($ids->count() === $batchSize);
+
+    $this->info("Reservas draft expiradas liberadas: {$released}");
+
+    return self::SUCCESS;
+})->purpose('Release only expired draft route pre-sale stock reservations');
+
+Schedule::command('routes:release-expired-draft-reservations')->everyMinute()->withoutOverlapping();
 
 Artisan::command('app:diagnose-storage', function () {
     $tmpPath = storage_path('app/tmp');

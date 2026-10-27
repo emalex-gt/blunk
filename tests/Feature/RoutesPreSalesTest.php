@@ -34,6 +34,8 @@ use App\Models\TenantModule;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\BranchInventory;
+use App\Support\Inventory\DraftReservationLease;
+use App\Support\Inventory\StockReservationService;
 use App\Support\Permissions;
 use App\Support\RouteWorkDayCompletion;
 use App\Support\StockAvailability;
@@ -43,6 +45,7 @@ use App\Services\Routes\RouteDeliveryBatchService;
 use App\Services\Routes\RoutePostConversionCollectionReader;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
@@ -3505,6 +3508,109 @@ class RoutesPreSalesTest extends TestCase
             ->assertJsonPath('reserved_total', 0)
             ->assertJsonPath('pre_sale_reservations', [])
             ->assertJsonPath('orphan_or_ignored_reservations', []);
+    }
+
+    public function test_fresh_draft_stock_reservation_remains_effective(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+
+        $this->manualPreSaleReservation($business, $branch, $seller, $product, 3);
+
+        $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
+
+        $this->assertSame(3.0, $breakdown['reserved_pre_sales']);
+        $this->assertSame(7.0, $breakdown['available_stock']);
+    }
+
+    public function test_expired_draft_stock_reservation_is_ignored_and_explained(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->manualPreSaleReservation($business, $branch, $seller, $product, 3);
+
+        StockReservation::query()
+            ->where('source_id', $preSale->id)
+            ->update(['updated_at' => now()->subMinutes(DraftReservationLease::TTL_MINUTES + 1)]);
+
+        $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
+        $explanation = StockAvailability::explainProductReservations($business->id, $branch->id, $product);
+
+        $this->assertSame(0.0, $breakdown['reserved_pre_sales']);
+        $this->assertSame(10.0, $breakdown['available_stock']);
+        $this->assertSame([], $explanation['pre_sale_reservations']);
+        $this->assertSame('expired_draft_lease', $explanation['orphan_or_ignored_reservations'][0]['reason']);
+    }
+
+    public function test_submitted_pre_sale_reservation_remains_effective_after_the_draft_ttl(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $preSale = $this->manualPreSaleReservation($business, $branch, $seller, $product, 4);
+        $preSale->update(['status' => PreSale::STATUS_SUBMITTED]);
+
+        StockReservation::query()
+            ->where('source_id', $preSale->id)
+            ->update(['updated_at' => now()->subMinutes(DraftReservationLease::TTL_MINUTES + 1)]);
+
+        $breakdown = StockAvailability::getBreakdownForProducts($business->id, $branch->id, [$product->id])->get($product->id);
+
+        $this->assertSame(4.0, $breakdown['reserved_pre_sales']);
+        $this->assertSame(6.0, $breakdown['available_stock']);
+    }
+
+    public function test_expired_own_draft_reservation_cannot_be_added_back_over_a_new_effective_reservation(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $otherSeller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10);
+        $firstPreSale = $this->manualPreSaleReservation($business, $branch, $seller, $product, 10);
+        $firstItem = $firstPreSale->items()->firstOrFail();
+
+        StockReservation::query()
+            ->where('source_id', $firstPreSale->id)
+            ->update(['updated_at' => now()->subMinutes(DraftReservationLease::TTL_MINUTES + 1)]);
+
+        $this->manualPreSaleReservation($business, $branch, $otherSeller, $product, 10);
+
+        try {
+            app(StockReservationService::class)->assertAvailableForReservation($business, $branch, $product, 10, $firstItem->id);
+            $this->fail('An expired own draft reservation must not be added back to availability.');
+        } catch (ValidationException $exception) {
+            $this->assertSame('No hay suficiente stock disponible.', $exception->errors()['items'][0]);
+        }
+    }
+
+    public function test_expired_draft_reservation_cleanup_releases_only_expired_drafts(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        $product = $this->product($business, $branch, stock: 20);
+        $expired = $this->manualPreSaleReservation($business, $branch, $seller, $product, 1);
+        $fresh = $this->manualPreSaleReservation($business, $branch, $seller, $product, 1);
+        $submitted = $this->manualPreSaleReservation($business, $branch, $seller, $product, 1);
+        $submitted->update(['status' => PreSale::STATUS_SUBMITTED]);
+
+        StockReservation::query()
+            ->whereIn('source_id', [$expired->id, $submitted->id])
+            ->update(['updated_at' => now()->subMinutes(DraftReservationLease::TTL_MINUTES + 1)]);
+
+        $this->artisan('routes:release-expired-draft-reservations')->assertSuccessful();
+
+        $this->assertSame('released', StockReservation::query()->where('source_id', $expired->id)->value('status'));
+        $this->assertSame('active', StockReservation::query()->where('source_id', $fresh->id)->value('status'));
+        $this->assertSame('active', StockReservation::query()->where('source_id', $submitted->id)->value('status'));
+    }
+
+    public function test_route_visit_uses_a_silent_visible_draft_reservation_heartbeat(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Routes/Mobile/Visit.tsx'));
+
+        $this->assertStringContainsString('const draftSyncInFlightRef = useRef(false);', $source);
+        $this->assertStringContainsString('syncDraftCart(confirmedItemsRef.current, true, true)', $source);
+        $this->assertStringContainsString("document.visibilityState === 'visible'", $source);
+        $this->assertStringContainsString('window.setInterval(heartbeat, 60_000)', $source);
+        $this->assertStringContainsString('draftSyncInFlightRef.current || draftSyncTimerRef.current !== null', $source);
+        $this->assertStringNotContainsString('beforeunload', $source);
     }
 
     public function test_customer_search_finds_commercial_name_and_is_business_scoped(): void

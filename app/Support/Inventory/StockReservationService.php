@@ -21,7 +21,7 @@ class StockReservationService
     {
         $preSale = $item->preSale()->firstOrFail();
 
-        return StockReservation::query()->updateOrCreate(
+        $reservation = StockReservation::query()->updateOrCreate(
             [
                 'business_id' => $item->business_id,
                 'source_type' => self::SOURCE_PRE_SALE,
@@ -40,6 +40,10 @@ class StockReservationService
                 'cancelled_at' => null,
             ],
         );
+
+        $reservation->touch();
+
+        return $reservation;
     }
 
     public function syncPreSaleReservations(PreSale $preSale): void
@@ -236,14 +240,20 @@ class StockReservationService
         $available = StockAvailability::availableStock($product, null, $branchId);
 
         if ($ignorePreSaleItemId) {
-            $available += (float) StockReservation::query()
-                ->where('business_id', $businessId)
-                ->where('branch_id', $branchId)
-                ->where('product_id', $product->id)
-                ->where('source_type', self::SOURCE_PRE_SALE)
-                ->where('source_item_id', $ignorePreSaleItemId)
-                ->where('status', 'active')
-                ->sum('quantity');
+            $ownReservation = StockReservation::query()
+                ->join('pre_sales', function ($join) {
+                    $join->on('pre_sales.id', '=', 'stock_reservations.source_id')
+                        ->whereColumn('pre_sales.business_id', 'stock_reservations.business_id')
+                        ->whereColumn('pre_sales.branch_id', 'stock_reservations.branch_id');
+                })
+                ->where('stock_reservations.business_id', $businessId)
+                ->where('stock_reservations.branch_id', $branchId)
+                ->where('stock_reservations.product_id', $product->id)
+                ->where('stock_reservations.source_type', self::SOURCE_PRE_SALE)
+                ->where('stock_reservations.source_item_id', $ignorePreSaleItemId)
+                ->where('stock_reservations.status', 'active');
+            DraftReservationLease::applyEffectivePreSaleReservationLease($ownReservation);
+            $available += (float) $ownReservation->sum('stock_reservations.quantity');
         }
 
         if ($available < (float) $qty) {

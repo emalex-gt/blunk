@@ -5,7 +5,9 @@ namespace App\Support;
 use App\Models\CreditReceiptLine;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
+use App\Models\PreSale;
 use App\Models\StockReservation;
+use App\Support\Inventory\DraftReservationLease;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -55,6 +57,7 @@ class StockAvailability
             ->where('stock_reservations.status', 'active')
             ->whereIn('pre_sales.status', ['draft', 'submitted', 'processing', 'picked'])
             ->where(fn ($query) => $query->whereNull('route_visits.id')->orWhere('route_visits.status', '!=', 'without_sale'))
+            ->tap(fn ($query) => DraftReservationLease::applyEffectivePreSaleReservationLease($query))
             ->groupBy('stock_reservations.product_id')
             ->selectRaw('stock_reservations.product_id, COALESCE(SUM(stock_reservations.quantity), 0) as reserved')
             ->pluck('reserved', 'product_id')
@@ -197,6 +200,7 @@ class StockAvailability
             ->where('stock_reservations.status', 'active')
             ->whereIn('pre_sales.status', ['draft', 'submitted', 'processing', 'picked'])
             ->where(fn ($query) => $query->whereNull('route_visits.id')->orWhere('route_visits.status', '!=', 'without_sale'))
+            ->tap(fn ($query) => DraftReservationLease::applyEffectivePreSaleReservationLease($query))
             ->orderBy('stock_reservations.created_at')
             ->limit(100)
             ->get([
@@ -324,7 +328,11 @@ class StockAvailability
                     ->orWhereNotIn('pre_sales.status', ['draft', 'submitted', 'processing', 'picked'])
                     ->orWhereNull('pre_sale_items.id')
                     ->orWhereColumn('pre_sale_items.pre_sale_id', '!=', 'pre_sales.id')
-                    ->orWhere('route_visits.status', 'without_sale');
+                    ->orWhere('route_visits.status', 'without_sale')
+                    ->orWhere(function ($query) {
+                        $query->where('pre_sales.status', PreSale::STATUS_DRAFT)
+                            ->where('stock_reservations.updated_at', '<', DraftReservationLease::cutoff());
+                    });
             })
             ->orderBy('stock_reservations.created_at')
             ->limit(100)
@@ -334,6 +342,7 @@ class StockAvailability
                 'stock_reservations.source_item_id',
                 'stock_reservations.quantity',
                 'stock_reservations.created_at',
+                'stock_reservations.updated_at as reservation_updated_at',
                 'pre_sales.id as pre_sale_id',
                 'pre_sales.status as pre_sale_status',
                 'pre_sale_items.id as pre_sale_item_id',
@@ -358,6 +367,10 @@ class StockAvailability
 
     private static function ignoredPreSaleReservationReason(object $row): string
     {
+        if ($row->pre_sale_status === PreSale::STATUS_DRAFT && DraftReservationLease::isExpired($row->reservation_updated_at)) {
+            return 'expired_draft_lease';
+        }
+
         if (! $row->pre_sale_id) {
             return 'missing_pre_sale';
         }

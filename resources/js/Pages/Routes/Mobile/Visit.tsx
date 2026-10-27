@@ -152,6 +152,7 @@ export default function Visit({
     const draftSyncRequestRef = useRef(0);
     const draftSyncTimerRef = useRef<number | null>(null);
     const draftSyncControllerRef = useRef<AbortController | null>(null);
+    const draftSyncInFlightRef = useRef(false);
     const confirmedItemsRef = useRef<Item[]>(initialItems);
     const customerForm = useForm({
         commercial_name: visit.customer.commercial_name ?? '',
@@ -190,24 +191,34 @@ export default function Visit({
         });
     };
 
-    const syncDraftCart = (items: Item[], immediate = false) => {
+    const syncDraftCart = (items: Item[], immediate = false, silent = false) => {
         if (!canModifyPreSale) {
+            return;
+        }
+
+        if (silent && (draftSyncInFlightRef.current || draftSyncTimerRef.current !== null)) {
             return;
         }
 
         const requestId = draftSyncRequestRef.current + 1;
         draftSyncRequestRef.current = requestId;
-        draftSyncControllerRef.current?.abort();
 
-        if (draftSyncTimerRef.current !== null) {
-            window.clearTimeout(draftSyncTimerRef.current);
+        if (!silent) {
+            draftSyncControllerRef.current?.abort();
+
+            if (draftSyncTimerRef.current !== null) {
+                window.clearTimeout(draftSyncTimerRef.current);
+                draftSyncTimerRef.current = null;
+            }
+
+            setDraftSyncing(true);
+            setDraftSyncError(null);
         }
 
-        setDraftSyncing(true);
-        setDraftSyncError(null);
         const synchronize = async () => {
             const controller = new AbortController();
             draftSyncControllerRef.current = controller;
+            draftSyncInFlightRef.current = true;
 
             try {
                 const response = await fetch(route('routes.mobile.visits.pre-sale.draft', visit.id), {
@@ -246,7 +257,7 @@ export default function Visit({
                         const message = payload?.errors?.items?.[0] ?? payload?.message ?? 'No se pudo reservar el stock. Inténtalo nuevamente.';
                         setDraftSyncError(message);
                         form.setData('items', confirmedItemsRef.current);
-                    } else {
+                    } else if (!silent) {
                         setDraftSyncError('No pudimos confirmar la reserva. Actualizando el carrito desde el servidor…');
                         router.visit(window.location.href, {
                             method: 'get',
@@ -276,17 +287,22 @@ export default function Visit({
                 })));
             } catch {
                 if (!controller.signal.aborted && draftSyncRequestRef.current === requestId) {
-                    setDraftSyncError('No pudimos confirmar la reserva. Actualizando el carrito desde el servidor…');
-                    router.visit(window.location.href, {
-                        method: 'get',
-                        only: ['visit', 'preSale', 'products'],
-                        preserveScroll: true,
-                        preserveState: false,
-                    });
+                    if (!silent) {
+                        setDraftSyncError('No pudimos confirmar la reserva. Actualizando el carrito desde el servidor…');
+                        router.visit(window.location.href, {
+                            method: 'get',
+                            only: ['visit', 'preSale', 'products'],
+                            preserveScroll: true,
+                            preserveState: false,
+                        });
+                    }
                 }
             } finally {
-                if (!controller.signal.aborted && draftSyncRequestRef.current === requestId) {
-                    setDraftSyncing(false);
+                if (draftSyncRequestRef.current === requestId) {
+                    draftSyncInFlightRef.current = false;
+                    if (!silent && !controller.signal.aborted) {
+                        setDraftSyncing(false);
+                    }
                 }
             }
         };
@@ -295,6 +311,7 @@ export default function Visit({
             void synchronize();
         } else {
             draftSyncTimerRef.current = window.setTimeout(() => {
+                draftSyncTimerRef.current = null;
                 void synchronize();
             }, 350);
         }
@@ -311,6 +328,27 @@ export default function Visit({
         }
         draftSyncControllerRef.current?.abort();
     }, []);
+
+    useEffect(() => {
+        if (!canModifyPreSale || form.data.items.length === 0) {
+            return;
+        }
+
+        const heartbeat = () => {
+            if (document.visibilityState === 'visible') {
+                syncDraftCart(confirmedItemsRef.current, true, true);
+            }
+        };
+        const interval = window.setInterval(heartbeat, 60_000);
+        const onVisibilityChange = () => heartbeat();
+
+        document.addEventListener('visibilitychange', onVisibilityChange);
+
+        return () => {
+            window.clearInterval(interval);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+        };
+    }, [canModifyPreSale, form.data.items.length]);
 
     useEffect(() => {
         const value = searchTerm.trim();

@@ -26,6 +26,7 @@ use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\GuatemalaLocations;
 use App\Support\IdempotencyService;
 use App\Support\Inventory\StockReservationService;
+use App\Support\Inventory\DraftReservationLease;
 use App\Support\ManualPricePolicy;
 use App\Support\Permissions;
 use App\Support\PriceLists;
@@ -1113,11 +1114,17 @@ class RouteController extends Controller
             $productIds = $preSale->items->pluck('product_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
             $stockBreakdown = StockAvailability::getBreakdownForProducts((int) $visit->business_id, (int) $visit->branch_id, $productIds);
             $reservedByProduct = StockReservation::query()
-                ->where('business_id', $visit->business_id)
-                ->where('branch_id', $visit->branch_id)
-                ->where('source_type', StockReservationService::SOURCE_PRE_SALE)
-                ->where('source_id', $preSale->id)
-                ->where('status', 'active')
+                ->join('pre_sales as reserved_pre_sales', function ($join) {
+                    $join->on('reserved_pre_sales.id', '=', 'stock_reservations.source_id')
+                        ->whereColumn('reserved_pre_sales.business_id', 'stock_reservations.business_id')
+                        ->whereColumn('reserved_pre_sales.branch_id', 'stock_reservations.branch_id');
+                })
+                ->where('stock_reservations.business_id', $visit->business_id)
+                ->where('stock_reservations.branch_id', $visit->branch_id)
+                ->where('stock_reservations.source_type', StockReservationService::SOURCE_PRE_SALE)
+                ->where('stock_reservations.source_id', $preSale->id)
+                ->where('stock_reservations.status', 'active')
+                ->tap(fn ($query) => DraftReservationLease::applyEffectivePreSaleReservationLease($query, 'stock_reservations', 'reserved_pre_sales'))
                 ->groupBy('product_id')
                 ->selectRaw('product_id, COALESCE(SUM(quantity), 0) as quantity')
                 ->pluck('quantity', 'product_id');
