@@ -374,7 +374,7 @@ class ProductController extends Controller
             'code' => ['nullable', 'string', 'max:255'],
             'barcode' => ['nullable', 'string', 'max:255'],
             'cost_price' => ['required', 'numeric', 'min:0'],
-            'sale_price' => ['required', 'numeric', 'min:0'],
+            'sale_price' => ['required', 'numeric', 'decimal:0,2', 'min:0'],
             'stock' => ['required', 'integer', 'min:0'],
             'min_stock' => ['required', 'integer', 'min:0'],
             'location' => ['nullable', 'string', 'max:255'],
@@ -384,7 +384,7 @@ class ProductController extends Controller
             'brand_id' => ['nullable', 'integer'],
             'brand_name' => ['nullable', 'string', 'max:255'],
             'prices' => ['nullable', 'array'],
-            'prices.*' => ['nullable', 'numeric', 'min:0'],
+            'prices.*' => ['nullable', 'numeric', 'decimal:0,2', 'min:0'],
         ];
 
         if (tenantSetting('use_product_images', true)) {

@@ -203,7 +203,7 @@ class PriceListController extends Controller
                 'integer',
                 Rule::exists('products', 'id')->where('business_id', currentBusinessId()),
             ],
-            'prices.*.price' => ['required', 'numeric', 'min:0'],
+            'prices.*.price' => ['required', 'numeric', 'decimal:0,2', 'min:0'],
         ]);
 
         $branchId = BranchInventory::pricingScope(currentBusinessId()) === 'branch'

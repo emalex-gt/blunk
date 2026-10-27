@@ -9,6 +9,7 @@ import { getProductImageUrl } from '@/lib/cloudinary';
 import { compressImage } from '@/lib/images';
 import { t } from '@/lib/i18n';
 import { formatCurrency } from '@/utils/currency';
+import { limitDecimalPlaces } from '@/utils/decimalInput';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -834,7 +835,7 @@ export default function ProductIndex({
                                 htmlFor="sale_price"
                                 value={pricingScope === 'branch' && activeBranch ? `Precio de sucursal: ${activeBranch.name}` : t('products.sale_price')}
                             />
-                            <TextInput id="sale_price" type="number" step="0.01" className="mt-1 block w-full" value={data.sale_price} onChange={(e) => setData('sale_price', e.target.value)} />
+                            <TextInput id="sale_price" type="number" step="0.01" className="mt-1 block w-full" value={data.sale_price} onChange={(e) => setData('sale_price', limitDecimalPlaces(e.target.value))} />
                         </div>
                     </div>
 
@@ -857,7 +858,7 @@ export default function ProductIndex({
                                             value={data.prices[String(priceType.id)] ?? ''}
                                             onChange={(event) => setData('prices', {
                                                 ...data.prices,
-                                                [String(priceType.id)]: event.target.value,
+                                                [String(priceType.id)]: limitDecimalPlaces(event.target.value),
                                             })}
                                             placeholder={data.sale_price}
                                             className="w-full"

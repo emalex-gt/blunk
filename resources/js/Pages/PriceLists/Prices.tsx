@@ -6,6 +6,7 @@ import TextInput from '@/Components/TextInput';
 import { useToast } from '@/hooks/useToast';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { formatCurrency } from '@/utils/currency';
+import { limitDecimalPlaces } from '@/utils/decimalInput';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 
@@ -72,8 +73,10 @@ export default function Prices({
     }
 
     function setPrice(productId: number, price: string) {
+        const normalizedPrice = limitDecimalPlaces(price);
+
         form.setData('prices', form.data.prices.map((row) => (
-            row.product_id === productId ? { ...row, price } : row
+            row.product_id === productId ? { ...row, price: normalizedPrice } : row
         )));
     }
 

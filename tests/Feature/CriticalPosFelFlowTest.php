@@ -2776,6 +2776,51 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('175.00', (string) BranchProductPrice::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('product_id', $product->id)->where('price_type_id', $default->id)->firstOrFail()->price);
     }
 
+    public function test_product_sale_prices_reject_more_than_two_decimals(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        $this->product($business, stock: 10, salePrice: 80);
+        $default = PriceType::query()->where('business_id', $business->id)->where('is_default', true)->firstOrFail();
+
+        $this->actingAs($user)
+            ->post(route('products.store'), $this->productFormPayload([
+                'sale_price' => '100.123',
+                'prices' => [$default->id => '99.999'],
+            ]))
+            ->assertSessionHasErrors(['sale_price', 'prices.'.$default->id]);
+    }
+
+    public function test_price_list_update_rejects_more_than_two_decimals(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        $product = $this->product($business, stock: 10, salePrice: 80);
+        $default = PriceType::query()->where('business_id', $business->id)->where('is_default', true)->firstOrFail();
+
+        $this->actingAs($user)
+            ->patch(route('price-lists.prices.update', $default), [
+                'prices' => [
+                    ['product_id' => $product->id, 'price' => '175.123'],
+                ],
+            ])
+            ->assertSessionHasErrors(['prices.0.price']);
+    }
+
+    public function test_sale_rejects_unit_price_with_more_than_two_decimals(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register'], role: 'owner');
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                itemOverrides: ['unit_price' => '100.123'],
+            ))
+            ->assertSessionHasErrors(['items.0.unit_price']);
+    }
+
     public function test_sales_receive_business_correlatives_per_business(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);

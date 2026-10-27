@@ -348,7 +348,7 @@ class SaleController extends Controller
             'items.*.product_id' => ['required', 'exists:products,id'],
             'items.*.quantity' => ['required', 'integer', 'min:1'],
             'items.*.price_type_id' => ['nullable', 'integer', 'exists:price_types,id'],
-            'items.*.unit_price' => ['nullable', 'numeric', 'gt:0'],
+            'items.*.unit_price' => ['nullable', 'numeric', 'decimal:0,2', 'gt:0'],
             'items.*.price_source' => ['nullable', 'in:price_list,last_customer_price,manual'],
             'items.*.manual_price' => ['nullable', 'boolean'],
             'items.*.quotation_item_id' => ['nullable', 'integer'],

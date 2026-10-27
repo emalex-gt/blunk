@@ -7,6 +7,7 @@ import { t } from '@/lib/i18n';
 import { clearDraft, loadDraft, makeDraftKey, saveDraft } from '@/lib/draftStorage';
 import { discardOperationDraft, formatOperationDraftUpdatedAt, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
 import { formatCurrency } from '@/utils/currency';
+import { limitDecimalPlaces } from '@/utils/decimalInput';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import {
     FormEvent,
@@ -2118,10 +2119,12 @@ export default function POS({
     }
 
     function updateManualPrice(productId: number, value: string) {
+        const normalizedPrice = limitDecimalPlaces(value);
+
         renewOperationKeyAfterFailedMutation();
         setCart((items) => items.map((item) => (
             item.product.id === productId
-                ? { ...item, unit_price: value, price_source: 'manual', manual_price: true, price_warning: null }
+                ? { ...item, unit_price: normalizedPrice, price_source: 'manual', manual_price: true, price_warning: null }
                 : item
         )));
     }
@@ -4140,7 +4143,7 @@ export default function POS({
                                         onChange={(event) => setManualPriceDraft((current) => ({
                                             productId: item.product.id,
                                             percentage: current?.productId === item.product.id ? current.percentage : '',
-                                            unitPrice: event.target.value,
+                                            unitPrice: limitDecimalPlaces(event.target.value),
                                         }))}
                                         className="mt-1 h-12 w-full rounded-xl border-slate-200 text-lg font-semibold text-slate-950 focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                     />
