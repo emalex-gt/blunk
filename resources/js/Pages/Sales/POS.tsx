@@ -3512,7 +3512,7 @@ export default function POS({
                                 </div>
                             )}
 
-                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-3 min-[1700px]:grid-cols-4">
+                            <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
                                 {productsToShow.map((product) => {
                                     const availableStock = Math.floor(product.available_stock ?? product.stock);
                                     const reservedStock = Math.floor(product.reserved_stock ?? 0);
@@ -3528,32 +3528,32 @@ export default function POS({
                                             type="button"
                                             disabled={disabledByStock || processing}
                                             onClick={() => handleProductResultClick(product)}
-                                            className="flex items-stretch gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-[0_4px_18px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-[0_12px_28px_rgba(15,23,42,0.10)] disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-70"
+                                            className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-orange-50 focus:outline-none focus-visible:bg-orange-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-orange-400 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-70"
                                         >
                                             {use_product_images && product.image_url ? (
                                                 <img
                                                     src={getProductImageUrl(product.image_url, 200) ?? ''}
                                                     alt={product.name}
                                                     loading="lazy"
-                                                        className="h-20 w-20 shrink-0 rounded-xl object-cover 2xl:h-24 2xl:w-24"
+                                                    className="h-12 w-12 shrink-0 rounded-lg object-cover sm:h-14 sm:w-14"
                                                 />
                                             ) : null}
 
-                                            <div className="flex min-w-0 flex-1 flex-col justify-between">
-                                                <div>
+                                            <div className="min-w-0 flex-1">
+                                                <div className="flex min-w-0 items-start justify-between gap-3">
                                                     <h3 className="line-clamp-2 text-sm font-semibold leading-5 text-slate-900" title={product.name}>
                                                         {product.name}
                                                     </h3>
-                                                    <div className="mt-1 whitespace-nowrap text-right text-sm font-bold text-slate-900">
+                                                    <div className="shrink-0 whitespace-nowrap text-right text-sm font-bold text-slate-900">
                                                         {formatCurrency(product.sale_price, country)}
                                                     </div>
                                                 </div>
 
-                                                <div className="truncate text-xs text-slate-500" title={product.barcode || product.code || ''}>
+                                                <div className="mt-0.5 truncate text-xs text-slate-500" title={product.barcode || product.code || ''}>
                                                     {product.barcode || product.code || t('common.code')}
                                                 </div>
 
-                                                <div className="flex items-center justify-between gap-2 text-xs">
+                                                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
                                                     <span
                                                         className={
                                                             disabledByStock
@@ -3583,11 +3583,9 @@ export default function POS({
                                                     )}
                                                 </div>
                                                 {otherBranchesSummary && (
-                                                    <><div className="mt-1 truncate text-[11px] font-medium text-orange-900" title="Disponibilidad Sucursales">
-                                                        Disponibilidad Sucursales:
-                                                    </div><div className="mt-1 truncate text-[11px] font-medium text-orange-600" title={otherBranchesSummary}>
-                                                            {otherBranchesSummary}
-                                                        </div></>
+                                                    <div className="mt-1 truncate text-[11px] font-medium text-orange-700" title={otherBranchesSummary}>
+                                                        Otras sucursales: {otherBranchesSummary}
+                                                    </div>
                                                 )}
                                             </div>
                                         </button>
