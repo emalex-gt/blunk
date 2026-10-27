@@ -344,15 +344,39 @@ function normalizedFiscalNit(value: string | null | undefined) {
 }
 
 function normalizeCustomerValidationState(
-    customer: CustomerForm,
+    customer: Partial<CustomerForm> | null | undefined,
     country: string,
     defaults: Partial<Pick<CustomerForm, 'department' | 'municipality'>> = {},
 ): CustomerForm {
-    return {
+    const normalized = {
         ...emptyCustomer(country, defaults),
-        ...customer,
-        tax_lookup_verified_doc_number: customer.tax_lookup_verified_doc_number
-            ?? (customer.tax_lookup_verified_at ? normalizedFiscalNit(customer.doc_number) : null),
+        ...(customer ?? {}),
+    };
+    const docType = String(normalized.doc_type ?? (country === 'GT' ? 'CF' : ''));
+    const docNumber = String(normalized.doc_number ?? '');
+    const consumidorFinal = Boolean(normalized.consumidor_final)
+        || docType === 'CF'
+        || docType === 'Consumidor Final';
+
+    return {
+        ...normalized,
+        id: normalized.id ?? null,
+        consumidor_final: consumidorFinal,
+        doc_type: docType,
+        doc_number: country === 'GT' && docType === 'CF' && docNumber.trim() === '' ? 'CF' : docNumber,
+        tax_condition: String(normalized.tax_condition ?? ''),
+        name: String(normalized.name ?? ''),
+        commercial_name: String(normalized.commercial_name ?? ''),
+        address: String(normalized.address ?? ''),
+        address_reference: String(normalized.address_reference ?? ''),
+        department: String(normalized.department ?? defaults.department ?? ''),
+        municipality: String(normalized.municipality ?? defaults.municipality ?? ''),
+        phone: String(normalized.phone ?? ''),
+        country: String(normalized.country ?? country),
+        name_locked: Boolean(normalized.name_locked),
+        tax_lookup_verified_at: normalized.tax_lookup_verified_at ?? null,
+        tax_lookup_verified_doc_number: normalized.tax_lookup_verified_doc_number
+            ?? (normalized.tax_lookup_verified_at ? normalizedFiscalNit(docNumber) : null),
     };
 }
 
