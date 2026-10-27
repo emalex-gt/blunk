@@ -3,24 +3,25 @@
 <head>
     <meta charset="utf-8">
     <title>{{ format_credit_payment_number($payment) }} - Recibo de abono</title>
-    <style>
-        @page { size: letter; margin: 16mm; }
-        body { font-family: Arial, sans-serif; color: #111827; margin: 0; font-size: 13px; }
-        header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #111827; padding-bottom: 14px; }
-        .logo { max-width: 160px; max-height: 80px; object-fit: contain; } .right { text-align: right; } .muted { color: #4b5563; }
-        .box { border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; margin-top: 14px; }
-        table { width: 360px; margin: 18px 0 0 auto; border-collapse: collapse; } td { border-bottom: 1px solid #e5e7eb; padding: 8px; }
-    </style>
+    <style>@page { size: Letter; margin: 12mm; }</style>
+    @include('print.partials.document-styles')
+    <style>.payment-totals { width: 360px; margin-left: auto; }</style>
 </head>
 <body>
-    <header>
-        <div>@if($logoUrl)<img class="logo" src="{{ $logoUrl }}" alt="Logo">@endif<div><strong>{{ $business->name }}</strong></div>@if($branch)<div class="muted">{{ $branch->name }}</div>@endif</div>
-        <div class="right"><h1>RECIBO DE ABONO</h1><strong>{{ format_credit_payment_number($payment) }}</strong><div class="muted">{{ $payment->created_at?->format('d/m/Y H:i') }}</div></div>
+<div class="toolbar no-print">
+    <button type="button" onclick="window.close()">Cerrar</button>
+    <button type="button" class="primary" onclick="window.print()">Imprimir</button>
+</div>
+<main class="document-page">
+    <header class="document-header">
+        <div class="document-brand">@if($logoUrl)<img class="document-logo" src="{{ $logoUrl }}" alt="Logo">@endif<div class="document-company"><h1>{{ $business->name }}</h1>@if($branch)<div class="muted">{{ $branch->name }}</div>@endif</div></div>
+        <div class="document-title"><h1>RECIBO DE ABONO</h1><strong>{{ format_credit_payment_number($payment) }}</strong><div class="muted">{{ $payment->created_at?->format('d/m/Y H:i') }}</div></div>
     </header>
-    <section class="box"><div><strong>Cliente:</strong> {{ $payment->customer->name }}</div><div><strong>NIT:</strong> {{ $payment->customer->doc_number }}</div><div><strong>Método:</strong> {{ $payment->payment_method }}</div>@if($payment->reference)<div><strong>Referencia:</strong> {{ $payment->reference }}</div>@endif</section>
-    <table><tr><td>Saldo anterior</td><td class="right">{{ formatMoney($previousBalance, $business->country) }}</td></tr><tr><td><strong>Abono recibido</strong></td><td class="right"><strong>{{ formatMoney($payment->amount, $business->country) }}</strong></td></tr><tr><td>Nuevo saldo</td><td class="right">{{ formatMoney($newBalance, $business->country) }}</td></tr></table>
-    @if($payment->notes)<section class="box"><strong>Notas:</strong> {{ $payment->notes }}</section>@endif
+    <section class="document-info"><div><span class="label">Cliente</span><div>{{ $payment->customer->name }}</div><span class="label">NIT</span><div>{{ $payment->customer->doc_number }}</div></div><div><span class="label">Método</span><div>{{ $payment->payment_method }}</div>@if($payment->reference)<span class="label">Referencia</span><div>{{ $payment->reference }}</div>@endif</div></section>
+    <table class="payment-totals"><tr><td>Saldo anterior</td><td class="right">{{ formatMoney($previousBalance, $business->country) }}</td></tr><tr><td><strong>Abono recibido</strong></td><td class="right"><strong>{{ formatMoney($payment->amount, $business->country) }}</strong></td></tr><tr><td><strong>Nuevo saldo</strong></td><td class="right total">{{ formatMoney($newBalance, $business->country) }}</td></tr></table>
+    @if($payment->notes)<section class="document-box"><strong>Notas:</strong> {{ $payment->notes }}</section>@endif
     <p class="muted">Registrado por {{ $payment->createdBy?->name ?: '-' }}</p>
+</main>
     <script>window.addEventListener('load', () => setTimeout(() => window.print(), 300));</script>
 </body>
 </html>

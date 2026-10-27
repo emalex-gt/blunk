@@ -4,48 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Factura FEL {{ $fel['series'] }}-{{ $fel['number'] }}</title>
+    <style>@page { size: {{ $paperSize }}; margin: 12mm; }</style>
+    @include('print.partials.document-styles')
     <style>
-        @page { size: {{ $paperSize }}; margin: 12mm; }
-        * { box-sizing: border-box; }
-        body {
-            margin: 0;
-            background: #eef2f7;
-            color: #111827;
-            font: 12px Arial, Helvetica, sans-serif;
-        }
-        .toolbar {
-            display: flex;
-            justify-content: flex-end;
-            gap: 8px;
-            margin: 16px auto 10px;
-            max-width: 900px;
-        }
-        button {
-            border: 1px solid #b8c3d1;
-            border-radius: 6px;
-            background: white;
-            cursor: pointer;
-            font-weight: bold;
-            padding: 8px 13px;
-        }
-        button.primary { background: #0d62ab; border-color: #0d62ab; color: white; }
-        .page {
-            background: white;
-            margin: 0 auto 24px;
-            max-width: 900px;
-            min-height: 10in;
-            padding: 24px;
-        }
-        .header {
-            display: grid;
-            grid-template-columns: 170px 1fr 210px;
-            gap: 18px;
-            align-items: start;
-        }
-        .logo { max-height: 80px; max-width: 165px; object-fit: contain; }
-        h1 { color: #0d62ab; font-size: 20px; margin: 0 0 6px; text-align: center; }
-        p { margin: 2px 0; }
-        .center { text-align: center; }
+        .document-header { grid-template-columns: 170px minmax(0, 1fr) 210px; }
         .fel-box {
             border: 1px solid #0d62ab;
             border-radius: 6px;
@@ -53,28 +15,10 @@
         }
         .fel-box strong { color: #0d62ab; font-size: 13px; }
         .uuid { font-size: 10px; overflow-wrap: anywhere; }
-        .issuer {
-            border-bottom: 1px solid #0d62ab;
-            margin: 10px 0 14px;
-            padding-bottom: 6px;
-        }
-        .buyer {
-            border: 1px solid #0d62ab;
-            border-radius: 6px;
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            margin-bottom: 18px;
-        }
-        .buyer > div { padding: 9px 12px; }
+        .issuer { margin: 10px 0 14px; padding-bottom: 6px; border-bottom: 1px solid #0d62ab; }
         .buyer > div + div { border-left: 1px solid #0d62ab; }
-        .label { color: #0d62ab; font-size: 10px; font-weight: bold; text-transform: uppercase; }
-        table { border-collapse: collapse; width: 100%; }
         .lines th {
-            background: #0d62ab;
-            color: white;
             padding: 8px 7px;
-            text-align: left;
-            text-transform: uppercase;
         }
         .lines td {
             border-left: 1px solid #0d62ab;
@@ -83,13 +27,8 @@
             vertical-align: top;
         }
         .lines tbody tr:last-child td { border-bottom: 1px solid #0d62ab; }
-        .right { text-align: right; white-space: nowrap; }
-        .summary {
-            display: grid;
-            grid-template-columns: 1fr 285px;
-            gap: 16px;
-            margin-top: 13px;
-        }
+        .right { white-space: nowrap; }
+        .summary { grid-template-columns: minmax(0, 1fr) 285px; }
         .summary table td { border-bottom: 1px solid #dbe2ea; padding: 6px; }
         .grand td {
             border-top: 2px solid #0d62ab;
@@ -97,27 +36,10 @@
             font-size: 17px;
             font-weight: bold;
         }
-        .bottom {
-            align-items: center;
-            border-top: 1px solid #0d62ab;
-            display: grid;
-            grid-template-columns: 120px 1fr;
-            gap: 20px;
-            margin-top: 24px;
-            padding-top: 12px;
-        }
+        .bottom { display: grid; grid-template-columns: 120px 1fr; gap: 20px; align-items: center; margin-top: 24px; padding-top: 12px; border-top: 1px solid #0d62ab; }
         .qr { height: 100px; width: 100px; }
-        .certifier {
-            border: 1px solid #0d62ab;
-            border-radius: 6px;
-            padding: 9px 12px;
-        }
+        .certifier { border: 1px solid #0d62ab; border-radius: 5px; padding: 9px 12px; }
         .payments { margin-top: 12px; }
-        @media print {
-            body { background: #fff; }
-            .no-print { display: none !important; }
-            .page { margin: 0; max-width: none; min-height: 0; padding: 0; }
-        }
     </style>
 </head>
 <body>
@@ -145,14 +67,14 @@
     <button type="button" onclick="window.close()">Cerrar</button>
     <button class="primary" type="button" onclick="window.print()">Imprimir</button>
 </div>
-<main class="page">
-    <header class="header">
+<main class="document-page">
+    <header class="document-header">
         <div>
             @if (! empty($company['logo_url']))
                 <img class="logo" src="{{ $company['logo_url'] }}" alt="Logo">
             @endif
         </div>
-        <div class="center">
+        <div class="document-company center">
             <h1>{{ $company['name'] }}</h1>
             @if (! empty($company['establishment_name']))
                 <p><strong>{{ $company['establishment_name'] }}</strong></p>
@@ -173,7 +95,7 @@
         <strong>NIT: {{ $company['tax_id'] }}</strong>
         <span style="float:right">Documento Tributario Electrónico</span>
     </div>
-    <section class="buyer">
+    <section class="document-info buyer">
         <div>
             <span class="label">Cliente</span>
             <p><strong>{{ $customer['name'] }}</strong></p>
@@ -206,7 +128,7 @@
         @endforeach
         </tbody>
     </table>
-    <section class="summary">
+    <section class="document-summary summary">
         <div class="payments">
             <span class="label">Pagos</span>
             @foreach ($payments as $payment)

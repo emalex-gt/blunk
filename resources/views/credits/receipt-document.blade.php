@@ -3,27 +3,20 @@
 <head>
     <meta charset="utf-8">
     <title>{{ $number }} - Recibo de crédito</title>
-    <style>
-        @page { size: letter; margin: 16mm; }
-        body { font-family: Arial, sans-serif; color: #111827; margin: 0; font-size: 13px; }
-        .header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #111827; padding-bottom: 14px; }
-        .logo { max-width: 160px; max-height: 80px; object-fit: contain; }
-        h1 { font-size: 18px; margin: 0 0 8px; }
-        .muted { color: #4b5563; }
-        .box { border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; margin-top: 14px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-        th, td { border-bottom: 1px solid #e5e7eb; padding: 8px; text-align: left; }
-        th { background: #f3f4f6; font-size: 12px; text-transform: uppercase; }
-        .right { text-align: right; }
-        .totals { margin-left: auto; width: 320px; }
-        .note { border: 1px solid #111827; padding: 10px; margin-top: 18px; text-align: center; font-weight: 700; }
-    </style>
+    <style>@page { size: Letter; margin: 12mm; }</style>
+    @include('print.partials.document-styles')
+    <style>.totals { margin-left: auto; width: 320px; } .credit-customer { grid-template-columns: 1fr; }</style>
 </head>
 <body>
-    <header class="header">
+<div class="toolbar no-print">
+    <button type="button" onclick="window.close()">Cerrar</button>
+    <button type="button" class="primary" onclick="window.print()">Imprimir</button>
+</div>
+<main class="document-page">
+    <header class="document-header">
         <div>
             @if($logoUrl)
-                <img class="logo" src="{{ $logoUrl }}" alt="Logo">
+                <img class="document-logo" src="{{ $logoUrl }}" alt="Logo">
             @else
                 <h1>{{ $receipt->business->name }}</h1>
             @endif
@@ -32,7 +25,7 @@
                 <div class="muted">Sucursal: {{ $receipt->branch->name }}</div>
             @endif
         </div>
-        <div class="right">
+        <div class="document-title">
             <h1>RECIBO DE PRODUCTOS A CRÉDITO</h1>
             <div><strong>PENDIENTE DE FACTURAR</strong></div>
             <div class="muted">{{ $number }}</div>
@@ -40,7 +33,7 @@
         </div>
     </header>
 
-    <section class="box">
+    <section class="document-info credit-customer">
         <div><strong>Cliente:</strong> {{ $receipt->customer_name }}</div>
         <div><strong>NIT:</strong> {{ $receipt->customer_doc_number }}</div>
         @if($receipt->customer_address)
@@ -78,14 +71,15 @@
     </table>
 
     @if($receipt->notes)
-        <section class="box">
+        <section class="document-box">
             <strong>Nota:</strong> {{ $receipt->notes }}
         </section>
     @endif
 
-    <div class="note">
+    <div class="document-warning">
         Este documento no es factura. Los productos quedan reservados hasta su facturación.
     </div>
+</main>
 
     <script>
         window.addEventListener('load', function () {
