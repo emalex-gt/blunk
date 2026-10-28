@@ -232,10 +232,10 @@ final class PurchasesOverviewMetricQuery implements DashboardMetricQuery
     private function purchasesQuery(DashboardContext $context, ?DashboardPeriod $period): Builder
     {
         return Purchase::query()
-            ->where('business_id', $context->business->id)
-            ->when($context->branchIdForScopedMetric(), fn ($query, int $branchId) => $query->where('branch_id', $branchId))
-            ->where(fn ($query) => $query->where('status', 'completed')->orWhereNull('status'))
-            ->when($period, fn ($query, DashboardPeriod $range) => $query->whereBetween('created_at', [$range->start, $range->end]));
+            ->where('purchases.business_id', $context->business->id)
+            ->when($context->branchIdForScopedMetric(), fn ($query, int $branchId) => $query->where('purchases.branch_id', $branchId))
+            ->where(fn ($query) => $query->where('purchases.status', 'completed')->orWhereNull('purchases.status'))
+            ->when($period, fn ($query, DashboardPeriod $range) => $query->whereBetween('purchases.created_at', [$range->start, $range->end]));
     }
 
     private function purchaseItemsQuery(DashboardContext $context, DashboardPeriod $period)
