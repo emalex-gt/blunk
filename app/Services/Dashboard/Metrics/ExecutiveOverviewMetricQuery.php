@@ -109,7 +109,7 @@ final class ExecutiveOverviewMetricQuery implements DashboardMetricQuery
         $localDate = "DATE((sales.created_at AT TIME ZONE 'UTC') AT TIME ZONE ?)";
         $rows = $this->salesQuery($context, $period)
             ->selectRaw("{$localDate} as local_date, COUNT(*) as count, COALESCE(SUM(sales.total), 0) as total", [$context->timezone])
-            ->groupByRaw($localDate, [$context->timezone])
+            ->groupByRaw('1')
             ->get()
             ->keyBy('local_date');
 
