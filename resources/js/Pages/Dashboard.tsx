@@ -1,6 +1,6 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import ExecutiveDashboard from '@/Components/Dashboard/ExecutiveDashboard';
-import FinanceDashboard from '@/Components/Dashboard/FinanceDashboard';
+import FinanceDashboard, { type FinanceDashboardData } from '@/Components/Dashboard/FinanceDashboard';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, usePage } from '@inertiajs/react';
 
@@ -145,7 +145,7 @@ function WidgetCard({ widget, country }: { widget: Widget; country: string }) {
         return <CashierWorkspaceCard data={widget.data as CashierWorkspaceData} country={country} />;
     }
     if (widget.type === 'executive_overview') return <ExecutiveDashboard data={widget.data} country={country} />;
-    if (widget.type === 'finance_overview') return <FinanceDashboard data={widget.data} country={country} />;
+    if (widget.type === 'finance_overview') return <FinanceDashboard data={widget.data as FinanceDashboardData} country={country} />;
     if (widget.type === 'branch_manager_overview') return <BranchManagerOverviewCard data={widget.data as any} country={country} />;
     if (widget.type === 'warehouse_overview') return <WarehouseOverviewCard data={widget.data as any} />;
 

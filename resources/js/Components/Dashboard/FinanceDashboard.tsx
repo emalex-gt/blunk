@@ -5,7 +5,7 @@ import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, 
 
 type Summary = { total: string; count: number; average?: string; average_ticket?: string; previous_total?: string; change_percent?: number | null };
 type AgingBucket = { amount: string; count: number };
-type FinanceDashboardData = {
+export type FinanceDashboardData = {
     sales_month: Summary | null;
     profit_month: { sales_total: string; cost_total: string; profit_total: string; margin_percent: number | null; previous_profit_total: string; change_percent: number | null } | null;
     purchases_month: Summary | null;
