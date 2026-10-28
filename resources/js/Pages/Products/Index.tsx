@@ -334,7 +334,12 @@ export default function ProductIndex({
     activeBranch?: { id: number; name: string } | null;
     use_product_images?: boolean;
 }) {
-    const business = usePage().props.business as { country?: string | null } | null;
+    const page = usePage();
+    const business = page.props.business as { country?: string | null } | null;
+    const auth = page.props.auth as { user?: { is_super_admin?: boolean }; permissions?: string[] } | undefined;
+    const enabledModules = (page.props.enabled_modules as string[] | undefined) ?? [];
+    const canViewPurchaseCostHistory = enabledModules.includes('reports')
+        && (Boolean(auth?.user?.is_super_admin) || (auth?.permissions ?? []).includes('reports.purchase_cost_history.view'));
     const country = business?.country ?? 'GT';
     const [editing, setEditing] = useState<Product | null>(null);
     const [search, setSearch] = useState(filters.search ?? '');
@@ -957,6 +962,7 @@ export default function ProductIndex({
                             product={editing}
                             history={editing.supplier_cost_history ?? []}
                             country={country}
+                            canViewFullHistory={canViewPurchaseCostHistory}
                         />
                     )}
                 </form>
@@ -1190,21 +1196,25 @@ function SupplierCostHistorySection({
     product,
     history,
     country,
+    canViewFullHistory,
 }: {
     product: Product;
     history: SupplierCostHistory[];
     country: string;
+    canViewFullHistory: boolean;
 }) {
     return (
         <section className="border-t border-slate-100 pt-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-sm font-semibold text-slate-950">Últimos costos por proveedor</h4>
-                <Link
-                    href={route('reports.purchase-cost-history', { product_id: product.id })}
-                    className="text-sm font-semibold text-orange-600 hover:text-orange-800"
-                >
-                    Ver historial completo
-                </Link>
+                {canViewFullHistory && (
+                    <Link
+                        href={route('reports.purchase-cost-history', { product_id: product.id })}
+                        className="text-sm font-semibold text-orange-600 hover:text-orange-800"
+                    >
+                        Ver historial completo
+                    </Link>
+                )}
             </div>
 
             {history.length === 0 ? (

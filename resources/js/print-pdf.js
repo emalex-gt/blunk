@@ -1,5 +1,3 @@
-import html2pdf from 'html2pdf.js';
-
 const pxToMm = 25.4 / 96;
 
 function safeFilename(value) {
@@ -75,6 +73,8 @@ async function downloadPdf(button) {
 
     await document.fonts?.ready;
     await waitForImages(target);
+    const html2pdfModule = await import('html2pdf.js');
+    const html2pdf = html2pdfModule.default ?? html2pdfModule;
     await html2pdf().set(options).from(target).save();
 }
 
