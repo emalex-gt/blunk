@@ -105,7 +105,10 @@ class DashboardBranchManagerTest extends TestCase
         $this->assertSame(1, $data['inventory']['reservations']['count']);
         $this->assertSame('80.00', $data['purchases_today']['total']);
         $this->assertSame('Producto A', $data['top_products_today'][0]['name']);
-        $this->assertSame(['sale', 'purchase'], collect($data['recent_activity'])->pluck('type')->sort()->values()->all());
+        $this->assertEqualsCanonicalizing(
+            ['sale', 'purchase'],
+            collect($data['recent_activity'])->pluck('type')->all()
+        );
         $this->assertArrayNotHasKey('profit', $data);
         $this->assertArrayNotHasKey('margin', $data);
         $this->assertArrayNotHasKey('inventory_value', $data);
