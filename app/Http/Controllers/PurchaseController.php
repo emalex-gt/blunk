@@ -196,7 +196,7 @@ class PurchaseController extends Controller
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'exists:products,id'],
             'items.*.quantity' => ['required', 'integer', 'min:1'],
-            'items.*.unit_cost' => ['required', 'numeric', 'min:0'],
+            'items.*.unit_cost' => ['required', 'numeric', 'decimal:0,5', 'min:0'],
         ], [
             'items.*.quantity.required' => 'La cantidad debe ser un número entero.',
             'items.*.quantity.integer' => 'La cantidad debe ser un número entero.',
@@ -281,7 +281,7 @@ class PurchaseController extends Controller
                 $newAverageCost = $currentStock <= 0
                     ? $incomingCost
                     : (($currentStock * $currentCost) + ($incomingQty * $incomingCost)) / $newStock;
-                $lineTotal = round($incomingQty * $incomingCost, 2);
+                $lineTotal = round($incomingQty * $incomingCost, 5);
                 $total += $lineTotal;
 
                 $purchase->items()->create([
@@ -291,12 +291,12 @@ class PurchaseController extends Controller
                     'quantity' => $incomingQty,
                     'unit_cost' => $incomingCost,
                     'previous_cost' => $currentCost,
-                    'new_average_cost' => round($newAverageCost, 2),
+                    'new_average_cost' => round($newAverageCost, 5),
                     'total' => $lineTotal,
                 ]);
 
                 $product->update([
-                    'cost_price' => round($newAverageCost, 2),
+                    'cost_price' => round($newAverageCost, 5),
                 ]);
 
                 StockMovement::create([
@@ -313,13 +313,15 @@ class PurchaseController extends Controller
                 ]);
             }
 
-            $purchase->update(['total' => round($total, 2)]);
+            $purchaseTotal = round($total, 5);
+            $purchase->update(['total' => $purchaseTotal]);
 
-            if ($cashSession && $total > 0) {
+            if ($cashSession && $purchaseTotal > 0) {
+                $cashPurchaseAmount = round($purchaseTotal, 2);
                 CashRegister::recordMovement(
                     $cashSession,
                     'purchase_cash',
-                    -1 * $total,
+                    -1 * $cashPurchaseAmount,
                     'purchase',
                     $purchase->id,
                     stockMovementNote('purchase', $purchase->business_number ?: $purchase->id),
@@ -450,7 +452,7 @@ class PurchaseController extends Controller
                 ->map(fn (array $item) => [
                     'product_id' => (int) ($item['product_id'] ?? 0),
                     'quantity' => (int) ($item['quantity'] ?? 0),
-                    'unit_cost' => round((float) ($item['unit_cost'] ?? 0), 4),
+                    'unit_cost' => round((float) ($item['unit_cost'] ?? 0), 5),
                 ])
                 ->sortBy(fn (array $item) => implode('|', [$item['product_id'], $item['quantity'], $item['unit_cost']]))
                 ->values()

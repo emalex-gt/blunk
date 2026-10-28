@@ -106,6 +106,16 @@ class ProductPurchaseCostHistoryTest extends TestCase
         $this->assertSame($productA->id, $rows->sole()->product_id);
     }
 
+    public function test_historical_cost_contract_preserves_five_decimal_unit_costs(): void
+    {
+        [$business, $branch, $product, $supplier] = $this->context();
+        $this->historical($business, $product, $supplier, '2026-01-01 12:00:00', 12.34567, 'five-decimals', $branch);
+
+        $cost = ProductSupplierCostHistory::forProducts($business->id, [$product->id])->get($product->id)->sole();
+
+        $this->assertSame(12.34567, (float) $cost->unit_cost);
+    }
+
     /** @return array{Business, Branch, Product, Supplier} */
     private function context(): array
     {

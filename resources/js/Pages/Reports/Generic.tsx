@@ -9,6 +9,7 @@ type Column = {
     label: string;
     type?: 'money' | 'number' | 'link' | 'reservations';
     link_label?: string;
+    decimals?: number;
 };
 
 type SummaryItem = {
@@ -449,7 +450,7 @@ function renderCell(
 
 function formatCell(value: unknown, column: Column, country: string): string {
     if (column.type === 'money') {
-        return formatCurrency(value as number | string | null, country);
+        return formatCurrency(value as number | string | null, country, column.decimals ?? 2);
     }
 
     if (column.type === 'number') {

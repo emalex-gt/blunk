@@ -7,6 +7,7 @@ import { makeOperationKey } from '@/lib/idempotency';
 import { discardOperationDraft, formatOperationDraftUpdatedAt, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency } from '@/utils/currency';
+import { limitDecimalPlaces } from '@/utils/decimalInput';
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import axios from 'axios';
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
@@ -332,6 +333,10 @@ export default function Create({
             }
 
             value = sanitized;
+        }
+
+        if (field === 'unit_cost') {
+            value = limitDecimalPlaces(value, 5);
         }
 
         setCart((items) =>
@@ -1117,14 +1122,14 @@ export default function Create({
                                                     <div>
                                                         Costo actual:{' '}
                                                         <span className="font-semibold text-slate-900">
-                                                            {formatCurrency(product.cost_price, country)}
+                                                            {formatCurrency(product.cost_price, country, 5)}
                                                         </span>
                                                     </div>
                                                     {product.supplier_costs?.[0] && (
                                                         <div>
                                                             Último costo:{' '}
                                                             <span className="font-semibold text-slate-700">
-                                                                {formatCurrency(product.supplier_costs[0].unit_cost, country)}
+                                                                {formatCurrency(product.supplier_costs[0].unit_cost, country, 5)}
                                                             </span>
                                                         </div>
                                                     )}
@@ -1184,14 +1189,14 @@ export default function Create({
                                             <div>
                                                 Costo actual{' '}
                                                 <span className="font-semibold text-slate-900">
-                                                    {formatCurrency(product.cost_price, country)}
+                                                    {formatCurrency(product.cost_price, country, 5)}
                                                 </span>
                                             </div>
                                             {product.supplier_costs?.[0] && (
                                                 <div className="mt-0.5">
                                                     Último{' '}
                                                     <span className="font-semibold text-slate-700">
-                                                        {formatCurrency(product.supplier_costs[0].unit_cost, country)}
+                                                        {formatCurrency(product.supplier_costs[0].unit_cost, country, 5)}
                                                     </span>
                                                 </div>
                                             )}
@@ -1330,7 +1335,7 @@ export default function Create({
                                                     <input
                                                         type="number"
                                                         min="0"
-                                                        step="0.01"
+                                                        step="0.00001"
                                                         value={item.unit_cost}
                                                         onChange={(event) => updateItem(item.product.id, 'unit_cost', event.target.value)}
                                                         className="h-10 w-full rounded-xl border-slate-200 text-right text-sm font-semibold text-slate-900 focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
@@ -1341,7 +1346,7 @@ export default function Create({
                                                         Subtotal
                                                     </div>
                                                     <div className="whitespace-nowrap text-sm font-semibold text-slate-950">
-                                                        {formatCurrency(lineTotal, country)}
+                                                        {formatCurrency(lineTotal, country, 5)}
                                                     </div>
                                                 </div>
                                             </div>
@@ -1355,7 +1360,7 @@ export default function Create({
                             <div className="flex items-end justify-between">
                                 <span className="text-sm font-semibold uppercase text-slate-500">Total</span>
                                 <span className="whitespace-nowrap text-4xl font-bold text-slate-950">
-                                    {formatCurrency(total, country)}
+                                    {formatCurrency(total, country, 5)}
                                 </span>
                             </div>
                             <button
@@ -1490,7 +1495,7 @@ export default function Create({
                                     <div>
                                         <div className="text-sm font-semibold text-slate-900">{draft.title ?? 'Borrador de compra'}</div>
                                         <div className="mt-1 text-xs text-slate-500">
-                                            {draft.supplier?.name ?? draft.payload.supplier_name ?? 'Sin proveedor'} · {draft.item_count} productos · Total estimado {formatCurrency(Number(draft.total ?? 0), country)} · Usuario: {draft.user?.name ?? '-'} · Guardado: {formatOperationDraftUpdatedAt(draft.updated_at)}
+                                            {draft.supplier?.name ?? draft.payload.supplier_name ?? 'Sin proveedor'} · {draft.item_count} productos · Total estimado {formatCurrency(Number(draft.total ?? 0), country, 5)} · Usuario: {draft.user?.name ?? '-'} · Guardado: {formatOperationDraftUpdatedAt(draft.updated_at)}
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
@@ -1603,7 +1608,7 @@ function CostHistoryModal({
                                                 <SupplierInfoPopover supplier={row} />
                                             </td>
                                             <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-950">
-                                                {formatCurrency(row.unit_cost, country)}
+                                                {formatCurrency(row.unit_cost, country, 5)}
                                             </td>
                                             <td className="px-4 py-3 text-slate-600">
                                                 {row.created_at_formatted ?? '-'}

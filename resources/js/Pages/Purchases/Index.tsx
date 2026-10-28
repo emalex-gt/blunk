@@ -163,7 +163,7 @@ export default function Index({ purchases, filters = {} }: { purchases: Paginate
                                                     )}
                                                 </td>
                                                 <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-950">
-                                                    {formatCurrency(purchase.total, country)}
+                                                    {formatCurrency(purchase.total, country, 5)}
                                                 </td>
                                                 <td className="px-4 py-3 text-right">
                                                     <Link

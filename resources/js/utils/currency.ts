@@ -26,11 +26,11 @@ export function parseMoneyValue(value: string): number | null {
     return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function formatCurrency(amount: number | string | null | undefined, country?: string | null): string {
+export function formatCurrency(amount: number | string | null | undefined, country?: string | null, decimals = 2): string {
     const config = currencies[country || 'GT'] ?? currencies.GT;
     const value = Number(amount ?? 0).toLocaleString('en-US', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
     });
 
     if (config.position === 'after') {

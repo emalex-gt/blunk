@@ -105,8 +105,8 @@
                     <td>{{ $item->product?->code ?: $item->product?->barcode ?: '-' }}</td>
                     <td>{{ $item->product_name }}</td>
                     <td class="right">{{ number_format((float) $item->quantity, 2) }}</td>
-                    <td class="right">{{ formatMoney($item->unit_cost, $business->country) }}</td>
-                    <td class="right">{{ formatMoney($item->total, $business->country) }}</td>
+                    <td class="right">{{ formatMoney($item->unit_cost, $business->country, 5) }}</td>
+                    <td class="right">{{ formatMoney($item->total, $business->country, 5) }}</td>
                 </tr>
             @endforeach
         </tbody>
@@ -115,8 +115,8 @@
     <section class="document-summary">
         <div></div>
         <table>
-            <tr><td>Subtotal</td><td class="right">{{ formatMoney($subtotal, $business->country) }}</td></tr>
-            <tr><td><strong>Total</strong></td><td class="right total">{{ formatMoney($purchase->total, $business->country) }}</td></tr>
+            <tr><td>Subtotal</td><td class="right">{{ formatMoney($subtotal, $business->country, 5) }}</td></tr>
+            <tr><td><strong>Total</strong></td><td class="right total">{{ formatMoney($purchase->total, $business->country, 5) }}</td></tr>
         </table>
     </section>
 

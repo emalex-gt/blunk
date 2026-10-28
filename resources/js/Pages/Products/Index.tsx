@@ -828,7 +828,7 @@ export default function ProductIndex({
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <InputLabel htmlFor="cost_price" value={t('products.cost')} />
-                            <TextInput id="cost_price" type="number" step="0.01" className="mt-1 block w-full" value={data.cost_price} onChange={(e) => setData('cost_price', e.target.value)} />
+                            <TextInput id="cost_price" type="number" step="0.00001" className="mt-1 block w-full" value={data.cost_price} onChange={(e) => setData('cost_price', limitDecimalPlaces(e.target.value, 5))} />
                         </div>
                         <div>
                             <InputLabel

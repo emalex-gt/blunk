@@ -70,7 +70,7 @@ export default function Show({ purchase }: { purchase: Purchase }) {
                             <Summary label="Sucursal" value={purchase.branch?.name ?? '-'} />
                             <Summary label="Forma de pago" value={paymentMethodLabel(purchase.payment_method)} />
                             <Summary label="Usuario" value={purchase.created_by?.name ?? '-'} />
-                            <Summary label="Total" value={formatCurrency(purchase.total, country)} />
+                            <Summary label="Total" value={formatCurrency(purchase.total, country, 5)} />
                         </div>
                         {purchase.paid_from_cash && (
                             <div className="mt-5 rounded-2xl border border-orange-100 bg-orange-50 p-4 text-sm font-semibold text-orange-700">
@@ -111,16 +111,16 @@ export default function Show({ purchase }: { purchase: Purchase }) {
                                             </td>
                                             <td className="px-4 py-3 text-right text-slate-700">{Number(item.quantity)}</td>
                                             <td className="whitespace-nowrap px-4 py-3 text-right text-slate-700">
-                                                {formatCurrency(item.previous_cost, country)}
+                                                {formatCurrency(item.previous_cost, country, 5)}
                                             </td>
                                             <td className="whitespace-nowrap px-4 py-3 text-right text-slate-700">
-                                                {formatCurrency(item.unit_cost, country)}
+                                                {formatCurrency(item.unit_cost, country, 5)}
                                             </td>
                                             <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-950">
-                                                {formatCurrency(item.new_average_cost, country)}
+                                                {formatCurrency(item.new_average_cost, country, 5)}
                                             </td>
                                             <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-950">
-                                                {formatCurrency(item.total, country)}
+                                                {formatCurrency(item.total, country, 5)}
                                             </td>
                                         </tr>
                                     ))}

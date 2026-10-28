@@ -21,10 +21,10 @@ class PurchaseItem extends Model
 
     protected $casts = [
         'quantity' => 'decimal:2',
-        'unit_cost' => 'decimal:2',
-        'previous_cost' => 'decimal:2',
-        'new_average_cost' => 'decimal:2',
-        'total' => 'decimal:2',
+        'unit_cost' => 'decimal:5',
+        'previous_cost' => 'decimal:5',
+        'new_average_cost' => 'decimal:5',
+        'total' => 'decimal:5',
     ];
 
     public function purchase(): BelongsTo

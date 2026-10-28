@@ -267,7 +267,7 @@ class ReportController extends Controller
             ['key' => 'product_code', 'label' => 'Código'],
             ['key' => 'supplier_name', 'label' => 'Proveedor'],
             ['key' => 'quantity', 'label' => 'Cantidad', 'type' => 'number'],
-            ['key' => 'unit_cost', 'label' => 'Costo unitario', 'type' => 'money'],
+            ['key' => 'unit_cost', 'label' => 'Costo unitario', 'type' => 'money', 'decimals' => 5],
             ['key' => 'supplier_invoice_number', 'label' => 'Factura proveedor'],
             ['key' => 'branch_name', 'label' => 'Sucursal'],
             ['key' => 'source', 'label' => 'Origen'],

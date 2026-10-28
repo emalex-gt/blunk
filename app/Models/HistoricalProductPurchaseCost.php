@@ -26,7 +26,7 @@ class HistoricalProductPurchaseCost extends Model
 
     protected $casts = [
         'quantity' => 'decimal:4',
-        'unit_cost' => 'decimal:4',
+        'unit_cost' => 'decimal:5',
         'acquired_at' => 'datetime',
         'imported_at' => 'datetime',
     ];

@@ -373,7 +373,7 @@ class ProductController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'code' => ['nullable', 'string', 'max:255'],
             'barcode' => ['nullable', 'string', 'max:255'],
-            'cost_price' => ['required', 'numeric', 'min:0'],
+            'cost_price' => ['required', 'numeric', 'decimal:0,5', 'min:0'],
             'sale_price' => ['required', 'numeric', 'decimal:0,2', 'min:0'],
             'stock' => ['required', 'integer', 'min:0'],
             'min_stock' => ['required', 'integer', 'min:0'],

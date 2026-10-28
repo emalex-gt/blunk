@@ -25,7 +25,7 @@ class Purchase extends Model
     ];
 
     protected $casts = [
-        'total' => 'decimal:2',
+        'total' => 'decimal:5',
         'paid_from_cash' => 'boolean',
         'business_number' => 'integer',
     ];

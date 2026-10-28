@@ -152,9 +152,9 @@ if (! function_exists('tenantTimezone')) {
 }
 
 if (! function_exists('formatMoney')) {
-    function formatMoney(float|int|string|null $amount, ?string $country = null): string
+    function formatMoney(float|int|string|null $amount, ?string $country = null, int $decimals = 2): string
     {
-        return Currency::formatMoney($amount, $country);
+        return Currency::formatMoney($amount, $country, $decimals);
     }
 }
 
