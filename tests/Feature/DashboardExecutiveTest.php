@@ -8,6 +8,7 @@ use App\Models\Customer;
 use App\Models\CustomerCreditAccount;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
+use App\Models\Purchase;
 use App\Models\Sale;
 use App\Models\TenantModule;
 use App\Models\TenantSetting;
@@ -136,14 +137,66 @@ class DashboardExecutiveTest extends TestCase
 
     public function test_executive_frontend_renders_comparisons_attention_and_authorized_links_only(): void
     {
-        $source = file_get_contents(resource_path('js/Pages/Dashboard.tsx'));
+        $source = file_get_contents(resource_path('js/Components/Dashboard/ExecutiveDashboard.tsx'));
+        $dashboard = file_get_contents(resource_path('js/Pages/Dashboard.tsx'));
 
-        $this->assertStringContainsString("widget.type === 'executive_overview'", $source);
+        $this->assertStringContainsString("widget.type === 'executive_overview'", $dashboard);
         $this->assertStringContainsString('sales_today.change_percent', $source);
         $this->assertStringContainsString('sales_month.change_percent', $source);
-        $this->assertStringContainsString('data.attention.map', $source);
+        $this->assertStringContainsString('attention.map', $source);
         $this->assertStringContainsString('item.href && <Link', $source);
-        $this->assertStringNotContainsString('executive.overview\' && <Link', $source);
+        $this->assertStringContainsString('AreaChart', $source);
+    }
+
+    public function test_sales_trend_has_fourteen_tenant_and_branch_scoped_days_with_zero_fill(): void
+    {
+        [$business, $user, $branch, $otherBranch] = $this->tenant(withOtherBranch: true);
+        $this->sale($business, $branch, $user, 125, '2026-03-25 10:00:00');
+        $this->sale($business, $otherBranch, $user, 900, '2026-03-25 10:00:00');
+        [$foreign, $foreignUser, $foreignBranch] = $this->tenant();
+        $this->sale($foreign, $foreignBranch, $foreignUser, 9000, '2026-03-25 10:00:00');
+
+        $trend = $this->overview($this->context($business, $user, $branch, [Permissions::POS_VIEW], ['pos']))['sales_trend'];
+
+        $this->assertCount(14, $trend);
+        $this->assertSame('2026-03-25', $trend[7]['date']);
+        $this->assertSame(125.0, $trend[7]['total']);
+        $this->assertSame(1, $trend[7]['count']);
+        $this->assertSame(0.0, $trend[0]['total']);
+    }
+
+    public function test_purchase_inventory_and_customer_blocks_require_their_specific_permissions(): void
+    {
+        [$business, $user, $branch] = $this->tenant();
+        $product = Product::query()->create(['business_id' => $business->id, 'name' => 'Inventario', 'code' => 'INV-'.uniqid(), 'cost_price' => 12, 'sale_price' => 20, 'stock' => 3, 'min_stock' => 0, 'is_active' => true]);
+        ProductBranchStock::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id, 'stock' => 3]);
+        Purchase::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'status' => 'completed', 'total' => 45, 'payment_method' => 'cash', 'created_by' => $user->id]);
+        $customer = Customer::query()->create(['business_id' => $business->id, 'name' => 'Cliente real', 'country' => 'GT']);
+        $this->sale($business, $branch, $user, 80, '2026-03-31 10:00:00', 'completed', $customer);
+
+        $without = $this->overview($this->context($business, $user, $branch, [Permissions::POS_VIEW], ['pos', 'purchases', 'inventory']));
+        $this->assertNull($without['purchases_month']);
+        $this->assertNull($without['inventory_value']);
+        $this->assertSame([], $without['top_customers']);
+
+        $with = $this->overview($this->context($business, $user, $branch, [Permissions::POS_VIEW, Permissions::PURCHASES_VIEW, Permissions::REPORTS_WAREHOUSE_MONEY_VIEW, Permissions::REPORTS_SALES_BY_CUSTOMER_VIEW], ['pos', 'purchases', 'inventory']));
+        $this->assertSame('45.00', $with['purchases_month']['total']);
+        $this->assertSame('36.00', $with['inventory_value']['amount']);
+        $this->assertSame('Cliente real', $with['top_customers'][0]['name']);
+    }
+
+    public function test_recent_activity_only_exposes_authorized_operation_types(): void
+    {
+        [$business, $user, $branch] = $this->tenant();
+        $sale = $this->sale($business, $branch, $user, 80, '2026-03-31 10:00:00');
+        $purchase = Purchase::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'status' => 'completed', 'total' => 45, 'payment_method' => 'cash', 'created_by' => $user->id]);
+        $purchase->forceFill(['created_at' => Carbon::parse('2026-03-31 11:00:00', 'America/Guatemala')->utc()])->save();
+
+        $activity = $this->overview($this->context($business, $user, $branch, [Permissions::POS_VIEW], ['pos', 'purchases']))['recent_activity'];
+        $this->assertSame([], $activity);
+
+        $activity = $this->overview($this->context($business, $user, $branch, [Permissions::POS_VIEW, Permissions::SALES_VIEW, Permissions::PURCHASES_VIEW], ['pos', 'purchases']))['recent_activity'];
+        $this->assertSame(['purchase:'.$purchase->id, 'sale:'.$sale->id], collect($activity)->pluck('key')->all());
     }
 
     private function overview(DashboardContext $context): array
@@ -186,14 +239,15 @@ class DashboardExecutiveTest extends TestCase
         return new DashboardContext($business, $user, $branch, true, $permissions, $modules, 'America/Guatemala');
     }
 
-    private function sale(Business $business, Branch $branch, User $user, int $total, string $localDate, string $status = 'completed'): Sale
+    private function sale(Business $business, Branch $branch, User $user, int $total, string $localDate, string $status = 'completed', ?Customer $customer = null): Sale
     {
         $at = Carbon::parse($localDate, 'America/Guatemala')->utc();
         $sale = Sale::query()->create([
             'business_id' => $business->id,
             'branch_id' => $branch->id,
             'business_number' => Sale::query()->where('business_id', $business->id)->count() + 1,
-            'customer_name' => 'Cliente ejecutivo',
+            'customer_id' => $customer?->id,
+            'customer_name' => $customer?->name ?? 'Cliente ejecutivo',
             'total' => $total,
             'payment_method' => 'cash',
             'document_type' => 'receipt',
