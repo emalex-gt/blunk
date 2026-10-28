@@ -954,6 +954,7 @@ export default function ProductIndex({
 
                     {editing && (
                         <SupplierCostHistorySection
+                            product={editing}
                             history={editing.supplier_cost_history ?? []}
                             country={country}
                         />
@@ -1186,17 +1187,25 @@ export default function ProductIndex({
 }
 
 function SupplierCostHistorySection({
+    product,
     history,
     country,
 }: {
+    product: Product;
     history: SupplierCostHistory[];
     country: string;
 }) {
     return (
         <section className="border-t border-slate-100 pt-4">
-            <h4 className="text-sm font-semibold text-slate-950">
-                Últimos costos por proveedor
-            </h4>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold text-slate-950">Últimos costos por proveedor</h4>
+                <Link
+                    href={route('reports.purchase-cost-history', { product_id: product.id })}
+                    className="text-sm font-semibold text-orange-600 hover:text-orange-800"
+                >
+                    Ver historial completo
+                </Link>
+            </div>
 
             {history.length === 0 ? (
                 <p className="mt-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-500">

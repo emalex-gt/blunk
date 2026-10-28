@@ -207,31 +207,43 @@ class ReportController extends Controller
         ]);
     }
 
-    public function purchaseCostHistory(Request $request): Response
+    public function purchaseCostHistory(Request $request): Response|RedirectResponse
     {
         $businessId = currentBusinessId();
         $business = Business::query()->select('id', 'country')->findOrFail($businessId);
+        $productId = $request->integer('product_id');
+
+        if (! $productId) {
+            return redirect()
+                ->route('products.index')
+                ->with('warning', 'Selecciona un producto para consultar su historial de precios de compra.');
+        }
+
+        $product = Product::query()
+            ->where('business_id', $businessId)
+            ->findOrFail($productId);
         $data = $request->validate([
-            'product_search' => ['nullable', 'string', 'max:255'],
-            'supplier_search' => ['nullable', 'string', 'max:255'],
+            'supplier_id' => ['nullable', 'integer'],
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
         ]);
-        $productSearch = trim((string) ($data['product_search'] ?? ''));
-        $supplierSearch = trim((string) ($data['supplier_search'] ?? ''));
+        $supplierId = $data['supplier_id'] ?? null;
         $dateFrom = $data['date_from'] ?? null;
         $dateTo = $data['date_to'] ?? null;
         $timezone = tenantTimezone($business);
 
-        $rows = ProductPurchaseCostHistory::reportRows($businessId)
-            ->when($productSearch !== '', function ($query) use ($productSearch) {
-                $query->where(function ($query) use ($productSearch) {
-                    $query->where('products.name', 'ilike', "%{$productSearch}%")
-                        ->orWhere('products.code', 'ilike', "%{$productSearch}%")
-                        ->orWhere('products.barcode', 'ilike', "%{$productSearch}%");
-                });
-            })
-            ->when($supplierSearch !== '', fn ($query) => $query->where('suppliers.name', 'ilike', "%{$supplierSearch}%"))
+        $costHistory = ProductPurchaseCostHistory::reportRows($businessId)
+            ->where('cost_history.product_id', $product->id);
+
+        $suppliers = (clone $costHistory)
+            ->whereNotNull('suppliers.id')
+            ->select('suppliers.id', 'suppliers.name')
+            ->distinct()
+            ->orderBy('suppliers.name')
+            ->get();
+
+        $rows = $costHistory
+            ->when($supplierId, fn ($query) => $query->where('cost_history.supplier_id', $supplierId))
             ->when($dateFrom, fn ($query) => $query->where('cost_history.acquired_at', '>=', Carbon::parse($dateFrom, $timezone)->startOfDay()->utc()))
             ->when($dateTo, fn ($query) => $query->where('cost_history.acquired_at', '<=', Carbon::parse($dateTo, $timezone)->endOfDay()->utc()))
             ->orderByDesc('cost_history.acquired_at')
@@ -273,11 +285,13 @@ class ReportController extends Controller
             ['key' => 'source', 'label' => 'Origen'],
         ], $rows, [
             'filters' => [
-                'product_search' => $productSearch,
-                'supplier_search' => $supplierSearch,
+                'supplier_id' => $supplierId,
                 'date_from' => $dateFrom,
                 'date_to' => $dateTo,
             ],
+            'fixedFilters' => ['product_id' => $product->id],
+            'productContext' => ['id' => $product->id, 'name' => $product->name, 'code' => $product->code],
+            'suppliers' => $suppliers,
             'maxRangeLabel' => 'Historial completo; rango de fechas opcional.',
             'exportBranchName' => 'Todas las sucursales',
         ]);
@@ -1117,6 +1131,9 @@ class ReportController extends Controller
             'categories' => $extra['categories'] ?? [],
             'customers' => $extra['customers'] ?? [],
             'sellers' => $extra['sellers'] ?? [],
+            'suppliers' => $extra['suppliers'] ?? [],
+            'fixedFilters' => $extra['fixedFilters'] ?? [],
+            'productContext' => $extra['productContext'] ?? null,
             'branch' => $extra['branch'] ?? null,
             'exportBranchName' => $extra['exportBranchName'] ?? null,
             'maxRangeLabel' => $extra['maxRangeLabel'] ?? 'Rango máximo: 3 meses',

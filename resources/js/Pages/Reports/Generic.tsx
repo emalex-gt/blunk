@@ -2,7 +2,7 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import { ReactNode } from 'react';
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 
 type Column = {
     key: string;
@@ -31,6 +31,12 @@ type Branch = {
     code?: string | null;
 };
 
+type ProductContext = {
+    id: number;
+    name: string;
+    code?: string | null;
+};
+
 type Paginator<T> = {
     data: T[];
     links: { url: string | null; label: string; active: boolean }[];
@@ -49,6 +55,9 @@ type Props = {
     categories?: Option[];
     customers?: Option[];
     sellers?: Option[];
+    suppliers?: Option[];
+    fixedFilters?: Record<string, string | number | null>;
+    productContext?: ProductContext | null;
     branch?: Branch | null;
     maxRangeLabel?: string;
 };
@@ -102,6 +111,9 @@ export default function GenericReport({
     categories = [],
     customers = [],
     sellers = [],
+    suppliers = [],
+    fixedFilters = {},
+    productContext = null,
     branch = null,
     maxRangeLabel = 'Rango máximo: 3 meses',
 }: Props) {
@@ -109,7 +121,8 @@ export default function GenericReport({
     const business = page.props.business as { country?: string | null } | null;
     const errors = page.props.errors as Record<string, string | undefined>;
     const country = business?.country ?? 'GT';
-    const [form, setForm] = useState<Record<string, string>>(() => stringifyFilters(filters));
+    const fixedFilterValues = useMemo(() => stringifyFilters(fixedFilters), [fixedFilters]);
+    const [form, setForm] = useState<Record<string, string>>(() => ({ ...stringifyFilters(filters), ...fixedFilterValues }));
     const [reservationExplanation, setReservationExplanation] = useState<ReservationExplanation | null>(null);
     const [reservationLoading, setReservationLoading] = useState(false);
     const [reservationError, setReservationError] = useState<string | null>(null);
@@ -124,14 +137,15 @@ export default function GenericReport({
 
     function submit(event: FormEvent) {
         event.preventDefault();
-        router.get(route(routeName), cleanForm(form), {
+        router.get(route(routeName), requestFilters(form, fixedFilterValues), {
             preserveScroll: true,
             preserveState: true,
         });
     }
 
     function clear() {
-        router.get(route(routeName), {}, { preserveScroll: true });
+        setForm(fixedFilterValues);
+        router.get(route(routeName), fixedFilterValues, { preserveScroll: true });
     }
 
     async function openReservationExplanation(row: Record<string, unknown>) {
@@ -170,6 +184,12 @@ export default function GenericReport({
 
             <div className="py-5">
                 <div className="mx-auto max-w-[1800px] space-y-5 px-5 sm:px-6">
+                    {productContext && (
+                        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                            <h3 className="text-base font-semibold text-slate-950">{productContext.name}</h3>
+                            {productContext.code && <p className="mt-1 text-sm text-slate-500">Código: {productContext.code}</p>}
+                        </section>
+                    )}
                     <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                             <div>
@@ -181,13 +201,13 @@ export default function GenericReport({
                             </div>
                             <div className="flex flex-wrap gap-2">
                                 <a
-                                    href={exportUrl(routeName, 'excel', form)}
+                                    href={exportUrl(routeName, 'excel', requestFilters(form, fixedFilterValues))}
                                     className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                                 >
                                     Exportar Excel
                                 </a>
                                 <a
-                                    href={exportUrl(routeName, 'pdf', form)}
+                                    href={exportUrl(routeName, 'pdf', requestFilters(form, fixedFilterValues))}
                                     className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                                 >
                                     Exportar PDF
@@ -276,6 +296,13 @@ export default function GenericReport({
                             )}
                             {filterKeys.includes('supplier_search') && (
                                 <TextField label="Proveedor" value={form.supplier_search ?? ''} onChange={(value) => setField('supplier_search', value)} />
+                            )}
+                            {filterKeys.includes('supplier_id') && (
+                                <SearchableSupplierField
+                                    suppliers={suppliers}
+                                    value={form.supplier_id ?? ''}
+                                    onChange={(value) => setField('supplier_id', value)}
+                                />
                             )}
                             {filterKeys.includes('only_below_minimum') && (
                                 <SelectField label="Stock bajo" value={form.only_below_minimum ?? '1'} onChange={(value) => setField('only_below_minimum', value)}>
@@ -403,6 +430,10 @@ function cleanForm(form: Record<string, string>): Record<string, string> {
     return Object.fromEntries(Object.entries(form).filter(([, value]) => value !== ''));
 }
 
+function requestFilters(form: Record<string, string>, fixedFilters: Record<string, string>): Record<string, string> {
+    return { ...cleanForm(form), ...fixedFilters };
+}
+
 function exportUrl(routeName: string, format: 'excel' | 'pdf', form: Record<string, string>) {
     return route('reports.export', {
         report: routeName.replace(/^reports\./, ''),
@@ -496,6 +527,83 @@ function TextField({ label, value, onChange }: { label: string; value: string; o
                 onChange={(event) => onChange(event.target.value)}
                 className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
             />
+        </label>
+    );
+}
+
+function SearchableSupplierField({
+    suppliers,
+    value,
+    onChange,
+}: {
+    suppliers: Option[];
+    value: string;
+    onChange: (value: string) => void;
+}) {
+    const selectedSupplier = suppliers.find((supplier) => String(supplier.id) === value);
+    const [query, setQuery] = useState(selectedSupplier?.name ?? '');
+    const [open, setOpen] = useState(false);
+    const matches = useMemo(
+        () => suppliers.filter((supplier) => supplier.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())),
+        [query, suppliers],
+    );
+
+    useEffect(() => {
+        setQuery(selectedSupplier?.name ?? '');
+    }, [selectedSupplier?.name]);
+
+    return (
+        <label className="relative block">
+            <span className="text-xs font-semibold text-slate-500">Proveedor</span>
+            <input
+                type="text"
+                value={query}
+                role="combobox"
+                aria-expanded={open}
+                aria-controls="supplier-filter-options"
+                placeholder="Todos los proveedores"
+                onFocus={() => setOpen(true)}
+                onChange={(event) => {
+                    setQuery(event.target.value);
+                    onChange('');
+                    setOpen(true);
+                }}
+                className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm shadow-sm focus:border-orange-400 focus:ring-orange-100"
+            />
+            {open && (
+                <div id="supplier-filter-options" role="listbox" className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                    <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                            setQuery('');
+                            onChange('');
+                            setOpen(false);
+                        }}
+                    >
+                        Todos los proveedores
+                    </button>
+                    {matches.map((supplier) => (
+                        <button
+                            key={supplier.id}
+                            type="button"
+                            role="option"
+                            aria-selected={String(supplier.id) === value}
+                            className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                                setQuery(supplier.name);
+                                onChange(String(supplier.id));
+                                setOpen(false);
+                            }}
+                        >
+                            {supplier.name}
+                        </button>
+                    ))}
+                    {matches.length === 0 && <p className="px-3 py-2 text-sm text-slate-500">Sin proveedores coincidentes.</p>}
+                </div>
+            )}
         </label>
     );
 }
