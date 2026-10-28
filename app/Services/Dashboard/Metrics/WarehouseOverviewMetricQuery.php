@@ -199,6 +199,7 @@ final class WarehouseOverviewMetricQuery implements DashboardMetricQuery
     {
         $branchId = $context->branchIdForScopedMetric();
         if (! $branchId) return [];
+        $timezone = $context->timezone;
 
         return $this->scopedTransfers($context)
             ->with(['fromBranch:id,name', 'toBranch:id,name'])
@@ -207,7 +208,7 @@ final class WarehouseOverviewMetricQuery implements DashboardMetricQuery
             ->latest('inventory_transfers.created_at')
             ->limit(5)
             ->get()
-            ->map(function (InventoryTransfer $transfer) use ($branchId) {
+            ->map(function (InventoryTransfer $transfer) use ($branchId, $timezone) {
                 $inbound = (int) $transfer->to_branch_id === $branchId;
 
                 return [
@@ -216,7 +217,7 @@ final class WarehouseOverviewMetricQuery implements DashboardMetricQuery
                     'other_branch' => $inbound ? $transfer->fromBranch?->name : $transfer->toBranch?->name,
                     'quantity' => (float) ($transfer->quantity ?? 0),
                     'lines_count' => (int) $transfer->lines_count,
-                    'created_at' => $transfer->created_at?->timezone($context->timezone)->toIso8601String(),
+                    'created_at' => $transfer->created_at?->timezone($timezone)->toIso8601String(),
                     'href' => route('inventory.transfers.show', $transfer, absolute: false),
                 ];
             })
