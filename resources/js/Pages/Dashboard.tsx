@@ -1,12 +1,13 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import ExecutiveDashboard from '@/Components/Dashboard/ExecutiveDashboard';
+import FinanceDashboard from '@/Components/Dashboard/FinanceDashboard';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, usePage } from '@inertiajs/react';
 
 type Widget = {
     key: string;
     title: string;
-    type: 'sales_summary' | 'cash_status' | 'stock_alerts' | 'top_product' | 'money' | 'count' | 'route_work_day' | 'route_delivery_run' | 'cashier_workspace' | 'executive_overview' | 'branch_manager_overview' | 'warehouse_overview';
+    type: 'sales_summary' | 'cash_status' | 'stock_alerts' | 'top_product' | 'money' | 'count' | 'route_work_day' | 'route_delivery_run' | 'cashier_workspace' | 'executive_overview' | 'finance_overview' | 'branch_manager_overview' | 'warehouse_overview';
     period: 'today' | 'this_month' | 'current';
     data: Record<string, unknown>;
 };
@@ -144,6 +145,7 @@ function WidgetCard({ widget, country }: { widget: Widget; country: string }) {
         return <CashierWorkspaceCard data={widget.data as CashierWorkspaceData} country={country} />;
     }
     if (widget.type === 'executive_overview') return <ExecutiveDashboard data={widget.data} country={country} />;
+    if (widget.type === 'finance_overview') return <FinanceDashboard data={widget.data} country={country} />;
     if (widget.type === 'branch_manager_overview') return <BranchManagerOverviewCard data={widget.data as any} country={country} />;
     if (widget.type === 'warehouse_overview') return <WarehouseOverviewCard data={widget.data as any} />;
 

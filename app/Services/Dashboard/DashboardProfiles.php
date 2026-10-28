@@ -44,13 +44,7 @@ final class DashboardProfiles
             'route_delivery' => ['routes.my_delivery_run'],
             'purchases', 'generic' => [],
             'warehouse' => ['warehouse.overview'],
-            'finance' => [
-                'sales.today',
-                'sales.this_month',
-                'sales.estimated_margin',
-                'sales.top_product',
-                'credits.receivable',
-            ],
+            'finance' => ['finance.overview'],
             'route_supervisor' => [
                 'routes.open_work_days',
                 'routes.pending_visits',

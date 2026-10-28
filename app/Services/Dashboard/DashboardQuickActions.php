@@ -47,6 +47,10 @@ final class DashboardQuickActions
             ['key' => 'purchases.index', 'label' => 'Ver compras', 'route' => 'purchases.index', 'profiles' => ['purchases', 'generic'], 'modules' => ['purchases'], 'permissions' => [Permissions::PURCHASES_VIEW], 'emphasis' => 'secondary'],
             ['key' => 'reports.sales', 'label' => 'Reportes de ventas', 'route' => 'reports.sales', 'profiles' => ['executive', 'finance', 'generic'], 'modules' => ['reports'], 'permissions' => [Permissions::REPORTS_SALES_VIEW], 'emphasis' => 'primary'],
             ['key' => 'credits.accounts', 'label' => 'Cuentas por cobrar', 'route' => 'credits.accounts.index', 'profiles' => ['executive', 'finance', 'generic'], 'modules' => ['credits'], 'permissions' => [Permissions::CREDITS_ACCOUNTS_VIEW], 'features' => ['credit_sales'], 'emphasis' => 'secondary'],
+            ['key' => 'reports.profit', 'label' => 'Rentabilidad', 'route' => 'reports.profit', 'profiles' => ['finance'], 'modules' => ['reports'], 'permissions' => [Permissions::REPORTS_PROFIT_VIEW], 'features' => [], 'emphasis' => 'secondary'],
+            ['key' => 'reports.warehouse-money', 'label' => 'Inventario valorizado', 'route' => 'reports.warehouse-money', 'profiles' => ['finance'], 'modules' => ['reports', 'inventory'], 'permissions' => [Permissions::REPORTS_WAREHOUSE_MONEY_VIEW], 'features' => [], 'emphasis' => 'secondary'],
+            ['key' => 'credits.payments', 'label' => 'Abonos', 'route' => 'credits.payments.index', 'profiles' => ['finance'], 'modules' => ['credits'], 'permissions' => [Permissions::CREDITS_PAYMENTS_VIEW], 'features' => ['credit_sales'], 'emphasis' => 'secondary'],
+            ['key' => 'purchases.index.finance', 'label' => 'Compras', 'route' => 'purchases.index', 'profiles' => ['finance'], 'modules' => ['purchases'], 'permissions' => [Permissions::PURCHASES_VIEW], 'features' => [], 'emphasis' => 'secondary'],
         ];
     }
 
