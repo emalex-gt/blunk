@@ -16,9 +16,12 @@ export type WarehouseDashboardData = {
     attention: Array<{ key: string; severity: 'critical' | 'warning' | 'info'; title: string; detail: string; href: string | null }>;
 };
 
+type KpiTone = 'red' | 'amber' | 'emerald' | 'orange' | 'slate';
+type KpiItem = { label: string; value: number | string; detail: string; tone?: KpiTone };
+
 export default function WarehouseDashboard({ data }: { data: WarehouseDashboardData }) {
     const movement = data.movements_today;
-    const kpis = [
+    const kpis: KpiItem[] = [
         { label: 'SKUs activos', value: data.stock_summary.active_skus, detail: `${data.stock_summary.physical_units} unidades físicas` },
         { label: 'Sin stock', value: data.inventory.out_of_stock_count, detail: data.stock_summary.negative_stock_count > 0 ? `${data.stock_summary.negative_stock_count} negativos` : 'Requieren atención', tone: 'red' },
         { label: 'Stock bajo', value: data.inventory.low_stock_count, detail: 'Por debajo del mínimo', tone: 'amber' },
@@ -35,7 +38,7 @@ export default function WarehouseDashboard({ data }: { data: WarehouseDashboardD
     </section>;
 }
 
-function Kpi({ label, value, detail, tone = 'slate' }: { label: string; value: number | string; detail: string; tone?: 'red' | 'amber' | 'emerald' | 'orange' | 'slate' }) { const color = { red: 'text-red-700', amber: 'text-amber-700', emerald: 'text-emerald-700', orange: 'text-orange-700', slate: 'text-slate-950' }[tone]; return <article className="min-w-0 rounded-xl border border-slate-200/80 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.05)]"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p><p className={`mt-2 truncate text-2xl font-bold tracking-tight ${color}`}>{value}</p><p className="mt-2 truncate text-xs text-slate-500">{detail}</p></article>; }
+function Kpi({ label, value, detail, tone = 'slate' }: KpiItem) { const color = { red: 'text-red-700', amber: 'text-amber-700', emerald: 'text-emerald-700', orange: 'text-orange-700', slate: 'text-slate-950' }[tone]; return <article className="min-w-0 rounded-xl border border-slate-200/80 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.05)]"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p><p className={`mt-2 truncate text-2xl font-bold tracking-tight ${color}`}>{value}</p><p className="mt-2 truncate text-xs text-slate-500">{detail}</p></article>; }
 
 function MovementTrend({ rows }: { rows: WarehouseDashboardData['movement_trend'] }) { return <Panel className="xl:col-span-8" title="Actividad de inventario" subtitle="Últimos 14 días"><div className="h-[280px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={rows} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}><CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} /><XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: '#64748b', fontSize: 11 }} /><YAxis tickLine={false} axisLine={false} tick={{ fill: '#64748b', fontSize: 11 }} width={44} /><Tooltip content={<MovementTooltip />} /><Bar dataKey="entries" name="Entradas" fill="#059669" radius={[4, 4, 0, 0]} maxBarSize={28} /><Bar dataKey="exits" name="Salidas" fill="#ea580c" radius={[4, 4, 0, 0]} maxBarSize={28} /></BarChart></ResponsiveContainer></div></Panel>; }
 function MovementTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ payload: WarehouseDashboardData['movement_trend'][number] }>; label?: string }) { if (!active || !payload?.[0]) return null; const row = payload[0].payload; return <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg"><p className="font-semibold text-slate-800">{label}</p><p className="mt-1 text-emerald-700">Entradas: {row.entries}</p><p className="text-orange-700">Salidas: {row.exits}</p><p className="text-slate-500">{row.movements} movimiento(s)</p></div>; }
