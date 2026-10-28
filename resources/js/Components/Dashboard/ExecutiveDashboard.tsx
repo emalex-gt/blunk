@@ -21,7 +21,7 @@ export default function ExecutiveDashboard({ data, country }: ExecutiveDashboard
     ].filter(Boolean) as Array<{ label: string; value: string; detail: string; change?: number | null; tone?: string }>;
 
     const operation = [
-        data.cash && { label: 'Caja', value: data.cash.status === 'open' ? 'Abierta' : 'Cerrada', detail: data.cash.expected_cash ? `Esperado ${formatCurrency(data.cash.expected_cash, country)}` : 'Sin sesión abierta', tone: data.cash.status === 'open' ? 'emerald' : 'slate' },
+        data.cash && { label: 'Caja', value: data.cash.status === 'open' ? 'Abierta' : 'Cerrada', detail: data.cash.status === 'open' ? `Esperado ${formatCurrency(data.cash.expected_cash ?? 0, country)}` : 'Sin sesión abierta', tone: data.cash.status === 'open' ? 'emerald' : 'slate' },
         data.stock && { label: 'Sin existencias', value: String(data.stock.out_of_stock_count), detail: 'Productos agotados', tone: data.stock.out_of_stock_count > 0 ? 'red' : 'slate' },
         data.stock && { label: 'Stock bajo', value: String(data.stock.low_stock_count), detail: 'Productos por reabastecer', tone: data.stock.low_stock_count > 0 ? 'amber' : 'slate' },
         data.purchases_month && { label: 'Compras', value: formatCurrency(data.purchases_month.total, country), detail: 'Acumulado del mes', tone: 'slate' },
@@ -203,7 +203,7 @@ function OperationPanel({ operation, routes }: { operation: Array<{ label: strin
 }
 
 function CompactOperation({ label, value, detail, tone = 'slate' }: { label: string; value: string; detail: string; tone?: string }) {
-    const valueTone = tone === 'emerald' ? 'text-emerald-700' : tone === 'red' ? 'text-red-700' : 'text-slate-900';
+    const valueTone = tone === 'emerald' ? 'text-emerald-700' : tone === 'amber' ? 'text-amber-700' : tone === 'red' ? 'text-red-700' : 'text-slate-900';
     return <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs font-semibold text-slate-500">{label}</p><p className={`mt-1 text-lg font-bold ${valueTone}`}>{value}</p><p className="mt-1 text-xs text-slate-500">{detail}</p></div>;
 }
 
