@@ -38,20 +38,21 @@ class ListFilterExportsTest extends TestCase
     {
         [$business, $user, $branch] = $this->tenant('purchases', ['purchases']);
         $supplier = Supplier::query()->create(['business_id' => $business->id, 'name' => 'Proveedor A']);
-        $this->purchase($business, $branch, $user, $supplier, 100, 'cash', now()->subMonth());
-        $this->purchase($business, $branch, $user, $supplier, 200, 'card', now());
+        $today = now(tenantTimezone($business));
+        $this->purchase($business, $branch, $user, $supplier, 100, 'cash', $today->copy()->subMonth());
+        $this->purchase($business, $branch, $user, $supplier, 200, 'card', $today->copy());
 
         $this->actingAs($user)
             ->get(route('purchases.index', [
-                'date_from' => now()->toDateString(),
-                'date_to' => now()->toDateString(),
+                'date_from' => $today->toDateString(),
+                'date_to' => $today->toDateString(),
                 'payment_method' => 'card',
             ]))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Purchases/Index')
                 ->where('purchases.total', 1)
-                ->where('purchases.data.0.total', '200.00'));
+                ->where('purchases.data.0.total', '200.00000'));
     }
 
     public function test_purchases_export_requires_permission_and_is_branch_scoped(): void
