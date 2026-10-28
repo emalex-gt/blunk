@@ -42,7 +42,8 @@ final class DashboardProfiles
             'cashier' => ['cashier.workspace'],
             'route_seller' => ['routes.my_work_day'],
             'route_delivery' => ['routes.my_delivery_run'],
-            'purchases', 'generic' => [],
+            'purchases' => ['purchases.overview'],
+            'generic' => [],
             'warehouse' => ['warehouse.overview'],
             'finance' => ['finance.overview'],
             'route_supervisor' => [

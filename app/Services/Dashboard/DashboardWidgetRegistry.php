@@ -17,6 +17,7 @@ use App\Services\Dashboard\Metrics\ExecutiveOverviewMetricQuery;
 use App\Services\Dashboard\Metrics\BranchManagerOverviewMetricQuery;
 use App\Services\Dashboard\Metrics\WarehouseOverviewMetricQuery;
 use App\Services\Dashboard\Metrics\FinanceOverviewMetricQuery;
+use App\Services\Dashboard\Metrics\PurchasesOverviewMetricQuery;
 use App\Support\Permissions;
 use LogicException;
 
@@ -28,6 +29,7 @@ final class DashboardWidgetRegistry
         $definitions = [
             new DashboardWidgetDefinition(key: 'executive.overview', title: 'Resumen ejecutivo', type: 'executive_overview', period: DashboardPeriod::CURRENT, query: new ExecutiveOverviewMetricQuery(), requiredModules: ['pos'], requiredAnyPermissions: [Permissions::POS_VIEW, Permissions::REPORTS_SALES_VIEW]),
             new DashboardWidgetDefinition(key: 'finance.overview', title: 'Análisis financiero', type: 'finance_overview', period: DashboardPeriod::CURRENT, query: new FinanceOverviewMetricQuery(), requiredModules: [], requiredAnyPermissions: []),
+            new DashboardWidgetDefinition(key: 'purchases.overview', title: 'Compras y abastecimiento', type: 'purchases_overview', period: DashboardPeriod::CURRENT, query: new PurchasesOverviewMetricQuery(), requiredModules: ['purchases'], requiredPermissions: [Permissions::PURCHASES_VIEW]),
             new DashboardWidgetDefinition(key: 'branch_manager.overview', title: 'Operación de sucursal', type: 'branch_manager_overview', period: DashboardPeriod::CURRENT, query: new BranchManagerOverviewMetricQuery(), requiredModules: [], requiredAnyPermissions: []),
             new DashboardWidgetDefinition(key: 'warehouse.overview', title: 'Inventario', type: 'warehouse_overview', period: DashboardPeriod::CURRENT, query: new WarehouseOverviewMetricQuery(), requiredModules: ['inventory'], requiredPermissions: [Permissions::INVENTORY_VIEW]),
             new DashboardWidgetDefinition(
