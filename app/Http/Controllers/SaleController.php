@@ -22,6 +22,7 @@ use App\Models\TenantSetting;
 use App\Models\TenantFelSetting;
 use App\Services\Fel\FelException;
 use App\Services\Fel\FelCancellationFinalizer;
+use App\Services\Fel\FelCancellationRequestService;
 use App\Services\SaleStockCancellationService;
 use App\Services\BranchAccessService;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
@@ -1308,41 +1309,38 @@ class SaleController extends Controller
         $branchId = (int) ($sale->branch_id ?: BranchInventory::defaultBranch($businessId)->id);
         $cancellationRequest = $sale->electronicDocument?->cancellationRequest;
 
+        if (! $cancellationRequest && $this->hasCertifiedGuatemalaFelDocument($sale)) {
+            $this->assertGuatemalaFelCancellationIsSafe($sale);
+
+            $cancellationRequest = app(FelCancellationRequestService::class)->request(
+                $sale->electronicDocument,
+                $data['reason'],
+                $request->user()->id,
+            );
+        }
+
         if ($cancellationRequest) {
             if ($cancellationRequest->status !== FelCancellationRequest::CONFIRMED) {
+                $message = match ($cancellationRequest->status) {
+                    FelCancellationRequest::REJECTED => 'Digifact rechazó la anulación fiscal. La venta continúa sin cambios.',
+                    FelCancellationRequest::UNKNOWN => 'No se pudo confirmar la anulación fiscal. La venta continúa sin cambios hasta resolver la incidencia.',
+                    FelCancellationRequest::MANUAL_RESOLUTION_REQUIRED => 'La anulación fiscal requiere resolución manual antes de aplicar efectos comerciales.',
+                    default => 'La anulación fiscal sigue en proceso. La venta continúa sin cambios.',
+                };
+
                 throw ValidationException::withMessages([
-                    'sale' => 'No se pueden aplicar efectos comerciales mientras la anulación fiscal no esté confirmada.',
+                    'sale' => $message,
                 ]);
             }
 
             try {
-                app(IdempotencyService::class)->run(
+                $this->finalizeConfirmedFelCancellation(
+                    $request,
+                    $sale,
+                    $cancellationRequest,
                     $businessId,
                     $branchId,
-                    $request->user()->id,
-                    'sale_cancel',
                     $data['idempotency_key'],
-                    [
-                        'business_id' => $businessId,
-                        'branch_id' => $branchId,
-                        'user_id' => $request->user()->id,
-                        'operation_type' => 'sale_cancel_finalization',
-                        'sale_id' => $sale->id,
-                        'fel_cancellation_request_id' => $cancellationRequest->id,
-                    ],
-                    function () use ($cancellationRequest, $request, $businessId) {
-                        $finalized = app(FelCancellationFinalizer::class)->finalize(
-                            $cancellationRequest,
-                            $request->user(),
-                            $businessId,
-                        );
-
-                        return [
-                            'result_id' => $finalized->id,
-                            'response_payload' => ['sale_id' => $finalized->id],
-                        ];
-                    },
-                    'sale',
                 );
             } catch (FelException $exception) {
                 throw ValidationException::withMessages([
@@ -2914,6 +2912,51 @@ class SaleController extends Controller
                 'sale' => 'La anulación de facturas FEL certificadas está temporalmente bloqueada hasta validar el contrato Digifact en TEST.',
             ]);
         }
+    }
+
+    private function hasCertifiedGuatemalaFelDocument(Sale $sale): bool
+    {
+        return strtoupper((string) $sale->business?->country) === 'GT'
+            && $sale->electronicDocument?->status === 'certified';
+    }
+
+    private function finalizeConfirmedFelCancellation(
+        Request $request,
+        Sale $sale,
+        FelCancellationRequest $cancellationRequest,
+        int $businessId,
+        int $branchId,
+        string $idempotencyKey,
+    ): void {
+        app(IdempotencyService::class)->run(
+            $businessId,
+            $branchId,
+            $request->user()->id,
+            'sale_cancel',
+            $idempotencyKey,
+            [
+                'business_id' => $businessId,
+                'branch_id' => $branchId,
+                'user_id' => $request->user()->id,
+                'operation_type' => 'sale_cancel_finalization',
+                'sale_id' => $sale->id,
+                'fel_cancellation_request_id' => $cancellationRequest->id,
+                'reason' => $cancellationRequest->reason,
+            ],
+            function () use ($cancellationRequest, $request, $businessId) {
+                $finalized = app(FelCancellationFinalizer::class)->finalize(
+                    $cancellationRequest,
+                    $request->user(),
+                    $businessId,
+                );
+
+                return [
+                    'result_id' => $finalized->id,
+                    'response_payload' => ['sale_id' => $finalized->id],
+                ];
+            },
+            'sale',
+        );
     }
 
     private function userCanCancelSale(Request $request, Sale $sale): bool
