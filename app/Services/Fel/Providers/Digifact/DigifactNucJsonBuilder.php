@@ -375,7 +375,7 @@ class DigifactNucJsonBuilder
         $settings = $document->business?->tenantFelSetting;
         $sale = $document->sale;
         $customer = $sale?->customer;
-        $issuedAt = $document->issued_at ?: $sale?->fel_issued_at ?: $sale?->created_at;
+        $issuedAt = $this->originalIssuedAtForCancellation($document, $sale);
         $issuerTaxId = DigifactNit::cleanIssuerNitForPayload($settings?->issuer_tax_id);
         $receiverTaxId = DigifactNit::cleanReceiverNit($sale?->customer_doc_number ?: $customer?->doc_number);
 
@@ -391,5 +391,37 @@ class DigifactNucJsonBuilder
             'MotivoAnulacion' => $reason,
             'Username' => $settings->username,
         ];
+    }
+
+    private function originalIssuedAtForCancellation(ElectronicDocument $document, ?Sale $sale): ?Carbon
+    {
+        $requestPayload = $document->request_payload;
+        $payloadIssuedAt = is_array($requestPayload)
+            ? ($requestPayload['Header']['IssuedDateTime'] ?? null)
+            : null;
+
+        if (filled($payloadIssuedAt)) {
+            try {
+                return Carbon::parse((string) $payloadIssuedAt);
+            } catch (\Throwable) {
+                return null;
+            }
+        }
+
+        foreach ([[$document, 'issued_at'], [$sale, 'fel_issued_at']] as [$model, $attribute]) {
+            if (! $model) {
+                continue;
+            }
+
+            $rawTimestamp = $model->getRawOriginal($attribute);
+
+            if (filled($rawTimestamp)) {
+                // Legacy Laravel timestamps are stored without an offset. For FEL,
+                // the persisted clock value represents Guatemala's fiscal issue time.
+                return Carbon::parse((string) $rawTimestamp, 'America/Guatemala');
+            }
+        }
+
+        return null;
     }
 }

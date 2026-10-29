@@ -59,6 +59,16 @@ class DigifactCancellationContractTest extends TestCase
         });
     }
 
+    public function test_cancellation_preserves_the_original_guatemala_issue_time_after_the_document_is_reloaded(): void
+    {
+        [, $document] = $this->certifiedDocument();
+        $document = $document->fresh(['sale.customer', 'business.tenantFelSetting']);
+
+        $payload = app(DigifactNucJsonBuilder::class)->buildCancellationPayload($document, 'Error en datos del receptor');
+
+        $this->assertSame('2026-10-01T09:30:00', $payload['FechaEmisionDocumentoAnular']);
+    }
+
     public function test_cancellation_is_confirmed_only_when_the_provider_returns_the_same_uuid(): void
     {
         [, $document] = $this->certifiedDocument();
