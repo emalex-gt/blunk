@@ -4,13 +4,12 @@ namespace Tests\Feature;
 
 use App\Models\Business;
 use App\Models\ElectronicDocument;
+use App\Models\FelCancellationRequest;
 use App\Models\Sale;
 use App\Models\TenantFelPhrase;
 use App\Models\TenantFelSetting;
-use App\Services\Fel\FelException;
-use App\Services\Fel\FelProviderRejectedException;
+use App\Services\Fel\FelCancellationRequestService;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
-use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Fel\Providers\Digifact\DigifactNucJsonBuilder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
@@ -69,15 +68,23 @@ class DigifactCancellationContractTest extends TestCase
         $this->assertSame('2026-10-01T09:30:00', $payload['FechaEmisionDocumentoAnular']);
     }
 
-    public function test_cancellation_is_confirmed_only_when_the_provider_returns_the_same_uuid(): void
+    public function test_cancellation_request_is_persisted_before_the_provider_is_called_and_confirmed_only_for_the_same_uuid(): void
     {
         [, $document] = $this->certifiedDocument();
-        Http::fake(['*CancelFelGT' => Http::response(['Codigo' => '1', 'Autorizacion' => self::UUID])]);
+        Http::fake(function () use ($document) {
+            $this->assertDatabaseHas('fel_cancellation_requests', [
+                'electronic_document_id' => $document->id,
+                'status' => FelCancellationRequest::PENDING,
+            ]);
 
-        app(DigifactInvoiceService::class)->cancelElectronicDocument($document, 'Error en datos del receptor');
+            return Http::response(['Codigo' => '1', 'Autorizacion' => self::UUID]);
+        });
 
-        $this->assertSame('cancelled', $document->refresh()->status);
-        $this->assertNotNull($document->cancelled_at);
+        $request = $this->requestCancellation($document);
+
+        $this->assertSame(FelCancellationRequest::CONFIRMED, $request->status);
+        $this->assertNotNull($request->confirmed_at);
+        $this->assertSame('certified', $document->refresh()->status);
     }
 
     public function test_cancellation_with_a_different_uuid_is_uncertain_not_confirmed(): void
@@ -85,12 +92,10 @@ class DigifactCancellationContractTest extends TestCase
         [, $document] = $this->certifiedDocument();
         Http::fake(['*CancelFelGT' => Http::response(['Codigo' => '1', 'Autorizacion' => 'OTHER-UUID'])]);
 
-        try {
-            app(DigifactInvoiceService::class)->cancelElectronicDocument($document, 'Error en datos del receptor');
-            $this->fail('Expected an unconfirmed cancellation exception.');
-        } catch (FelException) {
-            $this->assertSame('cancellation_unknown', $document->refresh()->status);
-        }
+        $request = $this->requestCancellation($document);
+
+        $this->assertSame(FelCancellationRequest::UNKNOWN, $request->status);
+        $this->assertSame('certified', $document->refresh()->status);
     }
 
     public function test_explicit_cancellation_rejection_is_recorded_as_rejected(): void
@@ -98,12 +103,10 @@ class DigifactCancellationContractTest extends TestCase
         [, $document] = $this->certifiedDocument();
         Http::fake(['*CancelFelGT' => Http::response(['Codigo' => '0', 'Mensaje' => 'Anulación rechazada'])]);
 
-        try {
-            app(DigifactInvoiceService::class)->cancelElectronicDocument($document, 'Error en datos del receptor');
-            $this->fail('Expected an explicit provider rejection.');
-        } catch (FelProviderRejectedException) {
-            $this->assertSame('cancellation_rejected', $document->refresh()->status);
-        }
+        $request = $this->requestCancellation($document);
+
+        $this->assertSame(FelCancellationRequest::REJECTED, $request->status);
+        $this->assertSame('certified', $document->refresh()->status);
     }
 
     public function test_success_http_without_fiscal_confirmation_is_uncertain(): void
@@ -141,15 +144,62 @@ class DigifactCancellationContractTest extends TestCase
         $this->assertCancellationIsUncertain($jsonDocument);
     }
 
+    public function test_unknown_cancellation_is_not_sent_again_automatically(): void
+    {
+        [, $document] = $this->certifiedDocument();
+        Http::fake(['*CancelFelGT' => Http::response(['message' => 'upstream unavailable'], 503)]);
+
+        $first = $this->requestCancellation($document);
+        $second = $this->requestCancellation($document);
+
+        $this->assertSame(FelCancellationRequest::UNKNOWN, $first->status);
+        $this->assertSame($first->id, $second->id);
+        Http::assertSentCount(1);
+    }
+
+    public function test_confirmed_cancellation_is_not_sent_again_and_leaves_commercial_effects_untouched(): void
+    {
+        [, $document] = $this->certifiedDocument();
+        Http::fake(['*CancelFelGT' => Http::response(['Codigo' => '1', 'Autorizacion' => self::UUID])]);
+
+        $first = $this->requestCancellation($document);
+        $second = $this->requestCancellation($document);
+
+        $this->assertSame(FelCancellationRequest::CONFIRMED, $first->status);
+        $this->assertSame($first->id, $second->id);
+        $this->assertSame('completed', $document->sale->refresh()->status);
+        Http::assertSentCount(1);
+    }
+
+    public function test_confirmed_cancellation_can_be_retained_for_manual_resolution_without_another_provider_call(): void
+    {
+        [, $document] = $this->certifiedDocument();
+        Http::fake(['*CancelFelGT' => Http::response(['Codigo' => '1', 'Autorizacion' => self::UUID])]);
+
+        $confirmed = $this->requestCancellation($document);
+        $manual = app(FelCancellationRequestService::class)->markManualResolutionRequired(
+            $confirmed,
+            'La reversión comercial local requiere atención manual.',
+        );
+
+        $this->assertSame(FelCancellationRequest::MANUAL_RESOLUTION_REQUIRED, $manual->status);
+        $this->assertNotNull($manual->confirmed_at);
+        $this->assertSame('completed', $document->sale->refresh()->status);
+        Http::assertSentCount(1);
+    }
+
     private function assertCancellationIsUncertain(ElectronicDocument $document): void
     {
-        try {
-            app(DigifactInvoiceService::class)->cancelElectronicDocument($document, 'Error en datos del receptor');
-            $this->fail('Expected an uncertain cancellation exception.');
-        } catch (FelException) {
-            $this->assertSame('cancellation_unknown', $document->refresh()->status);
-            $this->assertNull($document->cancelled_at);
-        }
+        $request = $this->requestCancellation($document);
+
+        $this->assertSame(FelCancellationRequest::UNKNOWN, $request->status);
+        $this->assertNull($request->confirmed_at);
+        $this->assertSame('certified', $document->refresh()->status);
+    }
+
+    private function requestCancellation(ElectronicDocument $document): FelCancellationRequest
+    {
+        return app(FelCancellationRequestService::class)->request($document, 'Error en datos del receptor');
     }
 
     /** @return array{Business, ElectronicDocument} */

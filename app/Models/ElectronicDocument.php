@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class ElectronicDocument extends Model
 {
@@ -63,5 +64,10 @@ class ElectronicDocument extends Model
     public function attempts(): HasMany
     {
         return $this->hasMany(FelCertificationAttempt::class);
+    }
+
+    public function cancellationRequest(): HasOne
+    {
+        return $this->hasOne(FelCancellationRequest::class);
     }
 }

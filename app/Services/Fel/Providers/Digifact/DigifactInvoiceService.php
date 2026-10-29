@@ -10,9 +10,11 @@ use App\Models\FiscalDocumentIntent;
 use App\Models\Sale;
 use App\Models\TenantFelSetting;
 use App\Services\Fel\FelException;
+use App\Services\Fel\FelCancellationRequestService;
 use App\Services\Fel\FelProviderRejectedException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -449,16 +451,54 @@ class DigifactInvoiceService
 
     public function cancelElectronicDocument(ElectronicDocument $document, string $reason): ElectronicDocument
     {
+        if (DB::transactionLevel() > 0) {
+            throw new FelException(
+                'La solicitud de anulación FEL debe iniciarse fuera de la transacción comercial.',
+            );
+        }
+
+        $request = app(FelCancellationRequestService::class)->request($document, $reason, auth()->id());
+
+        if ($request->status === \App\Models\FelCancellationRequest::CONFIRMED) {
+            return $document->refresh();
+        }
+
+        if ($request->status === \App\Models\FelCancellationRequest::REJECTED) {
+            throw new FelProviderRejectedException(
+                $request->last_error ?: 'Digifact rechazó la anulación.',
+                responsePayload: $request->response_payload,
+            );
+        }
+
+        throw new FelException(
+            $request->last_error ?: 'No se pudo confirmar la anulación electrónica.',
+            responsePayload: $request->response_payload,
+        );
+    }
+
+    /**
+     * Builds the exact CancelFelGT body without sending it.  The durable
+     * cancellation request persists this snapshot before any HTTP call.
+     */
+    public function buildCancellationPayload(ElectronicDocument $document, string $reason): array
+    {
+        $document->loadMissing(['business', 'sale']);
+        $business = $document->business;
+        $this->settings($business);
+
+        return $this->payloadBuilder->buildCancellationPayload($document, $reason);
+    }
+
+    /**
+     * Sends a previously persisted cancellation payload.  This method has no
+     * local persistence side effects; FelCancellationRequestService owns the
+     * durable state transitions around the provider call.
+     */
+    public function sendCancellation(ElectronicDocument $document, array $payload): array
+    {
         $document->loadMissing(['business', 'sale']);
         $business = $document->business;
         $settings = $this->settings($business);
-        $payload = $this->payloadBuilder->buildCancellationPayload($document, $reason);
-
-        $document->update([
-            'status' => 'cancellation_pending',
-            'cancellation_request_payload' => $payload,
-            'error_message' => null,
-        ]);
 
         Log::info('Digifact cancellation start', [
             'business_id' => $business->id,
@@ -467,59 +507,16 @@ class DigifactInvoiceService
             'environment' => $settings->environment,
         ]);
 
-        try {
-            $response = DigifactClient::forBusiness($business)->cancel($payload);
-            $this->assertCancellationConfirmed($document, $response);
+        $response = DigifactClient::forBusiness($business)->cancel($payload);
+        $this->assertCancellationConfirmed($document, $response);
 
-            $document->update([
-                'status' => 'cancelled',
-                'cancelled_at' => now(),
-                'cancellation_response_payload' => $response,
-                'error_message' => null,
-            ]);
+        Log::info('Digifact cancellation confirmed', [
+            'business_id' => $business->id,
+            'sale_id' => $document->sale_id,
+            'electronic_document_id' => $document->id,
+        ]);
 
-            Log::info('Digifact cancellation success', [
-                'business_id' => $business->id,
-                'sale_id' => $document->sale_id,
-                'electronic_document_id' => $document->id,
-            ]);
-
-            return $document->refresh();
-        } catch (FelProviderRejectedException $exception) {
-            $document->update([
-                'status' => 'cancellation_rejected',
-                'cancellation_response_payload' => $exception->responsePayload(),
-                'error_message' => $exception->getMessage(),
-            ]);
-
-            Log::warning('Digifact cancellation rejected', [
-                'business_id' => $business->id,
-                'sale_id' => $document->sale_id,
-                'electronic_document_id' => $document->id,
-                'error' => $exception->getMessage(),
-            ]);
-
-            throw $exception;
-        } catch (\Throwable $exception) {
-            $message = $exception instanceof FelException
-                ? $exception->getMessage()
-                : 'No se pudo anular la factura electronica.';
-
-            $document->update([
-                'status' => 'cancellation_unknown',
-                'cancellation_response_payload' => $exception instanceof FelException ? $exception->responsePayload() : null,
-                'error_message' => $message,
-            ]);
-
-            Log::error('Digifact cancellation failed', [
-                'business_id' => $business->id,
-                'sale_id' => $document->sale_id,
-                'electronic_document_id' => $document->id,
-                'error' => $message,
-            ]);
-
-            throw new FelException($message, previous: $exception);
-        }
+        return $response;
     }
 
     private function assertCancellationConfirmed(ElectronicDocument $document, array $response): void
