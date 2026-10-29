@@ -530,8 +530,12 @@ class DigifactClient
             throw new FelException('La respuesta de Digifact no es valida.');
         }
 
-        if (! $this->lookupResponseHasData($payload)) {
+        if ($this->isConfirmedInternalReferenceNotFound($payload)) {
             return [];
+        }
+
+        if (! $this->lookupResponseHasData($payload)) {
+            throw new FelException('Digifact no confirmó de forma inequívoca la ausencia del DTE por referencia interna.');
         }
 
         return $payload;
@@ -1087,6 +1091,22 @@ class DigifactClient
         $response = $payload['RESPONSE'];
 
         return is_array($response) && count($response) > 0;
+    }
+
+    private function isConfirmedInternalReferenceNotFound(array $payload): bool
+    {
+        $requestData = $payload['REQUEST_DATA'] ?? null;
+        $response = $payload['RESPONSE'] ?? null;
+
+        if (! is_array($requestData) || ! array_is_list($requestData) || ! is_array($response) || $response !== []) {
+            return false;
+        }
+
+        $result = $requestData[0] ?? null;
+
+        return is_array($result)
+            && (string) ($result['Respuesta'] ?? '') === '1'
+            && (string) ($result['Codigo'] ?? '') === '1';
     }
 
     private function extractNitName(array $payload): ?string

@@ -56,7 +56,7 @@ class FiscalDocumentIntentService
                 return $existing;
             }
 
-            $internalReference = 'FIS-'.strtoupper(Str::uuid()->toString());
+            $internalReference = Str::uuid()->toString();
             $snapshot = $this->snapshotSale($sale, $operationPayload);
             $fiscalPayload = $this->invoiceService->buildIntentPayload($sale, $internalReference);
             $cashSessionId = $operationPayload['cash_register_session_id'] ?? null;
@@ -108,7 +108,7 @@ class FiscalDocumentIntentService
                 return $existing;
             }
 
-            $reference = 'FIS-'.strtoupper(Str::uuid()->toString());
+            $reference = Str::uuid()->toString();
             $snapshot = [
                 ...$this->snapshotSale($sale, $operationPayload),
                 'route_pre_sale' => $operationPayload['route_pre_sale'] ?? [],
@@ -153,7 +153,7 @@ class FiscalDocumentIntentService
                 return $existing;
             }
 
-            $reference = $sale->fel_internal_reference ?: 'FIS-'.strtoupper(Str::uuid()->toString());
+            $reference = $sale->fel_internal_reference ?: Str::uuid()->toString();
             $payload = $this->invoiceService->buildIntentPayload($sale, $reference);
 
             return FiscalDocumentIntent::query()->create([
@@ -240,8 +240,8 @@ class FiscalDocumentIntentService
         try {
             $result = $this->reconciliationService->findByInternalReference(
                 $intent->business()->firstOrFail(),
-                $intent->internal_reference,
-                $intent->created_at,
+                $this->providerInternalReference($intent),
+                $this->frozenIssuedDate($intent),
             );
         } catch (\Throwable $exception) {
             return $this->markUnknown($intent, 'reconciliation_unavailable', $exception->getMessage());
@@ -457,7 +457,7 @@ class FiscalDocumentIntentService
             'series' => $ids['series'] ?? $document->series,
             'number' => $ids['number'] ?? $document->number,
             'certification_date' => $ids['certification_date'] ?? $intent->certified_at,
-            'issued_at' => $intent->created_at,
+            'issued_at' => $this->frozenIssuedAt($intent),
             'request_payload' => $intent->fiscal_payload,
             'response_payload' => $intent->provider_response,
             'error_message' => null,
@@ -582,7 +582,7 @@ class FiscalDocumentIntentService
             'series' => $ids['series'] ?? null,
             'number' => $ids['number'] ?? null,
             'certification_date' => $ids['certification_date'] ?? $intent->certified_at,
-            'issued_at' => $intent->created_at,
+            'issued_at' => $this->frozenIssuedAt($intent),
             'request_payload' => $intent->fiscal_payload,
             'response_payload' => $intent->provider_response,
             'created_by' => $intent->created_by,
@@ -636,6 +636,33 @@ class FiscalDocumentIntentService
             }
             return $locked;
         });
+    }
+
+    private function providerInternalReference(FiscalDocumentIntent $intent): string
+    {
+        $reference = data_get($intent->fiscal_payload, 'AdditionalDocumentInfo.AdditionalInfo.0.Code');
+
+        return is_string($reference) && $reference !== ''
+            ? $reference
+            : $intent->internal_reference;
+    }
+
+    private function frozenIssuedDate(FiscalDocumentIntent $intent): Carbon|string
+    {
+        $issuedDate = data_get($intent->fiscal_payload, 'Header.IssuedDateTime');
+
+        return is_string($issuedDate) && $issuedDate !== ''
+            ? $issuedDate
+            : $intent->created_at;
+    }
+
+    private function frozenIssuedAt(FiscalDocumentIntent $intent): Carbon
+    {
+        $issuedDate = $this->frozenIssuedDate($intent);
+
+        return $issuedDate instanceof Carbon
+            ? $issuedDate
+            : Carbon::parse($issuedDate);
     }
 
     private function recordCertificationFailure(FiscalDocumentIntent $intent, FelException $exception): FiscalDocumentIntent

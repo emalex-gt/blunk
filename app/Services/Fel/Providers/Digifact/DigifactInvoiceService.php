@@ -357,6 +357,14 @@ class DigifactInvoiceService
             ?: $this->payloadBuilder->internalReference($sale);
         $issuedAt = $sale->fel_issued_at ?: $document->issued_at ?: $sale->created_at;
 
+        if ($sale->fel_internal_reference !== $internalReference) {
+            $sale->forceFill(['fel_internal_reference' => $internalReference])->save();
+        }
+
+        if ($document->internal_reference !== $internalReference) {
+            $document->forceFill(['internal_reference' => $internalReference])->save();
+        }
+
         $attempt = FelCertificationAttempt::query()->create([
             'business_id' => $sale->business_id,
             'sale_id' => $sale->id,
@@ -768,6 +776,61 @@ class DigifactInvoiceService
 
         if (! is_array($payload['Totals']['GrandTotal']) || ! array_key_exists('InvoiceTotal', $payload['Totals']['GrandTotal'])) {
             throw new FelException('Payload FEL invalido: falta Totals.GrandTotal.InvoiceTotal.');
+        }
+
+        $this->validateAdditionalDocumentInfo($payload['AdditionalDocumentInfo']);
+    }
+
+    private function validateAdditionalDocumentInfo(mixed $additionalDocumentInfo): void
+    {
+        $additionalInfo = is_array($additionalDocumentInfo)
+            ? ($additionalDocumentInfo['AdditionalInfo'] ?? null)
+            : null;
+
+        if (! is_array($additionalInfo) || ! array_is_list($additionalInfo)) {
+            throw new FelException('Payload FEL invalido: AdditionalDocumentInfo.AdditionalInfo debe ser un arreglo.');
+        }
+
+        $adendas = array_values(array_filter(
+            $additionalInfo,
+            fn (mixed $info): bool => is_array($info) && ($info['Type'] ?? null) === 'ADENDA',
+        ));
+
+        if (count($adendas) !== 1) {
+            throw new FelException('Payload FEL invalido: debe existir exactamente una adenda FEL.');
+        }
+
+        $adenda = $adendas[0];
+        $code = (string) ($adenda['Code'] ?? '');
+
+        if (! preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $code)) {
+            throw new FelException('Payload FEL invalido: AdditionalInfo.Code debe ser un UUID válido de 36 caracteres.');
+        }
+
+        $info = $adenda['AditionalInfo']['Info'] ?? null;
+        if (! is_array($info) || ! array_is_list($info)) {
+            throw new FelException('Payload FEL invalido: falta AdditionalInfo.AditionalInfo.Info.');
+        }
+
+        $validationMarkers = array_values(array_filter(
+            $info,
+            fn (mixed $item): bool => is_array($item) && ($item['Name'] ?? null) === 'VALIDAR_REFERENCIA_INTERNA',
+        ));
+        if (count($validationMarkers) !== 1 || ($validationMarkers[0]['Value'] ?? null) !== 'VALIDAR') {
+            throw new FelException('Payload FEL invalido: la adenda debe validar la referencia interna.');
+        }
+
+        $references = array_values(array_filter(
+            $info,
+            fn (mixed $item): bool => is_array($item) && ($item['Name'] ?? null) === 'NoReferencia',
+        ));
+        if (count($references) !== 1) {
+            throw new FelException('Payload FEL invalido: la adenda debe incluir exactamente un NoReferencia.');
+        }
+
+        $reference = (string) ($references[0]['Value'] ?? '');
+        if ($reference === '' || mb_strlen($reference) > 50) {
+            throw new FelException('Payload FEL invalido: NoReferencia debe tener entre 1 y 50 caracteres.');
         }
     }
 

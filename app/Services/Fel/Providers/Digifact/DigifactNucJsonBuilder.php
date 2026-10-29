@@ -13,6 +13,7 @@ use App\Support\CustomerIdentity;
 use App\Support\FelPhraseRenderer;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class DigifactNucJsonBuilder
 {
@@ -22,6 +23,10 @@ class DigifactNucJsonBuilder
         $settings->loadMissing('phrases');
         FelPhraseRenderer::validate($settings->phrases);
         $internalReference = $sale->fel_internal_reference ?: $this->internalReference($sale);
+
+        if (! $this->isProviderInternalReference($internalReference)) {
+            throw new FelException('La referencia interna FEL debe ser un UUID válido de 36 caracteres.');
+        }
         $companySettings = $sale->business?->tenantSetting
             ?: TenantSetting::query()->where('business_id', $sale->business_id)->first();
         $felBranch = $this->felBranch($sale);
@@ -207,9 +212,22 @@ class DigifactNucJsonBuilder
             'AdditionalDocumentInfo' => [
                 'AdditionalInfo' => [
                     [
-                        'Name' => 'NoReferencia',
-                        'Data' => null,
-                        'Value' => $internalReference,
+                        'Code' => $internalReference,
+                        'Type' => 'ADENDA',
+                        'AditionalInfo' => [
+                            'Info' => [
+                                [
+                                    'Name' => 'VALIDAR_REFERENCIA_INTERNA',
+                                    'Data' => null,
+                                    'Value' => 'VALIDAR',
+                                ],
+                                [
+                                    'Name' => 'NoReferencia',
+                                    'Data' => null,
+                                    'Value' => $this->readableReference($sale, $internalReference),
+                                ],
+                            ],
+                        ],
                     ],
                 ],
             ],
@@ -220,7 +238,24 @@ class DigifactNucJsonBuilder
 
     public function internalReference(Sale $sale): string
     {
-        return 'BLUNK-'.$sale->business_id.'-'.$sale->id;
+        return Str::uuid()->toString();
+    }
+
+    public function isProviderInternalReference(string $reference): bool
+    {
+        return preg_match(
+            '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i',
+            $reference,
+        ) === 1;
+    }
+
+    private function readableReference(Sale $sale, string $internalReference): string
+    {
+        if ($sale->business_id && $sale->getKey()) {
+            return 'BLUNK-'.$sale->business_id.'-'.$sale->getKey();
+        }
+
+        return 'BLUNK-INTENT-'.$internalReference;
     }
 
     public function felMetadataFromPayload(array $payload, TenantFelSetting $settings): array
