@@ -4647,9 +4647,16 @@ class CriticalPosFelFlowTest extends TestCase
                 ->post(route('sales.cancel', $sale), ['reason' => 'Error fiscal de prueba', 'idempotency_key' => 'fel-cancel-no-finalize-'.uniqid()])
                 ->assertSessionHasErrors('sale');
 
-            $this->assertSame($scenario['status'], FelCancellationRequest::query()->latest('id')->value('status'));
+            $cancellationRequest = FelCancellationRequest::query()
+                ->where('business_id', $business->id)
+                ->where('electronic_document_id', $document->id)
+                ->sole();
+
+            $this->assertSame($scenario['status'], $cancellationRequest->status);
             $this->assertSame('completed', $sale->refresh()->status);
             $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+            $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->where('type', 'sale_cash_cancel')->count());
+            $this->assertSame(0, CustomerAccountMovement::query()->where('sale_id', $sale->id)->where('type', 'cancellation')->count());
         }
     }
 
