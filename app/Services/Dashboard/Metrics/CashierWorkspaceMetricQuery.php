@@ -55,7 +55,7 @@ final class CashierWorkspaceMetricQuery implements DashboardMetricQuery
     {
         return Sale::query()
             ->where('sales.business_id', $context->business->id)
-            ->when($context->branchIdForScopedMetric(), fn (Builder $query, int $branchId) => $query->where('sales.branch_id', $branchId))
+            ->when($context->branch?->id, fn (Builder $query, int $branchId) => $query->where('sales.branch_id', $branchId))
             ->where('sales.created_by', $context->user->id)
             ->where(fn (Builder $query) => $query->where('sales.status', 'completed')->orWhereNull('sales.status'))
             ->whereBetween('sales.created_at', [$period->start, $period->end]);
