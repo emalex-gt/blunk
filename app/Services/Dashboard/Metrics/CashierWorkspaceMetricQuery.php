@@ -17,7 +17,7 @@ final class CashierWorkspaceMetricQuery implements DashboardMetricQuery
 {
     public function resolve(DashboardContext $context, DashboardPeriod $period): array
     {
-        $branchId = $context->branchIdForScopedMetric();
+        $branchId = $context->branch?->id;
         $canViewCash = $context->hasModule('cash_register') && $context->hasPermission(Permissions::CASH_REGISTER_VIEW);
         $session = $canViewCash && $branchId
             ? CashRegister::currentOpenSession((int) $context->business->id, branchId: $branchId)
