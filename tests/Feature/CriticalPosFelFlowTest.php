@@ -4623,41 +4623,20 @@ class CriticalPosFelFlowTest extends TestCase
         Http::assertSentCount(1);
     }
 
-    public function test_rejected_or_unknown_fel_cancellation_keeps_sale_effects_untouched(): void
+    public function test_rejected_fel_cancellation_keeps_sale_effects_untouched(): void
     {
-        foreach ([
-            ['response' => ['Codigo' => '0', 'Mensaje' => 'Rechazada'], 'status' => FelCancellationRequest::REJECTED],
-            ['response' => ['Codigo' => '1'], 'status' => FelCancellationRequest::UNKNOWN],
-        ] as $scenario) {
-            [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'fel_gt'], role: 'owner', allowInvoices: true);
-            $settings = $this->felSettings($business);
-            $settings->update(['token' => 'cached-token', 'token_expires_at' => now()->addHour()]);
-            Permissions::assignDirectPermissions($user, [Permissions::SALES_CANCEL]);
-            $sale = $this->invoiceSale($business);
-            $sale->update(['certification_status' => 'certified', 'fel_uuid' => 'FEL-CANCEL-'.uniqid(), 'fel_issued_at' => now('America/Guatemala')]);
-            $document = ElectronicDocument::create([
-                'business_id' => $business->id, 'sale_id' => $sale->id, 'provider' => 'digifact', 'environment' => 'test',
-                'document_type' => 'invoice', 'status' => 'certified', 'uuid' => $sale->fel_uuid, 'issued_at' => $sale->fel_issued_at,
-            ]);
-            $sale->update(['electronic_document_id' => $document->id]);
-            config(['digifact.cancel_invoice_enabled' => true]);
-            Http::fake(['*CancelFelGT' => Http::response($scenario['response'])]);
+        $this->assertUnfinalizedFelCancellation(
+            ['Codigo' => '0', 'Mensaje' => 'Rechazada'],
+            FelCancellationRequest::REJECTED,
+        );
+    }
 
-            $this->actingAs($user)
-                ->post(route('sales.cancel', $sale), ['reason' => 'Error fiscal de prueba', 'idempotency_key' => 'fel-cancel-no-finalize-'.uniqid()])
-                ->assertSessionHasErrors('sale');
-
-            $cancellationRequest = FelCancellationRequest::query()
-                ->where('business_id', $business->id)
-                ->where('electronic_document_id', $document->id)
-                ->sole();
-
-            $this->assertSame($scenario['status'], $cancellationRequest->status);
-            $this->assertSame('completed', $sale->refresh()->status);
-            $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
-            $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->where('type', 'sale_cash_cancel')->count());
-            $this->assertSame(0, CustomerAccountMovement::query()->where('sale_id', $sale->id)->where('type', 'cancellation')->count());
-        }
+    public function test_unknown_fel_cancellation_keeps_sale_effects_untouched(): void
+    {
+        $this->assertUnfinalizedFelCancellation(
+            ['Codigo' => '1'],
+            FelCancellationRequest::UNKNOWN,
+        );
     }
 
     public function test_super_admin_fel_incident_ui_limits_fiscal_actions_to_their_allowed_states(): void
@@ -5439,6 +5418,51 @@ class CriticalPosFelFlowTest extends TestCase
             'fiscal_payload' => [],
             'next_reconciliation_at' => now()->addMinutes(5),
         ]);
+    }
+
+    private function assertUnfinalizedFelCancellation(array $providerResponse, string $expectedStatus): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'fel_gt'], role: 'owner', allowInvoices: true);
+        $settings = $this->felSettings($business);
+        $settings->update(['token' => 'cached-token', 'token_expires_at' => now()->addHour()]);
+        Permissions::assignDirectPermissions($user, [Permissions::SALES_CANCEL]);
+        $sale = $this->invoiceSale($business);
+        $sale->update([
+            'certification_status' => 'certified',
+            'fel_uuid' => 'FEL-CANCEL-'.uniqid(),
+            'fel_issued_at' => now('America/Guatemala'),
+        ]);
+        $document = ElectronicDocument::create([
+            'business_id' => $business->id,
+            'sale_id' => $sale->id,
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'document_type' => 'invoice',
+            'status' => 'certified',
+            'uuid' => $sale->fel_uuid,
+            'issued_at' => $sale->fel_issued_at,
+        ]);
+        $sale->update(['electronic_document_id' => $document->id]);
+        config(['digifact.cancel_invoice_enabled' => true]);
+        Http::fake(['*CancelFelGT' => Http::response($providerResponse)]);
+
+        $this->actingAs($user)
+            ->post(route('sales.cancel', $sale), [
+                'reason' => 'Error fiscal de prueba',
+                'idempotency_key' => 'fel-cancel-no-finalize-'.uniqid(),
+            ])
+            ->assertSessionHasErrors('sale');
+
+        $cancellationRequest = FelCancellationRequest::query()
+            ->where('business_id', $business->id)
+            ->where('electronic_document_id', $document->id)
+            ->sole();
+
+        $this->assertSame($expectedStatus, $cancellationRequest->status);
+        $this->assertSame('completed', $sale->refresh()->status);
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+        $this->assertSame(0, CashMovement::query()->where('business_id', $business->id)->where('type', 'sale_cash_cancel')->count());
+        $this->assertSame(0, CustomerAccountMovement::query()->where('sale_id', $sale->id)->where('type', 'cancellation')->count());
     }
 
     private function tenant(
