@@ -537,7 +537,7 @@ class DigifactClient
         return $payload;
     }
 
-    public function cancel(array $payload, string $format = 'XML'): array
+    public function cancel(array $payload): array
     {
         $this->ensureReadyForCalls();
 
@@ -547,17 +547,9 @@ class DigifactClient
             'endpoint' => $this->endpoint('cancel_invoice'),
             'full_url' => $this->buildUrl($this->endpoint('cancel_invoice')),
             'method' => 'POST',
-            'issuer_tax_id' => $this->issuerTaxId(),
-            'username_part' => $this->settings->username,
         ]);
 
-        // TODO: Confirm the final Digifact GT cancellation path from the active NUC API contract.
-        // The endpoint remains isolated here so the controller/service flow does not change.
-        return $this->postAuthenticatedWithRetry($this->endpoint('cancel_invoice'), $payload, [
-            'TAXID' => $this->issuerTaxId(),
-            'USERNAME' => $this->settings->username,
-            'FORMAT' => $format,
-        ], (int) config('digifact.certification_timeout', 20), 'cancellation_ms');
+        return $this->postCancellation($payload);
     }
 
     public function getDocument(ElectronicDocument|Sale $document, string $format): array|string
@@ -781,6 +773,80 @@ class DigifactClient
         }
 
         return $data;
+    }
+
+    /**
+     * CancelFelGT has a distinct REST contract. A transport-successful response
+     * is not a fiscal confirmation unless it explicitly includes Codigo = 1.
+     */
+    private function postCancellation(array $payload): array
+    {
+        $started = microtime(true);
+        $endpoint = $this->endpoint('cancel_invoice');
+        $url = $this->buildUrl($endpoint);
+        $timeout = (int) config('digifact.certification_timeout', 20);
+        $response = $this->authorizedRequest($timeout)->post($url, $payload);
+
+        if ($response->status() === 401) {
+            $this->settings->forceFill(['token' => null, 'token_expires_at' => null])->save();
+            $response = $this->authorizedRequest($timeout)->post($url, $payload);
+        }
+
+        $cancellationMs = $this->recordTiming('cancellation_ms', $started);
+        $this->timings['cancellation_http_status'] = $response->status();
+        $decoded = $this->decodedResponse($response, false);
+
+        Log::info('Digifact cancellation response received', [
+            'business_id' => $this->business->id,
+            'endpoint' => $endpoint,
+            'http_status' => $response->status(),
+            'token_source' => $this->lastTokenSource(),
+            'cancellation_ms' => $cancellationMs,
+            'parsed_json' => $this->safeLogPayload($decoded),
+        ]);
+
+        if (! $response->successful()) {
+            if (is_array($decoded) && $this->hasExplicitCancellationRejection($decoded)) {
+                throw new FelProviderRejectedException(
+                    $this->readableErrorFromArray($decoded) ?: 'Digifact rechazó la anulación.',
+                    responsePayload: $decoded,
+                );
+            }
+
+            throw new FelException(
+                $this->readableError($response) ?: 'No se pudo confirmar la anulación en Digifact.',
+                responsePayload: is_array($decoded) ? $decoded : null,
+            );
+        }
+
+        $data = $this->decodedResponse($response);
+
+        if (! is_array($data)) {
+            throw new FelException('Digifact devolvió una respuesta de anulación no válida.');
+        }
+
+        if (! array_key_exists('Codigo', $data) && ! array_key_exists('codigo', $data)) {
+            throw new FelException('Digifact no confirmó explícitamente la anulación.', responsePayload: $data);
+        }
+
+        if (! $this->hasExplicitCancellationRejection($data)
+            && (string) ($data['Codigo'] ?? $data['codigo']) === '1') {
+            return $data;
+        }
+
+        throw new FelProviderRejectedException(
+            $this->readableErrorFromArray($data) ?: 'Digifact rechazó la anulación.',
+            responsePayload: $data,
+        );
+    }
+
+    private function hasExplicitCancellationRejection(array $payload): bool
+    {
+        if (! array_key_exists('Codigo', $payload) && ! array_key_exists('codigo', $payload)) {
+            return false;
+        }
+
+        return (string) ($payload['Codigo'] ?? $payload['codigo']) !== '1';
     }
 
     private function authorizedRequest(int $timeout = 10)

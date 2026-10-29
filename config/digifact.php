@@ -20,7 +20,10 @@ return [
         'token' => env('DIGIFACT_TOKEN_PATH', 'login/get_token'),
         'shared' => env('DIGIFACT_SHARED_PATH', 'Shared'),
         'certify_invoice' => env('DIGIFACT_CERTIFY_INVOICE_PATH', 'v2/transform/nuc_json'),
-        'cancel_invoice' => env('DIGIFACT_CANCEL_INVOICE_PATH', 'v2/transform/nuc_json'),
+        'cancel_invoice' => env('DIGIFACT_CANCEL_INVOICE_PATH', 'CancelFelGT'),
         'get_document' => env('DIGIFACT_GET_DOCUMENT_PATH', 'GetDocument'),
     ],
+    // Keep live FEL cancellations disabled until the CancelFelGT contract has
+    // been validated against the configured TEST tenant.
+    'cancel_invoice_enabled' => env('DIGIFACT_CANCEL_INVOICE_ENABLED', false),
 ];

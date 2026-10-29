@@ -4544,6 +4544,42 @@ class CriticalPosFelFlowTest extends TestCase
         }
     }
 
+    public function test_certified_guatemala_fel_sale_without_a_verifiable_document_is_blocked_from_local_cancellation(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'fel_gt'], role: 'owner', allowInvoices: true);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $sale = Sale::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'business_number' => 1,
+            'customer_name' => 'Consumidor Final',
+            'customer_doc_type' => 'CF',
+            'customer_doc_number' => 'CF',
+            'customer_country' => 'GT',
+            'subtotal_before_discount' => 100,
+            'total' => 100,
+            'payment_method' => 'cash',
+            'payment_status' => 'paid',
+            'amount_paid' => 100,
+            'status' => 'completed',
+            'document_type' => 'invoice',
+            'certification_status' => 'certified',
+            'fel_uuid' => 'FEL-CERTIFIED-WITHOUT-DOCUMENT',
+            'created_by' => $user->id,
+        ]);
+
+        $this->actingAs($user)
+            ->post(route('sales.cancel', $sale), [
+                'reason' => 'Anulación fiscal pendiente de validar',
+                'idempotency_key' => 'cancel-certified-without-document-'.uniqid(),
+            ])
+            ->assertSessionHasErrors('sale');
+
+        $this->assertSame('completed', $sale->refresh()->status);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+    }
+
     public function test_super_admin_fel_incident_ui_limits_fiscal_actions_to_their_allowed_states(): void
     {
         $source = file_get_contents(resource_path('js/Pages/SuperAdmin/FelIncidents/Index.tsx'));

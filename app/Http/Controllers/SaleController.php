@@ -1287,7 +1287,7 @@ class SaleController extends Controller
         $this->authorizeSaleBranch($request, $sale);
         abort_unless($this->userCanCancelSale($request, $sale), 403);
 
-        $sale->loadMissing(['electronicDocument', 'fiscalDocumentIntent']);
+        $sale->loadMissing(['business', 'electronicDocument', 'fiscalDocumentIntent']);
         $fiscalStatus = $sale->fiscalDocumentIntent?->status
             ?: $sale->certification_status
             ?: $sale->electronicDocument?->status;
@@ -1296,6 +1296,8 @@ class SaleController extends Controller
                 'sale' => 'No se puede anular una operación mientras su estado fiscal está pendiente o desconocido.',
             ]);
         }
+
+        $this->assertGuatemalaFelCancellationIsSafe($sale);
 
         $data = $request->validate([
             'reason' => ['required', 'string', 'min:3', 'max:500'],
@@ -1325,7 +1327,7 @@ class SaleController extends Controller
             $sale = Sale::query()
                 ->where('business_id', $businessId)
                 ->lockForUpdate()
-                ->with(['items', 'payments', 'electronicDocument'])
+                ->with(['business', 'items', 'payments', 'electronicDocument'])
                 ->findOrFail($sale->id);
 
             if (($sale->status ?? 'completed') === 'cancelled') {
@@ -1333,6 +1335,8 @@ class SaleController extends Controller
                     'reason' => 'Esta venta ya fue anulada.',
                 ]);
             }
+
+            $this->assertGuatemalaFelCancellationIsSafe($sale);
 
             if ($sale->is_credit_sale && (float) $sale->amount_paid > 0) {
                 throw ValidationException::withMessages([
@@ -2844,6 +2848,34 @@ class SaleController extends Controller
             || strtoupper((string) $customer->doc_type) === 'CF'
             || strtoupper((string) $customer->doc_number) === 'CF'
             || (int) $customer->id === 1;
+    }
+
+    private function assertGuatemalaFelCancellationIsSafe(Sale $sale): void
+    {
+        if (strtoupper((string) $sale->business?->country) !== 'GT') {
+            return;
+        }
+
+        $document = $sale->electronicDocument;
+        $hasCertifiedFelEvidence = filled($sale->fel_uuid)
+            || $sale->certification_status === 'certified'
+            || $document?->status === 'certified';
+
+        if (! $hasCertifiedFelEvidence) {
+            return;
+        }
+
+        if (! $document || $document->status !== 'certified') {
+            throw ValidationException::withMessages([
+                'sale' => 'No se puede anular localmente una venta FEL sin un documento certificado verificable.',
+            ]);
+        }
+
+        if (! (bool) config('digifact.cancel_invoice_enabled', false)) {
+            throw ValidationException::withMessages([
+                'sale' => 'La anulación de facturas FEL certificadas está temporalmente bloqueada hasta validar el contrato Digifact en TEST.',
+            ]);
+        }
     }
 
     private function userCanCancelSale(Request $request, Sale $sale): bool

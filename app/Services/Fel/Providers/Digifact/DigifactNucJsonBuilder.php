@@ -373,18 +373,23 @@ class DigifactNucJsonBuilder
     {
         $document->loadMissing(['sale.customer', 'business.tenantFelSetting']);
         $settings = $document->business?->tenantFelSetting;
-        $customer = $document->sale?->customer;
+        $sale = $document->sale;
+        $customer = $sale?->customer;
+        $issuedAt = $document->issued_at ?: $sale?->fel_issued_at ?: $sale?->created_at;
+        $issuerTaxId = DigifactNit::cleanIssuerNitForPayload($settings?->issuer_tax_id);
+        $receiverTaxId = DigifactNit::cleanReceiverNit($sale?->customer_doc_number ?: $customer?->doc_number);
+
+        if (! filled($document->uuid) || ! filled($issuerTaxId) || ! $issuedAt || ! filled($settings?->username)) {
+            throw new FelException('No se puede preparar la anulación FEL porque faltan datos fiscales originales.');
+        }
 
         return [
-            'Version' => '1.00',
-            'CountryCode' => 'GT',
-            'NumeroDocumentoAAnular' => $document->uuid,
-            'NITEmisorDocumentoAnular' => DigifactNit::normalizeIssuerTaxId($settings?->issuer_tax_id),
-            'IDReceptorDocumentoAnular' => DigifactNit::cleanReceiverNit($customer?->doc_number),
-            'NITCertificadorDocumentoAnular' => DigifactNit::cleanReceiverNit($settings?->certifier_tax_id),
-            'FechaEmisionDocumentoAnular' => ($document->certification_date ?: $document->sale?->created_at)?->copy()->timezone('America/Guatemala')->format('Y-m-d\TH:i:sP'),
-            'FechaAnulacion' => Carbon::now('America/Guatemala')->format('Y-m-d\TH:i:sP'),
+            'Taxid' => $issuerTaxId,
+            'Autorizacion' => $document->uuid,
+            'IdReceptor' => $receiverTaxId,
+            'FechaEmisionDocumentoAnular' => $issuedAt->copy()->timezone('America/Guatemala')->format('Y-m-d\TH:i:s'),
             'MotivoAnulacion' => $reason,
+            'Username' => $settings->username,
         ];
     }
 }

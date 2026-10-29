@@ -10,6 +10,7 @@ use App\Models\FiscalDocumentIntent;
 use App\Models\Sale;
 use App\Models\TenantFelSetting;
 use App\Services\Fel\FelException;
+use App\Services\Fel\FelProviderRejectedException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\File;
@@ -468,6 +469,7 @@ class DigifactInvoiceService
 
         try {
             $response = DigifactClient::forBusiness($business)->cancel($payload);
+            $this->assertCancellationConfirmed($document, $response);
 
             $document->update([
                 'status' => 'cancelled',
@@ -483,13 +485,28 @@ class DigifactInvoiceService
             ]);
 
             return $document->refresh();
+        } catch (FelProviderRejectedException $exception) {
+            $document->update([
+                'status' => 'cancellation_rejected',
+                'cancellation_response_payload' => $exception->responsePayload(),
+                'error_message' => $exception->getMessage(),
+            ]);
+
+            Log::warning('Digifact cancellation rejected', [
+                'business_id' => $business->id,
+                'sale_id' => $document->sale_id,
+                'electronic_document_id' => $document->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
         } catch (\Throwable $exception) {
             $message = $exception instanceof FelException
                 ? $exception->getMessage()
                 : 'No se pudo anular la factura electronica.';
 
             $document->update([
-                'status' => 'cancellation_failed',
+                'status' => 'cancellation_unknown',
                 'cancellation_response_payload' => $exception instanceof FelException ? $exception->responsePayload() : null,
                 'error_message' => $message,
             ]);
@@ -502,6 +519,18 @@ class DigifactInvoiceService
             ]);
 
             throw new FelException($message, previous: $exception);
+        }
+    }
+
+    private function assertCancellationConfirmed(ElectronicDocument $document, array $response): void
+    {
+        $authorization = trim((string) ($response['Autorizacion'] ?? $response['autorizacion'] ?? ''));
+
+        if ($authorization === '' || ! hash_equals(strtoupper((string) $document->uuid), strtoupper($authorization))) {
+            throw new FelException(
+                'Digifact no confirmó la anulación para el UUID solicitado.',
+                responsePayload: $response,
+            );
         }
     }
 
