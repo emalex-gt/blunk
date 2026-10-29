@@ -14,12 +14,14 @@ use App\Models\CreditReceiptLine;
 use App\Models\CreditReceiptLineInvoice;
 use App\Models\Customer;
 use App\Models\ElectronicDocument;
+use App\Models\FelCancellationRequest;
 use App\Models\FelReconciliationRequest;
 use App\Models\FiscalDocumentIntent;
 use App\Models\StockMovement;
 use App\Models\TenantSetting;
 use App\Models\TenantFelSetting;
 use App\Services\Fel\FelException;
+use App\Services\Fel\FelCancellationFinalizer;
 use App\Services\SaleStockCancellationService;
 use App\Services\BranchAccessService;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
@@ -1287,7 +1289,7 @@ class SaleController extends Controller
         $this->authorizeSaleBranch($request, $sale);
         abort_unless($this->userCanCancelSale($request, $sale), 403);
 
-        $sale->loadMissing(['business', 'electronicDocument', 'fiscalDocumentIntent']);
+        $sale->loadMissing(['business', 'electronicDocument.cancellationRequest', 'fiscalDocumentIntent']);
         $fiscalStatus = $sale->fiscalDocumentIntent?->status
             ?: $sale->certification_status
             ?: $sale->electronicDocument?->status;
@@ -1297,8 +1299,6 @@ class SaleController extends Controller
             ]);
         }
 
-        $this->assertGuatemalaFelCancellationIsSafe($sale);
-
         $data = $request->validate([
             'reason' => ['required', 'string', 'min:3', 'max:500'],
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
@@ -1306,6 +1306,54 @@ class SaleController extends Controller
 
         $businessId = currentBusinessId();
         $branchId = (int) ($sale->branch_id ?: BranchInventory::defaultBranch($businessId)->id);
+        $cancellationRequest = $sale->electronicDocument?->cancellationRequest;
+
+        if ($cancellationRequest) {
+            if ($cancellationRequest->status !== FelCancellationRequest::CONFIRMED) {
+                throw ValidationException::withMessages([
+                    'sale' => 'No se pueden aplicar efectos comerciales mientras la anulación fiscal no esté confirmada.',
+                ]);
+            }
+
+            try {
+                app(IdempotencyService::class)->run(
+                    $businessId,
+                    $branchId,
+                    $request->user()->id,
+                    'sale_cancel',
+                    $data['idempotency_key'],
+                    [
+                        'business_id' => $businessId,
+                        'branch_id' => $branchId,
+                        'user_id' => $request->user()->id,
+                        'operation_type' => 'sale_cancel_finalization',
+                        'sale_id' => $sale->id,
+                        'fel_cancellation_request_id' => $cancellationRequest->id,
+                    ],
+                    function () use ($cancellationRequest, $request, $businessId) {
+                        $finalized = app(FelCancellationFinalizer::class)->finalize(
+                            $cancellationRequest,
+                            $request->user(),
+                            $businessId,
+                        );
+
+                        return [
+                            'result_id' => $finalized->id,
+                            'response_payload' => ['sale_id' => $finalized->id],
+                        ];
+                    },
+                    'sale',
+                );
+            } catch (FelException $exception) {
+                throw ValidationException::withMessages([
+                    'sale' => $exception->getMessage() ?: 'No se pudo finalizar localmente la anulación fiscal.',
+                ]);
+            }
+
+            return redirect()->route('sales.show', $sale)->with('success', 'Venta anulada correctamente.');
+        }
+
+        $this->assertGuatemalaFelCancellationIsSafe($sale);
 
         app(IdempotencyService::class)->run(
             $businessId,
@@ -1356,20 +1404,10 @@ class SaleController extends Controller
                 );
             }
 
-            if (
-                $sale->electronicDocument
-                && $sale->electronicDocument->status === 'certified'
-            ) {
-                try {
-                    app(DigifactInvoiceService::class)->cancelElectronicDocument(
-                        $sale->electronicDocument,
-                        $data['reason'],
-                    );
-                } catch (FelException $exception) {
-                    throw ValidationException::withMessages([
-                        'reason' => $exception->getMessage() ?: 'No se pudo anular la factura electronica.',
-                    ]);
-                }
+            if ($sale->electronicDocument && $sale->electronicDocument->status === 'certified') {
+                throw ValidationException::withMessages([
+                    'sale' => 'La anulación FEL debe confirmarse fiscalmente antes de aplicar efectos comerciales.',
+                ]);
             }
 
             AccountsReceivable::cancelSaleCharge($sale, $request->user());

@@ -18,6 +18,7 @@ class FelCancellationRequest extends Model
         'sale_id',
         'electronic_document_id',
         'requested_by',
+        'finalized_by',
         'provider',
         'environment',
         'uuid',
@@ -26,8 +27,10 @@ class FelCancellationRequest extends Model
         'request_payload',
         'response_payload',
         'last_error',
+        'finalization_error',
         'attempted_at',
         'confirmed_at',
+        'finalized_at',
         'resolved_at',
     ];
 
@@ -36,6 +39,7 @@ class FelCancellationRequest extends Model
         'response_payload' => 'array',
         'attempted_at' => 'datetime',
         'confirmed_at' => 'datetime',
+        'finalized_at' => 'datetime',
         'resolved_at' => 'datetime',
     ];
 
@@ -57,6 +61,11 @@ class FelCancellationRequest extends Model
     public function requestedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by');
+    }
+
+    public function finalizedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'finalized_by');
     }
 
     public function isTerminal(): bool

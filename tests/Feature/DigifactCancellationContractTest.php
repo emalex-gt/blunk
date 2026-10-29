@@ -8,7 +8,10 @@ use App\Models\FelCancellationRequest;
 use App\Models\Sale;
 use App\Models\TenantFelPhrase;
 use App\Models\TenantFelSetting;
+use App\Models\User;
+use App\Services\Fel\FelCancellationFinalizer;
 use App\Services\Fel\FelCancellationRequestService;
+use App\Services\Fel\FelException;
 use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Services\Fel\Providers\Digifact\DigifactNucJsonBuilder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -186,6 +189,44 @@ class DigifactCancellationContractTest extends TestCase
         $this->assertNotNull($manual->confirmed_at);
         $this->assertSame('completed', $document->sale->refresh()->status);
         Http::assertSentCount(1);
+    }
+
+    public function test_confirmed_cancellation_finalizes_local_effects_once_without_another_provider_call(): void
+    {
+        [$business, $document] = $this->certifiedDocument();
+        Http::fake(['*CancelFelGT' => Http::response(['Codigo' => '1', 'Autorizacion' => self::UUID])]);
+        $confirmed = $this->requestCancellation($document);
+        $actor = User::factory()->create(['business_id' => $business->id]);
+
+        $first = app(FelCancellationFinalizer::class)->finalize($confirmed, $actor, $business->id);
+        $second = app(FelCancellationFinalizer::class)->finalize($confirmed->refresh(), $actor, $business->id);
+
+        $this->assertSame('cancelled', $first->status);
+        $this->assertSame($first->id, $second->id);
+        $this->assertNotNull($confirmed->refresh()->finalized_at);
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        Http::assertSentCount(1);
+    }
+
+    public function test_finalization_failure_preserves_fiscal_confirmation_and_records_the_error(): void
+    {
+        [$business, $document] = $this->certifiedDocument();
+        Http::fake(['*CancelFelGT' => Http::response(['Codigo' => '1', 'Autorizacion' => self::UUID])]);
+        $confirmed = $this->requestCancellation($document);
+        $confirmed->update(['uuid' => 'MISMATCHED-UUID']);
+        $actor = User::factory()->create(['business_id' => $business->id]);
+
+        try {
+            app(FelCancellationFinalizer::class)->finalize($confirmed->refresh(), $actor, $business->id);
+            $this->fail('Expected local finalization to reject mismatched fiscal identity.');
+        } catch (FelException) {
+            $this->assertSame(FelCancellationRequest::CONFIRMED, $confirmed->refresh()->status);
+            $this->assertNull($confirmed->finalized_at);
+            $this->assertNotEmpty($confirmed->finalization_error);
+            $this->assertSame('completed', $document->sale->refresh()->status);
+            Http::assertSentCount(1);
+        }
     }
 
     private function assertCancellationIsUncertain(ElectronicDocument $document): void
