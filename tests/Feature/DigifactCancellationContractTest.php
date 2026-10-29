@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Business;
 use App\Models\ElectronicDocument;
 use App\Models\Sale;
+use App\Models\TenantFelPhrase;
 use App\Models\TenantFelSetting;
 use App\Services\Fel\FelException;
 use App\Services\Fel\FelProviderRejectedException;
@@ -152,7 +153,7 @@ class DigifactCancellationContractTest extends TestCase
             'is_active' => true,
         ]);
 
-        TenantFelSetting::query()->create([
+        $settings = TenantFelSetting::query()->create([
             'business_id' => $business->id,
             'provider' => 'digifact',
             'environment' => 'test',
@@ -164,6 +165,18 @@ class DigifactCancellationContractTest extends TestCase
             'token_expires_at' => now()->addHour(),
             'test_base_url' => 'https://testnucgt.digifact.com/api',
             'affiliate_type' => 'GEN',
+        ]);
+
+        TenantFelPhrase::query()->create([
+            'business_id' => $business->id,
+            'tenant_fel_setting_id' => $settings->id,
+            'data_identifier' => '1',
+            'phrase_type' => '1',
+            'scenario_code' => '2',
+            'type_data' => '1',
+            'type_value' => '1',
+            'scenario_data' => '1',
+            'scenario_value' => '2',
         ]);
 
         $sale = Sale::query()->create([

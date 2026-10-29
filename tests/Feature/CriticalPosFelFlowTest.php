@@ -1772,7 +1772,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringContainsString('onClick={() => handleProductResultClick(product)}', $source);
         $this->assertStringContainsString("setDuplicateProductSelectionMode('exact-enter');", $source);
         $this->assertStringContainsString('const productsByIdRef = useRef(productsById);', $source);
-        $this->assertStringContainsString('}, [draftKey, fetchPosProducts]);', $source);
+        $this->assertStringContainsString('}, [draftKey, fetchPosProducts, quotation_edit_source]);', $source);
         $this->assertStringNotContainsString('}, [draftKey, fetchPosProducts, productsById]);', $source);
         $this->assertStringContainsString('Selecciona un producto de los resultados.', $source);
     }
@@ -4380,7 +4380,10 @@ class CriticalPosFelFlowTest extends TestCase
         $this->actingAs($user)
             ->get(route('fiscal-intents.provisional-receipt', $intent))
             ->assertOk()
-            ->assertSee('COMPROBANTE PROVISIONAL — NO ES FACTURA NI DOCUMENTO TRIBUTARIO FEL');
+            ->assertSeeInOrder([
+                'COMPROBANTE PROVISIONAL',
+                'NO ES FACTURA NI DOCUMENTO TRIBUTARIO FEL',
+            ]);
 
         $intent->update(['status' => FiscalDocumentIntent::FINALIZED]);
         $this->actingAs($user)
