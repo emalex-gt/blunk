@@ -116,7 +116,7 @@ class DigifactInvoiceService
                 $normalized['number'] = $xmlData['number'] ?? $normalized['number'];
 
                 if (! filled($normalized['certification_date']) && filled($xmlData['certification_date'] ?? null)) {
-                    $normalized['certification_date'] = \Illuminate\Support\Carbon::parse($xmlData['certification_date']);
+                    $normalized['certification_date'] = $this->parseProviderTimestamp($xmlData['certification_date']);
                 }
             }
 
@@ -578,7 +578,30 @@ class DigifactInvoiceService
     private function parseIssuedAt(string $issuedAt): ?Carbon
     {
         try {
-            return Carbon::parse($issuedAt);
+            // PostgreSQL stores these legacy timestamp columns without a timezone.
+            // Normalize the offset-bearing frozen fiscal header before persistence.
+            return Carbon::parse($issuedAt)->utc();
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function parseProviderTimestamp(mixed $timestamp): ?Carbon
+    {
+        if (! is_string($timestamp) || trim($timestamp) === '') {
+            return null;
+        }
+
+        $timestamp = trim($timestamp);
+
+        // Digifact may omit an offset. Do not silently label a local provider
+        // clock value as UTC; the raw response remains available for audit.
+        if (! preg_match('/(?:Z|[+-]\d{2}:?\d{2})$/i', $timestamp)) {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($timestamp)->utc();
         } catch (\Throwable) {
             return null;
         }
@@ -604,7 +627,7 @@ class DigifactInvoiceService
             $normalized['number'] = $xmlData['number'] ?? $normalized['number'];
 
             if (! filled($normalized['certification_date']) && filled($xmlData['certification_date'] ?? null)) {
-                $normalized['certification_date'] = Carbon::parse($xmlData['certification_date']);
+                $normalized['certification_date'] = $this->parseProviderTimestamp($xmlData['certification_date']);
             }
         }
 
@@ -987,14 +1010,12 @@ class DigifactInvoiceService
                 'RESPONSE.NumeroDocumento',
                 'RESPONSE.0.NumeroDocumento',
             ]),
-            'issued_at' => ($issuedAt = $this->firstValue($flat, [
+            'issued_at' => $this->parseProviderTimestamp($this->firstValue($flat, [
                 'issuedTimeStamp',
                 'issuedtimestamp',
                 'issued_at',
-            ]))
-                ? \Illuminate\Support\Carbon::parse($issuedAt)
-                : null,
-            'certification_date' => ($date = $this->firstValue($flat, [
+            ])),
+            'certification_date' => $this->parseProviderTimestamp($this->firstValue($flat, [
                 'enrolledTimeStamp',
                 'enrolledtimestamp',
                 'issuedTimeStamp',
@@ -1008,9 +1029,7 @@ class DigifactInvoiceService
                 'FechaHoraCertificacion',
                 'RESPONSE.FechaCertificacion',
                 'RESPONSE.0.FechaCertificacion',
-            ]))
-                ? \Illuminate\Support\Carbon::parse($date)
-                : now(),
+            ])),
             'xml_base64' => $this->firstValue($flat, ['responseData1', 'responsedata1', 'ResponseData1', 'RESPONSE.responseData1', 'RESPONSE.0.ResponseData1', 'xml', 'XML', 'Xml', 'xml_base64', 'XMLBase64', 'XmlBase64', 'RESPONSE.XML', 'RESPONSE.0.XML']),
             'html_base64' => $this->firstValue($flat, ['responseData2', 'responsedata2', 'ResponseData2', 'RESPONSE.responseData2', 'RESPONSE.0.ResponseData2', 'html_base64', 'HTMLBase64', 'HtmlBase64']),
             'pdf_base64' => $this->firstValue($flat, ['responseData3', 'responsedata3', 'ResponseData3', 'RESPONSE.responseData3', 'RESPONSE.0.ResponseData3', 'pdf', 'PDF', 'Pdf', 'pdf_base64', 'PDFBase64', 'PdfBase64', 'RESPONSE.PDF', 'RESPONSE.0.PDF']),

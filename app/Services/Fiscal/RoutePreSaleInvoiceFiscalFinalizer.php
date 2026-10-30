@@ -17,6 +17,7 @@ use App\Support\CashRegister;
 use App\Support\Inventory\StockReservationService;
 use App\Support\RouteWorkDayCompletion;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
 /** Finalizes a certified route pre-sale invoice from its immutable snapshot. */
@@ -170,7 +171,7 @@ class RoutePreSaleInvoiceFiscalFinalizer
             'series' => $ids['series'] ?? null,
             'number' => $ids['number'] ?? null,
             'certification_date' => $ids['certification_date'] ?? $intent->certified_at,
-            'issued_at' => $intent->created_at,
+            'issued_at' => $this->frozenIssuedAt($intent),
             'request_payload' => $intent->fiscal_payload,
             'response_payload' => $intent->provider_response,
             'created_by' => $intent->created_by,
@@ -218,5 +219,14 @@ class RoutePreSaleInvoiceFiscalFinalizer
         ]);
 
         return $intent->refresh();
+    }
+
+    private function frozenIssuedAt(FiscalDocumentIntent $intent): Carbon
+    {
+        $issuedDate = data_get($intent->fiscal_payload, 'Header.IssuedDateTime');
+
+        return is_string($issuedDate) && $issuedDate !== ''
+            ? Carbon::parse($issuedDate)->utc()
+            : $intent->created_at->copy()->utc();
     }
 }

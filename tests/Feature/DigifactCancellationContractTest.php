@@ -71,6 +71,24 @@ class DigifactCancellationContractTest extends TestCase
         $this->assertSame('2026-10-01T09:30:00', $payload['FechaEmisionDocumentoAnular']);
     }
 
+    public function test_cancellation_prefers_the_frozen_issue_datetime_over_the_utc_derivative(): void
+    {
+        [, $document] = $this->certifiedDocument();
+        $document->update([
+            'issued_at' => '2026-10-01 15:30:00',
+            'request_payload' => [
+                'Header' => ['IssuedDateTime' => '2026-10-01T09:30:00-06:00'],
+            ],
+        ]);
+
+        $payload = app(DigifactNucJsonBuilder::class)->buildCancellationPayload(
+            $document->fresh(['sale.customer', 'business.tenantFelSetting']),
+            'Error en datos del receptor',
+        );
+
+        $this->assertSame('2026-10-01T09:30:00', $payload['FechaEmisionDocumentoAnular']);
+    }
+
     public function test_cancellation_request_is_persisted_before_the_provider_is_called_and_confirmed_only_for_the_same_uuid(): void
     {
         [, $document] = $this->certifiedDocument();

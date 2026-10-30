@@ -660,9 +660,10 @@ class FiscalDocumentIntentService
     {
         $issuedDate = $this->frozenIssuedDate($intent);
 
-        return $issuedDate instanceof Carbon
-            ? $issuedDate
-            : Carbon::parse($issuedDate);
+        return ($issuedDate instanceof Carbon
+            ? $issuedDate->copy()
+            : Carbon::parse($issuedDate))
+            ->utc();
     }
 
     private function recordCertificationFailure(FiscalDocumentIntent $intent, FelException $exception): FiscalDocumentIntent
