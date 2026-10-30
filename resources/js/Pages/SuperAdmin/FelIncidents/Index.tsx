@@ -1,5 +1,6 @@
 import SuperAdminLayout from '@/Layouts/SuperAdminLayout';
 import { Link, router } from '@inertiajs/react';
+import { useState } from 'react';
 
 type Incident = {
     id: number;
@@ -52,7 +53,15 @@ const statusLabels: Record<string, string> = {
     resolved: 'Alerta cerrada',
 };
 
+type ActionFeedback = {
+    tone: 'success' | 'warning' | 'error';
+    message: string;
+};
+
 export default function Index({ incidents, intents, reconciliations }: { incidents: Paginated<Incident>; intents: Paginated<FiscalIntent>; reconciliations: Paginated<LegacyReconciliation> }) {
+    const [activeIntentAction, setActiveIntentAction] = useState<number | null>(null);
+    const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
+
     function markReviewed(id: number) {
         router.post(route('super-admin.fel-incidents.review', id), {}, { preserveScroll: true });
     }
@@ -62,7 +71,34 @@ export default function Index({ incidents, intents, reconciliations }: { inciden
     }
 
     function reconcileIntent(id: number) {
-        router.post(route('super-admin.fel-incidents.intents.reconcile', id), {}, { preserveScroll: true });
+        if (activeIntentAction !== null) {
+            return;
+        }
+
+        setActionFeedback(null);
+        setActiveIntentAction(id);
+        router.post(route('super-admin.fel-incidents.intents.reconcile', id), {}, {
+            preserveScroll: true,
+            onSuccess: (page) => {
+                const flash = page.props.flash as {
+                    success?: string | null;
+                    warning?: string | null;
+                } | undefined;
+                const message = flash?.warning ?? flash?.success;
+
+                setActionFeedback({
+                    tone: flash?.warning ? 'warning' : 'success',
+                    message: message ?? 'La consulta de Digifact terminó. Revisa el estado fiscal actualizado.',
+                });
+            },
+            onError: (errors) => {
+                setActionFeedback({
+                    tone: 'error',
+                    message: Object.values(errors)[0] ?? 'No se pudo consultar Digifact. Inténtalo nuevamente.',
+                });
+            },
+            onFinish: () => setActiveIntentAction(null),
+        });
     }
 
     function retryIntent(id: number) {
@@ -83,6 +119,17 @@ export default function Index({ incidents, intents, reconciliations }: { inciden
                 <h2 className="font-semibold text-amber-900">Conciliación fiscal centralizada</h2>
                 <p className="mt-1 text-sm text-amber-800">Las intenciones pendientes, desconocidas y reintentables se administran únicamente desde Super Admin.</p>
             </div>
+            {actionFeedback && (
+                <div className={`mb-6 rounded-xl border p-4 text-sm font-medium ${
+                    actionFeedback.tone === 'success'
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                        : actionFeedback.tone === 'warning'
+                            ? 'border-amber-200 bg-amber-50 text-amber-900'
+                            : 'border-red-200 bg-red-50 text-red-800'
+                }`}>
+                    {actionFeedback.message}
+                </div>
+            )}
             <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                 <h2 className="mb-3 text-lg font-semibold text-gray-900">Intenciones fiscales</h2>
                 {intents.data.length === 0 ? (
@@ -98,7 +145,7 @@ export default function Index({ incidents, intents, reconciliations }: { inciden
                                         <td className="px-3 py-3 font-mono text-xs text-gray-700">#{intent.id}<br />{intent.internal_reference}<div className="mt-1 font-sans text-gray-500">Venta final: {intent.sale_id ?? '-'}</div><div className="font-sans text-gray-500">{intent.provider} / {intent.environment}</div></td>
                                         <td className="px-3 py-3"><div className="font-medium text-gray-800">{intent.status}</div><div className="mt-1 max-w-md text-xs text-gray-500">{intent.last_reconciliation_error ?? '-'}</div>{intent.last_finalization_error && <div className="mt-1 max-w-md text-xs text-red-700">Finalización: {intent.last_finalization_error}</div>}</td>
                                         <td className="px-3 py-3 text-xs text-gray-600"><div>Negativas válidas: {intent.negative_reconciliation_count}</div><div>Última: {intent.last_reconciliation_at ?? '-'}</div><div>Siguiente: {intent.next_reconciliation_at ?? '-'}</div><div className="mt-1 break-all">Resultado: {intent.last_reconciliation_result ? JSON.stringify(intent.last_reconciliation_result) : '-'}</div></td>
-                                        <td className="px-3 py-3"><div className="flex justify-end gap-2">{intent.status === 'unknown' && <button type="button" onClick={() => reconcileIntent(intent.id)} className="rounded-md border border-orange-200 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-50">Consultar Digifact ahora</button>}{intent.status === 'certified' && <button type="button" onClick={() => finalizeIntent(intent.id)} className="rounded-md border border-orange-200 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-50">Reintentar finalización local</button>}{intent.status === 'retryable' && <button type="button" onClick={() => retryIntent(intent.id)} className="rounded-md bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-700">Reintentar certificación</button>}</div></td>
+                                        <td className="px-3 py-3"><div className="flex justify-end gap-2">{intent.status === 'unknown' && <button type="button" onClick={() => reconcileIntent(intent.id)} disabled={activeIntentAction !== null} className="rounded-md border border-orange-200 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-60">{activeIntentAction === intent.id ? 'Consultando Digifact...' : 'Consultar Digifact ahora'}</button>}{intent.status === 'certified' && <button type="button" onClick={() => finalizeIntent(intent.id)} className="rounded-md border border-orange-200 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-50">Reintentar finalización local</button>}{intent.status === 'retryable' && <button type="button" onClick={() => retryIntent(intent.id)} className="rounded-md bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-700">Reintentar certificación</button>}</div></td>
                                     </tr>
                                 ))}
                             </tbody>

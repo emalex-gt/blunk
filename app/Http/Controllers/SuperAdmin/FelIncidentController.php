@@ -123,7 +123,31 @@ class FelIncidentController extends Controller
             return back()->withErrors(['reconciliation' => 'No se pudo conciliar la intención FEL: '.$exception->getMessage()]);
         }
 
-        return back()->with('success', "Conciliación completada: {$intent->status}.");
+        $outcome = (string) data_get($intent->last_reconciliation_result, 'outcome');
+
+        if ($intent->status === FiscalDocumentIntent::UNKNOWN) {
+            $message = match ($outcome) {
+                'not_found' => "Digifact confirmó que no existe un DTE para la referencia consultada. Negativas válidas: {$intent->negative_reconciliation_count} de 3; la intención sigue en verificación.",
+                'reconciliation_unavailable' => 'La consulta a Digifact no está disponible o no devolvió una respuesta inequívoca. La intención sigue en verificación y no se reemitió.',
+                default => 'La intención FEL sigue en verificación. No se reemitió ningún documento.',
+            };
+
+            return back()->with('warning', $message);
+        }
+
+        if ($intent->status === FiscalDocumentIntent::RETRYABLE) {
+            return back()->with('warning', 'Digifact confirmó tres ausencias válidas. La intención queda disponible únicamente para un reintento controlado de Super Admin.');
+        }
+
+        if ($intent->status === FiscalDocumentIntent::FINALIZED) {
+            return back()->with('success', 'DTE encontrado y venta finalizada localmente una sola vez.');
+        }
+
+        if ($intent->status === FiscalDocumentIntent::CERTIFIED) {
+            return back()->with('warning', 'DTE encontrado, pero la finalización local sigue pendiente. Usa “Reintentar finalización local”; no se reenviará a Digifact.');
+        }
+
+        return back()->withErrors(['reconciliation' => "La conciliación terminó en estado fiscal {$intent->status}."]);
     }
 
     public function retryIntent(FiscalDocumentIntent $intent, FiscalDocumentIntentService $service): RedirectResponse

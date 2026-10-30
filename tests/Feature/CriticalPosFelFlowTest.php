@@ -4366,11 +4366,57 @@ class CriticalPosFelFlowTest extends TestCase
     public function test_tenant_fel_reconciliation_route_is_removed_and_incidents_are_super_admin_only(): void
     {
         [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner', allowInvoices: true);
+        $intent = $this->unknownFiscalIntent($business, $user);
         $this->assertFalse(Route::has('fel.reconciliation.check'));
 
         $this->actingAs($user)
             ->get(route('super-admin.fel-incidents.index'))
             ->assertForbidden();
+
+        $this->actingAs($user)
+            ->post(route('super-admin.fel-incidents.intents.reconcile', $intent))
+            ->assertForbidden();
+    }
+
+    public function test_super_admin_reconciliation_keeps_the_selected_unknown_intent_when_digifact_is_unavailable(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner', allowInvoices: true);
+        $intent = $this->unknownFiscalIntent($business, $user);
+        $otherIntent = $this->unknownFiscalIntent($business, $user);
+        $reconciliation = Mockery::mock(DigifactReconciliationService::class);
+        $reconciliation->shouldReceive('findByInternalReference')
+            ->once()
+            ->withArgs(fn (Business $actualBusiness, string $reference, mixed $issuedAt): bool =>
+                $actualBusiness->is($business) && $reference === $intent->internal_reference,
+            )
+            ->andThrow(new FelException('Servicio de consulta no disponible.'));
+        $this->app->instance(
+            FiscalDocumentIntentService::class,
+            new FiscalDocumentIntentService(Mockery::mock(DigifactInvoiceService::class), $reconciliation),
+        );
+        $superAdmin = User::factory()->create(['role' => 'super_admin', 'is_super_admin' => true]);
+
+        $this->actingAs($superAdmin)
+            ->post(route('super-admin.fel-incidents.intents.reconcile', $intent))
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('warning', 'La consulta a Digifact no está disponible o no devolvió una respuesta inequívoca. La intención sigue en verificación y no se reemitió.');
+
+        $this->assertSame(FiscalDocumentIntent::UNKNOWN, $intent->refresh()->status);
+        $this->assertSame(0, $intent->negative_reconciliation_count);
+        $this->assertSame('reconciliation_unavailable', $intent->last_reconciliation_result['outcome']);
+        $this->assertSame(FiscalDocumentIntent::UNKNOWN, $otherIntent->refresh()->status);
+        $this->assertSame(0, $otherIntent->negative_reconciliation_count);
+    }
+
+    public function test_super_admin_intent_reconciliation_ui_shows_progress_and_operational_feedback(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/SuperAdmin/FelIncidents/Index.tsx'));
+
+        $this->assertStringContainsString("router.post(route('super-admin.fel-incidents.intents.reconcile', id)", $source);
+        $this->assertStringContainsString('onError: (errors)', $source);
+        $this->assertStringContainsString('disabled={activeIntentAction !== null}', $source);
+        $this->assertStringContainsString("'Consultando Digifact...'", $source);
+        $this->assertStringContainsString('{actionFeedback.message}', $source);
     }
 
     public function test_provisional_receipt_is_tenant_scoped_non_fiscal_and_only_available_while_unresolved(): void
