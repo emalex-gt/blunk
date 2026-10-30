@@ -148,7 +148,11 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
         || (auth.permissions ?? []).includes('fel.documents.view');
 
     function printSale() {
-        if (['certified', 'cancelled'].includes(sale.electronic_document?.status ?? '') && sale.electronic_document.has_printable_document) {
+        if (
+            sale.electronic_document &&
+            ['certified', 'cancelled'].includes(sale.electronic_document.status) &&
+            sale.electronic_document.has_printable_document
+        ) {
             if (!canViewFelDocuments) {
                 toast.error('No tienes permisos para ver documentos FEL.');
                 return;
