@@ -61,24 +61,27 @@ class DigifactInternalReferenceContractTest extends TestCase
 
     public function test_offset_fiscal_issue_time_is_persisted_as_a_utc_derivative(): void
     {
-        [, $sale] = $this->saleFixture();
-        $sale->update([
-            'created_at' => '2026-10-30 21:33:25+00:00',
-            'fel_internal_reference' => self::PROVIDER_REFERENCE,
-        ]);
-        Http::fake(['*' => Http::response([
-            'RESPONSE' => [[
-                'UUID' => self::PROVIDER_REFERENCE,
-                'Serie' => 'A',
-                'Numero' => '1',
-            ]],
-        ])]);
+        $this->travelTo('2026-10-30T21:33:25+00:00');
 
-        $document = app(DigifactInvoiceService::class)->certifySale($sale->fresh(), []);
+        try {
+            [, $sale] = $this->saleFixture();
+            $sale->update(['fel_internal_reference' => self::PROVIDER_REFERENCE]);
+            Http::fake(['*' => Http::response([
+                'RESPONSE' => [[
+                    'UUID' => self::PROVIDER_REFERENCE,
+                    'Serie' => 'A',
+                    'Numero' => '1',
+                ]],
+            ])]);
 
-        $this->assertSame('2026-10-30T15:33:25-06:00', $document->request_payload['Header']['IssuedDateTime']);
-        $this->assertSame('2026-10-30 21:33:25', $document->getRawOriginal('issued_at'));
-        $this->assertSame('2026-10-30 21:33:25', $sale->fresh()->getRawOriginal('fel_issued_at'));
+            $document = app(DigifactInvoiceService::class)->certifySale($sale->fresh(), []);
+
+            $this->assertSame('2026-10-30T15:33:25-06:00', $document->request_payload['Header']['IssuedDateTime']);
+            $this->assertSame('2026-10-30 21:33:25', $document->getRawOriginal('issued_at'));
+            $this->assertSame('2026-10-30 21:33:25', $sale->fresh()->getRawOriginal('fel_issued_at'));
+        } finally {
+            $this->travelBack();
+        }
     }
 
     public function test_provider_timestamps_without_offsets_are_not_silently_interpreted_as_utc(): void
