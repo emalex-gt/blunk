@@ -1615,6 +1615,10 @@ class SaleController extends Controller
                 'number' => $sale->fel_number ?: $sale->electronicDocument?->number,
                 'certified_at' => ($sale->fel_certified_at ?: $sale->electronicDocument?->certification_date)
                     ?->copy()->timezone($timezone)->format('Y-m-d H:i:s'),
+                'status' => $sale->electronicDocument?->status,
+                'cancelled_at' => $sale->electronicDocument?->cancelled_at
+                    ?->copy()->timezone($timezone)->format('Y-m-d H:i:s'),
+                'cancellation_reason' => $sale->cancellation_reason,
                 'certifier_tax_id' => $felSettings?->certifier_tax_id ?: '-',
                 'certifier_name' => $felSettings?->provider === 'digifact'
                     ? 'DIGIFACT SERVICIOS, SOCIEDAD ANONIMA'
@@ -1658,13 +1662,13 @@ class SaleController extends Controller
 
     private function hasCertifiedFelDocument(Sale $sale): bool
     {
-        if ($sale->electronicDocument?->status === 'certified') {
+        if (in_array($sale->electronicDocument?->status, ['certified', 'cancelled'], true)) {
             return filled($sale->fel_uuid ?: $sale->electronicDocument->uuid);
         }
 
         // Legacy POS invoices created before electronic_documents was consistently persisted remain printable.
         return $sale->document_type === 'invoice'
-            && $sale->certification_status === 'certified'
+            && in_array($sale->certification_status, ['certified', 'cancelled'], true)
             && filled($sale->fel_uuid);
     }
 

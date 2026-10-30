@@ -50,6 +50,8 @@ class FelCancellationFinalizer
                 $this->assertFiscalIdentity($lockedRequest, $document, $sale);
 
                 if ($lockedRequest->finalized_at) {
+                    $this->synchronizeElectronicDocumentCancellation($document, $sale, $lockedRequest);
+
                     return $sale;
                 }
 
@@ -108,6 +110,8 @@ class FelCancellationFinalizer
                     'finalization_error' => null,
                 ]);
 
+                $this->synchronizeElectronicDocumentCancellation($document, $sale, $lockedRequest);
+
                 return $sale->refresh();
             });
         } catch (\Throwable $exception) {
@@ -115,6 +119,24 @@ class FelCancellationFinalizer
 
             throw $exception;
         }
+    }
+
+    private function synchronizeElectronicDocumentCancellation(
+        ElectronicDocument $document,
+        Sale $sale,
+        FelCancellationRequest $request,
+    ): void {
+        $document->update([
+            'status' => 'cancelled',
+            'cancelled_at' => $request->confirmed_at ?: now(),
+            'cancellation_request_payload' => $request->request_payload,
+            'cancellation_response_payload' => $request->response_payload,
+        ]);
+
+        $sale->update([
+            'certification_status' => 'cancelled',
+            'fel_status' => 'CANCELLED',
+        ]);
     }
 
     private function assertFiscalIdentity(FelCancellationRequest $request, ElectronicDocument $document, Sale $sale): void

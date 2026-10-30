@@ -69,6 +69,15 @@
     <button class="primary" type="button" onclick="window.print()">Imprimir</button>
 </div>
 <main class="document-page">
+    @if (($fel['status'] ?? null) === 'cancelled')
+        <section class="document-warning" style="margin-bottom: 12px; border-color: #b91c1c; color: #991b1b;">
+            <strong>FACTURA FEL ANULADA</strong>
+            <p>Fecha de anulación: {{ $fel['cancelled_at'] ?: '-' }}</p>
+            @if (! empty($fel['cancellation_reason']))
+                <p>Motivo: {{ $fel['cancellation_reason'] }}</p>
+            @endif
+        </section>
+    @endif
     <header class="document-header">
         <div>
             @if (! empty($company['logo_url']))

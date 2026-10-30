@@ -222,6 +222,31 @@ class DigifactCancellationContractTest extends TestCase
         $this->assertSame('cancelled', $first->status);
         $this->assertSame($first->id, $second->id);
         $this->assertNotNull($confirmed->refresh()->finalized_at);
+        $this->assertSame('cancelled', $document->refresh()->status);
+        $this->assertNotNull($document->cancelled_at);
+        $this->assertSame('cancelled', $first->refresh()->certification_status);
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        Http::assertSentCount(1);
+    }
+
+    public function test_finalizing_an_already_finalized_cancellation_repairs_only_the_electronic_document(): void
+    {
+        [$business, $document] = $this->certifiedDocument();
+        Http::fake(['*CancelFelGT' => Http::response(['Codigo' => '1', 'Autorizacion' => self::UUID])]);
+        $confirmed = $this->requestCancellation($document);
+        $actor = User::factory()->create(['business_id' => $business->id]);
+
+        app(FelCancellationFinalizer::class)->finalize($confirmed, $actor, $business->id);
+        $document->update(['status' => 'certified', 'cancelled_at' => null]);
+        $document->sale->update(['certification_status' => 'certified', 'fel_status' => 'CERTIFIED']);
+
+        $repaired = app(FelCancellationFinalizer::class)->finalize($confirmed->refresh(), $actor, $business->id);
+
+        $this->assertSame('cancelled', $repaired->status);
+        $this->assertSame('cancelled', $document->refresh()->status);
+        $this->assertNotNull($document->cancelled_at);
+        $this->assertSame('cancelled', $repaired->refresh()->certification_status);
         $this->assertDatabaseCount('cash_movements', 0);
         $this->assertDatabaseCount('stock_movements', 0);
         Http::assertSentCount(1);

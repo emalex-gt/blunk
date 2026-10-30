@@ -148,7 +148,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
         || (auth.permissions ?? []).includes('fel.documents.view');
 
     function printSale() {
-        if (sale.electronic_document?.status === 'certified' && sale.electronic_document.has_printable_document) {
+        if (['certified', 'cancelled'].includes(sale.electronic_document?.status ?? '') && sale.electronic_document.has_printable_document) {
             if (!canViewFelDocuments) {
                 toast.error('No tienes permisos para ver documentos FEL.');
                 return;
@@ -380,6 +380,13 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                     )}
                                 </div>
                                 <div className="mt-1 font-semibold">Estado FEL: {felStatusLabel(sale.electronic_document.status)}</div>
+                                {sale.electronic_document.status === 'cancelled' && (
+                                    <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                                        <div className="font-semibold">FACTURA FEL ANULADA</div>
+                                        <div>Fecha: {sale.electronic_document.cancelled_at ?? sale.cancelled_at_local ?? '-'}</div>
+                                        {sale.cancellation_reason && <div>Motivo: {sale.cancellation_reason}</div>}
+                                    </div>
+                                )}
                                 <div className="mt-2 grid gap-2 md:grid-cols-2">
                                     <div>UUID: {sale.electronic_document.uuid ?? '-'}</div>
                                     {auth.user?.is_super_admin && (
