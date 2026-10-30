@@ -52,6 +52,19 @@ class DigifactInternalReferenceContractTest extends TestCase
         ], $payload['AdditionalDocumentInfo']);
     }
 
+    public function test_new_guatemala_payload_uses_the_exact_nuc_phrase_field_name(): void
+    {
+        [, $sale, $settings] = $this->saleFixture();
+        $sale->update(['fel_internal_reference' => self::PROVIDER_REFERENCE]);
+
+        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings);
+        $phraseNames = collect($payload['Seller']['AdditionlInfo'] ?? [])->pluck('Name')->all();
+
+        $this->assertContains('TipoFrase', $phraseNames);
+        $this->assertContains('CodigoEscenario', $phraseNames);
+        $this->assertNotContains('Escenario', $phraseNames);
+    }
+
     public function test_fiscal_intent_persists_one_uuid_before_any_provider_call_and_reuses_it_for_the_same_key(): void
     {
         [, $sale] = $this->saleFixture();

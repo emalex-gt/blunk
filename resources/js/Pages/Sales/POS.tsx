@@ -834,6 +834,7 @@ export default function POS({
     const [cart, setCart] = useState<CartItem[]>([]);
     const [message, setMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
+    const [provisionalReceiptUrl, setProvisionalReceiptUrl] = useState<string | null>(null);
     const [recentProductIds, setRecentProductIds] = useState<number[]>([]);
     const [productViewMode, setProductViewMode] = useState<ProductViewMode>(() => loadProductViewMode(productViewModeKey));
     const [hasHeldSale, setHasHeldSale] = useState(false);
@@ -1685,6 +1686,7 @@ export default function POS({
         setSearch('');
         setErrorMessage('');
         setMessage('');
+        setProvisionalReceiptUrl(null);
         setData('note', '');
         setData('branch_id', activeBranchId);
         setData('customer', defaultCustomer);
@@ -1730,6 +1732,7 @@ export default function POS({
     function beginOperationSubmit() {
         latestSubmitSucceededRef.current = false;
         latestSubmitFailureHandledRef.current = false;
+        setProvisionalReceiptUrl(null);
     }
 
     function finalizeOperationSubmit() {
@@ -2753,15 +2756,34 @@ export default function POS({
         post(route('sales.store'), {
             preserveScroll: true,
             onSuccess: (page) => {
-                latestSubmitSucceededRef.current = true;
                 const flash = page.props.flash as {
                     receipt_sale_id?: number | null;
                     fel_print_sale_id?: number | null;
                     fel_print_url?: string | null;
                     fel_success_message?: string | null;
+                    warning?: string | null;
+                    fiscal_intent_id?: number | null;
+                    provisional_receipt_url?: string | null;
                 } | undefined;
                 const receiptSaleId = flash?.receipt_sale_id;
                 const felPrintSaleId = flash?.fel_print_sale_id;
+
+                if (effectiveDocumentType === 'invoice' && !felPrintSaleId) {
+                    const fiscalMessage = flash?.warning
+                        ?? (flash?.fiscal_intent_id
+                            ? 'La certificación FEL está pendiente de finalización local. Conserva la operación y no la reenvíes.'
+                            : 'La factura FEL no fue confirmada. Conserva la operación y revisa el estado antes de reintentar.');
+
+                    latestSubmitSucceededRef.current = false;
+                    setFailedSubmission(true);
+                    setProvisionalReceiptUrl(flash?.provisional_receipt_url ?? null);
+                    showError(fiscalMessage);
+                    toast.warning(fiscalMessage, { persistent: true });
+
+                    return;
+                }
+
+                latestSubmitSucceededRef.current = true;
 
                 setCart([]);
                 setSearch('');
@@ -2785,6 +2807,7 @@ export default function POS({
                 setCustomerEditing(false);
                 setIdempotencyKey(makeOperationKey());
                 setFailedSubmission(false);
+                setProvisionalReceiptUrl(null);
                 focusSearch();
 
                 if (effectiveDocumentType === 'receipt' && receiptSaleId) {
@@ -3706,7 +3729,17 @@ export default function POS({
                         <div className="min-h-[320px] p-4 2xl:min-h-0 2xl:flex-1 2xl:overflow-y-auto">
                             {(errorMessage || errors.items || errors.note || customerError || paymentsError || cashRegisterError) && (
                                 <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
-                                    {errorMessage || errors.items || errors.note || customerError || paymentsError || cashRegisterError}
+                                    <div>{errorMessage || errors.items || errors.note || customerError || paymentsError || cashRegisterError}</div>
+                                    {provisionalReceiptUrl && (
+                                        <a
+                                            href={provisionalReceiptUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="mt-2 inline-flex font-semibold underline underline-offset-2"
+                                        >
+                                            Abrir comprobante provisional no fiscal
+                                        </a>
+                                    )}
                                 </div>
                             )}
 

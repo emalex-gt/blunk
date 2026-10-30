@@ -858,7 +858,7 @@ class DigifactInvoiceService
                 $typeOneDataIdentifiers[] = (string) $info['Data'];
             }
 
-            if ($info['Name'] === 'Escenario' && (string) $info['Value'] === '2') {
+            if ($info['Name'] === 'CodigoEscenario' && (string) $info['Value'] === '2') {
                 $scenarioOneDataIdentifiers[] = (string) $info['Data'];
             }
         }
@@ -869,7 +869,7 @@ class DigifactInvoiceService
             }
         }
 
-        throw new FelException('Payload FEL invalido: FACT debe incluir TipoFrase 1 y Escenario 2 con el mismo Data.');
+        throw new FelException('Payload FEL invalido: FACT debe incluir TipoFrase 1 y CodigoEscenario 2 con el mismo Data.');
     }
 
     private function writeDebugPayload(array $payload): void

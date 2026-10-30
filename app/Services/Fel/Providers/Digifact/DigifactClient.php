@@ -757,6 +757,13 @@ class DigifactClient
         if (! $response->successful()) {
             $payload = $this->decodedResponse($response, false);
 
+            if (is_array($payload) && $this->hasExplicitCertificationRejection($payload)) {
+                throw new FelProviderRejectedException(
+                    $this->readableErrorFromArray($payload) ?: 'Digifact rechazo la solicitud.',
+                    responsePayload: $payload,
+                );
+            }
+
             throw new FelException(
                 $this->readableError($response) ?: 'Digifact rechazo la solicitud.',
                 responsePayload: is_array($payload) ? $payload : null,
@@ -1149,27 +1156,61 @@ class DigifactClient
 
     private function isSuccessfulBusinessResponse(array $payload): bool
     {
-        if (isset($payload['REQUEST_DATA']) && is_array($payload['REQUEST_DATA'])) {
-            foreach ($payload['REQUEST_DATA'] as $row) {
-                if (! is_array($row)) {
-                    continue;
-                }
+        $code = $this->businessResponseCode($payload);
 
-                $code = $row['Codigo'] ?? $row['codigo'] ?? null;
+        return $code === null || in_array($code, ['1', '200'], true);
+    }
 
-                if (filled($code) && ! in_array((string) $code, ['1', '200'], true)) {
-                    return false;
+    /**
+     * A structured provider response with an explicit non-success business code
+     * proves that Digifact rejected the NUC before fiscal authorization. Transport
+     * failures and unstructured HTTP errors remain ambiguous.
+     */
+    private function hasExplicitCertificationRejection(array $payload): bool
+    {
+        $code = $this->businessResponseCode($payload);
+
+        return $code !== null
+            && ! in_array($code, ['1', '200'], true)
+            && filled($this->readableErrorFromArray($payload));
+    }
+
+    private function businessResponseCode(array $payload): ?string
+    {
+        foreach (['Codigo', 'codigo', 'Code', 'code'] as $key) {
+            $value = $payload[$key] ?? null;
+
+            if (is_scalar($value) && filled($value)) {
+                return trim((string) $value);
+            }
+        }
+
+        if (! isset($payload['REQUEST_DATA']) || ! is_array($payload['REQUEST_DATA'])) {
+            return null;
+        }
+
+        $successfulCode = null;
+        foreach ($payload['REQUEST_DATA'] as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            foreach (['Codigo', 'codigo', 'Code', 'code'] as $key) {
+                $value = $row[$key] ?? null;
+
+                if (is_scalar($value) && filled($value)) {
+                    $code = trim((string) $value);
+
+                    if (! in_array($code, ['1', '200'], true)) {
+                        return $code;
+                    }
+
+                    $successfulCode ??= $code;
                 }
             }
         }
 
-        if (! array_key_exists('Codigo', $payload) && ! array_key_exists('codigo', $payload)) {
-            return true;
-        }
-
-        $code = (string) ($payload['Codigo'] ?? $payload['codigo']);
-
-        return in_array($code, ['1', '200'], true);
+        return $successfulCode;
     }
 
     private function readableError(Response $response): ?string

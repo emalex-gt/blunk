@@ -346,7 +346,7 @@ class DigifactNucJsonBuilder
                     'Value' => $phraseType,
                 ],
                 [
-                    'Name' => 'Escenario',
+                    'Name' => 'CodigoEscenario',
                     'Data' => $data,
                     'Value' => $scenarioCode,
                 ],
@@ -377,7 +377,7 @@ class DigifactNucJsonBuilder
             ->where('Name', 'TipoFrase')
             ->where('Value', '1')
             ->contains(fn (array $typeInfo) => collect($items)
-                ->where('Name', 'Escenario')
+                ->where('Name', 'CodigoEscenario')
                 ->where('Data', $typeInfo['Data'])
                 ->where('Value', '2')
                 ->isNotEmpty());
@@ -386,7 +386,7 @@ class DigifactNucJsonBuilder
             array_unshift(
                 $items,
                 [
-                    'Name' => 'Escenario',
+                    'Name' => 'CodigoEscenario',
                     'Data' => '1',
                     'Value' => '2',
                 ],

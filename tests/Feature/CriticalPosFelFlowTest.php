@@ -5333,6 +5333,66 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertDatabaseMissing('stock_reservations', ['source_type' => 'fiscal_document_intent', 'source_id' => $intent->id, 'status' => 'active']);
     }
 
+    public function test_digifact_http_400_with_an_explicit_nuc_schema_rejection_is_rejected_not_unknown(): void
+    {
+        [$business, $user, $product, $settings] = $this->realDigifactInvoiceContext();
+        $settings->update(['token' => 'cached-token', 'token_expires_at' => now()->addHour()]);
+
+        Http::fake([
+            '*v2/transform/nuc_json*' => Http::response([
+                'code' => 400,
+                'message' => 'El contenido del mensaje en formato JSON no coincide con el esquema NUC',
+            ], 400),
+        ]);
+
+        $this->submitRealDigifactInvoice($user, $product, expectsValidationError: true);
+
+        $intent = FiscalDocumentIntent::query()->where('business_id', $business->id)->firstOrFail();
+        $this->assertSame(FiscalDocumentIntent::REJECTED, $intent->status);
+        $this->assertStringContainsString('esquema NUC', (string) $intent->last_reconciliation_error);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseMissing('stock_reservations', ['source_type' => 'fiscal_document_intent', 'source_id' => $intent->id, 'status' => 'active']);
+    }
+
+    public function test_digifact_http_400_without_a_structured_provider_rejection_remains_unknown(): void
+    {
+        [$business, $user, $product, $settings] = $this->realDigifactInvoiceContext();
+        $settings->update(['token' => 'cached-token', 'token_expires_at' => now()->addHour()]);
+
+        Http::fake([
+            '*v2/transform/nuc_json*' => Http::response(['message' => 'Solicitud no confirmada'], 400),
+        ]);
+
+        $this->submitRealDigifactInvoice($user, $product);
+
+        $this->assertAmbiguousDigifactIntent($business, $product, 'Solicitud no confirmada');
+    }
+
+    public function test_digifact_http_200_without_fiscal_authorization_remains_unknown(): void
+    {
+        [$business, $user, $product, $settings] = $this->realDigifactInvoiceContext();
+        $settings->update(['token' => 'cached-token', 'token_expires_at' => now()->addHour()]);
+
+        Http::fake([
+            '*v2/transform/nuc_json*' => Http::response(['code' => 200, 'message' => 'Solicitud recibida'], 200),
+        ]);
+
+        $this->submitRealDigifactInvoice($user, $product);
+
+        $this->assertAmbiguousDigifactIntent($business, $product, 'No se pudo identificar la autorización FEL');
+    }
+
+    public function test_pos_only_completes_an_invoice_when_the_backend_supplies_a_finalized_fel_print_sale(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+
+        $this->assertStringContainsString("if (effectiveDocumentType === 'invoice' && !felPrintSaleId)", $source);
+        $this->assertStringContainsString('Conserva la operación y no la reenvíes.', $source);
+        $this->assertStringContainsString('setProvisionalReceiptUrl(flash?.provisional_receipt_url ?? null);', $source);
+        $this->assertStringContainsString("if (effectiveDocumentType === 'invoice' && felPrintSaleId)", $source);
+    }
+
     private function realDigifactInvoiceContext(): array
     {
         [$business, $user] = $this->tenant(
