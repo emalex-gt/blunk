@@ -44,6 +44,7 @@
 <div class="toolbar no-print">
     <button type="button" onclick="window.close()">Cerrar</button>
     @include('print.partials.pdf-download-button', ['target' => '.ticket', 'filename' => 'venta-'.format_sale_number($sale).'.pdf', 'kind' => 'ticket', 'widthMm' => 80, 'marginMm' => 4])
+    @include('print.partials.delivery-print-toggle', ['delivery' => $delivery])
     <button type="button" class="primary" onclick="window.print()">Imprimir</button>
 </div>
 
@@ -92,9 +93,19 @@
             <span>Cliente</span>
             <span class="right">{{ $customerDisplayName ?? 'Consumidor final' }}</span>
         </div>
+        <div class="row">
+            <span>Le atendió</span>
+            <span class="right">{{ $attendedBy }}</span>
+        </div>
     </section>
 
     <div class="line"></div>
+
+    @include('print.partials.delivery-details', ['delivery' => $delivery])
+
+    @if (collect($delivery)->contains(fn ($value) => filled(trim((string) $value))))
+        <div class="line delivery-details" data-delivery-details></div>
+    @endif
 
     <section>
         @forelse ($items as $item)

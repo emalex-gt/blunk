@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Product;
 use App\Models\Quotation;
 use App\Models\PriceType;
+use App\Models\PreSale;
 use App\Models\Sale;
 use App\Models\Business;
 use App\Models\Branch;
@@ -1471,6 +1472,7 @@ class SaleController extends Controller
         ]);
 
         $receiptFormat = $settings?->receipt_format === 'document' ? 'document' : 'ticket';
+        $printDetails = $this->salePrintDetails($sale);
 
         return view("sales.receipt-{$receiptFormat}", [
             'paperSize' => ($business?->country ?? 'GT') === 'AR' ? 'A4' : 'Letter',
@@ -1482,6 +1484,8 @@ class SaleController extends Controller
             'sale' => $sale,
             'items' => $sale->items,
             'payments' => $sale->payments,
+            'attendedBy' => $printDetails['attended_by'],
+            'delivery' => $printDetails['delivery'],
             'createdAtLocal' => $sale->created_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
             'cancelledAtLocal' => $sale->cancelled_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
         ]);
@@ -1536,6 +1540,7 @@ class SaleController extends Controller
 
         $sale->load([
             'customer:id,name,doc_type,doc_number,address,phone',
+            'createdBy:id,name',
             'items.product:id,code,barcode',
             'payments:id,sale_id,method,amount,reference,details',
             'electronicDocument',
@@ -1578,6 +1583,7 @@ class SaleController extends Controller
 
         $subtotal = round((float) ($sale->subtotal_before_discount ?? $sale->total), 2);
         $total = round((float) $sale->total, 2);
+        $printDetails = $this->salePrintDetails($sale);
         $taxable = round($total / 1.12, 2);
         $iva = round($total - $taxable, 2);
         $verificationUrl = 'https://felpub.c.sat.gob.gt/verificador-web/publico/vistas/verificacionDte.jsf'
@@ -1602,6 +1608,8 @@ class SaleController extends Controller
             'sale' => $sale,
             'items' => $sale->items,
             'payments' => $sale->payments,
+            'attendedBy' => $printDetails['attended_by'],
+            'delivery' => $printDetails['delivery'],
             'customer' => [
                 'name' => $sale->customer_name ?: $sale->customer?->name ?: 'Consumidor Final',
                 'tax_id' => $receiverNit,
@@ -1670,6 +1678,29 @@ class SaleController extends Controller
         return $sale->document_type === 'invoice'
             && in_array($sale->certification_status, ['certified', 'cancelled'], true)
             && filled($sale->fel_uuid);
+    }
+
+    /** @return array{attended_by: string, delivery: array{address: string, address_reference: string, phone: string}} */
+    private function salePrintDetails(Sale $sale): array
+    {
+        $routePreSale = PreSale::query()
+            ->where('business_id', $sale->business_id)
+            ->where('converted_sale_id', $sale->id)
+            ->with('seller:id,name')
+            ->first();
+
+        $attendedBy = $routePreSale
+            ? ($routePreSale->seller?->name ?: 'No registrado')
+            : ($sale->createdBy?->name ?: 'No registrado');
+
+        return [
+            'attended_by' => $attendedBy,
+            'delivery' => [
+                'address' => trim((string) $sale->customer_address),
+                'address_reference' => trim((string) $sale->customer_address_reference),
+                'phone' => trim((string) $sale->customer_phone),
+            ],
+        ];
     }
 
     private function saleIdempotencyPayload(array $data, int $branchId, int $businessId, int $userId): array

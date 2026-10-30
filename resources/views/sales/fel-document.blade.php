@@ -66,6 +66,7 @@
 <div class="toolbar no-print">
     <button type="button" onclick="window.close()">Cerrar</button>
     @include('print.partials.pdf-download-button', ['target' => '.document-page', 'filename' => 'factura-fel-'.$fel['series'].'-'.$fel['number'].'.pdf', 'kind' => 'document', 'paper' => $paperSize, 'marginMm' => 12])
+    @include('print.partials.delivery-print-toggle', ['delivery' => $delivery])
     <button class="primary" type="button" onclick="window.print()">Imprimir</button>
 </div>
 <main class="document-page">
@@ -116,8 +117,11 @@
             <p><strong>{{ $customer['tax_id'] }}</strong></p>
             <span class="label">Fecha</span>
             <p>{{ $createdAtLocal ?: '-' }}</p>
+            <span class="label">Le atendió</span>
+            <p>{{ $attendedBy }}</p>
         </div>
     </section>
+    @include('print.partials.delivery-details', ['delivery' => $delivery])
     <table class="lines">
         <thead>
             <tr>

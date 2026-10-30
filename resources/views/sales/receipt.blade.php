@@ -49,6 +49,7 @@
 <div class="toolbar no-print">
     <button type="button" onclick="window.close()">Cerrar</button>
     @include('print.partials.pdf-download-button', ['target' => '.document-page', 'filename' => 'venta-'.format_sale_number($sale).'.pdf', 'kind' => 'document', 'paper' => $paperSize, 'marginMm' => 12])
+    @include('print.partials.delivery-print-toggle', ['delivery' => $delivery])
     <button type="button" class="primary" onclick="window.print()">Imprimir</button>
 </div>
 
@@ -99,10 +100,12 @@
             <p>{{ $customerDisplayName ?? 'Consumidor final' }}</p>
         </div>
         <div class="right">
-            <strong>Usuario</strong>
-            <p>{{ $sale->createdBy?->name ?? '-' }}</p>
+            <strong>Le atendió</strong>
+            <p>{{ $attendedBy }}</p>
         </div>
     </section>
+
+    @include('print.partials.delivery-details', ['delivery' => $delivery])
 
     <table>
         <thead>

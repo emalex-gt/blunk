@@ -51,6 +51,7 @@
 <div class="toolbar no-print">
     <button type="button" onclick="window.close()">Cerrar</button>
     @include('print.partials.pdf-download-button', ['target' => '.ticket', 'filename' => 'factura-fel-'.$fel['series'].'-'.$fel['number'].'.pdf', 'kind' => 'ticket', 'widthMm' => 80, 'marginMm' => 4])
+    @include('print.partials.delivery-print-toggle', ['delivery' => $delivery])
     <button type="button" onclick="window.print()">Imprimir</button>
 </div>
 <main class="ticket">
@@ -92,11 +93,16 @@
     <div class="center"><strong>NIT: {{ $customer['tax_id'] }}</strong></div>
     <div class="center"><strong>{{ $customer['name'] }}</strong></div>
     <div class="center">Dirección: {{ $customer['address'] }}</div>
+    <div class="center">Le atendió: {{ $attendedBy }}</div>
     @if (! empty($customer['municipality']) || ! empty($customer['department']))
         <div class="center">{{ $customer['municipality'] }} {{ $customer['department'] }}</div>
     @endif
 
     <div class="separator"></div>
+    @include('print.partials.delivery-details', ['delivery' => $delivery])
+    @if (collect($delivery)->contains(fn ($value) => filled(trim((string) $value))))
+        <div class="separator delivery-details" data-delivery-details></div>
+    @endif
     <table>
         <thead>
             <tr>
