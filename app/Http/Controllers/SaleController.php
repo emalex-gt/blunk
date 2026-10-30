@@ -912,6 +912,7 @@ class SaleController extends Controller
 
             if ($intent->status === FiscalDocumentIntent::REJECTED) {
                 throw ValidationException::withMessages([
+                    'fiscal_intent_status' => 'rejected',
                     'document_type' => 'Digifact rechazó explícitamente la certificación. No se registraron efectos de venta.',
                 ]);
             }

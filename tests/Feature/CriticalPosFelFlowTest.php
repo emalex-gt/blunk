@@ -1844,6 +1844,8 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringContainsString('function beginOperationSubmit()', $source);
         $this->assertStringContainsString('function finalizeOperationSubmit()', $source);
         $this->assertStringContainsString("errors.idempotency_key", $source);
+        $this->assertStringContainsString("const fiscalIntentRejected = errors.fiscal_intent_status === 'rejected';", $source);
+        $this->assertStringContainsString('if (fiscalIntentRejected || idempotencyError ===', $source);
         $this->assertStringContainsString('La venta cambió después del intento anterior. Intenta confirmar nuevamente.', $source);
         $this->assertStringContainsString("handleOperationSubmitError(errors as Record<string, string>, 'No se pudo registrar el crédito.')", $source);
         $this->assertStringContainsString("handleOperationSubmitError(errors as Record<string, string>, 'No se pudo completar la venta. Revisa los datos.')", $source);

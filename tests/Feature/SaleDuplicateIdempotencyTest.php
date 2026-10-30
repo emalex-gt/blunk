@@ -25,6 +25,8 @@ use App\Models\User;
 use App\Support\BranchInventory;
 use App\Support\IdempotencyService;
 use App\Support\Permissions;
+use App\Services\Fel\FelException;
+use App\Services\Fel\FelProviderRejectedException;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -398,6 +400,91 @@ class SaleDuplicateIdempotencyTest extends TestCase
 
         $this->assertSame(1, FiscalDocumentIntent::query()->where('business_id', $business->id)->count());
         $this->assertSame(1, Sale::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_explicitly_rejected_fiscal_intent_returns_a_structured_status_and_a_new_key_creates_a_new_intent(): void
+    {
+        [$business, $user] = $this->tenant();
+        $this->enableFelInvoices($business);
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $payload = $this->salePayload($product, 'idem-rejected-fiscal-intent', 'invoice', [
+            'name' => 'Consumidor Final',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'consumidor_final' => true,
+        ]);
+
+        $invoice = Mockery::mock(DigifactInvoiceService::class);
+        $invoice->shouldReceive('buildIntentPayload')->twice()->andReturn([
+            'Header' => ['IssuedDateTime' => now('America/Guatemala')->format('Y-m-d\\TH:i:sP')],
+        ]);
+        $invoice->shouldReceive('certifyIntent')->twice()->andThrow(
+            new FelProviderRejectedException('Rechazo fiscal explícito.', responsePayload: ['code' => 'REJECTED']),
+        );
+        $this->app->instance(DigifactInvoiceService::class, $invoice);
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $payload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasErrors([
+                'fiscal_intent_status' => 'rejected',
+                'document_type' => 'Digifact rechazó explícitamente la certificación. No se registraron efectos de venta.',
+            ]);
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $payload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasErrors('fiscal_intent_status');
+
+        $this->assertSame(1, FiscalDocumentIntent::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
+
+        $replacementPayload = [...$payload, 'idempotency_key' => 'idem-rejected-fiscal-intent-retry'];
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $replacementPayload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasErrors('fiscal_intent_status');
+
+        $this->assertSame(2, FiscalDocumentIntent::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_ambiguous_fiscal_intent_replay_keeps_the_same_key_without_reemitting(): void
+    {
+        [$business, $user] = $this->tenant();
+        $this->enableFelInvoices($business);
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $payload = $this->salePayload($product, 'idem-unknown-fiscal-intent', 'invoice', [
+            'name' => 'Consumidor Final',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'consumidor_final' => true,
+        ]);
+
+        $invoice = Mockery::mock(DigifactInvoiceService::class);
+        $invoice->shouldReceive('buildIntentPayload')->once()->andReturn([
+            'Header' => ['IssuedDateTime' => now('America/Guatemala')->format('Y-m-d\\TH:i:sP')],
+        ]);
+        $invoice->shouldReceive('certifyIntent')->once()->andThrow(new FelException('Resultado fiscal incierto.'));
+        $this->app->instance(DigifactInvoiceService::class, $invoice);
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $payload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('warning');
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $payload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('warning');
+
+        $intent = FiscalDocumentIntent::query()->where('business_id', $business->id)->sole();
+        $this->assertSame(FiscalDocumentIntent::UNKNOWN, $intent->status);
+        $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
+        $this->assertSame(1, OperationIdempotencyKey::query()
+            ->where('business_id', $business->id)
+            ->where('idempotency_key', 'idem-unknown-fiscal-intent')
+            ->value('replay_count'));
     }
 
     public function test_pos_reuses_one_generic_final_consumer_customer(): void

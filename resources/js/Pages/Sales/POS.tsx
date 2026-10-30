@@ -1714,11 +1714,12 @@ export default function POS({
 
     function handleOperationSubmitError(errors: Record<string, string>, fallback: string) {
         const idempotencyError = errors.idempotency_key;
-        const message = idempotencyError ?? Object.values(errors)[0] ?? fallback;
+        const fiscalIntentRejected = errors.fiscal_intent_status === 'rejected';
+        const message = idempotencyError ?? errors.document_type ?? Object.values(errors)[0] ?? fallback;
 
         latestSubmitFailureHandledRef.current = true;
 
-        if (idempotencyError === 'La venta cambió después del intento anterior. Intenta confirmar nuevamente.') {
+        if (fiscalIntentRejected || idempotencyError === 'La venta cambió después del intento anterior. Intenta confirmar nuevamente.') {
             setIdempotencyKey(makeOperationKey());
             setFailedSubmission(false);
         } else {
