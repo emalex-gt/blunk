@@ -344,7 +344,9 @@ class DigifactNucJsonBuilder
                     'Value' => $phraseType,
                 ],
                 [
-                    'Name' => 'CodigoEscenario',
+                    // Digifact's FACT example and live GT validator require Escenario.
+                    // The public field table's CodigoEscenario label is not accepted here.
+                    'Name' => 'Escenario',
                     'Data' => $data,
                     'Value' => $scenarioCode,
                 ],
@@ -375,7 +377,7 @@ class DigifactNucJsonBuilder
             ->where('Name', 'TipoFrase')
             ->where('Value', '1')
             ->contains(fn (array $typeInfo) => collect($items)
-                ->where('Name', 'CodigoEscenario')
+                ->where('Name', 'Escenario')
                 ->where('Data', $typeInfo['Data'])
                 ->where('Value', '2')
                 ->isNotEmpty());
@@ -384,7 +386,7 @@ class DigifactNucJsonBuilder
             array_unshift(
                 $items,
                 [
-                    'Name' => 'CodigoEscenario',
+                    'Name' => 'Escenario',
                     'Data' => '1',
                     'Value' => '2',
                 ],

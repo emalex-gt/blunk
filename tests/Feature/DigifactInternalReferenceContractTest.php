@@ -95,7 +95,7 @@ class DigifactInternalReferenceContractTest extends TestCase
             $serialized['AdditionalDocumentInfo']['AdditionalInfo'][0]['Code'],
         );
         $this->assertArrayHasKey('Number', $serialized['Items'][0]);
-        $this->assertContains('CodigoEscenario', collect($serialized['Seller']['AdditionlInfo'])->pluck('Name')->all());
+        $this->assertContains('Escenario', collect($serialized['Seller']['AdditionlInfo'])->pluck('Name')->all());
     }
 
     public function test_local_invoice_validation_rejects_legacy_adenda_wrapper_and_number_line(): void
@@ -133,7 +133,7 @@ class DigifactInternalReferenceContractTest extends TestCase
         $this->assertArrayNotHasKey('NumberLine', $example['Items'][0]);
     }
 
-    public function test_new_guatemala_payload_uses_the_exact_nuc_phrase_field_name(): void
+    public function test_new_guatemala_payload_uses_the_operational_nuc_phrase_field_name(): void
     {
         [, $sale, $settings] = $this->saleFixture();
         $sale->update(['fel_internal_reference' => self::PROVIDER_REFERENCE]);
@@ -142,8 +142,10 @@ class DigifactInternalReferenceContractTest extends TestCase
         $phraseNames = collect($payload['Seller']['AdditionlInfo'] ?? [])->pluck('Name')->all();
 
         $this->assertContains('TipoFrase', $phraseNames);
-        $this->assertContains('CodigoEscenario', $phraseNames);
-        $this->assertNotContains('Escenario', $phraseNames);
+        // The public table labels this CodigoEscenario, but Digifact's FACT example
+        // and the TEST validator require the serialized Name to be Escenario.
+        $this->assertContains('Escenario', $phraseNames);
+        $this->assertNotContains('CodigoEscenario', $phraseNames);
     }
 
     public function test_fiscal_intent_persists_one_uuid_before_any_provider_call_and_reuses_it_for_the_same_key(): void
