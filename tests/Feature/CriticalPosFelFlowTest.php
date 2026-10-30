@@ -4419,6 +4419,29 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringContainsString('disabled={activeIntentAction !== null}', $source);
         $this->assertStringContainsString("'Consultando Digifact...'", $source);
         $this->assertStringContainsString('{actionFeedback.message}', $source);
+        $this->assertStringContainsString('function formatLocalDateTime', $source);
+        $this->assertStringContainsString('Intl.DateTimeFormat', $source);
+        $this->assertStringContainsString('formatLocalDateTime(intent.next_reconciliation_at)', $source);
+    }
+
+    public function test_super_admin_fel_intent_dates_are_serialized_as_utc_iso_timestamps(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner', allowInvoices: true);
+        $intent = $this->unknownFiscalIntent($business, $user);
+        $intent->update([
+            'last_reconciliation_at' => '2026-10-30 20:16:38+00:00',
+            'next_reconciliation_at' => '2026-10-30 21:21:38+00:00',
+        ]);
+        $superAdmin = User::factory()->create(['role' => 'super_admin', 'is_super_admin' => true]);
+
+        $this->actingAs($superAdmin)
+            ->get(route('super-admin.fel-incidents.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('SuperAdmin/FelIncidents/Index')
+                ->where('intents.data.0.last_reconciliation_at', '2026-10-30T20:16:38+00:00')
+                ->where('intents.data.0.next_reconciliation_at', '2026-10-30T21:21:38+00:00')
+            );
     }
 
     public function test_provisional_receipt_is_tenant_scoped_non_fiscal_and_only_available_while_unresolved(): void

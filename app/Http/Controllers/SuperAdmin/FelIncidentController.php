@@ -11,6 +11,7 @@ use App\Services\Fiscal\FiscalDocumentIntentService;
 use App\Services\Fel\Providers\Digifact\DigifactReconciliationService;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Support\AccountsReceivable;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -37,7 +38,7 @@ class FelIncidentController extends Controller
                 'severity' => $incident->severity,
                 'status' => $incident->status,
                 'message' => $incident->message,
-                'created_at' => $incident->created_at?->format('Y-m-d H:i'),
+                'created_at' => $this->serializeTimestamp($incident->created_at),
             ]);
 
         $intents = FiscalDocumentIntent::query()
@@ -62,12 +63,12 @@ class FelIncidentController extends Controller
                 'environment' => $intent->environment,
                 'status' => $intent->status,
                 'negative_reconciliation_count' => $intent->negative_reconciliation_count,
-                'last_reconciliation_at' => $intent->last_reconciliation_at?->format('Y-m-d H:i'),
-                'next_reconciliation_at' => $intent->next_reconciliation_at?->format('Y-m-d H:i'),
+                'last_reconciliation_at' => $this->serializeTimestamp($intent->last_reconciliation_at),
+                'next_reconciliation_at' => $this->serializeTimestamp($intent->next_reconciliation_at),
                 'last_reconciliation_result' => $intent->last_reconciliation_result,
                 'last_reconciliation_error' => $intent->last_reconciliation_error,
                 'last_finalization_error' => $intent->last_finalization_error,
-                'created_at' => $intent->created_at?->format('Y-m-d H:i'),
+                'created_at' => $this->serializeTimestamp($intent->created_at),
             ]);
 
         $reconciliations = FelReconciliationRequest::query()
@@ -83,7 +84,7 @@ class FelIncidentController extends Controller
                 'status' => $item->status,
                 'attempts' => $item->attempts,
                 'last_error' => $item->last_error,
-                'checked_at' => $item->checked_at?->format('Y-m-d H:i'),
+                'checked_at' => $this->serializeTimestamp($item->checked_at),
             ]);
 
         return Inertia::render('SuperAdmin/FelIncidents/Index', [
@@ -91,6 +92,11 @@ class FelIncidentController extends Controller
             'intents' => $intents,
             'reconciliations' => $reconciliations,
         ]);
+    }
+
+    private function serializeTimestamp(?CarbonInterface $timestamp): ?string
+    {
+        return $timestamp?->copy()->utc()->toIso8601String();
     }
 
     public function review(Request $request, FelIncident $incident): RedirectResponse
