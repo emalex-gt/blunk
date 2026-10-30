@@ -248,6 +248,15 @@ class FiscalDocumentIntentService
         }
 
         if (($result['found'] ?? false) === true) {
+            if ($this->hasAuthorizationUuidDiscrepancy($intent, (string) ($result['authNumber'] ?? ''))) {
+                return $this->markUnknown(
+                    $intent,
+                    'reconciliation_authorization_mismatch',
+                    'Digifact devolvió una autorización distinta de la autorización fiscal local.',
+                    $result['raw'] ?? null,
+                );
+            }
+
             $intent->update([
                 'status' => FiscalDocumentIntent::CERTIFIED,
                 'provider_response' => $result['raw'],
@@ -453,7 +462,7 @@ class FiscalDocumentIntentService
         $document->fill([
             'internal_reference' => $intent->internal_reference,
             'status' => 'certified',
-            'uuid' => $ids['uuid'] ?? $document->uuid,
+            'uuid' => $document->uuid ?: ($ids['uuid'] ?? null),
             'series' => $ids['series'] ?? $document->series,
             'number' => $ids['number'] ?? $document->number,
             'certification_date' => $ids['certification_date'] ?? $intent->certified_at,
@@ -697,6 +706,32 @@ class FiscalDocumentIntentService
 
             return $intent->refresh();
         });
+    }
+
+    private function hasAuthorizationUuidDiscrepancy(FiscalDocumentIntent $intent, string $providerUuid): bool
+    {
+        if ($intent->operation_type !== 'certify_existing_sale') {
+            return false;
+        }
+
+        $sale = $intent->finalizedSale()->with('electronicDocument')->first();
+        $persistedUuid = trim((string) ($sale?->electronicDocument?->uuid ?: $sale?->fel_uuid));
+        $providerUuid = trim($providerUuid);
+
+        if ($persistedUuid === '' || $providerUuid === '') {
+            return false;
+        }
+
+        return ! $this->authorizationUuidsMatch($persistedUuid, $providerUuid);
+    }
+
+    private function authorizationUuidsMatch(string $persistedUuid, string $providerUuid): bool
+    {
+        $uuidPattern = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+
+        return preg_match($uuidPattern, $persistedUuid) === 1
+            && preg_match($uuidPattern, $providerUuid) === 1
+            && hash_equals(strtoupper($persistedUuid), strtoupper($providerUuid));
     }
 
     private function recordValidNegative(FiscalDocumentIntent $intent, array $result): FiscalDocumentIntent

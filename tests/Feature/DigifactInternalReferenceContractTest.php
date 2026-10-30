@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Business;
+use App\Models\ElectronicDocument;
 use App\Models\FiscalDocumentIntent;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
@@ -93,6 +94,56 @@ class DigifactInternalReferenceContractTest extends TestCase
 
         $this->assertNull($identifiers['issued_at']);
         $this->assertNull($identifiers['certification_date']);
+    }
+
+    public function test_reconciliation_accepts_a_lowercase_guid_that_matches_the_persisted_authorization_uuid(): void
+    {
+        [$business, $sale] = $this->saleFixture();
+        $authorizationUuid = '998E20C0-73D2-481B-B15A-13259EE06B68';
+        $document = ElectronicDocument::query()->create([
+            'business_id' => $business->id,
+            'sale_id' => $sale->id,
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'document_type' => 'invoice',
+            'internal_reference' => self::PROVIDER_REFERENCE,
+            'status' => 'unknown',
+            'uuid' => $authorizationUuid,
+        ]);
+        $sale->update([
+            'electronic_document_id' => $document->id,
+            'fel_uuid' => $authorizationUuid,
+            'certification_status' => 'unknown',
+        ]);
+        $intent = FiscalDocumentIntent::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $sale->branch_id,
+            'finalized_sale_id' => $sale->id,
+            'country' => 'GT',
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'document_type' => 'invoice',
+            'operation_type' => 'certify_existing_sale',
+            'internal_reference' => self::PROVIDER_REFERENCE,
+            'status' => FiscalDocumentIntent::UNKNOWN,
+            'operation_payload' => ['existing_sale_id' => $sale->id],
+            'fiscal_payload' => ['Header' => ['IssuedDateTime' => '2026-10-30T15:33:25-06:00']],
+        ]);
+        $reconciliation = Mockery::mock(DigifactReconciliationService::class);
+        $reconciliation->shouldReceive('findByInternalReference')->once()->andReturn([
+            'found' => true,
+            'authNumber' => strtolower($authorizationUuid),
+            'raw' => ['GUID' => strtolower($authorizationUuid), 'ReferenciaInterna' => self::PROVIDER_REFERENCE],
+        ]);
+
+        $resolved = (new FiscalDocumentIntentService(
+            app(DigifactInvoiceService::class),
+            $reconciliation,
+        ))->reconcile($intent);
+
+        $this->assertSame(FiscalDocumentIntent::FINALIZED, $resolved->status);
+        $this->assertSame($authorizationUuid, $document->refresh()->uuid);
+        $this->assertSame($authorizationUuid, $sale->refresh()->fel_uuid);
     }
 
     public function test_serialized_payload_matches_the_versioned_nuc_v203_adenda_and_item_contract(): void
