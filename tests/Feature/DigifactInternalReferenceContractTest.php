@@ -43,13 +43,94 @@ class DigifactInternalReferenceContractTest extends TestCase
                 'Code' => self::PROVIDER_REFERENCE,
                 'Type' => 'ADENDA',
                 'AditionalInfo' => [
-                    'Info' => [
-                        ['Name' => 'VALIDAR_REFERENCIA_INTERNA', 'Data' => null, 'Value' => 'VALIDAR'],
-                        ['Name' => 'NoReferencia', 'Data' => null, 'Value' => 'BLUNK-'.$sale->business_id.'-'.$sale->id],
-                    ],
+                    ['Name' => 'VALIDAR_REFERENCIA_INTERNA', 'Data' => null, 'Value' => 'VALIDAR'],
+                    ['Name' => 'NoReferencia', 'Data' => null, 'Value' => 'BLUNK-'.$sale->business_id.'-'.$sale->id],
                 ],
             ]],
         ], $payload['AdditionalDocumentInfo']);
+
+        $serialized = json_decode(json_encode($payload, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
+        $adenda = $serialized['AdditionalDocumentInfo']['AdditionalInfo'][0];
+
+        $this->assertIsArray($adenda['AditionalInfo']);
+        $this->assertTrue(array_is_list($adenda['AditionalInfo']));
+        $this->assertArrayNotHasKey('Info', $adenda['AditionalInfo']);
+        $this->assertArrayHasKey('Number', $serialized['Items'][0]);
+        $this->assertArrayNotHasKey('NumberLine', $serialized['Items'][0]);
+    }
+
+    public function test_serialized_payload_matches_the_versioned_nuc_v203_adenda_and_item_contract(): void
+    {
+        [, $sale, $settings] = $this->saleFixture();
+        $sale->update(['fel_internal_reference' => self::PROVIDER_REFERENCE]);
+
+        $serialized = json_decode(
+            json_encode(
+                app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings),
+                JSON_THROW_ON_ERROR,
+            ),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+        $schema = json_decode(
+            file_get_contents(base_path('tests/Fixtures/Digifact/GT/NUCSchema-v2.0.3.json')),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+
+        $adendaInfoSchema = data_get(
+            $schema,
+            'properties.AdditionalDocumentInfo.properties.AdditionalInfo.items.properties.AditionalInfo',
+        );
+
+        $this->assertSame('http://json-schema.org/draft-04/schema', $schema['$schema']);
+        $this->assertSame(['array', 'null'], $adendaInfoSchema['type']);
+        $this->assertArrayHasKey('Number', data_get($schema, 'properties.Items.items.properties'));
+        $this->assertTrue(array_is_list($serialized['AdditionalDocumentInfo']['AdditionalInfo'][0]['AditionalInfo']));
+        $this->assertSame('VALIDAR', $serialized['AdditionalDocumentInfo']['AdditionalInfo'][0]['AditionalInfo'][0]['Value']);
+        $this->assertMatchesRegularExpression(
+            '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i',
+            $serialized['AdditionalDocumentInfo']['AdditionalInfo'][0]['Code'],
+        );
+        $this->assertArrayHasKey('Number', $serialized['Items'][0]);
+        $this->assertContains('CodigoEscenario', collect($serialized['Seller']['AdditionlInfo'])->pluck('Name')->all());
+    }
+
+    public function test_local_invoice_validation_rejects_legacy_adenda_wrapper_and_number_line(): void
+    {
+        [$business, $sale, $settings] = $this->saleFixture();
+        $sale->update(['fel_internal_reference' => self::PROVIDER_REFERENCE]);
+        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings);
+
+        $legacyAdenda = $payload;
+        $legacyAdenda['AdditionalDocumentInfo']['AdditionalInfo'][0]['AditionalInfo'] = [
+            'Info' => $payload['AdditionalDocumentInfo']['AdditionalInfo'][0]['AditionalInfo'],
+        ];
+        $this->assertIntentPayloadIsRejectedLocally($business, $legacyAdenda, 'AdditionalInfo.AditionalInfo debe ser un arreglo');
+
+        $legacyLineNumber = $payload;
+        $legacyLineNumber['Items'][0]['NumberLine'] = $legacyLineNumber['Items'][0]['Number'];
+        unset($legacyLineNumber['Items'][0]['Number']);
+        $this->assertIntentPayloadIsRejectedLocally($business, $legacyLineNumber, 'Items[0].Number');
+    }
+
+    public function test_versioned_official_fact_example_uses_the_same_serialized_contract(): void
+    {
+        $example = json_decode(
+            file_get_contents(base_path('tests/Fixtures/Digifact/GT/fact-cf-v2.0.3.json')),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+
+        $adenda = $example['AdditionalDocumentInfo']['AdditionalInfo'][0];
+
+        $this->assertSame('FACT', $example['Header']['DocType']);
+        $this->assertTrue(array_is_list($adenda['AditionalInfo']));
+        $this->assertArrayHasKey('Number', $example['Items'][0]);
+        $this->assertArrayNotHasKey('NumberLine', $example['Items'][0]);
     }
 
     public function test_new_guatemala_payload_uses_the_exact_nuc_phrase_field_name(): void
@@ -85,7 +166,7 @@ class DigifactInternalReferenceContractTest extends TestCase
                         'AdditionalInfo' => [[
                             'Code' => $reference,
                             'Type' => 'ADENDA',
-                            'AditionalInfo' => ['Info' => []],
+                            'AditionalInfo' => [],
                         ]],
                     ],
                 ];
@@ -368,5 +449,20 @@ class DigifactInternalReferenceContractTest extends TestCase
         ]);
 
         return [$business, $sale->fresh(), $settings];
+    }
+
+    private function assertIntentPayloadIsRejectedLocally(Business $business, array $payload, string $expectedMessage): void
+    {
+        $intent = new FiscalDocumentIntent([
+            'business_id' => $business->id,
+            'fiscal_payload' => $payload,
+        ]);
+
+        try {
+            app(DigifactInvoiceService::class)->certifyIntent($intent);
+            $this->fail('Expected local NUC validation to reject the payload before an HTTP call.');
+        } catch (FelException $exception) {
+            $this->assertStringContainsString($expectedMessage, $exception->getMessage());
+        }
     }
 }

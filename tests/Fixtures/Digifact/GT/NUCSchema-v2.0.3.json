@@ -1,0 +1,1413 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema",
+  "title": "JSON Schema NUC",
+
+  "type": "object",
+  "required": ["Version", "CountryCode", "Header", "Seller", "Buyer", "Items", "Totals"],
+
+  "properties": {
+
+    "Version": {
+      "type": "string",
+      "description": "Elemento que contiene la version del formato de la factura electrónica."
+    },
+
+    "CountryCode": {
+      "type": "string",
+      "description": "Código del país donde pertenece la factura electrónica a generar.",
+      "maximum": 1
+    },
+
+    "Header": {
+      "type": "object",
+      "required": [ "DocType", "IssuedDateTime" ],
+
+      "description": "Elemento que contiene la información general de la factura electrónica.",
+
+      "properties": {
+        "DocType": {
+          "type": "string",
+          "description": "Tipo de documento a generar."
+        },
+        "GUID": {
+          "type": [ "string", "null" ],
+          "description": "Identificador de la factura electrónica."
+        },
+        "IssuedDateTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Fecha y hora de emision de la factura electrónica."
+        },
+        "AdditionalIssueType": {
+          "type": [ "string", "integer", "null" ],
+          "description": "Ambiente de destino de la factura electrónica."
+        },
+        "ExchangeRate": {
+          "type": [ "number", "null" ],
+          "description": "Tipo de cambio de la factura electrónica."
+        },
+        "Currency": {
+          "type": [ "string", "null" ],
+          "description": "Moneda utilizada en la operación."
+        },
+        "Reference": {
+          "type": [ "object", "null" ],
+          "description": "Elemento que contiene información de referencia de la factura electrónica.",
+
+          "properties": {
+            "Code": {
+              "type": [ "string", "null" ],
+              "description": "Codigo de referencia"
+            },
+            "Date": {
+              "type": [ "string", "null" ],
+              "description": "Fecha y hora de la referencia",
+              "format": "date-time"
+            }
+          }
+        },
+        "AdditionalIssueDocInfo": {
+          "type": [ "array", "null" ],
+          "description": "Elemento que contiene información general adicional de la factura electrónica.",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "description": "Elemento que describe la informacion adicional.",
+
+            "properties": {
+              "Name": {
+                "type": [ "string", "null" ],
+                "description": "Nombre o identificador de la información a agregar."
+              },
+              "Data": {
+                "type": [ "string", "integer", "number", "null" ],
+                "description": "Dato adicional de la información a agregar."
+              },
+              "Value": {
+                "type": [ "string", "integer", "number", "null" ],
+                "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "Seller": {
+      "type": "object",
+      "description": "Elemento que contiene la información del emisor de la factura electrónica.",
+      "required": [ "TaxID", "Name" ],
+
+      "properties": {
+        "TaxID": {
+          "type": "string",
+          "description": "Identificador tributario del emisor"
+        },
+        "TaxIDType": {
+          "type": [ "string", "integer", "null" ],
+          "description": "Tipo de contribuyente perteneciente al emisor."
+        },
+        "TaxIDAdditionalInfo": {
+          "title": "InfoAdicional",
+          "type": [ "array", "null" ],
+          "description": "Elemento que contiene información general adicional de la factura electrónica.",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "description": "Elemento que describe la informacion adicional.",
+
+            "properties": {
+              "Name": {
+                "type": [ "string", "null" ],
+                "description": "Nombre o identificador de la información a agregar."
+              },
+              "Data": {
+                "type": [ "string", "null" ],
+                "description": "Dato adicional de la información a agregar."
+              },
+              "Value": {
+                "type": [ "string", "null" ],
+                "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+              }
+            }
+          }
+        },
+        "Name": {
+          "type": "string",
+          "description": "Nombre o razón social del emisor."
+        },
+        "FiscalCategory": {
+          "type": [ "string", "null" ],
+          "description": "Categoría fiscal del emisor."
+        },
+        "Contact": {
+          "type": [ "object", "null" ],
+          "description": "Elemento que contiene información de contacto del emisor.",
+
+          "properties": {
+            "PhoneList": {
+              "type": [ "object", "null" ],
+              "description": "Elemento que contiene la lista de números telefónicos.",
+
+              "properties": {
+                "Phone": {
+                  "type": "array",
+                  "description": "",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "EmailList": {
+              "type": [ "object", "null" ],
+              "description": "Elemento que contiene la lista de correos electronicos.",
+
+              "properties": {
+                "Email": {
+                  "type": "array",
+                  "description": "",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "Website": {
+              "type": [ "string", "null" ],
+              "description": "Sitio web del contacto."
+            }
+          }
+        },
+        "AdditionlInfo": {
+          "title": "InfoAdicional",
+          "type": [ "array", "null" ],
+          "description": "Elemento que contiene información general adicional de la factura electrónica.",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "description": "Elemento que describe la informacion adicional.",
+
+            "properties": {
+              "Name": {
+                "type": [ "string", "null" ],
+                "description": "Nombre o identificador de la información a agregar."
+              },
+              "Data": {
+                "type": [ "string", "null" ],
+                "description": "Dato adicional de la información a agregar."
+              },
+              "Value": {
+                "type": [ "string", "null" ],
+                "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+              }
+            }
+          }
+        },
+        "AddressInfo": {
+          "title": "AddressInfo",
+          "type": [ "object", "null" ],
+          "description": "Elemento que contiene la dirección del emisor.",
+          "required": ["Country"],
+
+          "properties": {
+            "Address": {
+              "type": [ "string", "null" ],
+              "description": "Direccion de la ubicacion"
+            },
+            "City": {
+              "type": [ "string", "null" ],
+              "description": "Ciudad o corregimiento donde se encuentra la dirección."
+            },
+            "District": {
+              "type": [ "string", "null" ],
+              "description": "Distrito donde se encuentra la ciudad."
+            },
+            "State": {
+              "type": [ "string", "null" ],
+              "description": "Estado o provincia donde se encuentra el distrito"
+            },
+            "Country": {
+              "type": "string",
+              "description": "Pais donde se encuentra el estado"
+            }
+          }
+        },
+        "BranchInfo": {
+          "type": [ "object", "null" ],
+          "description": "Elemento que contiene información sobre el establecimiento del emisor.",
+          "required": [ "AddressInfo" ],
+
+          "properties": {
+            "Code": {
+              "type": [ "string", "null" ],
+              "description": "Codigo relacionado al establecimiento del emisor."
+            },
+            "Name": {
+              "type": [ "string", "null" ],
+              "description": "Nombre o razón social del emisor"
+            },
+            "AddressInfo": {
+              "title": "AddressInfo",
+              "type": [ "object", "null" ],
+              "description": "Elemento que contiene la dirección del emisor.",
+              "required": [ "Country" ],
+
+              "properties": {
+                "Address": {
+                  "type": [ "string", "null" ],
+                  "description": "Direccion de la ubicacion"
+                },
+                "City": {
+                  "type": [ "string", "null" ],
+                  "description": "Ciudad o corregimiento donde se encuentra la dirección."
+                },
+                "District": {
+                  "type": [ "string", "null" ],
+                  "description": "Distrito donde se encuentra la ciudad."
+                },
+                "State": {
+                  "type": [ "string", "null" ],
+                  "description": "Estado o provincia donde se encuentra el distrito"
+                },
+                "Country": {
+                  "type": "string",
+                  "description": "Pais donde se encuentra el estado"
+                }
+              }
+            },
+            "Phone": {
+              "type": [ "string", "null" ],
+              "description": "Numero telefonico del establecimiento"
+            },
+            "AdditionalBranchInfo": {
+              "title": "InfoAdicional",
+              "type": [ "array", "null" ],
+              "description": "Elemento que contiene información general adicional de la factura electrónica.",
+              "minItems": 1,
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "description": "Elemento que describe la informacion adicional.",
+
+                "properties": {
+                  "Name": {
+                    "type": [ "string", "null" ],
+                    "description": "Nombre o identificador de la información a agregar."
+                  },
+                  "Data": {
+                    "type": [ "string", "null" ],
+                    "description": "Dato adicional de la información a agregar."
+                  },
+                  "Value": {
+                    "type": [ "string", "null" ],
+                    "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "Buyer": {
+      "type": "object",
+      "description": "Elemento que contiene la información del receptor de la factura electrónica.",
+
+      "properties": {
+        "TaxID": {
+          "type": "string",
+          "description": "Identificador tributario del receptor"
+        },
+        "TaxIDType": {
+          "type": [ "string", "integer", "null" ],
+          "description": "Tipo de contribuyente perteneciente al receptor"
+        },
+        "TaxIDAdditionalInfo": {
+          "title": "InfoAdicional",
+          "type": [ "array", "null" ],
+          "description": "Elemento que contiene información general adicional de la factura electrónica.",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "description": "Elemento que describe la informacion adicional.",
+
+            "properties": {
+              "Name": {
+                "type": [ "string", "null" ],
+                "description": "Nombre o identificador de la información a agregar."
+              },
+              "Data": {
+                "type": [ "string", "null" ],
+                "description": "Dato adicional de la información a agregar."
+              },
+              "Value": {
+                "type": [ "string", "null" ],
+                "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+              }
+            }
+          }
+        },
+        "Name": {
+          "type": [ "string", "null" ],
+          "description": "Nombre o razon social del receptor"
+        },
+        "Contact": {
+          "type": [ "object", "null" ],
+          "description": "Elemento que contiene información de contacto del emisor.",
+
+          "properties": {
+            "PhoneList": {
+              "type": [ "object", "null" ],
+              "description": "Elemento que contiene la lista de números telefónicos.",
+
+              "properties": {
+                "Phone": {
+                  "type": "array",
+                  "description": "",
+                  "minItems": 1,
+                  "items": {
+                    "type": [ "string", "null" ]
+                  }
+                }
+              }
+            },
+            "EmailList": {
+              "type": [ "object", "null" ],
+              "description": "Elemento que contiene la lista de correos electronicos.",
+
+              "properties": {
+                "Email": {
+                  "type": "array",
+                  "description": "",
+                  "minItems": 1,
+                  "items": {
+                    "type": [ "string", "null" ]
+                  }
+                }
+              }
+            },
+            "Website": {
+              "type": [ "string", "null" ],
+              "description": "Sitio web del contacto."
+            }
+          }
+        },
+        "AdditionlInfo": {
+          "title": "InfoAdicional",
+          "type": [ "array", "null" ],
+          "description": "Elemento que contiene información general adicional de la factura electrónica.",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "description": "Elemento que describe la informacion adicional.",
+
+            "properties": {
+              "Name": {
+                "type": [ "string", "null" ],
+                "description": "Nombre o identificador de la información a agregar."
+              },
+              "Data": {
+                "type": [ "string", "null" ],
+                "description": "Dato adicional de la información a agregar."
+              },
+              "Value": {
+                "type": [ "string", "null" ],
+                "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+              }
+            }
+          }
+        },
+        "AddressInfo": {
+          "title": "AddressInfo",
+          "type": [ "object", "null" ],
+          "description": "Elemento que contiene la dirección del emisor.",
+          "required": [ "Country" ],
+
+          "properties": {
+            "Address": {
+              "type": [ "string", "null" ],
+              "description": "Direccion de la ubicacion"
+            },
+            "City": {
+              "type": [ "string", "null" ],
+              "description": "Ciudad o corregimiento donde se encuentra la dirección."
+            },
+            "District": {
+              "type": [ "string", "null" ],
+              "description": "Distrito donde se encuentra la ciudad."
+            },
+            "State": {
+              "type": [ "string", "null" ],
+              "description": "Estado o provincia donde se encuentra el distrito"
+            },
+            "Country": {
+              "type": "string",
+              "description": "Pais donde se encuentra el estado"
+            }
+          }
+        }
+      }
+    },
+
+    "ThirdParties": {
+      "type": [ "array", "null" ],
+      "description": "Elemento para agregar información sobre terceros.",
+      "minItems": 1,
+      "maxItems": 10,
+
+      "items": {
+        "type": "object",
+        "description": "Elemento que contiene la información sobre el tercero.",
+        "required": [ "TaxID" ],
+
+        "properties": {
+          "TaxID": {
+            "type": "string",
+            "description": "Identificador tributario"
+          },
+          "TaxIDType": {
+            "type": [ "string", "null" ],
+            "description": "Tipo de contribuyente perteneciente al tercero."
+          },
+          "TaxIDAdditionalInfo": {
+            "title": "InfoAdicional",
+            "type": [ "array", "null" ],
+            "description": "Elemento que contiene información general adicional de la factura electrónica.",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "description": "Elemento que describe la informacion adicional.",
+
+              "properties": {
+                "Name": {
+                  "type": [ "string", "null" ],
+                  "description": "Nombre o identificador de la información a agregar."
+                },
+                "Data": {
+                  "type": [ "string", "null" ],
+                  "description": "Dato adicional de la información a agregar."
+                },
+                "Value": {
+                  "type": [ "string", "null" ],
+                  "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+                }
+              }
+            }
+          },
+          "Name": {
+            "type": [ "string", "null" ],
+            "description": "Nombre o razon social"
+          },
+          "Contact": {
+            "type": [ "object", "null" ],
+            "description": "Elemento que contiene información de contacto del emisor.",
+
+            "properties": {
+              "PhoneList": {
+                "type": [ "object", "null" ],
+                "description": "Elemento que contiene la lista de números telefónicos.",
+
+                "properties": {
+                  "Phone": {
+                    "type": "array",
+                    "description": "",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "EmailList": {
+                "type": [ "object", "null" ],
+                "description": "Elemento que contiene la lista de correos electronicos.",
+
+                "properties": {
+                  "Email": {
+                    "type": "array",
+                    "description": "",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "Website": {
+                "type": [ "string", "null" ],
+                "description": "Sitio web del contacto."
+              }
+            }
+          },
+          "AdditionlInfo": {
+            "title": "InfoAdicional",
+            "type": [ "array", "null" ],
+            "description": "Elemento que contiene información general adicional de la factura electrónica.",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "description": "Elemento que describe la informacion adicional.",
+
+              "properties": {
+                "Name": {
+                  "type": [ "string", "null" ],
+                  "description": "Nombre o identificador de la información a agregar."
+                },
+                "Data": {
+                  "type": [ "string", "null" ],
+                  "description": "Dato adicional de la información a agregar."
+                },
+                "Value": {
+                  "type": [ "string", "null" ],
+                  "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+                }
+              }
+            }
+          },
+          "AddressInfo": {
+            "title": "AddressInfo",
+            "type": [ "object", "null" ],
+            "description": "Elemento que contiene la dirección del emisor.",
+            "required": [ "Country" ],
+
+            "properties": {
+              "Address": {
+                "type": [ "string", "null" ],
+                "description": "Direccion de la ubicacion"
+              },
+              "City": {
+                "type": [ "string", "null" ],
+                "description": "Ciudad o corregimiento donde se encuentra la dirección."
+              },
+              "District": {
+                "type": [ "string", "null" ],
+                "description": "Distrito donde se encuentra la ciudad."
+              },
+              "State": {
+                "type": [ "string", "null" ],
+                "description": "Estado o provincia donde se encuentra el distrito"
+              },
+              "Country": {
+                "type": "string",
+                "description": "Pais donde se encuentra el estado"
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "Items": {
+      "type": "array",
+      "description": "Elemento que contiene la información de los items.",
+      "minItems": 1,
+      "maxItems": 2000,
+
+      "items": {
+        "type": "object",
+        "description": "Elemento que describe la información de un item",
+        "required": ["Price", "Totals"],
+
+        "properties": {
+          "Number": {
+            "type": [ "integer", "string", "null" ],
+            "description": "Numero secuencial del item",
+            "minimum": 1
+          },
+          "Codes": {
+            "title": "CodesType",
+            "type": [ "array", "null" ],
+            "description": "Elemento que contiene información relacionada a codigos del item",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "description": "Elemento que describe la informacion sobre tipos de codigos",
+
+              "properties": {
+                "Name": {
+                  "type": [ "string", "null" ],
+                  "description": "Nombre o identificador de la información a agregar."
+                },
+                "Data": {
+                  "type": [ "string", "integer", "number", "null" ],
+                  "description": "Dato adicional de la información a agregar."
+                },
+                "Value": {
+                  "type": [ "string", "integer", "number", "null" ],
+                  "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+                }
+              }
+            }
+          },
+          "Type": {
+            "type": [ "string", "null" ],
+            "description": "Tipo o clasificacion del item"
+          },
+          "Description": {
+            "type": [ "string", "null" ],
+            "description": "Descripcion del item"
+          },
+          "Qty": {
+            "type": [ "number", "string", "null" ],
+            "description": "Cantidad del item"
+          },
+          "UnitOfMeasure": {
+            "type": [ "string", "null" ],
+            "description": "Unidad de medida"
+          },
+          "Price": {
+            "type": [ "number", "string" ],
+            "description": "Precio del item"
+          },
+          "Discounts": {
+            "type": [ "object", "null" ],
+            "title": "TransactionsType",
+            "description": "",
+
+            "properties": {
+              "Discount": {
+                "type": [ "array", "null" ],
+                "description": "Elemento que contiene la informacion de los descuentos aplicados al item",
+                "minItems": 1,
+                "maxItems": 5,
+
+                "items": {
+                  "type": "object",
+                  "description": "Elemento que describe el descuento",
+
+                  "properties": {
+                    "Code": {
+                      "type": [ "string", "null" ],
+                      "description": "Codigo de la informacion"
+                    },
+                    "Description": {
+                      "type": [ "string", "null" ],
+                      "description": "Descripcion de la informacion"
+                    },
+                    "TaxableAmount": {
+                      "type": [ "number", "string", "null" ],
+                      "description": "Valor sobre el cual se impone el impuesto",
+                      "minimum": 0
+                    },
+                    "ChargableAmount": {
+                      "type": [ "number", "string", "null" ],
+                      "description": "Valor sobre el cual se impone el cargo",
+                      "minimum": 0
+                    },
+                    "Rate": {
+                      "type": [ "number", "string", "null" ],
+                      "description": "Tasa a aplicar",
+                      "minimum": 0
+                    },
+                    "Amount": {
+                      "type": [ "number", "string" ],
+                      "description": "Monto total resultante",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "Taxes": {
+            "type": [ "object", "null" ],
+            "title": "TransactionsType",
+            "description": "",
+
+            "properties": {
+              "Tax": {
+                "type": [ "array", "null" ],
+                "description": "Elemento que contiene la informacion de los impuestos aplicados al item",
+                "minItems": 1,
+                "maxItems": 15,
+
+                "items": {
+                  "type": "object",
+                  "description": "Elemento que describe el impuesto",
+
+                  "properties": {
+                    "Code": {
+                      "type": [ "string", "null" ],
+                      "description": "Codigo de la informacion"
+                    },
+                    "Description": {
+                      "type": [ "string", "null" ],
+                      "description": "Descripcion de la informacion"
+                    },
+                    "TaxableAmount": {
+                      "type": [ "number", "string", "null" ],
+                      "description": "Valor sobre el cual se impone el impuesto",
+                      "minimum": 0
+                    },
+                    "ChargableAmount": {
+                      "type": [ "number", "string", "null" ],
+                      "description": "Valor sobre el cual se impone el cargo",
+                      "minimum": 0
+                    },
+                    "Rate": {
+                      "type": [ "number", "string", "null" ],
+                      "description": "Tasa a aplicar",
+                      "minimum": 0
+                    },
+                    "Amount": {
+                      "type": [ "number", "string" ],
+                      "description": "Monto total resultante",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "Charges": {
+            "type": [ "object", "null" ],
+            "title": "TransactionsType",
+            "description": "",
+
+            "properties": {
+              "Charge": {
+                "type": [ "array", "null" ],
+                "description": "Elemento que contiene la informacion de los cargos aplicados al item",
+                "minItems": 1,
+                "maxItems": 10,
+
+                "items": {
+                  "type": "object",
+                  "description": "Elemento que describe el cargo",
+
+                  "properties": {
+                    "Code": {
+                      "type": [ "string", "null" ],
+                      "description": "Codigo de la informacion"
+                    },
+                    "Description": {
+                      "type": [ "string", "null" ],
+                      "description": "Descripcion de la informacion"
+                    },
+                    "TaxableAmount": {
+                      "type": [ "number", "string", "null" ],
+                      "description": "Valor sobre el cual se impone el impuesto",
+                      "minimum": 0
+                    },
+                    "ChargableAmount": {
+                      "type": [ "number", "string", "null" ],
+                      "description": "Valor sobre el cual se impone el cargo",
+                      "minimum": 0
+                    },
+                    "Rate": {
+                      "type": [ "number", "string", "null" ],
+                      "description": "Tasa a aplicar",
+                      "minimum": 0
+                    },
+                    "Amount": {
+                      "type": [ "number", "string" ],
+                      "description": "Monto total resultante",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "Totals": {
+            "type": "object",
+            "description": "Elemento que contiene informacion relacionada a precios totales de un item",
+            "required": [ "TotalItem" ],
+
+            "properties": {
+              "TotalBDiscount": {
+                "type": [ "number", "string", "null" ],
+                "description": "Total antes de descuentos",
+                "minimum": 0
+              },
+              "TotalWDiscount": {
+                "type": [ "number", "string", "null" ],
+                "description": "Total aplicando descuentos",
+                "minimum": 0
+              },
+              "TotalBTaxes": {
+                "type": [ "number", "string", "null" ],
+                "description": "Total antes de impuestos",
+                "minimum": 0
+              },
+              "TotalWTaxes": {
+                "type": [ "number", "string", "null" ],
+                "description": "Total aplicando impuestos",
+                "minimum": 0
+              },
+              "SpecificTotal": {
+                "type": [ "number", "string", "null" ],
+                "description": "Total aplicando otras tasas, cargos, seguros, etc.",
+                "minimum": 0
+              },
+              "TotalItem": {
+                "type": [ "number", "string" ],
+                "description": "Precio total del item"
+              }
+            }
+
+          },
+          "AdditionalInfo": {
+            "title": "InfoAdicional",
+            "type": [ "array", "null" ],
+            "description": "Elemento que contiene información general adicional de la factura electrónica.",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "description": "Elemento que describe la informacion adicional.",
+
+              "properties": {
+                "Name": {
+                  "type": [ "string", "null" ],
+                  "description": "Nombre o identificador de la información a agregar."
+                },
+                "Data": {
+                  "type": [ "string", "null" ],
+                  "description": "Dato adicional de la información a agregar."
+                },
+                "Value": {
+                  "type": [ "string", "null" ],
+                  "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "Charges": {
+      "type": [ "object", "null" ],
+      "title": "TransactionsType",
+      "description": "",
+
+      "properties": {
+        "Charge": {
+          "title": "TransactionsType",
+          "type": [ "array", "null" ],
+          "description": "Elemento que contiene la informacion de cargos adicionales sobre la factura electronica",
+          "minItems": 1,
+          "maxItems": 5,
+
+          "items": {
+            "type": "object",
+            "description": "Elemento que describe el cargo",
+
+            "properties": {
+              "Code": {
+                "type": [ "string", "null" ],
+                "description": "Codigo de la informacion"
+              },
+              "Description": {
+                "type": [ "string", "null" ],
+                "description": "Descripcion de la informacion"
+              },
+              "TaxableAmount": {
+                "type": [ "number", "string", "null" ],
+                "description": "Valor sobre el cual se impone el impuesto",
+                "minimum": 0
+              },
+              "ChargableAmount": {
+                "type": [ "number", "string", "null" ],
+                "description": "Valor sobre el cual se impone el cargo",
+                "minimum": 0
+              },
+              "Rate": {
+                "type": [ "number", "string", "null" ],
+                "description": "Tasa a aplicar",
+                "minimum": 0
+              },
+              "Amount": {
+                "type": [ "number", "string" ],
+                "description": "Monto total resultante",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "Totals": {
+      "type": "object",
+      "description": "Elemento que contiene la informacion sobre el total de la factura electronica",
+      "required": [ "GrandTotal" ],
+
+      "properties": {
+        "QtyItems": {
+          "type": [ "integer", "null" ],
+          "description": "Cantidad de items en la factura electronica"
+        },
+        "TotalItems": {
+          "type": [ "number", "null" ],
+          "description": "Precio total de los items sin aplicar impuestos"
+        },
+        "TotalTaxableAmount": {
+          "type": [ "number", "null" ],
+          "description": "Impuesto total a aplicar"
+        },
+        "TotalTaxes": {
+          "type": [ "object", "null" ],
+          "title": "TransactionsType",
+          "description": "",
+
+          "properties": {
+            "TotalTax": {
+              "type": [ "array", "null" ],
+              "description": "Elemento que contiene impuestos aplicados al total de la factura electrónica.",
+              "minItems": 0,
+              "maxItems": 10,
+
+              "items": {
+                "type": "object",
+                "description": "Elemento que describe el impuesto",
+
+                "properties": {
+                  "Code": {
+                    "type": [ "string", "null" ],
+                    "description": "Codigo de la informacion"
+                  },
+                  "Description": {
+                    "type": [ "string", "null" ],
+                    "description": "Descripcion de la informacion"
+                  },
+                  "TaxableAmount": {
+                    "type": [ "number", "string", "null" ],
+                    "description": "Valor sobre el cual se impone el impuesto",
+                    "minimum": 0
+                  },
+                  "ChargableAmount": {
+                    "type": [ "number", "string", "null" ],
+                    "description": "Valor sobre el cual se impone el cargo",
+                    "minimum": 0
+                  },
+                  "Rate": {
+                    "type": [ "number", "string", "null" ],
+                    "description": "Tasa a aplicar",
+                    "minimum": 0
+                  },
+                  "Amount": {
+                    "type": [ "number", "string" ],
+                    "description": "Monto total resultante",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "TotalCharges": {
+          "type": [ "object", "null" ],
+          "title": "TransactionsType",
+          "description": "",
+
+          "properties": {
+            "TotalCharge": {
+              "type": [ "array", "null" ],
+              "description": "Elemento que contiene información sobre cargos adicionales aplicados a la factura electrónica.",
+              "minItems": 1,
+              "maxItems": 10,
+
+              "items": {
+                "type": "object",
+                "description": "Elemento que describe el cargo",
+
+                "properties": {
+                  "Code": {
+                    "type": [ "string", "null" ],
+                    "description": "Codigo de la informacion"
+                  },
+                  "Description": {
+                    "type": [ "string", "null" ],
+                    "description": "Descripcion de la informacion"
+                  },
+                  "TaxableAmount": {
+                    "type": [ "number", "string", "null" ],
+                    "description": "Valor sobre el cual se impone el impuesto",
+                    "minimum": 0
+                  },
+                  "ChargableAmount": {
+                    "type": [ "number", "string", "null" ],
+                    "description": "Valor sobre el cual se impone el cargo",
+                    "minimum": 0
+                  },
+                  "Rate": {
+                    "type": [ "number", "string", "null" ],
+                    "description": "Tasa a aplicar",
+                    "minimum": 0
+                  },
+                  "Amount": {
+                    "type": [ "number", "string" ],
+                    "description": "Monto total resultante",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "TotalDiscounts": {
+          "type": [ "object", "null" ],
+          "title": "TransactionsType",
+          "description": "",
+
+          "properties": {
+            "Discount": {
+              "type": [ "array", "null" ],
+              "description": "Elemento que contiene información sobre cargos adicionales aplicados a la factura electrónica.",
+              "minItems": 1,
+              "maxItems": 10,
+
+              "items": {
+                "type": "object",
+                "description": "Elemento que describe el cargo",
+
+                "properties": {
+                  "Code": {
+                    "type": [ "string", "null" ],
+                    "description": "Codigo de la informacion"
+                  },
+                  "Description": {
+                    "type": [ "string", "null" ],
+                    "description": "Descripcion de la informacion"
+                  },
+                  "TaxableAmount": {
+                    "type": [ "number", "string", "null" ],
+                    "description": "Valor sobre el cual se impone el impuesto",
+                    "minimum": 0
+                  },
+                  "ChargableAmount": {
+                    "type": [ "number", "string", "null" ],
+                    "description": "Valor sobre el cual se impone el cargo",
+                    "minimum": 0
+                  },
+                  "Rate": {
+                    "type": [ "number", "string", "null" ],
+                    "description": "Tasa a aplicar",
+                    "minimum": 0
+                  },
+                  "Amount": {
+                    "type": [ "number", "string" ],
+                    "description": "Monto total resultante",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "GrandTotal": {
+          "type": "object",
+          "description": "Elemento que contiene informacion sobre el precio total de la factura",
+          "required": [ "InvoiceTotal" ],
+
+          "properties": {
+            "TotalBTaxes": {
+              "type": [ "number", "string", "null" ],
+              "description": "Total antes de impuestos",
+              "minimum": 0
+            },
+            "TotalWTaxes": {
+              "type": [ "number", "string", "null" ],
+              "description": "Total aplicando impuestos",
+              "minimum": 0
+            },
+            "TotalBDiscounts": {
+              "type": [ "number", "string", "null" ],
+              "description": "Total antes de descuentos",
+              "minimum": 0
+            },
+            "TotalWDiscounts": {
+              "type": [ "number", "string", "null" ],
+              "description": "Total aplicando descuentos",
+              "minimum": 0
+            },
+            "ExplicitTotal": {
+              "type": [ "number", "string", "null" ],
+              "description": "Precio total de la factura, sin redondear",
+              "minimum": 0
+            },
+            "InvoiceTotal": {
+              "type": [ "number", "string" ],
+              "description": "Precio total de la factura, redondeado"
+            }
+          }
+        },
+        "InWords": {
+          "type": [ "string", "null" ],
+          "description": "Elemento para describir informacion relacionada al precio de una factura"
+        },
+        "AdditionalInfo": {
+          "type": [ "array", "null" ],
+          "description": "Elemento que contiene información general adicional de la factura electrónica.",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "description": "Elemento que describe la informacion adicional.",
+
+            "properties": {
+              "Name": {
+                "type": [ "string", "null" ],
+                "description": "Nombre o identificador de la información a agregar."
+              },
+              "Data": {
+                "type": [ "string", "integer", "number", "null" ],
+                "description": "Dato adicional de la información a agregar."
+              },
+              "Value": {
+                "type": [ "string", "integer", "number", "null" ],
+                "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "Payments": {
+      "type": [ "array", "null" ],
+      "description": "Elemento que contiene la informacion de pago de la factura electronica",
+      "minItems": 1,
+
+      "items": {
+        "type": "object",
+        "description": "Elemento que describe un pago",
+        "required": [ "Amount" ],
+
+        "properties": {
+          "Type": {
+            "type": [ "string", "null" ],
+            "description": "Tipo de pago"
+          },
+          "Code": {
+            "type": [ "string", "null" ],
+            "description": "Codigo del pago"
+          },
+          "Description": {
+            "type": [ "string", "null" ],
+            "description": "Descripcion del pago"
+          },
+          "Date": {
+            "type": [ "string", "null" ],
+            "description": "Fecha y hora de pago",
+            "format": "date-time"
+          },
+          "Amount": {
+            "type": [ "number", "string" ],
+            "description": "Total pagado"
+          },
+          "AditionalData": {
+            "title": "InfoAdicional",
+            "type": [ "array", "null" ],
+            "description": "Elemento que contiene información adicional a la forma de pago.",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "description": "Elemento que describe la informacion adicional.",
+
+              "properties": {
+                "Name": {
+                  "type": [ "string", "null" ],
+                  "description": "Nombre o identificador de la información a agregar."
+                },
+                "Data": {
+                  "type": [ "string", "number", "integer", "null" ],
+                  "description": "Dato adicional de la información a agregar."
+                },
+                "Value": {
+                  "type": [ "string", "number", "integer", "null" ],
+                  "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "AdditionalDocumentInfo": {
+      "type": "object",
+      "description": "Elemento para agregar informacion adicional sobre la factura electronica",
+
+      "properties": {
+        "DocTemplate": {
+          "type": [ "string", "null" ],
+          "description": "Plantilla del documento"
+        },
+        "AdditionalInfo": {
+          "type": [ "array", "null" ],
+          "description": "Elemento que contiene informacion adicional",
+          "minItems": 0,
+          "maxItems": 25,
+
+          "items": {
+            "type": "object",
+            "description": "Elemento que contiene la informacion adicional",
+
+            "properties": {
+              "Code": {
+                "type": [ "string", "null" ],
+                "description": "Codigo adicional"
+              },
+              "Type": {
+                "type": [ "string", "null" ],
+                "description": "Tipo de dato adicional"
+              },
+              "Description": {
+                "type": [ "string", "null" ],
+                "description": "Descripcion adicional"
+              },
+              "AddressInfo": {
+                "title": "AddressInfo",
+                "type": [ "object", "null" ],
+                "description": "Elemento que contiene informacion adicional sobre la direccion de un establecimiento",
+                "required": [ "Country" ],
+
+                "properties": {
+                  "Address": {
+                    "type": [ "string", "null" ],
+                    "description": "Direccion de la ubicacion"
+                  },
+                  "City": {
+                    "type": [ "string", "null" ],
+                    "description": "Ciudad o corregimiento donde se encuentra la dirección."
+                  },
+                  "District": {
+                    "type": [ "string", "null" ],
+                    "description": "Distrito donde se encuentra la ciudad."
+                  },
+                  "State": {
+                    "type": [ "string", "null" ],
+                    "description": "Estado o provincia donde se encuentra el distrito"
+                  },
+                  "Country": {
+                    "type": "string",
+                    "description": "Pais donde se encuentra el estado"
+                  }
+                }
+              },
+              "Texts": {
+                "type": [ "array", "null" ],
+                "description": "Elemento que contiene informacion sobre textos",
+                "minItems": 0,
+
+                "items": {
+                  "type": "object",
+                  "description": "Elemento que describe el texto",
+
+                  "properties": {
+                    "CNo": {
+                      "type": [ "string", "null" ],
+                      "description": "Numero C"
+                    },
+                    "RNo": {
+                      "type": [ "string", "null" ],
+                      "description": "Numero R"
+                    }
+                  }
+                }
+              },
+              "AditionalData": {
+                "type": [ "object", "null" ],
+                "description": "Elemento que contiene datos adicionales",
+                "required": [ "Data" ],
+
+                "properties": {
+                  "Data": {
+                    "type": [ "array", "null" ],
+                    "description": "Elemento que contiene datos adicionales sobre documentos de referencias, adendas, etc",
+                    "minItems": 1,
+                    "maxItems": 1000,
+
+                    "items": {
+                      "type": "object",
+                      "description": "Tipo de elemento que contiene informacion adicional relevante",
+
+                      "properties": {
+                        "Info": {
+                          "title": "InfoAdicional",
+                          "type": [ "array", "null" ],
+                          "description": "Elemento que contiene información general adicional de la factura electrónica.",
+                          "minItems": 1,
+                          "maxItems": 50,
+                          "items": {
+                            "type": "object",
+                            "description": "Elemento que describe la informacion adicional.",
+
+                            "properties": {
+                              "Name": {
+                                "type": [ "string", "null" ],
+                                "description": "Nombre o identificador de la información a agregar."
+                              },
+                              "Data": {
+                                "type": [ "string", "number", "integer", "null" ],
+                                "description": "Dato adicional de la información a agregar."
+                              },
+                              "Value": {
+                                "type": [ "string", "number", "integer", "null" ],
+                                "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+                              }
+                            }
+                          }
+                        },
+                        "Name": {
+                          "type": [ "string", "null" ],
+                          "description": "Nombre del identificador"
+                        },
+                        "Id": {
+                          "type": [ "integer", "null" ],
+                          "description": "Identificador"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "AditionalInfo": {
+                "title": "InfoAdicional",
+                "type": [ "array", "null" ],
+                "description": "Elemento que contiene información general adicional de la factura electrónica.",
+                "minItems": 1,
+                "maxItems": 50,
+                "items": {
+                  "type": "object",
+                  "description": "Elemento que describe la informacion adicional.",
+
+                  "properties": {
+                    "Name": {
+                      "type": [ "string", "null" ],
+                      "description": "Nombre o identificador de la información a agregar."
+                    },
+                    "Data": {
+                      "type": [ "string", "number", "integer", "null" ],
+                      "description": "Dato adicional de la información a agregar."
+                    },
+                    "Value": {
+                      "type": [ "string", "number", "integer", "null" ],
+                      "description": "Valor que corresponde al Name/Nombre de la informacion a agregar."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

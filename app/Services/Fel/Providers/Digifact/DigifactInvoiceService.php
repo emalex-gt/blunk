@@ -759,7 +759,7 @@ class DigifactInvoiceService
         }
 
         foreach ($payload['Items'] as $index => $item) {
-            foreach (['NumberLine', 'Type', 'Description', 'Qty', 'Price', 'Taxes', 'Totals'] as $key) {
+            foreach (['Number', 'Type', 'Description', 'Qty', 'Price', 'Taxes', 'Totals'] as $key) {
                 if (! array_key_exists($key, $item)) {
                     throw new FelException("Payload FEL invalido: falta Items[{$index}].{$key}.");
                 }
@@ -807,9 +807,9 @@ class DigifactInvoiceService
             throw new FelException('Payload FEL invalido: AdditionalInfo.Code debe ser un UUID válido de 36 caracteres.');
         }
 
-        $info = $adenda['AditionalInfo']['Info'] ?? null;
+        $info = $adenda['AditionalInfo'] ?? null;
         if (! is_array($info) || ! array_is_list($info)) {
-            throw new FelException('Payload FEL invalido: falta AdditionalInfo.AditionalInfo.Info.');
+            throw new FelException('Payload FEL invalido: AdditionalInfo.AditionalInfo debe ser un arreglo.');
         }
 
         $validationMarkers = array_values(array_filter(

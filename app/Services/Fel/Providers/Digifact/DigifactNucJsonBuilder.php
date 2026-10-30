@@ -130,7 +130,7 @@ class DigifactNucJsonBuilder
             }
 
             $items[] = [
-                'NumberLine' => $index + 1,
+                'Number' => $index + 1,
                 'Type' => 'B',
                 'Description' => $item->product_name,
                 'Qty' => $quantity,
@@ -215,17 +215,15 @@ class DigifactNucJsonBuilder
                         'Code' => $internalReference,
                         'Type' => 'ADENDA',
                         'AditionalInfo' => [
-                            'Info' => [
-                                [
-                                    'Name' => 'VALIDAR_REFERENCIA_INTERNA',
-                                    'Data' => null,
-                                    'Value' => 'VALIDAR',
-                                ],
-                                [
-                                    'Name' => 'NoReferencia',
-                                    'Data' => null,
-                                    'Value' => $this->readableReference($sale, $internalReference),
-                                ],
+                            [
+                                'Name' => 'VALIDAR_REFERENCIA_INTERNA',
+                                'Data' => null,
+                                'Value' => 'VALIDAR',
+                            ],
+                            [
+                                'Name' => 'NoReferencia',
+                                'Data' => null,
+                                'Value' => $this->readableReference($sale, $internalReference),
                             ],
                         ],
                     ],

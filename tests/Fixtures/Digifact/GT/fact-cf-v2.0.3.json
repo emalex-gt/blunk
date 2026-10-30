@@ -1,0 +1,207 @@
+{
+  "Version": "1.00",
+  "CountryCode": "GT",
+  "Header": {
+      "DocType": "FACT",
+      "IssuedDateTime": "2022-09-05T11:28:00-06:00",
+      "Currency": "GTQ"
+  },
+  "Seller": {
+      "TaxID": "123456",
+      "TaxIDAdditionalInfo": [
+          {
+              "Name": "AfiliacionIVA",
+              "Data": null,
+              "Value": "GEN"
+          }
+      ],
+      "Name": "FEL TEST",
+      "Contact": {
+          "EmailList": {
+              "Email": [
+                  "correo@outlook.com"
+              ]
+          }
+      },
+      "AdditionlInfo": [
+          {
+              "Name": "TipoFrase",
+              "Data": "1",
+              "Value": "1"
+          },
+          {
+              "Name": "Escenario",
+              "Data": "1",
+              "Value": "1"
+          }
+      ],
+      "BranchInfo": {
+          "Code": "1",
+          "Name": "ESTABLECIMIENTO DE PRUEBA",
+          "AddressInfo": {
+              "Address": "4 AVENIDA 15-70 ZONA 10 LOCAL 3 EDIFICIO PALADIUM",
+              "City": "01010",
+              "District": "Guatemala",
+              "State": "Guatemala",
+              "Country": "GT"
+          }
+      }
+  },
+  "Buyer": {
+      "TaxID": "CF",
+      "Name": "CONSUMIDOR FINAL",
+      "AddressInfo": {
+          "Address": "CIUDAD",
+          "City": "01010",
+          "District": "GUATEMALA",
+          "State": "GUATEMALA",
+          "Country": "GT"
+      }
+  },
+  "ThirdParties": null,
+  "Items": [
+      {
+          "Number": "1",
+          "Codes": null,
+          "Type": "Servicio",
+          "Description": "prueba",
+          "Qty": "1.000000",
+          "UnitOfMeasure": "SER",
+          "Price": "31.000000",
+          "Discounts": null,
+          "Taxes": {
+              "Tax": [
+                  {
+                      "Code": "1",
+                      "Description": "IVA",
+                      "TaxableAmount": "27.678571",
+                      "Amount": "3.321428"
+                  }
+              ]
+          },
+          "Totals": {
+              "TotalItem": "31.000000"
+          }
+      },
+      {
+          "Number": "2",
+          "Codes": null,
+          "Type": "Bien",
+          "Description": "Jeans",
+          "Qty": "1.000000",
+          "UnitOfMeasure": "UNI",
+          "Price": "600.000000",
+          "Discounts": null,
+          "Taxes": {
+              "Tax": [
+                  {
+                      "Code": "1",
+                      "Description": "IVA",
+                      "TaxableAmount": "537.714286",
+                      "Amount": "64.285714"
+                  }
+              ]
+          },
+          "Totals": {
+              "TotalItem": "600.000000"
+          }
+      }
+  ],
+  "Totals": {
+      "TotalTaxes": {
+          "TotalTax": [
+              {
+                  "Description": "IVA",
+                  "Amount": "67.607143"
+              }
+          ]
+      },
+      "GrandTotal": {
+          "InvoiceTotal": "631.000000"
+      }
+  },
+  "AdditionalDocumentInfo": {
+      "AdditionalInfo": [
+          {
+              "Code": "FRONT-263C-444B-89BA-6F87EC1330C0",
+              "Type": "ADENDA",
+              "AditionalData": {
+                  "Data": [
+                      {
+                          "Info": [
+                              {
+                                  "Name": "OBSERVACIONES",
+                                  "Data": null,
+                                  "Value": "-"
+                              },
+                              {
+                                  "Name": "CANTIDAD_LETRAS",
+                                  "Data": null,
+                                  "Value": "SEISCIENTOS TREINTA Y UN QUETZALES CON 00/100"
+                              }
+                          ],
+                          "Name": "INFORMACION_ADICIONAL"
+                      },
+                      {
+                          "Info": [
+                              {
+                                  "Name": "NumeroLinea",
+                                  "Data": null,
+                                  "Value": "1"
+                              },
+                              {
+                                  "Name": "Descripcion_Adicional",
+                                  "Data": null,
+                                  "Value": "-"
+                              },
+                              {
+                                  "Name": "CodigoEAN",
+                                  "Data": null,
+                                  "Value": "00011"
+                              },
+                              {
+                                  "Name": "CategoriaAdicional",
+                                  "Data": null,
+                                  "Value": "-"
+                              }
+                          ],
+                          "Name": "DetallesAux_Detalle"
+                      },
+                      {
+                          "Info": [
+                              {
+                                  "Name": "NumeroLinea",
+                                  "Data": null,
+                                  "Value": "2"
+                              },
+                              {
+                                  "Name": "Descripcion_Adicional",
+                                  "Data": null,
+                                  "Value": "---"
+                              },
+                              {
+                                  "Name": "CodigoEAN",
+                                  "Data": null,
+                                  "Value": "000113"
+                              },
+                              {
+                                  "Name": "CategoriaAdicional",
+                                  "Data": null,
+                                  "Value": "11"
+                              }
+                          ],
+                          "Name": "DetallesAux_Detalle"
+                      }
+                  ]
+              },
+              "AditionalInfo": [
+                  {
+                      "Name": "VALIDAR_REFERENCIA_INTERNA",
+                      "Data": null,
+                      "Value": "NO_VALIDAR"
+                  }
+              ]
+          }
+      ]
+  }
+}
