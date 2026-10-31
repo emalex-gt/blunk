@@ -7,6 +7,7 @@ import BranchManagerDashboard, { type BranchManagerDashboardData } from '@/Compo
 import CashierDashboard, { type CashierDashboardData } from '@/Components/Dashboard/CashierDashboard';
 import RouteSupervisorDashboard, { type RouteSupervisorDashboardData } from '@/Components/Dashboard/RouteSupervisorDashboard';
 import RouteSellerDashboard, { type RouteSellerDashboardData } from '@/Components/Dashboard/RouteSellerDashboard';
+import RouteDeliveryDashboard, { type RouteDeliveryDashboardData } from '@/Components/Dashboard/RouteDeliveryDashboard';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, usePage } from '@inertiajs/react';
 
@@ -16,15 +17,6 @@ type Widget = {
     type: 'sales_summary' | 'cash_status' | 'stock_alerts' | 'top_product' | 'money' | 'count' | 'route_work_day' | 'route_delivery_run' | 'cashier_workspace' | 'executive_overview' | 'finance_overview' | 'purchases_overview' | 'branch_manager_overview' | 'warehouse_overview' | 'route_supervisor_overview';
     period: 'today' | 'this_month' | 'current';
     data: Record<string, unknown>;
-};
-
-type RouteDeliveryRunData = {
-    has_current_run: boolean;
-    message?: string;
-    run?: { id: number; status: 'open' | 'draft' };
-    progress?: { assigned: number; pending: number; delivered: number; not_delivered: number; unpaid_delivered_count: number; unpaid_delivered_amount: string | number };
-    next_stop?: { id: number; position: number | null; customer_name: string | null; customer_address: string | null; customer_address_reference: string | null; customer_phone: string | null; sale_number: string | null; sale_total: string | number | null; href: string } | null;
-    primary_action: { label: string; href: string };
 };
 
 type DashboardData = {
@@ -119,7 +111,7 @@ function WidgetCard({ widget, country }: { widget: Widget; country: string }) {
     }
 
     if (widget.type === 'route_delivery_run') {
-        return <RouteDeliveryRunCard data={widget.data as RouteDeliveryRunData} country={country} />;
+        return <RouteDeliveryDashboard data={widget.data as RouteDeliveryDashboardData} country={country} />;
     }
 
     if (widget.type === 'cashier_workspace') {
@@ -147,41 +139,6 @@ function WidgetCard({ widget, country }: { widget: Widget; country: string }) {
             </div>
             {content}
         </article>
-    );
-}
-
-function RouteDeliveryRunCard({ data, country }: { data: RouteDeliveryRunData; country: string }) {
-    if (!data.has_current_run) {
-        return (
-            <section data-dashboard-widget="routes.my_delivery_run" className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
-                <p className="text-xs font-bold tracking-[0.14em] text-orange-700">MIS ENTREGAS</p>
-                <h2 className="mt-2 text-xl font-bold text-slate-950">Mis entregas</h2>
-                <p className="mt-2 text-sm text-slate-500">{data.message}</p>
-                <Link href={data.primary_action.href} className="mt-5 block rounded-xl bg-orange-600 px-4 py-3 text-center text-sm font-bold text-white hover:bg-orange-700">{data.primary_action.label}</Link>
-            </section>
-        );
-    }
-
-    const progress = data.progress!;
-    const resolved = progress.delivered + progress.not_delivered;
-    const completion = progress.assigned > 0 ? Math.min(100, Math.round((resolved / progress.assigned) * 100)) : 0;
-    const isOpen = data.run?.status === 'open';
-
-    return (
-        <section data-dashboard-widget="routes.my_delivery_run" className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
-            <p className="text-xs font-bold tracking-[0.14em] text-orange-700">MIS ENTREGAS</p>
-            <div className="mt-2 flex items-baseline justify-between gap-2">
-                <h2 className="text-xl font-bold text-slate-950">Jornada #{data.run?.id}</h2>
-                {isOpen ? <span className="text-sm font-semibold text-slate-700">{resolved} de {progress.assigned} resueltas</span> : <span className="text-sm font-semibold text-amber-700">Lista para iniciar</span>}
-            </div>
-            {isOpen ? <>
-                <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100" aria-label={`Progreso ${completion}%`}><div className="h-full rounded-full bg-orange-600" style={{ width: `${completion}%` }} /></div>
-                <div className="mt-4 grid grid-cols-3 gap-3"><Metric label="Entregadas" value={progress.delivered} tone="text-emerald-700" /><Metric label="Pendientes" value={progress.pending} tone="text-amber-700" /><Metric label="No entregadas" value={progress.not_delivered} tone="text-slate-700" /></div>
-                {progress.unpaid_delivered_count > 0 && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm font-medium text-amber-800">{progress.unpaid_delivered_count} entrega(s) realizada(s) siguen pendientes de cobro · {formatCurrency(progress.unpaid_delivered_amount, country)}</p>}
-                {data.next_stop ? <div className="mt-5 rounded-xl bg-slate-50 p-4"><p className="text-xs font-bold tracking-wide text-slate-500">SIGUIENTE ENTREGA</p><p className="mt-1 font-semibold text-slate-900">{data.next_stop.position ?? '—'}. {data.next_stop.customer_name}</p>{data.next_stop.customer_address && <p className="mt-1 text-sm text-slate-500">{data.next_stop.customer_address}</p>}{data.next_stop.customer_address_reference && <p className="mt-1 text-sm text-slate-500">Referencia: {data.next_stop.customer_address_reference}</p>}<p className="mt-1 text-sm text-slate-500">{data.next_stop.sale_number ? `Comprobante #${data.next_stop.sale_number}` : 'Comprobante'}{data.next_stop.sale_total !== null ? ` · ${formatCurrency(data.next_stop.sale_total, country)}` : ''}</p><Link href={data.next_stop.href} className="mt-3 inline-flex text-sm font-semibold text-orange-700 hover:text-orange-800">Abrir entrega</Link></div> : <p className="mt-5 rounded-xl bg-emerald-50 p-4 text-sm font-medium text-emerald-800">Todas las entregas están resueltas.</p>}
-            </> : <p className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">{progress.assigned} parada(s) asignada(s)</p>}
-            <Link href={data.primary_action.href} className="mt-5 block rounded-xl bg-orange-600 px-4 py-3 text-center text-sm font-bold text-white hover:bg-orange-700">{data.primary_action.label}</Link>
-        </section>
     );
 }
 

@@ -88,12 +88,17 @@ class DashboardRouteDeliveryTest extends TestCase
 
     public function test_dashboard_source_renders_delivery_progress_next_stop_and_safe_empty_states(): void
     {
-        $source = file_get_contents(resource_path('js/Pages/Dashboard.tsx'));
-        $this->assertStringContainsString("widget.type === 'route_delivery_run'", $source);
+        $dashboard = file_get_contents(resource_path('js/Pages/Dashboard.tsx'));
+        $source = file_get_contents(resource_path('js/Components/Dashboard/RouteDeliveryDashboard.tsx'));
+
+        $this->assertStringContainsString("widget.type === 'route_delivery_run'", $dashboard);
+        $this->assertStringContainsString('RouteDeliveryDashboard', $dashboard);
         $this->assertStringContainsString("label' => \$isOpen ? 'Continuar entregas'", file_get_contents(app_path('Services/Dashboard/Metrics/RouteDeliveryRunMetricQuery.php')));
         $this->assertStringContainsString('Todas las entregas están resueltas.', $source);
-        $this->assertStringContainsString('SIGUIENTE ENTREGA', $source);
-        $this->assertStringContainsString('pendientes de cobro', $source);
+        $this->assertStringContainsString('Próxima entrega', $source);
+        $this->assertStringContainsString('Cobros pendientes', $source);
+        $this->assertStringContainsString('role="progressbar"', $source);
+        $this->assertStringContainsString('No tienes una jornada asignada', $source);
     }
 
     private function deliveryAgent(): array
