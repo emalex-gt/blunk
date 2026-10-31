@@ -3,7 +3,7 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, useForm, usePage } from '@inertiajs/react';
-import { FormEvent, ReactNode, useMemo, useState } from 'react';
+import { FormEvent, ReactNode, useMemo, useRef, useState } from 'react';
 
 type Movement = {
     id: number;
@@ -77,10 +77,24 @@ export default function Index({
     const [showMovements, setShowMovements] = useState(false);
     const [expenseToCancel, setExpenseToCancel] = useState<Movement | null>(null);
 
-    const openingForm = useForm({ opening_amount: '0.00', notes: '' });
-    const expenseForm = useForm({ category_id: null as number | null, category_name: '', description: '', amount: '' });
+    const openingForm = useForm({
+        opening_amount: '0.00',
+        notes: '',
+        idempotency_key: '',
+    });
+    const expenseForm = useForm({
+        category_id: null as number | null,
+        category_name: '',
+        description: '',
+        amount: '',
+        idempotency_key: '',
+    });
     const closeForm = useForm({ counted_cash: openSession ? String(openSession.expected_cash) : '', closing_notes: '' });
     const cancellationForm = useForm({ cancellation_note: '' });
+    const openingOperationKeyRef = useRef<string | null>(null);
+    const openingSubmissionLockedRef = useRef(false);
+    const expenseOperationKeyRef = useRef<string | null>(null);
+    const expenseSubmissionLockedRef = useRef(false);
 
     const closeDifference = useMemo(() => {
         if (!openSession) {
@@ -104,27 +118,54 @@ export default function Index({
 
     function submitOpening(event: FormEvent) {
         event.preventDefault();
+
+        if (openingSubmissionLockedRef.current) {
+            return;
+        }
+
+        const idempotencyKey = openingOperationKeyRef.current ?? crypto.randomUUID();
+        openingOperationKeyRef.current = idempotencyKey;
+        openingSubmissionLockedRef.current = true;
+
+        openingForm.transform((data) => ({
+            ...data,
+            idempotency_key: idempotencyKey,
+        }));
+
         openingForm.post(route('cash-register.open'), {
             preserveScroll: true,
             onSuccess: () => {
                 setOpeningModalOpen(false);
                 openingForm.reset();
+                openingOperationKeyRef.current = null;
                 toast.success('Caja abierta correctamente.');
+            },
+            onFinish: () => {
+                openingSubmissionLockedRef.current = false;
             },
         });
     }
 
     function submitExpense(event: FormEvent) {
         event.preventDefault();
+
+        if (expenseSubmissionLockedRef.current) {
+            return;
+        }
+
         const cleanCategoryName = expenseCategoryName.trim();
         const matchingCategory = cleanCategoryName
             ? expenseCategories.find((category) => category.name.trim().toLowerCase() === cleanCategoryName.toLowerCase())
             : null;
+        const idempotencyKey = expenseOperationKeyRef.current ?? crypto.randomUUID();
+        expenseOperationKeyRef.current = idempotencyKey;
+        expenseSubmissionLockedRef.current = true;
 
         expenseForm.transform((data) => ({
             ...data,
             category_id: selectedExpenseCategory?.id ?? matchingCategory?.id ?? null,
             category_name: selectedExpenseCategory?.name ?? matchingCategory?.name ?? cleanCategoryName,
+            idempotency_key: idempotencyKey,
         }));
 
         expenseForm.post(route('cash-register.expenses.store'), {
@@ -134,7 +175,11 @@ export default function Index({
                 expenseForm.reset();
                 setExpenseCategoryName('');
                 setSelectedExpenseCategory(null);
+                expenseOperationKeyRef.current = null;
                 toast.success('Gasto registrado correctamente.');
+            },
+            onFinish: () => {
+                expenseSubmissionLockedRef.current = false;
             },
         });
     }

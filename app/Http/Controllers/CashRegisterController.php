@@ -11,6 +11,8 @@ use App\Services\BranchAccessService;
 use App\Models\TenantSetting;
 use App\Support\BranchInventory;
 use App\Support\CashRegister;
+use App\Support\IdempotencyService;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -40,36 +42,69 @@ class CashRegisterController extends Controller
     public function open(Request $request): RedirectResponse
     {
         $data = $request->validate([
+            'idempotency_key' => ['required', 'uuid'],
             'opening_amount' => ['required', 'numeric', 'min:0'],
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
+        $businessId = currentBusinessId();
+        $branch = BranchInventory::activeBranch($businessId);
 
-        DB::transaction(function () use ($request, $data) {
-            $businessId = currentBusinessId();
-            $branch = BranchInventory::activeBranch($businessId);
-            CashRegister::ensureNoOpenSession($businessId);
-
-            $session = CashRegisterSession::create([
-                'business_id' => $businessId,
-                'branch_id' => $branch->id,
-                'opened_by' => $request->user()->id,
-                'status' => 'open',
-                'opening_amount' => round((float) $data['opening_amount'], 2),
-                'expected_cash' => 0,
-                'opened_at' => now(),
-                'notes' => $data['notes'] ?? null,
-            ]);
-
-            CashRegister::recordMovement(
-                $session,
-                'opening',
-                (float) $data['opening_amount'],
-                'cash_register_session',
-                $session->id,
-                'Apertura de caja',
+        try {
+            app(IdempotencyService::class)->run(
+                $businessId,
+                $branch->id,
                 $request->user()->id,
+                'cash_register_open',
+                $data['idempotency_key'],
+                [
+                    'business_id' => $businessId,
+                    'branch_id' => $branch->id,
+                    'opening_amount' => round((float) $data['opening_amount'], 2),
+                    'notes' => $data['notes'] ?? null,
+                ],
+                function () use ($request, $data, $businessId, $branch): int {
+                    return DB::transaction(function () use ($request, $data, $businessId, $branch): int {
+                        if (CashRegister::currentOpenSession($businessId, true, $branch->id)) {
+                            throw ValidationException::withMessages([
+                                'opening_amount' => 'Ya hay una caja abierta.',
+                            ]);
+                        }
+
+                        $session = CashRegisterSession::create([
+                            'business_id' => $businessId,
+                            'branch_id' => $branch->id,
+                            'opened_by' => $request->user()->id,
+                            'status' => 'open',
+                            'opening_amount' => round((float) $data['opening_amount'], 2),
+                            'expected_cash' => 0,
+                            'opened_at' => now(),
+                            'notes' => $data['notes'] ?? null,
+                        ]);
+
+                        CashRegister::recordMovement(
+                            $session,
+                            'opening',
+                            (float) $data['opening_amount'],
+                            'cash_register_session',
+                            $session->id,
+                            'Apertura de caja',
+                            $request->user()->id,
+                        );
+
+                        return $session->id;
+                    });
+                },
+                'cash_register_session',
             );
-        });
+        } catch (QueryException $exception) {
+            if ($this->isOpenSessionUniquenessViolation($exception)) {
+                throw ValidationException::withMessages([
+                    'opening_amount' => 'Ya hay una caja abierta.',
+                ]);
+            }
+
+            throw $exception;
+        }
 
         return back()->with('success', 'Caja abierta correctamente.');
     }
@@ -77,46 +112,69 @@ class CashRegisterController extends Controller
     public function expense(Request $request): RedirectResponse
     {
         $data = $request->validate([
+            'idempotency_key' => ['required', 'uuid'],
             'category_id' => ['nullable', 'integer'],
             'category_name' => ['nullable', 'string', 'max:255'],
             'description' => ['required', 'string', 'max:255'],
             'amount' => ['required', 'numeric', 'gt:0'],
         ]);
+        $businessId = currentBusinessId();
+        $branch = BranchInventory::activeBranch($businessId);
 
-        DB::transaction(function () use ($request, $data) {
-            $businessId = currentBusinessId();
-            $session = CashRegister::requireOpenSession(
-                $businessId,
-                'Debes abrir caja antes de registrar gastos.',
-                true,
-            );
-            $category = $this->resolveExpenseCategory(
-                $businessId,
-                $data['category_id'] ?? null,
-                $data['category_name'] ?? null,
-            );
-
-            $expense = CashExpense::create([
+        app(IdempotencyService::class)->run(
+            $businessId,
+            $branch->id,
+            $request->user()->id,
+            'cash_register_expense',
+            $data['idempotency_key'],
+            [
                 'business_id' => $businessId,
-                'branch_id' => $session->branch_id,
-                'cash_register_session_id' => $session->id,
-                'cash_expense_category_id' => $category?->id,
-                'category' => $category?->name,
+                'branch_id' => $branch->id,
+                'category_id' => $data['category_id'] ?? null,
+                'category_name' => $data['category_name'] ?? null,
                 'description' => $data['description'],
                 'amount' => round((float) $data['amount'], 2),
-                'created_by' => $request->user()->id,
-            ]);
+            ],
+            function () use ($request, $data, $businessId, $branch): int {
+                return DB::transaction(function () use ($request, $data, $businessId, $branch): int {
+                    $session = CashRegister::requireOpenSession(
+                        $businessId,
+                        'Debes abrir caja antes de registrar gastos.',
+                        true,
+                        $branch->id,
+                    );
+                    $category = $this->resolveExpenseCategory(
+                        $businessId,
+                        $data['category_id'] ?? null,
+                        $data['category_name'] ?? null,
+                    );
 
-            CashRegister::recordMovement(
-                $session,
-                'expense',
-                -1 * (float) $data['amount'],
-                'cash_expense',
-                $expense->id,
-                $expense->description,
-                $request->user()->id,
-            );
-        });
+                    $expense = CashExpense::create([
+                        'business_id' => $businessId,
+                        'branch_id' => $session->branch_id,
+                        'cash_register_session_id' => $session->id,
+                        'cash_expense_category_id' => $category?->id,
+                        'category' => $category?->name,
+                        'description' => $data['description'],
+                        'amount' => round((float) $data['amount'], 2),
+                        'created_by' => $request->user()->id,
+                    ]);
+
+                    CashRegister::recordMovement(
+                        $session,
+                        'expense',
+                        -1 * (float) $data['amount'],
+                        'cash_expense',
+                        $expense->id,
+                        $expense->description,
+                        $request->user()->id,
+                    );
+
+                    return $expense->id;
+                });
+            },
+            'cash_expense',
+        );
 
         return back()->with('success', 'Gasto registrado correctamente.');
     }
@@ -416,5 +474,11 @@ class CashRegisterController extends Controller
         if (BranchInventory::branchesEnabled($businessId)) {
             app(BranchAccessService::class)->assertCanAccessBranch($request->user(), (int) $session->branch_id, $businessId);
         }
+    }
+
+    private function isOpenSessionUniquenessViolation(QueryException $exception): bool
+    {
+        return $exception->getCode() === '23505'
+            && str_contains($exception->getMessage(), 'cash_register_sessions_one_open_per_branch');
     }
 }
