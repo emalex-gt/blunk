@@ -14,6 +14,9 @@ return [
     'connect_timeout' => (int) env('DIGIFACT_CONNECT_TIMEOUT', 5),
     'token_timeout' => (int) env('DIGIFACT_TOKEN_TIMEOUT', 10),
     'certification_timeout' => (int) env('DIGIFACT_CERTIFICATION_TIMEOUT', 20),
+    // Local QA only. DigifactInvoiceService additionally hard-blocks this
+    // switch outside local/testing, even if it is accidentally configured.
+    'simulate_certification_timeout' => env('FEL_SIMULATE_CERTIFICATION_TIMEOUT', false),
     'document_timeout' => (int) env('DIGIFACT_DOCUMENT_TIMEOUT', 15),
     'lookup_timeout' => (int) env('DIGIFACT_LOOKUP_TIMEOUT', 10),
     'endpoints' => [

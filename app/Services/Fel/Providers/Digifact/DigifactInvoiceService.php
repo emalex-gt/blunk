@@ -327,6 +327,14 @@ class DigifactInvoiceService
         }
 
         $this->validateInvoicePayload($payload, $settings);
+
+        if (
+            app()->environment(['local', 'testing'])
+            && config('digifact.simulate_certification_timeout', false)
+        ) {
+            throw new ConnectionException('Simulación local: tiempo de espera durante la certificación FEL.');
+        }
+
         $issuedAt = $this->parseIssuedAt((string) ($payload['Header']['IssuedDateTime'] ?? now('America/Guatemala')->format('Y-m-d\\TH:i:sP')));
         $response = DigifactClient::forBusiness($business, $settings)->certify($payload, 'XML');
         $identifiers = $this->extractCertificationIdentifiers($response);
