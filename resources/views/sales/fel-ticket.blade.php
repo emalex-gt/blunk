@@ -96,12 +96,6 @@
         <div class="center">Dirección: {{ $customer['address'] }}</div>
     @endif
     <div class="center">Le atendió: {{ $attendedBy }}</div>
-    @if (filled($customer['municipality'] ?? null))
-        <div class="center">Municipio: {{ $customer['municipality'] }}</div>
-    @endif
-    @if (filled($customer['department'] ?? null))
-        <div class="center">Departamento: {{ $customer['department'] }}</div>
-    @endif
 
     <div class="separator"></div>
     @include('print.partials.delivery-details', ['delivery' => $delivery])

@@ -1614,7 +1614,7 @@ class SaleController extends Controller
             'customer' => [
                 'name' => $sale->customer_name ?: $sale->customer?->name ?: 'Consumidor Final',
                 'tax_id' => $receiverNit,
-                'address' => $printDetails['customer_location']['address'],
+                'address' => $printDetails['customer_location']['display'],
                 'municipality' => $printDetails['customer_location']['municipality'],
                 'department' => $printDetails['customer_location']['department'],
             ],
@@ -1681,7 +1681,7 @@ class SaleController extends Controller
             && filled($sale->fel_uuid);
     }
 
-    /** @return array{attended_by: string, customer_location: array{address: string, municipality: string, department: string}, delivery: array{address_reference: string, phone: string}} */
+    /** @return array{attended_by: string, customer_location: array{address: string, municipality: string, department: string, display: string}, delivery: array{address_reference: string, phone: string}} */
     private function salePrintDetails(Sale $sale): array
     {
         $routePreSale = PreSale::query()
@@ -1694,18 +1694,45 @@ class SaleController extends Controller
             ? ($routePreSale->seller?->name ?: 'No registrado')
             : ($sale->createdBy?->name ?: 'No registrado');
 
+        $customerLocation = [
+            'address' => trim((string) $sale->customer_address) ?: trim((string) $sale->customer?->address),
+            'municipality' => trim((string) $sale->customer_municipality) ?: trim((string) $sale->customer?->municipality),
+            'department' => trim((string) $sale->customer_department) ?: trim((string) $sale->customer?->department),
+        ];
+        $customerLocation['display'] = $this->formatCustomerPrintLocation($customerLocation);
+
         return [
             'attended_by' => $attendedBy,
-            'customer_location' => [
-                'address' => trim((string) $sale->customer_address) ?: trim((string) $sale->customer?->address),
-                'municipality' => trim((string) $sale->customer_municipality) ?: trim((string) $sale->customer?->municipality),
-                'department' => trim((string) $sale->customer_department) ?: trim((string) $sale->customer?->department),
-            ],
+            'customer_location' => $customerLocation,
             'delivery' => [
                 'address_reference' => trim((string) $sale->customer_address_reference),
                 'phone' => trim((string) $sale->customer_phone),
             ],
         ];
+    }
+
+    /** @param array{address: string, municipality: string, department: string} $location */
+    private function formatCustomerPrintLocation(array $location): string
+    {
+        $address = $location['address'];
+        $administrativeLocation = implode(', ', array_filter([
+            $location['municipality'],
+            $location['department'],
+        ]));
+
+        if ($address === '' || $administrativeLocation === '') {
+            return implode(', ', array_filter([
+                $address,
+                $location['municipality'],
+                $location['department'],
+            ]));
+        }
+
+        if (str_ends_with(mb_strtolower($address), mb_strtolower($administrativeLocation))) {
+            return $address;
+        }
+
+        return implode(', ', [$address, $administrativeLocation]);
     }
 
     private function saleIdempotencyPayload(array $data, int $branchId, int $businessId, int $userId): array

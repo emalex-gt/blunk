@@ -113,12 +113,6 @@
             @if (filled($customer['address'] ?? null))
                 <p><b>Dirección:</b> {{ $customer['address'] }}</p>
             @endif
-            @if (filled($customer['municipality'] ?? null))
-                <p><b>Municipio:</b> {{ $customer['municipality'] }}</p>
-            @endif
-            @if (filled($customer['department'] ?? null))
-                <p><b>Departamento:</b> {{ $customer['department'] }}</p>
-            @endif
         </div>
         <div>
             <span class="label">NIT</span>

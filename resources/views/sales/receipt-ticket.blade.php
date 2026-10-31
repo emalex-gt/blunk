@@ -93,22 +93,10 @@
             <span>Cliente</span>
             <span class="right">{{ $customerDisplayName ?? 'Consumidor final' }}</span>
         </div>
-        @if (filled($customerLocation['address'] ?? null))
+        @if (filled($customerLocation['display'] ?? null))
             <div class="row">
-                <span>Dirección</span>
-                <span class="right">{{ $customerLocation['address'] }}</span>
-            </div>
-        @endif
-        @if (filled($customerLocation['municipality'] ?? null))
-            <div class="row">
-                <span>Municipio</span>
-                <span class="right">{{ $customerLocation['municipality'] }}</span>
-            </div>
-        @endif
-        @if (filled($customerLocation['department'] ?? null))
-            <div class="row">
-                <span>Departamento</span>
-                <span class="right">{{ $customerLocation['department'] }}</span>
+                <span>Dirección:</span>
+                <span class="right">{{ $customerLocation['display'] }}</span>
             </div>
         @endif
         <div class="row">

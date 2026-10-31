@@ -333,14 +333,12 @@ class ListFilterExportsTest extends TestCase
             $response = $this->actingAs($user)->get(route('sales.receipt', $sale));
 
             $response->assertOk()
-                ->assertSee('Avenida Entrega 10')
-                ->assertSee('Mixco')
-                ->assertSee('Guatemala')
+                ->assertSee('Avenida Entrega 10, Mixco, Guatemala')
+                ->assertDontSee('Municipio:')
+                ->assertDontSee('Departamento:')
                 ->assertDontSee('Imprimir Datos de Entrega')
                 ->assertSee('Le atendió');
-            $this->assertSame(1, substr_count($response->getContent(), 'Avenida Entrega 10'));
-            $this->assertSame(1, substr_count($response->getContent(), 'Mixco'));
-            $this->assertSame(1, substr_count($response->getContent(), 'Guatemala'));
+            $this->assertSame(1, substr_count($response->getContent(), 'Avenida Entrega 10, Mixco, Guatemala'));
         }
 
         $sale->forceFill([
@@ -354,8 +352,8 @@ class ListFilterExportsTest extends TestCase
             $this->actingAs($user)->get(route('sales.receipt', $sale))
                 ->assertOk()
                 ->assertSee('Avenida sin ubicación administrativa')
-                ->assertDontSee('Mixco')
-                ->assertDontSee('Departamento');
+                ->assertDontSee('Municipio:')
+                ->assertDontSee('Departamento:');
         }
 
         $sale->forceFill([
@@ -369,9 +367,33 @@ class ListFilterExportsTest extends TestCase
             $this->actingAs($user)->get(route('sales.receipt', $sale))
                 ->assertOk()
                 ->assertDontSee('Avenida sin ubicación administrativa')
-                ->assertSee('Mixco')
-                ->assertSee('Guatemala');
+                ->assertSee('Mixco, Guatemala')
+                ->assertDontSee('Municipio:')
+                ->assertDontSee('Departamento:');
         }
+
+        $sale->forceFill([
+            'customer_address' => 'Avenida fiscal 5, Mixco, Guatemala',
+            'customer_municipality' => 'Mixco',
+            'customer_department' => 'Guatemala',
+        ])->save();
+
+        foreach (['document', 'ticket'] as $format) {
+            $business->tenantSetting->forceFill(['receipt_format' => $format])->save();
+            $response = $this->actingAs($user)->get(route('sales.receipt', $sale));
+
+            $response->assertOk()
+                ->assertSee('Avenida fiscal 5, Mixco, Guatemala')
+                ->assertDontSee('Municipio:')
+                ->assertDontSee('Departamento:');
+            $this->assertSame(1, substr_count($response->getContent(), 'Avenida fiscal 5, Mixco, Guatemala'));
+        }
+
+        $customer->forceFill([
+            'address' => 'Dirección de cliente relacionada',
+            'municipality' => 'Mixco',
+            'department' => 'Guatemala',
+        ])->save();
 
         $sale->forceFill([
             'customer_address' => null,
@@ -383,9 +405,24 @@ class ListFilterExportsTest extends TestCase
             $business->tenantSetting->forceFill(['receipt_format' => $format])->save();
             $this->actingAs($user)->get(route('sales.receipt', $sale))
                 ->assertOk()
-                ->assertDontSee('Avenida sin ubicación administrativa')
-                ->assertDontSee('Mixco')
-                ->assertDontSee('Departamento');
+                ->assertSee('Dirección de cliente relacionada, Mixco, Guatemala')
+                ->assertDontSee('Municipio:')
+                ->assertDontSee('Departamento:');
+        }
+
+        $customer->forceFill([
+            'address' => null,
+            'municipality' => null,
+            'department' => null,
+        ])->save();
+
+        foreach (['document', 'ticket'] as $format) {
+            $business->tenantSetting->forceFill(['receipt_format' => $format])->save();
+            $this->actingAs($user)->get(route('sales.receipt', $sale))
+                ->assertOk()
+                ->assertDontSee('Dirección de cliente relacionada')
+                ->assertDontSee('Municipio:')
+                ->assertDontSee('Departamento:');
         }
 
         $sale->forceFill(['customer_address_reference' => 'Portón verde', 'customer_phone' => null])->save();
