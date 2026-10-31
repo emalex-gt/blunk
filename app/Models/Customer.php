@@ -6,6 +6,7 @@ use App\Support\CustomerIdentity;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -74,15 +75,10 @@ class Customer extends Model
             $candidates = self::query()
                 ->where('business_id', $businessId)
                 ->whereNull('merged_into_customer_id')
-                ->where('normalized_tax_id', 'CF')
+                ->genericFinalConsumer()
                 ->orderBy('id')
                 ->lockForUpdate()
-                ->get()
-                ->filter(fn (self $customer) => CustomerIdentity::isGenericFinalConsumer(
-                    $customer->normalized_tax_id,
-                    $customer->name,
-                    $customer->only(['commercial_name', 'contact_name', 'address', 'address_reference', 'phone', 'postal_code', 'department', 'municipality']),
-                ));
+                ->get();
 
             if ($candidates->isNotEmpty()) {
                 return $candidates
@@ -110,6 +106,23 @@ class Customer extends Model
                 'tax_lookup_verified_at' => null,
             ]);
         });
+    }
+
+    public function scopeGenericFinalConsumer(Builder $query): Builder
+    {
+        return $query
+            ->where('normalized_tax_id', CustomerIdentity::CF)
+            ->where('is_final_consumer', true)
+            ->whereRaw("UPPER(REGEXP_REPLACE(BTRIM(name), '\\s+', ' ', 'g')) = ?", ['CONSUMIDOR FINAL']);
+    }
+
+    public function isGenericFinalConsumer(): bool
+    {
+        return CustomerIdentity::isCanonicalGenericFinalConsumer(
+            $this->normalized_tax_id ?? $this->doc_number,
+            $this->name,
+            $this->is_final_consumer,
+        );
     }
 
     public static function findOrCreateByNormalizedTaxId(Business|int $business, array $attributes): self

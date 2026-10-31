@@ -79,4 +79,14 @@ final class CustomerIdentity
 
         return true;
     }
+
+    public static function isCanonicalGenericFinalConsumer(
+        mixed $taxId,
+        mixed $name,
+        mixed $isFinalConsumer,
+    ): bool {
+        return (bool) $isFinalConsumer
+            && self::normalizeTaxId($taxId) === self::CF
+            && self::normalizeName($name) === 'CONSUMIDOR FINAL';
+    }
 }

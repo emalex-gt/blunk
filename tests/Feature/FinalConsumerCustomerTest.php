@@ -48,12 +48,12 @@ class FinalConsumerCustomerTest extends TestCase
         $this->assertFalse(CustomerIdentity::isGenericFinalConsumer('CF', 'Consumidor Final', ['phone' => '5555-1234']));
     }
 
-    public function test_final_consumer_with_an_address_reference_is_not_reused_as_the_generic_customer(): void
+    public function test_personalized_final_consumer_with_another_name_is_not_reused_as_the_generic_customer(): void
     {
         $business = $this->business();
         $namedCf = Customer::query()->create([
             'business_id' => $business->id,
-            'name' => 'Consumidor Final',
+            'name' => 'Consumidor de mostrador',
             'doc_type' => 'CF',
             'doc_number' => 'CF',
             'commercial_name' => null,
@@ -68,7 +68,12 @@ class FinalConsumerCustomerTest extends TestCase
             'is_final_consumer' => true,
         ]);
 
-        $this->assertFalse(CustomerIdentity::isGenericFinalConsumer('CF', 'Consumidor Final', [
+        $this->assertFalse(CustomerIdentity::isCanonicalGenericFinalConsumer(
+            'CF',
+            'Consumidor de mostrador',
+            true,
+        ));
+        $this->assertFalse(CustomerIdentity::isGenericFinalConsumer('CF', 'Consumidor de mostrador', [
             'commercial_name' => '',
             'contact_name' => '',
             'address' => '',
@@ -83,6 +88,26 @@ class FinalConsumerCustomerTest extends TestCase
 
         $this->assertNotSame($namedCf->id, $generic->id);
         $this->assertSame(2, Customer::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_generic_final_consumer_with_location_is_reused(): void
+    {
+        $business = $this->business();
+        $existing = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Consumidor Final',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+            'is_final_consumer' => true,
+            'department' => 'Quiché',
+            'municipality' => 'Chichicastenango',
+        ]);
+
+        $generic = Customer::getOrCreateGenericFinalConsumer($business);
+
+        $this->assertSame($existing->id, $generic->id);
+        $this->assertSame(1, Customer::query()->where('business_id', $business->id)->count());
     }
 
     public function test_database_rejects_duplicate_real_tax_id_after_normalization(): void

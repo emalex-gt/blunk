@@ -41,6 +41,7 @@ class CustomerController extends Controller
         $customers = Customer::query()
             ->where('business_id', $businessId)
             ->whereNull('merged_into_customer_id')
+            ->whereNot(fn ($query) => $query->genericFinalConsumer())
             ->when($search !== '', fn ($query) => $this->applySearch($query, $search))
             ->when($fiscalStatus !== '', fn ($query) => $this->applyFiscalStatus($query, $fiscalStatus))
             ->orderBy('name')
@@ -94,6 +95,7 @@ class CustomerController extends Controller
     public function edit(Customer $customer): Response
     {
         $customer = $this->customerForCurrentBusiness($customer);
+        $this->rejectGenericFinalConsumerAdministration($customer);
 
         return Inertia::render('Customers/Edit', [
             'customer' => $this->customerPayload($customer),
@@ -103,6 +105,7 @@ class CustomerController extends Controller
     public function update(Request $request, Customer $customer): RedirectResponse
     {
         $customer = $this->customerForCurrentBusiness($customer);
+        $this->rejectGenericFinalConsumerAdministration($customer);
         $this->rejectFiscalIdentityChanges($request, $customer);
 
         $data = $request->validate($this->updateRules($customer), [
@@ -135,6 +138,7 @@ class CustomerController extends Controller
     public function refreshTaxData(Customer $customer): RedirectResponse
     {
         $customer = $this->customerForCurrentBusiness($customer);
+        $this->rejectGenericFinalConsumerAdministration($customer);
         $docType = $this->taxIdentityType($customer);
 
         if ($docType === null) {
@@ -195,6 +199,7 @@ class CustomerController extends Controller
     public function assignNit(Request $request, Customer $customer): RedirectResponse
     {
         $customer = $this->customerForCurrentBusiness($customer);
+        $this->rejectGenericFinalConsumerAdministration($customer);
 
         if (! $this->isCfCustomer($customer)) {
             throw ValidationException::withMessages([
@@ -548,6 +553,15 @@ class CustomerController extends Controller
         return $customer;
     }
 
+    private function rejectGenericFinalConsumerAdministration(Customer $customer): void
+    {
+        abort_if(
+            $customer->isGenericFinalConsumer(),
+            403,
+            'El consumidor final genérico se administra automáticamente.'
+        );
+    }
+
     private function updateRules(Customer $customer): array
     {
         return [
@@ -706,14 +720,10 @@ class CustomerController extends Controller
     {
         return Customer::query()
             ->where('business_id', $businessId)
-            ->where('normalized_tax_id', 'CF')
+            ->whereNull('merged_into_customer_id')
+            ->genericFinalConsumer()
             ->when($ignoreCustomerId, fn ($query) => $query->whereKeyNot($ignoreCustomerId))
-            ->get()
-            ->contains(fn (Customer $candidate) => CustomerIdentity::isGenericFinalConsumer(
-                $candidate->normalized_tax_id,
-                $candidate->name,
-                $candidate->only(['commercial_name', 'contact_name', 'address', 'phone', 'postal_code', 'department', 'municipality']),
-            ));
+            ->exists();
     }
 
     private function fiscalStatus(Customer $customer): string

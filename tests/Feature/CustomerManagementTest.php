@@ -85,6 +85,50 @@ class CustomerManagementTest extends TestCase
             );
     }
 
+    public function test_generic_final_consumer_is_hidden_from_administration_but_available_to_customer_search(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+        $generic = Customer::getOrCreateGenericFinalConsumer($business);
+        Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente visible',
+            'doc_number' => '123',
+            'country' => 'GT',
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('customers.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Customers/Index')
+                ->where('customers.data.0.name', 'Cliente visible')
+                ->missing('customers.data.1')
+            );
+
+        $this->actingAs($user)
+            ->getJson(route('customers.search', ['search' => 'Consumidor Final']))
+            ->assertOk()
+            ->assertJsonPath('customers.0.id', $generic->id);
+    }
+
+    public function test_generic_final_consumer_cannot_be_edited_or_updated_from_administration(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+        $generic = Customer::getOrCreateGenericFinalConsumer($business);
+
+        $this->actingAs($user)
+            ->get(route('customers.edit', $generic))
+            ->assertForbidden();
+
+        $this->actingAs($user)
+            ->put(route('customers.update', $generic), [
+                'name' => 'Cambio no permitido',
+            ])
+            ->assertForbidden();
+
+        $this->assertSame('Consumidor Final', $generic->fresh()->name);
+    }
+
     public function test_customer_search_matches_name_nit_and_contact(): void
     {
         [$business, $user] = $this->tenantUser('owner');
