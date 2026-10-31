@@ -68,6 +68,7 @@ class HandleInertiaRequests extends Middleware
                 'maintenance_announcement' => null,
                 'flash' => [
                     'success' => fn () => $request->session()->get('success'),
+                    'created_product_id' => fn () => $request->session()->get('created_product_id'),
                     'receipt_sale_id' => fn () => $request->session()->get('receipt_sale_id'),
                     'fel_print_sale_id' => fn () => $request->session()->get('fel_print_sale_id'),
                     'fel_print_url' => fn () => $request->session()->get('fel_print_url'),
@@ -270,6 +271,7 @@ class HandleInertiaRequests extends Middleware
             },
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),
+                'created_product_id' => fn () => $request->session()->get('created_product_id'),
                 'receipt_sale_id' => fn () => $request->session()->get('receipt_sale_id'),
                 'fel_print_sale_id' => fn () => $request->session()->get('fel_print_sale_id'),
                 'fel_print_url' => fn () => $request->session()->get('fel_print_url'),

@@ -46,6 +46,7 @@ class ProductController extends Controller
         $categoryId = $request->integer('category_id') ?: null;
         $brandId = $request->integer('brand_id') ?: null;
         $locationId = $request->integer('location_id') ?: null;
+        $createdProductId = $request->integer('created_product_id') ?: null;
         $status = $request->string('status')->toString();
 
         $products = Product::query()
@@ -92,6 +93,7 @@ class ProductController extends Controller
             ->when($categoryId, fn ($query) => $query->where('category_id', $categoryId))
             ->when($brandId, fn ($query) => $query->where('brand_id', $brandId))
             ->when($locationId, fn ($query) => $query->where('location_id', $locationId))
+            ->when($createdProductId, fn ($query) => $query->whereKey($createdProductId))
             ->when($status === 'active', fn ($query) => $query->where('is_active', true))
             ->when($status === 'inactive', fn ($query) => $query->where('is_active', false))
             ->orderBy('name')
@@ -141,6 +143,7 @@ class ProductController extends Controller
                 'category_id' => $categoryId,
                 'brand_id' => $brandId,
                 'location_id' => $locationId,
+                'created_product_id' => $createdProductId,
                 'status' => in_array($status, ['active', 'inactive'], true) ? $status : '',
                 'per_page' => $perPage,
             ],
@@ -178,15 +181,16 @@ class ProductController extends Controller
         $idempotencyPayload = $this->productIdempotencyPayload($request);
         $idempotency = app(IdempotencyService::class);
 
-        if ($idempotency->replayCompleted(
+        $replayed = $idempotency->replayCompleted(
             $businessId,
             $branch->id,
             $request->user()->id,
             'product_create',
             $idempotencyKey,
             $idempotencyPayload,
-        )) {
-            return back()->with('success', 'Producto creado.');
+        );
+        if ($replayed) {
+            return $this->productCreatedResponse($replayed->resultId);
         }
 
         $data = $this->validatedProduct($request);
@@ -200,7 +204,7 @@ class ProductController extends Controller
         $data['business_id'] = $businessId;
         $useProductImages = tenantSetting('use_product_images', true);
 
-        $idempotency->run(
+        $result = $idempotency->run(
             $businessId,
             $branch->id,
             $request->user()->id,
@@ -257,7 +261,14 @@ class ProductController extends Controller
             'product',
         );
 
-        return back()->with('success', 'Producto creado.');
+        return $this->productCreatedResponse($result->resultId);
+    }
+
+    private function productCreatedResponse(int $productId): RedirectResponse
+    {
+        return redirect()->route('products.index', ['created_product_id' => $productId])
+            ->with('success', 'Producto creado correctamente.')
+            ->with('created_product_id', $productId);
     }
 
     public function update(Request $request, Product $product): RedirectResponse

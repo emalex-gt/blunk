@@ -4,10 +4,12 @@ import PrimaryButton from '@/Components/PrimaryButton';
 import SecondaryButton from '@/Components/SecondaryButton';
 import SupplierInfoPopover from '@/Components/SupplierInfoPopover';
 import TextInput from '@/Components/TextInput';
+import Toast from '@/Components/Toast';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { getProductImageUrl } from '@/lib/cloudinary';
 import { compressImage } from '@/lib/images';
 import { t } from '@/lib/i18n';
+import { useToast } from '@/hooks/useToast';
 import { formatCurrency } from '@/utils/currency';
 import { limitDecimalPlaces } from '@/utils/decimalInput';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
@@ -327,6 +329,7 @@ export default function ProductIndex({
         category_id?: number | null;
         brand_id?: number | null;
         location_id?: number | null;
+        created_product_id?: number | null;
         status?: string;
         per_page?: number;
     };
@@ -341,6 +344,7 @@ export default function ProductIndex({
     const canViewPurchaseCostHistory = enabledModules.includes('reports')
         && (Boolean(auth?.user?.is_super_admin) || (auth?.permissions ?? []).includes('reports.purchase_cost_history.view'));
     const country = business?.country ?? 'GT';
+    const toast = useToast();
     const [editing, setEditing] = useState<Product | null>(null);
     const [search, setSearch] = useState(filters.search ?? '');
     const didMountSearch = useRef(false);
@@ -352,11 +356,12 @@ export default function ProductIndex({
         per_page: String(filters.per_page ?? products.per_page ?? 25),
     });
     const [imagePreview, setImagePreview] = useState<string | null>(null);
+    const [imageInputKey, setImageInputKey] = useState(0);
     const [imageError, setImageError] = useState('');
     const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
     const [showBrandSuggestions, setShowBrandSuggestions] = useState(false);
     const [showLocationSuggestions, setShowLocationSuggestions] = useState(false);
-    const { data, setData, post, processing, errors, reset, transform } =
+    const { data, setData, post, processing, errors, reset, clearErrors, transform } =
         useForm<ProductForm>(emptyForm);
     const createOperationKeyRef = useRef<string | null>(null);
     const createSubmissionLockedRef = useRef(false);
@@ -370,6 +375,7 @@ export default function ProductIndex({
         [identityMatches],
     );
     const currentProducts = products.data;
+    const createdProductId = filters.created_product_id ?? null;
 
     function submit(event: FormEvent) {
         event.preventDefault();
@@ -406,14 +412,34 @@ export default function ProductIndex({
         post(route('products.store'), {
             forceFormData: true,
             preserveScroll: true,
-            onSuccess: () => {
-                clearImagePreview();
+            onSuccess: (page) => {
+                const flash = page.props.flash as { created_product_id?: number | null } | undefined;
+
+                if (!flash?.created_product_id) {
+                    return;
+                }
+
+                resetCreateForm();
                 createOperationKeyRef.current = null;
+                toast.success('Producto creado correctamente.');
             },
             onFinish: () => {
                 createSubmissionLockedRef.current = false;
             },
         });
+    }
+
+    function resetCreateForm() {
+        clearImagePreview();
+        reset();
+        clearErrors();
+        setEditing(null);
+        setIdentityErrors({});
+        setIdentityWarnings({});
+        setIdentityMatches([]);
+        setShowCategorySuggestions(false);
+        setShowBrandSuggestions(false);
+        setShowLocationSuggestions(false);
     }
 
     function edit(product: Product) {
@@ -477,6 +503,7 @@ export default function ProductIndex({
             category_id: filterState.category_id,
             brand_id: filterState.brand_id,
             location_id: filterState.location_id,
+            created_product_id: createdProductId,
             status: filterState.status,
             per_page: filterState.per_page,
             ...overrides,
@@ -513,6 +540,7 @@ export default function ProductIndex({
             return null;
         });
         setImageError('');
+        setImageInputKey((current) => current + 1);
         setData('image', null);
     }
 
@@ -666,6 +694,7 @@ export default function ProductIndex({
             header={<h2 className="text-xl font-semibold text-slate-950">{t('products.products')}</h2>}
         >
             <Head title={t('products.products')} />
+            <Toast toasts={toast.toasts} onClose={toast.removeToast} />
 
             <div className="mx-auto grid max-w-[1800px] gap-5 px-4 py-5 sm:px-5 lg:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)] 2xl:grid-cols-[420px_minmax(0,1fr)]">
                 <form
@@ -695,6 +724,7 @@ export default function ProductIndex({
                                 <label className="inline-flex cursor-pointer items-center rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50">
                                     {t('products.select_image')}
                                     <input
+                                        key={imageInputKey}
                                         id="image"
                                         type="file"
                                         accept="image/*"
@@ -1031,6 +1061,18 @@ export default function ProductIndex({
                         <PrimaryButton className="justify-center xl:col-span-3 2xl:col-span-1">{t('actions.search')}</PrimaryButton>
                     </form>
 
+                    {createdProductId && (
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900" role="status">
+                            <span className="font-medium">Mostrando el producto recién creado.</span>
+                            <Link
+                                href={route('products.index')}
+                                className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+                            >
+                                Ver todos los productos
+                            </Link>
+                        </div>
+                    )}
+
                     {identityMatches.length > 0 && (
                         <section className="mb-4 rounded-xl border border-amber-200 bg-amber-50/80 p-4">
                             <div>
@@ -1108,11 +1150,14 @@ export default function ProductIndex({
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
-                                {currentProducts.map((product) => (
-                                    <tr
-                                        key={product.id}
-                                        className={`transition-colors ${identityMatchIds.has(product.id) ? 'bg-amber-50 ring-1 ring-inset ring-amber-200' : 'hover:bg-orange-50/30'}`}
-                                    >
+                                {currentProducts.map((product) => {
+                                    const isCreatedProduct = product.id === createdProductId;
+
+                                    return (
+                                        <tr
+                                            key={product.id}
+                                            className={`transition-colors ${isCreatedProduct ? 'bg-emerald-50 ring-1 ring-inset ring-emerald-300' : identityMatchIds.has(product.id) ? 'bg-amber-50 ring-1 ring-inset ring-amber-200' : 'hover:bg-orange-50/30'}`}
+                                        >
                                         {use_product_images && (
                                             <td className="hidden py-3 pr-3 2xl:table-cell">
                                                 {product.image_url ? (
@@ -1171,8 +1216,9 @@ export default function ProductIndex({
                                                 {t('actions.edit')}
                                             </button>
                                         </td>
-                                    </tr>
-                                ))}
+                                        </tr>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>

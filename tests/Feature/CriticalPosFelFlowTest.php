@@ -2712,16 +2712,25 @@ class CriticalPosFelFlowTest extends TestCase
             'idempotency_key' => 'f9f2fce0-5be3-4f31-a59d-f31984bb98d9',
         ]);
 
-        foreach (range(1, 5) as $attempt) {
-            $this->actingAs($user)
-                ->post(route('products.store'), $payload)
-                ->assertSessionHasNoErrors();
-        }
+        $firstResponse = $this->actingAs($user)
+            ->post(route('products.store'), $payload)
+            ->assertSessionHasNoErrors();
 
         $product = Product::query()
             ->where('business_id', $business->id)
             ->where('code', 'PRODUCT-IDEMPOTENCY-001')
             ->firstOrFail();
+
+        $firstResponse
+            ->assertRedirect(route('products.index', ['created_product_id' => $product->id]))
+            ->assertSessionHas('created_product_id', $product->id);
+
+        foreach (range(1, 4) as $attempt) {
+            $this->actingAs($user)
+                ->post(route('products.store'), $payload)
+                ->assertRedirect(route('products.index', ['created_product_id' => $product->id]))
+                ->assertSessionHas('created_product_id', $product->id);
+        }
 
         $this->assertSame(1, Product::query()->where('business_id', $business->id)->where('code', 'PRODUCT-IDEMPOTENCY-001')->count());
         $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('product_id', $product->id)->where('type', 'initial')->count());
@@ -2733,6 +2742,16 @@ class CriticalPosFelFlowTest extends TestCase
             'result_type' => 'product',
             'result_id' => $product->id,
         ]);
+
+        Product::create($this->productRecord($business, ['name' => 'Otro producto', 'code' => 'PRODUCT-IDEMPOTENCY-OTHER']));
+        $this->actingAs($user)
+            ->get(route('products.index', ['created_product_id' => $product->id]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('filters.created_product_id', $product->id)
+                ->has('products.data', 1)
+                ->where('products.data.0.id', $product->id)
+            );
     }
 
     public function test_product_creation_rejects_a_reused_key_with_a_different_payload_and_isolated_per_tenant(): void
