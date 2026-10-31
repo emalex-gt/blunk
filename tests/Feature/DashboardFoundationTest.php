@@ -388,6 +388,7 @@ class DashboardFoundationTest extends TestCase
     {
         [$business, $owner, $branch] = $this->tenant('owner', branches: true, modules: ['routes']);
         $zone = RouteZone::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'name' => 'Centro', 'is_active' => true]);
+        $product = $this->product($business, $branch, 'Producto de ruta', 10, 1);
         $workDay = RouteWorkDay::query()->create([
             'business_id' => $business->id,
             'branch_id' => $branch->id,
@@ -407,6 +408,15 @@ class DashboardFoundationTest extends TestCase
             'seller_id' => $owner->id,
             'status' => 'pending',
         ]);
+        RouteVisit::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'route_work_day_id' => $workDay->id,
+            'route_zone_id' => $zone->id,
+            'customer_id' => $customer->id,
+            'seller_id' => $owner->id,
+            'status' => 'with_pre_sale',
+        ]);
         foreach ([PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING, PreSale::STATUS_PICKED, PreSale::STATUS_CANCELLED] as $status) {
             PreSale::query()->create([
                 'business_id' => $business->id,
@@ -421,6 +431,37 @@ class DashboardFoundationTest extends TestCase
                 'total' => 10,
             ]);
         }
+        $convertedSale = $this->sale($business, $branch, $owner, $product, 75, 1);
+        $this->sale($business, $branch, $owner, $product, 125, 1);
+        PreSale::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'route_work_day_id' => $workDay->id,
+            'route_zone_id' => $zone->id,
+            'customer_id' => $customer->id,
+            'seller_id' => $owner->id,
+            'status' => PreSale::STATUS_CONVERTED,
+            'subtotal' => 10,
+            'discount_total' => 0,
+            'total' => 10,
+            'converted_sale_id' => $convertedSale->id,
+            'converted_at' => now(),
+        ]);
+        $previousDaySale = $this->sale($business, $branch, $owner, $product, 50, 1, '2026-10-06 23:45:00');
+        PreSale::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'route_work_day_id' => $workDay->id,
+            'route_zone_id' => $zone->id,
+            'customer_id' => $customer->id,
+            'seller_id' => $owner->id,
+            'status' => PreSale::STATUS_CONVERTED,
+            'subtotal' => 10,
+            'discount_total' => 0,
+            'total' => 10,
+            'converted_sale_id' => $previousDaySale->id,
+            'converted_at' => Carbon::parse('2026-10-06 23:45:00', 'America/Guatemala')->utc(),
+        ]);
         $this->settlement($business, $branch, $owner, 'confirmed', 40);
         $this->settlement($business, $branch, $owner, 'reversed', 60);
 
@@ -445,6 +486,18 @@ class DashboardFoundationTest extends TestCase
         $this->assertSame('40.00', $overview['data']['effective_settlements']['amount']);
         $this->assertSame(1, $overview['data']['effective_settlements']['count']);
         $this->assertSame('today', $overview['data']['effective_settlements']['period']);
+        $this->assertSame(1, $overview['data']['seller_work_days']['total_open_work_days']);
+        $this->assertSame(1, count($overview['data']['seller_work_days']['items']));
+        $this->assertSame($owner->name, $overview['data']['seller_work_days']['items'][0]['seller_name']);
+        $this->assertSame(2, $overview['data']['seller_work_days']['items'][0]['total_visits']);
+        $this->assertSame(1, $overview['data']['seller_work_days']['items'][0]['completed_visits']);
+        $this->assertSame(1, $overview['data']['seller_work_days']['items'][0]['pending_visits']);
+        $this->assertSame(6, $overview['data']['seller_work_days']['items'][0]['pre_sales_count']);
+        $this->assertSame('60.00', $overview['data']['seller_work_days']['items'][0]['pre_sales_total']);
+        $this->assertSame(1, $overview['data']['pre_sale_flow']['submitted']);
+        $this->assertSame(1, $overview['data']['pre_sale_flow']['processing']);
+        $this->assertSame(1, $overview['data']['pre_sale_flow']['picked']);
+        $this->assertSame(1, $overview['data']['pre_sale_flow']['converted_today']);
     }
 
     public function test_route_supervisor_overview_is_permission_gated_and_branch_scoped(): void
@@ -469,6 +522,21 @@ class DashboardFoundationTest extends TestCase
                 'started_at' => now(),
             ]);
         }
+        $mainZoneId = (int) RouteZone::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->value('id');
+        for ($number = 1; $number < 16; $number++) {
+            RouteWorkDay::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'route_zone_id' => $mainZoneId,
+                'seller_id' => $owner->id,
+                'work_date' => today(),
+                'status' => 'open',
+                'started_at' => now(),
+            ]);
+        }
 
         $allowed = new DashboardContext($business, $owner, $branch, true, [
             Permissions::ROUTES_VIEW,
@@ -481,7 +549,9 @@ class DashboardFoundationTest extends TestCase
             Permissions::ROUTES_PRE_SALES_ADMIN_VIEW,
         ], ['routes'], 'America/Guatemala');
 
-        $this->assertSame(1, $overview['data']['open_work_days']['count']);
+        $this->assertSame(16, $overview['data']['open_work_days']['count']);
+        $this->assertCount(15, $overview['data']['seller_work_days']['items']);
+        $this->assertTrue($overview['data']['seller_work_days']['has_more']);
         $this->assertSame([], app(DashboardService::class)->resolve($restricted, 'route_supervisor')['widgets']);
     }
 
