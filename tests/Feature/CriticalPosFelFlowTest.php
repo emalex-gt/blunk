@@ -4534,9 +4534,8 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertOk()
             ->assertSeeInOrder([
                 'RECIBO TEMPORAL',
-                'NO ES FACTURA',
-                'NO ES DOCUMENTO TRIBUTARIO',
-                'DOCUMENTO SIN CERTIFICACIÓN FEL',
+                'No es factura ni documento tributario',
+                'Documento provisional pendiente de certificación FEL. No sustituye la factura electrónica.',
             ]);
 
         $provisionalReceipt

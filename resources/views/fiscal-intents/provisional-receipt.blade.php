@@ -7,14 +7,15 @@
     @include('print.partials.ticket-styles')
     <style>
         .temporary-title { font-size: 16px; font-weight: 800; letter-spacing: .05em; margin: 10px 0 6px; text-align: center; }
-        .provisional-warning { border: 2px solid #000; font-size: 12px; font-weight: 800; line-height: 1.45; margin: 10px 0; padding: 8px; text-align: center; }
+        .provisional-disclaimer { font-size: 10px; line-height: 1.35; margin: 0 0 10px; text-align: center; }
+        .internal-reference { overflow-wrap: anywhere; text-align: right; word-break: break-word; }
         .receipt-table { border-collapse: collapse; font-size: 10px; margin: 8px 0; width: 100%; }
         .receipt-table th { border-bottom: 1px solid #000; font-size: 9px; padding: 4px 1px; text-align: left; }
         .receipt-table td { padding: 4px 1px; vertical-align: top; }
         .receipt-table .number { text-align: right; white-space: nowrap; }
         .totals { margin-top: 8px; }
         .totals .row:last-child { border-top: 1px solid #000; font-size: 13px; margin-top: 4px; padding-top: 5px; }
-        .temporary-note { border-top: 1px solid #000; font-size: 10px; line-height: 1.45; margin-top: 12px; padding-top: 9px; text-align: center; }
+        .temporary-note { font-size: 9px; line-height: 1.4; margin: 12px 0 0; text-align: center; }
     </style>
 </head>
 <body>
@@ -51,10 +52,10 @@
         </header>
         <div class="line"></div>
         <h2 class="temporary-title">RECIBO TEMPORAL</h2>
-        <div class="provisional-warning">NO ES FACTURA<br>NO ES DOCUMENTO TRIBUTARIO<br>DOCUMENTO SIN CERTIFICACIÓN FEL</div>
+        <p class="provisional-disclaimer">No es factura ni documento tributario</p>
 
         <section>
-            <div class="row"><span>No. interno:</span><strong>{{ $internalNumber }}</strong></div>
+            <div class="row"><span>No. interno:</span><strong class="internal-reference">{{ $internalNumber }}</strong></div>
             <div class="row"><span>Fecha:</span><span>{{ $intent->created_at?->format('Y-m-d H:i') }}</span></div>
             <div class="row"><span>Cliente:</span><span class="right">{{ data_get($sale, 'customer_name', 'Consumidor final') }}</span></div>
             @if (filled(data_get($sale, 'customer_doc_number')))
@@ -89,10 +90,7 @@
         </section>
 
         <section class="temporary-note">
-            <strong>COMPROBANTE TEMPORAL DE VENTA</strong>
-            <p>Este documento no constituye una factura electrónica certificada ni sustituye el documento tributario correspondiente.</p>
-            <p>Solicite su factura electrónica FEL.</p>
-            <p>Gracias por su compra</p>
+            Documento provisional pendiente de certificación FEL. No sustituye la factura electrónica.
         </section>
     </main>
 </body>
