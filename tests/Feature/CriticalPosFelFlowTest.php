@@ -4529,13 +4529,21 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertDatabaseCount('sales', 0);
         $this->assertDatabaseCount('stock_movements', 0);
 
-        $this->actingAs($user)
+        $provisionalReceipt = $this->actingAs($user)
             ->get(route('fiscal-intents.provisional-receipt', $intent))
             ->assertOk()
             ->assertSeeInOrder([
-                'CONSTANCIA PROVISIONAL DE OPERACIÓN',
-                'NO ES FACTURA NI DOCUMENTO TRIBUTARIO',
+                'RECIBO TEMPORAL',
+                'NO ES FACTURA',
+                'NO ES DOCUMENTO TRIBUTARIO',
+                'DOCUMENTO SIN CERTIFICACIÓN FEL',
             ]);
+
+        $provisionalReceipt
+            ->assertDontSee('UUID fiscal')
+            ->assertDontSee('Serie FEL')
+            ->assertDontSee('Número de autorización')
+            ->assertDontSee('QR tributario');
 
         $acceptedAt = $intent->provisional_accepted_at;
         $this->actingAs($user)->post(route('fiscal-intents.provisional-receipt.accept', $intent))->assertSessionHasNoErrors();
