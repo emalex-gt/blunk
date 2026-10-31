@@ -39,8 +39,8 @@ class ListFilterExportsTest extends TestCase
         [$business, $user, $branch] = $this->tenant('purchases', ['purchases']);
         $supplier = Supplier::query()->create(['business_id' => $business->id, 'name' => 'Proveedor A']);
         $today = now(tenantTimezone($business));
-        $this->purchase($business, $branch, $user, $supplier, 100, 'cash', $today->copy()->subMonth());
-        $this->purchase($business, $branch, $user, $supplier, 200, 'card', $today->copy());
+        $this->purchase($business, $branch, $user, $supplier, 100, 'cash', $today->copy()->subMonth()->utc());
+        $this->purchase($business, $branch, $user, $supplier, 200, 'card', $today->copy()->utc());
 
         $this->actingAs($user)
             ->get(route('purchases.index', [
