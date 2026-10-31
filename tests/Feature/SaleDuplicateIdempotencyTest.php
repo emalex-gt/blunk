@@ -846,10 +846,12 @@ class SaleDuplicateIdempotencyTest extends TestCase
                     'unit_price' => isset($item['unit_price']) ? round((float) $item['unit_price'], 4) : null,
                     'price_source' => $item['price_source'] ?? null,
                     'manual_price' => (bool) ($item['manual_price'] ?? false),
+                    'quotation_item_id' => $item['quotation_item_id'] ?? null,
                     'credit_line_id' => $item['credit_line_id'] ?? null,
                 ])
                 ->sortBy(fn (array $item) => implode('|', [
                     $item['product_id'],
+                    $item['quotation_item_id'] ?? '',
                     $item['credit_line_id'] ?? '',
                     $item['price_type_id'] ?? '',
                     $item['unit_price'] ?? '',
@@ -858,6 +860,8 @@ class SaleDuplicateIdempotencyTest extends TestCase
                 ->values()
                 ->all(),
             'discount' => $data['discount'] ?? null,
+            'quotation_id' => $data['quotation_id'] ?? null,
+            'quotation_expired_confirmed' => (bool) ($data['quotation_expired_confirmed'] ?? false),
         ];
     }
 
