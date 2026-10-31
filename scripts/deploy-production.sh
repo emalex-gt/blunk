@@ -126,7 +126,7 @@ echo "npm runtime: $(npm --version)"
 echo "HOME is configured"
 echo "COMPOSER_HOME: $COMPOSER_HOME"
 
-"$PHP_BIN" -m | grep -qi pgsql || fail "PHP pgsql extension is not available"
+"$PHP_BIN" -r 'exit(extension_loaded("pdo_pgsql") ? 0 : 1);' || fail "PHP pdo_pgsql extension is not available"
 
 DEPLOY_STAGE="pre-deploy-backup-configuration"
 "$PHP_BIN" artisan system:pre-deploy-backup "$TARGET_SHA" --check --no-interaction --no-ansi
