@@ -75,21 +75,21 @@ export default function RouteSupervisorDashboard({ data, country }: { data: Rout
                     tone="emerald"
                 />
             </div>
-            <section className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
+            <section className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-[0_8px_24px_rgba(15,23,42,0.05)]" aria-labelledby="route-supervisor-heading">
                 <p className="text-xs font-bold tracking-[0.14em] text-orange-700">SUPERVISIÓN DE RUTAS</p>
-                <h2 className="mt-2 text-xl font-bold text-slate-950">Operación actual</h2>
+                <h2 id="route-supervisor-heading" className="mt-2 text-xl font-bold text-slate-950">Operación actual</h2>
                 <p className="mt-2 max-w-3xl text-sm text-slate-500">
                     Consulta el avance de jornadas, visitas, preventas, entregas y liquidaciones de la sucursal activa.
                 </p>
             </section>
-            <div className="grid gap-5 xl:grid-cols-2">
-                <SellerWorkDays data={data.seller_work_days} country={country} />
+            <OperationalAlerts rows={data.operational_alerts} />
+            <div className="grid gap-5 xl:grid-cols-3">
+                <div className="xl:col-span-2"><SellerWorkDays data={data.seller_work_days} country={country} /></div>
                 <PreSaleFlow data={data.pre_sale_flow} />
             </div>
-            <div className="grid gap-5 xl:grid-cols-3">
+            <div className="grid gap-5 xl:grid-cols-2">
                 <DeliveryOverview data={data.delivery_overview} country={country} />
                 <SettlementOverview data={data.settlement_overview} country={country} />
-                <OperationalAlerts rows={data.operational_alerts} />
             </div>
         </section>
     );
@@ -98,7 +98,7 @@ export default function RouteSupervisorDashboard({ data, country }: { data: Rout
 function DeliveryOverview({ data, country }: { data: RouteSupervisorDashboardData['delivery_overview']; country: string }) {
     return <Panel title="Entregas y cobros" subtitle="Actividad diaria y pendientes acumulados">
         <div className="grid grid-cols-2 gap-3"><Stat label="Entregadas" value={data.delivered_today} detail="Hoy" /><Stat label="No realizadas" value={data.not_delivered_today} detail="Hoy" /><Stat label="Pendientes" value={data.pending_backlog} detail="Backlog" /><Stat label="Sin cobro" value={data.unpaid_delivered.count} detail={formatCurrency(data.unpaid_delivered.amount, country)} /></div>
-        <Link href={data.href} className="mt-4 inline-flex text-sm font-semibold text-orange-700 hover:text-orange-800">Ver entregas</Link>
+        <Link href={data.href} className="mt-4 inline-flex rounded-md text-sm font-semibold text-orange-700 hover:text-orange-800 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2">Ver entregas</Link>
     </Panel>;
 }
 
@@ -107,30 +107,30 @@ function SettlementOverview({ data, country }: { data: RouteSupervisorDashboardD
 
     return <Panel title="Liquidaciones" subtitle="Confirmaciones y diferencias de caja">
         <div className="grid grid-cols-2 gap-3"><Stat label="Confirmadas" value={data.confirmed_today.count} detail={`${formatCurrency(data.confirmed_today.amount, country)} · Hoy`} /><Stat label="Borradores" value={data.draft_count ?? '—'} detail={data.draft_count === null ? 'Sin permiso de consulta' : 'Pendientes'} />{variance && <><Stat label="Diferencias abiertas" value={variance.count} detail="Requieren revisión" /><Stat label="Faltantes / sobrantes" value={formatCurrency(variance.shortages_amount, country)} detail={`Sobrantes ${formatCurrency(variance.overages_amount, country)}`} /></>}</div>
-        <div className="mt-4 flex flex-wrap gap-3">{data.href && <Link href={data.href} className="text-sm font-semibold text-orange-700 hover:text-orange-800">Ver liquidaciones</Link>}{data.variances_href && <Link href={data.variances_href} className="text-sm font-semibold text-orange-700 hover:text-orange-800">Ver diferencias</Link>}</div>
+        <div className="mt-4 flex flex-wrap gap-3">{data.href && <Link href={data.href} className="rounded-md text-sm font-semibold text-orange-700 hover:text-orange-800 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2">Ver liquidaciones</Link>}{data.variances_href && <Link href={data.variances_href} className="rounded-md text-sm font-semibold text-orange-700 hover:text-orange-800 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2">Ver diferencias</Link>}</div>
     </Panel>;
 }
 
 function OperationalAlerts({ rows }: { rows: RouteSupervisorDashboardData['operational_alerts'] }) {
     const tones = { critical: 'border-red-200 bg-red-50 text-red-800', warning: 'border-amber-200 bg-amber-50 text-amber-800', info: 'border-slate-200 bg-slate-50 text-slate-700' };
 
-    return <Panel title="Requiere atención" subtitle="Incidencias operativas accionables">{rows.length === 0 ? <Empty>No hay incidencias operativas pendientes.</Empty> : <div className="space-y-2">{rows.map((row) => <div key={row.key} className={`rounded-lg border p-3 ${tones[row.severity]}`}><p className="text-sm font-semibold">{row.title}</p><p className="mt-1 text-xs opacity-80">{row.detail}</p>{row.href && <Link href={row.href} className="mt-2 inline-flex text-xs font-semibold underline">Ver detalle</Link>}</div>)}</div>}</Panel>;
+    return <Panel title="Requiere atención" subtitle="Incidencias operativas accionables">{rows.length === 0 ? <Empty>No hay incidencias operativas pendientes.</Empty> : <ul className="grid gap-2 lg:grid-cols-2">{rows.map((row) => <li key={row.key} className={`rounded-lg border p-3 ${tones[row.severity]}`}><p className="text-sm font-semibold">{row.title}</p><p className="mt-1 text-xs opacity-80">{row.detail}</p>{row.href && <Link href={row.href} className="mt-2 inline-flex rounded-md text-xs font-semibold underline focus:outline-none focus:ring-2 focus:ring-current focus:ring-offset-2">Ver detalle<span className="sr-only">: {row.title}</span></Link>}</li>)}</ul>}</Panel>;
 }
 
 function SellerWorkDays({ data, country }: { data: RouteSupervisorDashboardData['seller_work_days']; country: string }) {
     return <Panel title="Estado por preventista" subtitle="Jornadas abiertas de la sucursal activa">
-        {data.items.length === 0 ? <Empty>No hay jornadas abiertas en esta sucursal.</Empty> : <div className="divide-y divide-slate-100">
+        {data.items.length === 0 ? <Empty>No hay jornadas abiertas en esta sucursal.</Empty> : <ol className="divide-y divide-slate-100">
             {data.items.map((workDay) => {
                 const progress = workDay.total_visits > 0 ? Math.round((workDay.completed_visits / workDay.total_visits) * 100) : 0;
-                return <div key={workDay.id} className="py-4 first:pt-0 last:pb-0">
-                    <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="font-semibold text-slate-900">{workDay.seller_name ?? 'Preventista no registrado'}</p><p className="text-xs text-slate-500">{workDay.zone_name ?? 'Ruta sin zona'} · {workDay.branch_name ?? 'Sucursal'}</p></div><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">Abierta</span></div>
-                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-orange-600" style={{ width: `${progress}%` }} /></div>
+                return <li key={workDay.id} className="py-4 first:pt-0 last:pb-0">
+                    <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><h4 className="break-words font-semibold text-slate-900">{workDay.seller_name ?? 'Preventista no registrado'}</h4><p className="mt-1 break-words text-xs text-slate-500">{workDay.zone_name ?? 'Ruta sin zona'} · {workDay.branch_name ?? 'Sucursal'}</p></div><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">{workDay.status === 'open' ? 'Jornada abierta' : workDay.status}</span></div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100" role="progressbar" aria-label={`Progreso de visitas de ${workDay.seller_name ?? 'preventista no registrado'}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><div className="h-full rounded-full bg-orange-600" style={{ width: `${progress}%` }} /></div>
                     <div className="mt-2 flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-slate-500"><span>{workDay.completed_visits} de {workDay.total_visits} visitas · {progress}%</span><span>{workDay.pending_visits} pendiente(s)</span></div>
                     <div className="mt-3 grid grid-cols-2 gap-3"><Stat label="Preventas" value={workDay.pre_sales_count} detail={formatCurrency(workDay.pre_sales_total, country)} /><Stat label="Estado" value={workDay.status === 'open' ? 'Abierta' : workDay.status} detail="Jornada actual" /></div>
-                </div>;
+                </li>;
             })}
-        </div>}
-        {data.has_more && <Link href={data.href} className="mt-4 inline-flex text-sm font-semibold text-orange-700 hover:text-orange-800">Ver las {data.total_open_work_days} jornadas abiertas</Link>}
+        </ol>}
+        {data.has_more && <Link href={data.href} className="mt-4 inline-flex rounded-md text-sm font-semibold text-orange-700 hover:text-orange-800 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2">Ver las {data.total_open_work_days} jornadas abiertas</Link>}
     </Panel>;
 }
 
@@ -156,8 +156,8 @@ function Kpi({ label, period, value, detail, tone }: CountMetric & { value?: str
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
                 <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{periodLabel(period)}</span>
             </div>
-            <p className={`mt-3 truncate text-2xl font-bold tracking-tight ${color}`}>{value ?? 0}</p>
-            <p className="mt-2 truncate text-xs text-slate-500">{detail}</p>
+            <p className={`mt-3 break-words text-2xl font-bold tracking-tight ${color}`}>{value ?? 0}</p>
+            <p className="mt-2 break-words text-xs text-slate-500">{detail}</p>
         </article>
     );
 }
