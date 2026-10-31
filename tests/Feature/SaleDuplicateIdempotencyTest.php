@@ -865,6 +865,11 @@ class SaleDuplicateIdempotencyTest extends TestCase
             ->where('business_id', $business->id)
             ->update(['allow_invoices' => true]);
 
+        BranchInventory::defaultBranchForBusiness($business)->update([
+            'department' => 'Guatemala',
+            'municipality' => 'Guatemala',
+        ]);
+
         TenantModule::query()->create([
             'business_id' => $business->id,
             'module' => 'fel_gt',
