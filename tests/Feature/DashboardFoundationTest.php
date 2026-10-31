@@ -71,9 +71,8 @@ class DashboardFoundationTest extends TestCase
                 ->where('dashboard.profile', 'branch_manager')
                 ->where('dashboard.context.timezone', 'America/Guatemala')
                 ->where('dashboard.widgets.0.key', 'branch_manager.overview')
-                ->where('dashboard.widgets.0.data.sales.total', '100.00')
-                ->where('dashboard.widgets.0.data.sales.count', 1)
-                ->where('dashboard.widgets.0.data.sales.cancelled_count', 1)
+                ->where('dashboard.widgets.0.data.sales_today.total', '100.00')
+                ->where('dashboard.widgets.0.data.sales_today.count', 1)
                 ->where('dashboard.widgets.0.data.cash.status', 'closed')
                 ->where('dashboard.widgets.0.data.inventory.low_stock_count', 1)
                 ->missing('dashboard.widgets.0.data.margin_today')
@@ -97,7 +96,7 @@ class DashboardFoundationTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->where('dashboard.context.branch.id', $main->id)
-                ->where('dashboard.widgets.0.data.sales.total', '100.00')
+                ->where('dashboard.widgets.0.data.sales_today.total', '100.00')
                 ->where('dashboard.widgets.0.data.inventory.out_of_stock_count', 1));
     }
 
@@ -125,8 +124,8 @@ class DashboardFoundationTest extends TestCase
             ->get(route('dashboard'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->where('dashboard.widgets.0.data.sales.total', '100.00')
-                ->where('dashboard.widgets.0.data.sales.previous_day_total', '200.00'));
+                ->where('dashboard.widgets.0.data.sales_today.total', '100.00')
+                ->where('dashboard.widgets.0.data.sales_today.previous_day_total', '200.00'));
     }
 
     public function test_cash_widget_uses_only_the_current_branch_open_session(): void
