@@ -47,7 +47,7 @@ class FiscalDocumentIntentController extends Controller
         ], true), 404);
 
         return response()->view('fiscal-intents.provisional-receipt', [
-            'intent' => $intent->load('business', 'branch'),
+            'intent' => $intent->load('business.tenantFelSetting', 'branch'),
             'operation' => $intent->operation_payload ?? [],
         ]);
     }

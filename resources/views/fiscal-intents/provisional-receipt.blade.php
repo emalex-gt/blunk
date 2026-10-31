@@ -6,47 +6,94 @@
     <title>Constancia provisional de operación</title>
     @include('print.partials.ticket-styles')
     <style>
-        .provisional-warning {
-            border: 2px solid #000;
-            font-size: 13px;
-            font-weight: 700;
-            margin: 6px 0;
-            padding: 6px;
-            text-align: center;
-        }
+        .temporary-title { font-size: 16px; font-weight: 800; letter-spacing: .05em; margin: 10px 0 6px; text-align: center; }
+        .provisional-warning { border: 2px solid #000; font-size: 12px; font-weight: 800; line-height: 1.45; margin: 10px 0; padding: 8px; text-align: center; }
+        .receipt-table { border-collapse: collapse; font-size: 10px; margin: 8px 0; width: 100%; }
+        .receipt-table th { border-bottom: 1px solid #000; font-size: 9px; padding: 4px 1px; text-align: left; }
+        .receipt-table td { padding: 4px 1px; vertical-align: top; }
+        .receipt-table .number { text-align: right; white-space: nowrap; }
+        .totals { margin-top: 8px; }
+        .totals .row:last-child { border-top: 1px solid #000; font-size: 13px; margin-top: 4px; padding-top: 5px; }
+        .temporary-note { border-top: 1px solid #000; font-size: 10px; line-height: 1.45; margin-top: 12px; padding-top: 9px; text-align: center; }
     </style>
 </head>
 <body>
+@php
+    $sale = data_get($operation, 'sale', []);
+    $items = data_get($operation, 'items', []);
+    $country = $intent->business?->country ?: 'GT';
+    $felSettings = $intent->business?->tenantFelSetting;
+    $businessAddress = $intent->branch?->fel_address ?: $intent->branch?->address ?: $felSettings?->establishment_address;
+    $customerAddress = collect([
+        data_get($sale, 'customer_address'),
+        data_get($sale, 'customer_municipality'),
+        data_get($sale, 'customer_department'),
+    ])->filter(fn ($value) => filled(trim((string) $value)))->unique()->implode(', ');
+    $subtotal = data_get($sale, 'subtotal_before_discount');
+    $total = data_get($sale, 'total', 0);
+    $discount = data_get($sale, 'discount_amount', 0);
+    $internalNumber = data_get($sale, 'business_number') ?: $intent->internal_reference;
+@endphp
     <div class="toolbar no-print">
         <button type="button" onclick="window.close()">Cerrar</button>
         @include('print.partials.pdf-download-button', ['target' => '.ticket', 'filename' => 'comprobante-provisional-'.$intent->id.'.pdf', 'kind' => 'ticket', 'widthMm' => 80, 'marginMm' => 4])
         <button type="button" onclick="window.print()">Imprimir</button>
     </div>
     <main class="ticket">
-        <div class="provisional-warning">CONSTANCIA PROVISIONAL DE OPERACIÓN<br>NO ES FACTURA NI DOCUMENTO TRIBUTARIO</div>
+        <header class="center">
+            <h1>{{ $intent->business?->name ?? 'Empresa' }}</h1>
+            @if (filled($felSettings?->issuer_tax_id))
+                <p>NIT: {{ $felSettings->issuer_tax_id }}</p>
+            @endif
+            @if (filled($businessAddress))
+                <p>{{ $businessAddress }}</p>
+            @endif
+        </header>
         <div class="line"></div>
-        <p><strong>Referencia interna:</strong> {{ $intent->internal_reference }}</p>
-        <p><strong>Estado fiscal:</strong> {{ $intent->status }}</p>
-        <p><strong>Empresa:</strong> {{ $intent->business?->name }}</p>
-        <p><strong>Sucursal:</strong> {{ $intent->branch?->name ?? '-' }}</p>
-        <p><strong>Emitido:</strong> {{ $intent->created_at?->format('Y-m-d H:i') }}</p>
-        @php($sale = data_get($operation, 'sale', []))
-        @php($items = data_get($operation, 'items', []))
-        @if(filled(data_get($sale, 'customer_name')))
-            <p><strong>Cliente:</strong> {{ data_get($sale, 'customer_name') }}</p>
-        @endif
-        @if(! empty($items))
-            <div class="line"></div>
-            <p><strong>Detalle de operación</strong></p>
-            @foreach($items as $item)
-                <p>{{ data_get($item, 'quantity', 0) }} × {{ data_get($item, 'product_name', 'Producto') }} — {{ formatMoney(data_get($item, 'total', 0), $intent->business?->country) }}</p>
-            @endforeach
-        @endif
-        @if(data_get($sale, 'total') !== null)
-            <p><strong>Importe:</strong> {{ formatMoney(data_get($sale, 'total'), $intent->business?->country) }}</p>
-        @endif
+        <h2 class="temporary-title">RECIBO TEMPORAL</h2>
+        <div class="provisional-warning">NO ES FACTURA<br>NO ES DOCUMENTO TRIBUTARIO<br>DOCUMENTO SIN CERTIFICACIÓN FEL</div>
+
+        <section>
+            <div class="row"><span>No. interno:</span><strong>{{ $internalNumber }}</strong></div>
+            <div class="row"><span>Fecha:</span><span>{{ $intent->created_at?->format('Y-m-d H:i') }}</span></div>
+            <div class="row"><span>Cliente:</span><span class="right">{{ data_get($sale, 'customer_name', 'Consumidor final') }}</span></div>
+            @if (filled(data_get($sale, 'customer_doc_number')))
+                <div class="row"><span>NIT:</span><span>{{ data_get($sale, 'customer_doc_number') }}</span></div>
+            @endif
+            @if (filled($customerAddress))
+                <div class="row"><span>Dirección:</span><span class="right">{{ $customerAddress }}</span></div>
+            @endif
+        </section>
+
         <div class="line"></div>
-        <p>Este comprobante acredita una solicitud en verificación y no sustituye una factura ni documento tributario FEL.</p>
+        <table class="receipt-table">
+            <thead><tr><th>Cant.</th><th>Descripción</th><th class="number">Precio</th><th class="number">Total</th></tr></thead>
+            <tbody>
+                @forelse ($items as $item)
+                    <tr>
+                        <td>{{ number_format((float) data_get($item, 'quantity', 0), 2, '.', ',') }}</td>
+                        <td>{{ data_get($item, 'product_name', 'Producto') }}</td>
+                        <td class="number">{{ formatMoney(data_get($item, 'unit_price', 0), $country) }}</td>
+                        <td class="number">{{ formatMoney(data_get($item, 'total', 0), $country) }}</td>
+                    </tr>
+                @empty
+                    <tr><td colspan="4">Sin líneas disponibles</td></tr>
+                @endforelse
+            </tbody>
+        </table>
+
+        <section class="totals">
+            <div class="row"><span>Subtotal</span><strong>{{ formatMoney($subtotal ?? $total, $country) }}</strong></div>
+            <div class="row"><span>Descuento</span><strong>{{ formatMoney($discount, $country) }}</strong></div>
+            <div class="row"><strong>TOTAL</strong><strong>{{ formatMoney($total, $country) }}</strong></div>
+        </section>
+
+        <section class="temporary-note">
+            <strong>COMPROBANTE TEMPORAL DE VENTA</strong>
+            <p>Este documento no constituye una factura electrónica certificada ni sustituye el documento tributario correspondiente.</p>
+            <p>Solicite su factura electrónica FEL.</p>
+            <p>Gracias por su compra</p>
+        </section>
     </main>
 </body>
 </html>
