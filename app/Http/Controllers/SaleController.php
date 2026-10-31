@@ -1463,7 +1463,7 @@ class SaleController extends Controller
         $settings = TenantSetting::query()->where('business_id', $businessId)->first();
 
         $sale->load([
-            'customer:id,name,doc_type,doc_number,address,phone,is_final_consumer',
+            'customer:id,name,doc_type,doc_number,address,municipality,department,phone,is_final_consumer',
             'createdBy:id,name',
             'cancelledBy:id,name',
             'items.product:id,code,barcode',
@@ -1485,6 +1485,7 @@ class SaleController extends Controller
             'items' => $sale->items,
             'payments' => $sale->payments,
             'attendedBy' => $printDetails['attended_by'],
+            'customerLocation' => $printDetails['customer_location'],
             'delivery' => $printDetails['delivery'],
             'createdAtLocal' => $sale->created_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
             'cancelledAtLocal' => $sale->cancelled_at?->copy()->timezone($timezone)->format('Y-m-d H:i'),
@@ -1539,7 +1540,7 @@ class SaleController extends Controller
         $timezone = tenantTimezone($business);
 
         $sale->load([
-            'customer:id,name,doc_type,doc_number,address,phone',
+            'customer:id,name,doc_type,doc_number,address,municipality,department,phone',
             'createdBy:id,name',
             'items.product:id,code,barcode',
             'payments:id,sale_id,method,amount,reference,details',
@@ -1613,9 +1614,9 @@ class SaleController extends Controller
             'customer' => [
                 'name' => $sale->customer_name ?: $sale->customer?->name ?: 'Consumidor Final',
                 'tax_id' => $receiverNit,
-                'address' => $sale->customer_address ?: $sale->customer?->address ?: 'Ciudad',
-                'municipality' => $sale->customer_municipality ?: $felSettings?->establishment_municipality,
-                'department' => $sale->customer_department ?: $felSettings?->establishment_department,
+                'address' => $printDetails['customer_location']['address'],
+                'municipality' => $printDetails['customer_location']['municipality'],
+                'department' => $printDetails['customer_location']['department'],
             ],
             'fel' => [
                 'uuid' => $sale->fel_uuid,
@@ -1680,7 +1681,7 @@ class SaleController extends Controller
             && filled($sale->fel_uuid);
     }
 
-    /** @return array{attended_by: string, delivery: array{address: string, address_reference: string, phone: string}} */
+    /** @return array{attended_by: string, customer_location: array{address: string, municipality: string, department: string}, delivery: array{address_reference: string, phone: string}} */
     private function salePrintDetails(Sale $sale): array
     {
         $routePreSale = PreSale::query()
@@ -1695,8 +1696,12 @@ class SaleController extends Controller
 
         return [
             'attended_by' => $attendedBy,
+            'customer_location' => [
+                'address' => trim((string) $sale->customer_address) ?: trim((string) $sale->customer?->address),
+                'municipality' => trim((string) $sale->customer_municipality) ?: trim((string) $sale->customer?->municipality),
+                'department' => trim((string) $sale->customer_department) ?: trim((string) $sale->customer?->department),
+            ],
             'delivery' => [
-                'address' => trim((string) $sale->customer_address),
                 'address_reference' => trim((string) $sale->customer_address_reference),
                 'phone' => trim((string) $sale->customer_phone),
             ],

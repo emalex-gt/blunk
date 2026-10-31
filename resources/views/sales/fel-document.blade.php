@@ -62,7 +62,6 @@
             default => [],
         })->filter();
     };
-    $customerAddress = trim((string) ($delivery['address'] ?? '')) ?: trim((string) ($customer['address'] ?? ''));
 @endphp
 <div class="toolbar no-print">
     <button type="button" onclick="window.close()">Cerrar</button>
@@ -111,8 +110,14 @@
         <div>
             <span class="label">Cliente</span>
             <p><strong>{{ $customer['name'] }}</strong></p>
-            @if (filled($customerAddress))
-                <p><b>Dirección:</b> {{ $customerAddress }} {{ $customer['municipality'] }} {{ $customer['department'] }}</p>
+            @if (filled($customer['address'] ?? null))
+                <p><b>Dirección:</b> {{ $customer['address'] }}</p>
+            @endif
+            @if (filled($customer['municipality'] ?? null))
+                <p><b>Municipio:</b> {{ $customer['municipality'] }}</p>
+            @endif
+            @if (filled($customer['department'] ?? null))
+                <p><b>Departamento:</b> {{ $customer['department'] }}</p>
             @endif
         </div>
         <div>

@@ -98,8 +98,14 @@
         <div>
             <strong>Cliente</strong>
             <p>{{ $customerDisplayName ?? 'Consumidor final' }}</p>
-            @if (filled($delivery['address'] ?? null))
-                <p><strong>Dirección:</strong> {{ $delivery['address'] }}</p>
+            @if (filled($customerLocation['address'] ?? null))
+                <p><strong>Dirección:</strong> {{ $customerLocation['address'] }}</p>
+            @endif
+            @if (filled($customerLocation['municipality'] ?? null))
+                <p><strong>Municipio:</strong> {{ $customerLocation['municipality'] }}</p>
+            @endif
+            @if (filled($customerLocation['department'] ?? null))
+                <p><strong>Departamento:</strong> {{ $customerLocation['department'] }}</p>
             @endif
         </div>
         <div class="right">

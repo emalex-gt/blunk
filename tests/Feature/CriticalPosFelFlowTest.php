@@ -3127,6 +3127,8 @@ class CriticalPosFelFlowTest extends TestCase
             'customer_doc_type' => 'CF',
             'customer_doc_number' => 'CF',
             'customer_address' => 'Dirección FEL 7',
+            'customer_municipality' => 'Mixco',
+            'customer_department' => 'Guatemala',
             'customer_address_reference' => 'Referencia FEL',
             'customer_phone' => '5555-0102',
             'total' => 100,
@@ -3153,6 +3155,8 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertViewIs('sales.fel-document')
             ->assertSee('Documento Tributario Electrónico')
             ->assertSee('Dirección FEL 7')
+            ->assertSee('Mixco')
+            ->assertSee('Guatemala')
             ->assertSee('Le atendió')
             ->assertSee('Imprimir Datos de Entrega')
             ->assertSee('851D92FD-166F-4CFE-925C-ADC0ABB4260D')
@@ -3166,6 +3170,8 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertViewIs('sales.fel-ticket')
             ->assertSee('FACTURA ELECTRÓNICA FEL')
             ->assertSee('Dirección FEL 7')
+            ->assertSee('Mixco')
+            ->assertSee('Guatemala')
             ->assertSee('Le atendió')
             ->assertSee('Imprimir Datos de Entrega');
     }

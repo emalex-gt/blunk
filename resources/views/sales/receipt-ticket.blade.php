@@ -93,10 +93,22 @@
             <span>Cliente</span>
             <span class="right">{{ $customerDisplayName ?? 'Consumidor final' }}</span>
         </div>
-        @if (filled($delivery['address'] ?? null))
+        @if (filled($customerLocation['address'] ?? null))
             <div class="row">
                 <span>Dirección</span>
-                <span class="right">{{ $delivery['address'] }}</span>
+                <span class="right">{{ $customerLocation['address'] }}</span>
+            </div>
+        @endif
+        @if (filled($customerLocation['municipality'] ?? null))
+            <div class="row">
+                <span>Municipio</span>
+                <span class="right">{{ $customerLocation['municipality'] }}</span>
+            </div>
+        @endif
+        @if (filled($customerLocation['department'] ?? null))
+            <div class="row">
+                <span>Departamento</span>
+                <span class="right">{{ $customerLocation['department'] }}</span>
             </div>
         @endif
         <div class="row">
