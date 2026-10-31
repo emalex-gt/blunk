@@ -309,6 +309,8 @@ class SaleDuplicateIdempotencyTest extends TestCase
             'doc_type' => 'CF',
             'doc_number' => 'CF',
             'consumidor_final' => true,
+            'department' => 'Guatemala',
+            'municipality' => 'Guatemala',
         ]);
         $sale = $this->historicalSale($business, $user, $product, 1, 100, now());
         $sale->forceFill([
