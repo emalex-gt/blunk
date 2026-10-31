@@ -5,13 +5,14 @@ import PurchasesDashboard, { type PurchasesDashboardData } from '@/Components/Da
 import WarehouseDashboard, { type WarehouseDashboardData } from '@/Components/Dashboard/WarehouseDashboard';
 import BranchManagerDashboard, { type BranchManagerDashboardData } from '@/Components/Dashboard/BranchManagerDashboard';
 import CashierDashboard, { type CashierDashboardData } from '@/Components/Dashboard/CashierDashboard';
+import RouteSupervisorDashboard, { type RouteSupervisorDashboardData } from '@/Components/Dashboard/RouteSupervisorDashboard';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, usePage } from '@inertiajs/react';
 
 type Widget = {
     key: string;
     title: string;
-    type: 'sales_summary' | 'cash_status' | 'stock_alerts' | 'top_product' | 'money' | 'count' | 'route_work_day' | 'route_delivery_run' | 'cashier_workspace' | 'executive_overview' | 'finance_overview' | 'purchases_overview' | 'branch_manager_overview' | 'warehouse_overview';
+    type: 'sales_summary' | 'cash_status' | 'stock_alerts' | 'top_product' | 'money' | 'count' | 'route_work_day' | 'route_delivery_run' | 'cashier_workspace' | 'executive_overview' | 'finance_overview' | 'purchases_overview' | 'branch_manager_overview' | 'warehouse_overview' | 'route_supervisor_overview';
     period: 'today' | 'this_month' | 'current';
     data: Record<string, unknown>;
 };
@@ -146,6 +147,7 @@ function WidgetCard({ widget, country }: { widget: Widget; country: string }) {
     if (widget.type === 'purchases_overview') return <PurchasesDashboard data={widget.data as PurchasesDashboardData} country={country} />;
     if (widget.type === 'branch_manager_overview') return <BranchManagerDashboard data={widget.data as BranchManagerDashboardData} country={country} />;
     if (widget.type === 'warehouse_overview') return <WarehouseDashboard data={widget.data as WarehouseDashboardData} />;
+    if (widget.type === 'route_supervisor_overview') return <RouteSupervisorDashboard data={widget.data as RouteSupervisorDashboardData} country={country} />;
 
     const content = widgetContent(widget, country);
 

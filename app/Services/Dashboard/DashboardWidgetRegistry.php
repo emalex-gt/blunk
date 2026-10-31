@@ -10,6 +10,7 @@ use App\Services\Dashboard\Metrics\SalesSummaryMetricQuery;
 use App\Services\Dashboard\Metrics\StockAlertsMetricQuery;
 use App\Services\Dashboard\Metrics\TopProductMetricQuery;
 use App\Services\Dashboard\Metrics\RouteOperationsMetricQuery;
+use App\Services\Dashboard\Metrics\RouteSupervisorOverviewMetricQuery;
 use App\Services\Dashboard\Metrics\RouteSellerWorkDayMetricQuery;
 use App\Services\Dashboard\Metrics\RouteDeliveryRunMetricQuery;
 use App\Services\Dashboard\Metrics\CashierWorkspaceMetricQuery;
@@ -116,6 +117,10 @@ final class DashboardWidgetRegistry
             new DashboardWidgetDefinition(
                 key: 'routes.my_delivery_run', title: 'Mis entregas', type: 'route_delivery_run', period: DashboardPeriod::CURRENT,
                 query: new RouteDeliveryRunMetricQuery(), requiredModules: ['routes'], requiredPermissions: [Permissions::ROUTES_DELIVERY_RUNS_VIEW, Permissions::ROUTES_DELIVERY_RUNS_EXECUTE],
+            ),
+            new DashboardWidgetDefinition(
+                key: 'route_supervisor.overview', title: 'Supervisión de rutas', type: 'route_supervisor_overview', period: DashboardPeriod::CURRENT,
+                query: new RouteSupervisorOverviewMetricQuery(), requiredModules: ['routes'], requiredPermissions: [Permissions::ROUTES_VIEW, Permissions::ROUTES_PRE_SALES_ADMIN_VIEW, Permissions::ROUTES_DELIVERY_RUNS_VIEW],
             ),
             new DashboardWidgetDefinition(
                 key: 'routes.open_work_days', title: 'Jornadas abiertas', type: 'count', period: DashboardPeriod::CURRENT,

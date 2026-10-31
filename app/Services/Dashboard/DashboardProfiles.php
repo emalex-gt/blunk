@@ -46,13 +46,7 @@ final class DashboardProfiles
             'generic' => [],
             'warehouse' => ['warehouse.overview'],
             'finance' => ['finance.overview'],
-            'route_supervisor' => [
-                'routes.open_work_days',
-                'routes.pending_visits',
-                'routes.operational_pre_sales',
-                'routes.pending_delivery_stops',
-                'routes.effective_settlements',
-            ],
+            'route_supervisor' => ['route_supervisor.overview'],
             default => throw new InvalidArgumentException("Unsupported dashboard profile [{$profile}]."),
         };
     }

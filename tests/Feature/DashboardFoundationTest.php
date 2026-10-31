@@ -432,13 +432,58 @@ class DashboardFoundationTest extends TestCase
         ], ['routes'], 'America/Guatemala');
         $dashboard = app(DashboardService::class)->resolve($context);
         $widgets = collect($dashboard['widgets'])->keyBy('key');
+        $overview = $widgets['route_supervisor.overview'];
 
         $this->assertSame('route_supervisor', $dashboard['profile']);
-        $this->assertSame(1, $widgets['routes.open_work_days']['data']['count']);
-        $this->assertSame(1, $widgets['routes.pending_visits']['data']['count']);
-        $this->assertSame(3, $widgets['routes.operational_pre_sales']['data']['count']);
-        $this->assertSame('40.00', $widgets['routes.effective_settlements']['data']['amount']);
-        $this->assertSame(1, $widgets['routes.effective_settlements']['data']['count']);
+        $this->assertSame(['route_supervisor.overview'], collect($dashboard['widgets'])->pluck('key')->all());
+        $this->assertSame('route_supervisor_overview', $overview['type']);
+        $this->assertSame(1, $overview['data']['open_work_days']['count']);
+        $this->assertSame('current', $overview['data']['open_work_days']['period']);
+        $this->assertSame(1, $overview['data']['pending_visits']['count']);
+        $this->assertSame('backlog', $overview['data']['pending_visits']['period']);
+        $this->assertSame(3, $overview['data']['operational_pre_sales']['count']);
+        $this->assertSame('backlog', $overview['data']['pending_delivery_stops']['period']);
+        $this->assertSame('40.00', $overview['data']['effective_settlements']['amount']);
+        $this->assertSame(1, $overview['data']['effective_settlements']['count']);
+        $this->assertSame('today', $overview['data']['effective_settlements']['period']);
+    }
+
+    public function test_route_supervisor_overview_is_permission_gated_and_branch_scoped(): void
+    {
+        [$business, $owner, $branch, $otherBranch] = $this->tenant('owner', branches: true, modules: ['routes']);
+        [$otherBusiness, $otherOwner, $foreignBranch] = $this->tenant('owner', branches: true, modules: ['routes']);
+
+        foreach ([[$business, $branch, $owner], [$business, $otherBranch, $owner], [$otherBusiness, $foreignBranch, $otherOwner]] as [$tenant, $tenantBranch, $seller]) {
+            $zone = RouteZone::query()->create([
+                'business_id' => $tenant->id,
+                'branch_id' => $tenantBranch->id,
+                'name' => 'Zona '.uniqid(),
+                'is_active' => true,
+            ]);
+            RouteWorkDay::query()->create([
+                'business_id' => $tenant->id,
+                'branch_id' => $tenantBranch->id,
+                'route_zone_id' => $zone->id,
+                'seller_id' => $seller->id,
+                'work_date' => today(),
+                'status' => 'open',
+                'started_at' => now(),
+            ]);
+        }
+
+        $allowed = new DashboardContext($business, $owner, $branch, true, [
+            Permissions::ROUTES_VIEW,
+            Permissions::ROUTES_PRE_SALES_ADMIN_VIEW,
+            Permissions::ROUTES_DELIVERY_RUNS_VIEW,
+        ], ['routes'], 'America/Guatemala');
+        $overview = app(DashboardService::class)->resolve($allowed, 'route_supervisor')['widgets'][0];
+        $restricted = new DashboardContext($business, $owner, $branch, true, [
+            Permissions::ROUTES_VIEW,
+            Permissions::ROUTES_PRE_SALES_ADMIN_VIEW,
+        ], ['routes'], 'America/Guatemala');
+
+        $this->assertSame(1, $overview['data']['open_work_days']['count']);
+        $this->assertSame([], app(DashboardService::class)->resolve($restricted, 'route_supervisor')['widgets']);
     }
 
     private function tenant(string $role, bool $branches = false, array $modules = ['pos', 'inventory', 'cash_register']): array
