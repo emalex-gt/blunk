@@ -12,6 +12,7 @@ use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\Permissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
@@ -571,6 +572,7 @@ class BrandManagementTest extends TestCase
     private function productPayload(array $overrides = []): array
     {
         return array_replace([
+            'idempotency_key' => (string) Str::uuid(),
             'name' => 'Producto catalogo',
             'code' => 'PROD-CATALOG-001',
             'barcode' => null,

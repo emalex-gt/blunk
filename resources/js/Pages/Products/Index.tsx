@@ -358,6 +358,8 @@ export default function ProductIndex({
     const [showLocationSuggestions, setShowLocationSuggestions] = useState(false);
     const { data, setData, post, processing, errors, reset, transform } =
         useForm<ProductForm>(emptyForm);
+    const createOperationKeyRef = useRef<string | null>(null);
+    const createSubmissionLockedRef = useRef(false);
     const [identityErrors, setIdentityErrors] = useState<IdentityMessages>({});
     const [identityWarnings, setIdentityWarnings] = useState<IdentityMessages>({});
     const [identityMatches, setIdentityMatches] = useState<IdentityMatch[]>([]);
@@ -372,7 +374,7 @@ export default function ProductIndex({
     function submit(event: FormEvent) {
         event.preventDefault();
 
-        if (hasIdentityError) {
+        if (hasIdentityError || (!editing && createSubmissionLockedRef.current)) {
             return;
         }
 
@@ -392,13 +394,24 @@ export default function ProductIndex({
             return;
         }
 
-        transform((formData) => formData);
+        const idempotencyKey = createOperationKeyRef.current ?? crypto.randomUUID();
+        createOperationKeyRef.current = idempotencyKey;
+        createSubmissionLockedRef.current = true;
+
+        transform((formData) => ({
+            ...formData,
+            idempotency_key: idempotencyKey,
+        }));
 
         post(route('products.store'), {
             forceFormData: true,
             preserveScroll: true,
             onSuccess: () => {
                 clearImagePreview();
+                createOperationKeyRef.current = null;
+            },
+            onFinish: () => {
+                createSubmissionLockedRef.current = false;
             },
         });
     }
@@ -947,8 +960,12 @@ export default function ProductIndex({
                     </label>
 
                     <div className="flex gap-2">
-                        <PrimaryButton disabled={processing || hasIdentityError}>
-                            {editing ? t('actions.update') : t('actions.create')}
+                        <PrimaryButton disabled={processing || hasIdentityError} aria-busy={processing}>
+                            {processing
+                                ? 'Guardando producto...'
+                                : editing
+                                    ? t('actions.update')
+                                    : t('actions.create')}
                         </PrimaryButton>
                         {editing && (
                             <SecondaryButton type="button" onClick={() => { setEditing(null); reset(); }}>

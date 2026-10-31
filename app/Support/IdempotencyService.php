@@ -15,6 +15,61 @@ class IdempotencyService
     public const STATUS_COMPLETED = 'completed';
     public const STATUS_FAILED = 'failed';
 
+    public function replayCompleted(
+        int $businessId,
+        ?int $branchId,
+        ?int $userId,
+        string $operationType,
+        string $idempotencyKey,
+        array $requestPayload,
+    ): ?IdempotencyResult {
+        $requestHash = self::requestHash($requestPayload);
+
+        return DB::transaction(function () use ($businessId, $branchId, $userId, $operationType, $idempotencyKey, $requestHash) {
+            $record = $this->recordQuery($businessId, $branchId, $userId, $operationType, $idempotencyKey)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $record) {
+                return null;
+            }
+
+            if (! hash_equals((string) $record->request_hash, $requestHash)) {
+                throw new IdempotencyConflictException(
+                    IdempotencyConflictException::PAYLOAD_MISMATCH,
+                    'Esta operación ya fue usada con otros datos. Inicia una nueva operación.',
+                );
+            }
+
+            if ($record->status === self::STATUS_PROCESSING) {
+                throw new IdempotencyConflictException(
+                    IdempotencyConflictException::PROCESSING,
+                    'La operación ya se está procesando. Espera un momento.',
+                );
+            }
+
+            if ($record->status !== self::STATUS_COMPLETED || ! $record->result_id) {
+                return null;
+            }
+
+            $record->increment('replay_count', 1, [
+                'last_replayed_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $this->log('idempotency.replayed', $record, [
+                'result_type' => $record->result_type,
+                'result_id' => $record->result_id,
+            ]);
+
+            return new IdempotencyResult(
+                replayed: true,
+                resultId: (int) $record->result_id,
+                responsePayload: $record->response_payload ?? [],
+                resultType: (string) $record->result_type,
+            );
+        });
+    }
+
     public function run(
         int $businessId,
         ?int $branchId,

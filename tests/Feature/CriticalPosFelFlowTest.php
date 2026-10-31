@@ -53,6 +53,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Str;
 use Inertia\Testing\AssertableInertia as Assert;
 use Mockery;
 use Tests\TestCase;
@@ -2699,6 +2700,61 @@ class CriticalPosFelFlowTest extends TestCase
                 'barcode' => 'BAR-001',
             ]))
             ->assertSessionHasNoErrors();
+    }
+
+    public function test_product_creation_replays_the_same_operation_without_duplicate_stock_effects(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        $payload = $this->productFormPayload([
+            'code' => 'PRODUCT-IDEMPOTENCY-001',
+            'stock' => 5,
+            'idempotency_key' => 'f9f2fce0-5be3-4f31-a59d-f31984bb98d9',
+        ]);
+
+        foreach (range(1, 5) as $attempt) {
+            $this->actingAs($user)
+                ->post(route('products.store'), $payload)
+                ->assertSessionHasNoErrors();
+        }
+
+        $product = Product::query()
+            ->where('business_id', $business->id)
+            ->where('code', 'PRODUCT-IDEMPOTENCY-001')
+            ->firstOrFail();
+
+        $this->assertSame(1, Product::query()->where('business_id', $business->id)->where('code', 'PRODUCT-IDEMPOTENCY-001')->count());
+        $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('product_id', $product->id)->where('type', 'initial')->count());
+        $this->assertDatabaseHas('operation_idempotency_keys', [
+            'business_id' => $business->id,
+            'operation_type' => 'product_create',
+            'idempotency_key' => $payload['idempotency_key'],
+            'status' => 'completed',
+            'result_type' => 'product',
+            'result_id' => $product->id,
+        ]);
+    }
+
+    public function test_product_creation_rejects_a_reused_key_with_a_different_payload_and_isolated_per_tenant(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['inventory'], role: 'owner');
+        $key = 'e0f4542d-0c56-4a5a-9f13-792db8f3c06a';
+        $payload = $this->productFormPayload([
+            'code' => 'PRODUCT-IDEMPOTENCY-002',
+            'idempotency_key' => $key,
+        ]);
+
+        $this->actingAs($user)->post(route('products.store'), $payload)->assertSessionHasNoErrors();
+        $this->actingAs($user)
+            ->post(route('products.store'), [...$payload, 'name' => 'Producto alterado'])
+            ->assertStatus(409);
+
+        [$otherBusiness, $otherUser] = $this->tenant(modules: ['inventory'], role: 'owner');
+        $this->actingAs($otherUser)
+            ->post(route('products.store'), [...$payload, 'code' => 'PRODUCT-IDEMPOTENCY-003'])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(1, Product::query()->where('business_id', $business->id)->where('code', 'PRODUCT-IDEMPOTENCY-002')->count());
+        $this->assertSame(1, Product::query()->where('business_id', $otherBusiness->id)->where('code', 'PRODUCT-IDEMPOTENCY-003')->count());
     }
 
     public function test_can_update_product_without_failing_against_itself(): void
@@ -5730,6 +5786,7 @@ class CriticalPosFelFlowTest extends TestCase
     private function productFormPayload(array $overrides = []): array
     {
         return [
+            'idempotency_key' => $overrides['idempotency_key'] ?? (string) Str::uuid(),
             'name' => $overrides['name'] ?? 'Producto nuevo',
             'code' => $overrides['code'] ?? 'NEW-'.uniqid(),
             'barcode' => $overrides['barcode'] ?? null,

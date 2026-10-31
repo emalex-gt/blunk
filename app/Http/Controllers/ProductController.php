@@ -10,6 +10,7 @@ use App\Models\ProductLocation;
 use App\Models\ProductPrice;
 use App\Models\StockMovement;
 use App\Support\BranchInventory;
+use App\Support\IdempotencyService;
 use App\Support\PriceLists;
 use App\Support\ProductSupplierCostHistory;
 use App\Support\Permissions;
@@ -169,6 +170,25 @@ class ProductController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        $idempotencyKey = (string) $request->validate([
+            'idempotency_key' => ['required', 'uuid'],
+        ])['idempotency_key'];
+        $businessId = currentBusinessId();
+        $branch = BranchInventory::activeBranch($businessId);
+        $idempotencyPayload = $this->productIdempotencyPayload($request);
+        $idempotency = app(IdempotencyService::class);
+
+        if ($idempotency->replayCompleted(
+            $businessId,
+            $branch->id,
+            $request->user()->id,
+            'product_create',
+            $idempotencyKey,
+            $idempotencyPayload,
+        )) {
+            return back()->with('success', 'Producto creado.');
+        }
+
         $data = $this->validatedProduct($request);
         $categoryName = $data['category_name'] ?? null;
         $brandNameProvided = array_key_exists('brand_name', $data);
@@ -176,55 +196,66 @@ class ProductController extends Controller
         $brandId = isset($data['brand_id']) ? (int) $data['brand_id'] : null;
         $locationNameProvided = array_key_exists('location_name', $data);
         $locationName = $data['location_name'] ?? ($data['location'] ?? null);
-        unset($data['category_name'], $data['brand_name'], $data['brand_id'], $data['location_name'], $data['image']);
-        $businessId = currentBusinessId();
+        unset($data['category_name'], $data['brand_name'], $data['brand_id'], $data['location_name'], $data['image'], $data['idempotency_key']);
         $data['business_id'] = $businessId;
         $useProductImages = tenantSetting('use_product_images', true);
 
-        DB::transaction(function () use ($request, $data, $categoryName, $brandName, $brandId, $brandNameProvided, $locationName, $locationNameProvided, $useProductImages, $businessId) {
-            $data['category_id'] = $this->resolveCategoryId(
-                $businessId,
-                $categoryName,
-            );
-            $data['brand_id'] = $this->resolveBrandIdByName(
-                $businessId,
-                $brandName,
-                $brandId,
-                $brandNameProvided,
-            );
-            [$data['location_id'], $data['location']] = $this->resolveProductLocationByName(
-                $businessId,
-                $locationName,
-                $locationNameProvided || filled($locationName),
-            );
+        $idempotency->run(
+            $businessId,
+            $branch->id,
+            $request->user()->id,
+            'product_create',
+            $idempotencyKey,
+            $idempotencyPayload,
+            function () use ($request, $data, $categoryName, $brandName, $brandId, $brandNameProvided, $locationName, $locationNameProvided, $useProductImages, $businessId, $branch): int {
+                return DB::transaction(function () use ($request, $data, $categoryName, $brandName, $brandId, $brandNameProvided, $locationName, $locationNameProvided, $useProductImages, $businessId, $branch): int {
+                    $data['category_id'] = $this->resolveCategoryId(
+                        $businessId,
+                        $categoryName,
+                    );
+                    $data['brand_id'] = $this->resolveBrandIdByName(
+                        $businessId,
+                        $brandName,
+                        $brandId,
+                        $brandNameProvided,
+                    );
+                    [$data['location_id'], $data['location']] = $this->resolveProductLocationByName(
+                        $businessId,
+                        $locationName,
+                        $locationNameProvided || filled($locationName),
+                    );
 
-            if ($useProductImages && $request->hasFile('image')) {
-                $data = [
-                    ...$data,
-                    ...$this->uploadProductImage($request),
-                ];
-            }
+                    if ($useProductImages && $request->hasFile('image')) {
+                        $data = [
+                            ...$data,
+                            ...$this->uploadProductImage($request),
+                        ];
+                    }
 
-            $prices = $data['prices'] ?? [];
-            unset($data['prices']);
+                    $prices = $data['prices'] ?? [];
+                    unset($data['prices']);
 
-            $product = Product::create($data);
-            $branch = BranchInventory::activeBranch($businessId);
-            $this->syncProductPrices($product, $prices, (float) $product->sale_price, $branch->id);
-            BranchInventory::adjust($product, $branch->id, (float) $product->stock);
+                    $product = Product::create($data);
+                    $this->syncProductPrices($product, $prices, (float) $product->sale_price, $branch->id);
+                    BranchInventory::adjust($product, $branch->id, (float) $product->stock);
 
-            if ($product->stock > 0) {
-                StockMovement::create([
-                    'business_id' => $businessId,
-                    'branch_id' => $branch->id,
-                    'product_id' => $product->id,
-                    'type' => 'initial',
-                    'quantity' => $product->stock,
-                    'note' => stockMovementNote('initial'),
-                    'created_by' => $request->user()->id,
-                ]);
-            }
-        });
+                    if ($product->stock > 0) {
+                        StockMovement::create([
+                            'business_id' => $businessId,
+                            'branch_id' => $branch->id,
+                            'product_id' => $product->id,
+                            'type' => 'initial',
+                            'quantity' => $product->stock,
+                            'note' => stockMovementNote('initial'),
+                            'created_by' => $request->user()->id,
+                        ]);
+                    }
+
+                    return $product->id;
+                });
+            },
+            'product',
+        );
 
         return back()->with('success', 'Producto creado.');
     }
@@ -424,6 +455,18 @@ class ProductController extends Controller
         }
 
         return $data;
+    }
+
+    private function productIdempotencyPayload(Request $request): array
+    {
+        $imagePath = $request->file('image')?->getRealPath();
+
+        return [
+            ...$request->except(['idempotency_key', 'image']),
+            'image_sha256' => is_string($imagePath) && is_file($imagePath)
+                ? hash_file('sha256', $imagePath)
+                : null,
+        ];
     }
 
     private function normalizeProductCode(?string $value): ?string
