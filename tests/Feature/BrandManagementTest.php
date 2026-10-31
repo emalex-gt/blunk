@@ -119,6 +119,7 @@ class BrandManagementTest extends TestCase
 
         $this->actingAs($user)
             ->post(route('products.store'), [
+                'idempotency_key' => (string) Str::uuid(),
                 'name' => 'Bomba de inyección',
                 'code' => '33100 4X700',
                 'barcode' => null,
