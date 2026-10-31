@@ -164,8 +164,10 @@ class DashboardRouteSellerTest extends TestCase
 
     public function test_route_seller_dashboard_source_disables_work_day_links_when_route_cash_is_closed(): void
     {
-        $source = file_get_contents(resource_path('js/Pages/Dashboard.tsx'));
+        $source = file_get_contents(resource_path('js/Components/Dashboard/RouteSellerDashboard.tsx'));
+        $dashboard = file_get_contents(resource_path('js/Pages/Dashboard.tsx'));
 
+        $this->assertStringContainsString('RouteSellerDashboard', $dashboard);
         $this->assertStringContainsString('const canOperateRoute = data.route_cash?.is_open === true;', $source);
         $this->assertStringContainsString('data-route-continue-action="active"', $source);
         $this->assertStringContainsString('data-route-continue-action="disabled"', $source);
