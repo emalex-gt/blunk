@@ -841,6 +841,7 @@ class SaleController extends Controller
                     [
                         'payments' => $data['payments'] ?? [],
                         'cash_register_session_id' => $openSession?->id,
+                        'draft_id' => $data['draft_id'] ?? null,
                         'environment' => $felSettings?->environment ?? 'test',
                         'credit_line_ids' => collect($data['items'] ?? [])
                             ->mapWithKeys(fn (array $item) => [(int) $item['product_id'] => $item['credit_line_id'] ?? null])

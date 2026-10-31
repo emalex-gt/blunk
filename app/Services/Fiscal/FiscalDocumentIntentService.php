@@ -329,100 +329,55 @@ class FiscalDocumentIntentService
                 $sale->load('items');
             }
 
-            $isCreditSale = (bool) ($payload['sale']['is_credit_sale'] ?? false);
-            $payments = $payload['payments'] ?? [];
-            $cashAmount = $isCreditSale ? 0.0 : CashRegister::cashAmountFromPayments($payments);
-            $session = $cashAmount > 0 ? $intent->cashRegisterSession()->lockForUpdate()->first() : null;
-            if ($cashAmount > 0 && (! $session || $session->status !== 'open')) {
-                throw new \RuntimeException('La caja reservada ya no está disponible para finalizar la venta certificada.');
-            }
-            $business = Business::query()->findOrFail($sale->business_id);
-            $creditLineIds = $payload['credit_line_ids'] ?? [];
-
-            foreach ($sale->items as $saleItem) {
-                $product = Product::query()->where('business_id', $sale->business_id)->whereKey($saleItem->product_id)->lockForUpdate()->firstOrFail();
-                $available = StockAvailability::availableStock($product, null, $sale->branch_id);
-                // StockAvailability correctly subtracts the active intent
-                // hold. The finalizer is the holder that is consuming it.
-                $available += (float) StockReservation::query()
-                    ->where('business_id', $intent->business_id)
-                    ->where('source_type', 'fiscal_document_intent')
-                    ->where('source_id', $intent->id)
-                    ->where('product_id', $product->id)
-                    ->where('status', 'active')
-                    ->sum('quantity');
-                $creditLineId = $creditLineIds[$saleItem->product_id] ?? null;
-                $creditLine = filled($creditLineId)
-                    ? CreditReceiptLine::query()->lockForUpdate()->find($creditLineId)
-                    : null;
-
-                if ($creditLine && Credits::reserveStockOnCreditReservations($sale->business_id) && (int) $creditLine->qty_reserved > 0) {
-                    $available += min((int) $saleItem->quantity, (int) $creditLine->qty_reserved);
-                }
-                if (! StockPolicy::allowsNegativeStock($business) && $available < (int) $saleItem->quantity) {
-                    throw \Illuminate\Validation\ValidationException::withMessages(['items' => 'No hay suficiente stock disponible para finalizar la venta certificada.']);
-                }
-
-                [$previousStock, $newStock] = BranchInventory::decrease($product, $sale->branch_id, $saleItem->quantity);
-                \App\Models\StockMovement::query()->create([
-                    'business_id' => $sale->business_id,
-                    'branch_id' => $sale->branch_id,
-                    'product_id' => $product->id,
-                    'type' => 'sale',
-                    'quantity' => -1 * $saleItem->quantity,
-                    'previous_stock' => $previousStock,
-                    'new_stock' => $newStock,
-                    'note' => stockMovementNote('sale', $sale->business_number ?: $sale->id),
-                    'created_by' => $sale->created_by,
-                ]);
-
-                if ($creditLine) {
-                    $creditLine->increment('qty_invoiced', (int) $saleItem->quantity);
-                    $creditLine = Credits::refreshLine($creditLine->refresh());
-                    Credits::refreshReceipt($creditLine->receipt);
-                    CreditReceiptLineInvoice::query()->create([
-                        'business_id' => $sale->business_id,
-                        'credit_receipt_line_id' => $creditLine->id,
-                        'sale_id' => $sale->id,
-                        'sale_line_id' => $saleItem->id,
-                        'quantity' => (int) $saleItem->quantity,
-                        'amount' => $saleItem->total,
-                    ]);
-                }
+            if ($sale->status !== 'completed') {
+                $this->applyCommercialEffects($intent, $sale, $payload);
             }
 
-            foreach ($payments as $payment) {
-                $sale->payments()->create([
-                    'business_id' => $sale->business_id,
-                    'method' => $payment['method'],
-                    'amount' => round((float) $payment['amount'], 2),
-                    'reference' => $payment['reference'] ?? null,
-                    'details' => $payment['details'] ?? null,
-                ]);
-            }
-
-            if ($cashAmount > 0 && $session) {
-                CashRegister::recordMovement($session, 'sale_cash', $cashAmount, 'sale', $sale->id, stockMovementNote('sale', $sale->business_number ?: $sale->id), $sale->created_by);
-            }
-            if ($isCreditSale) {
-                // The durable hold becomes the actual receivable inside this
-                // same transaction, so it cannot be counted twice.
-                $intent->update(['credit_hold_amount' => 0]);
-                AccountsReceivable::createCharge($sale, $sale->created_by);
-            }
-
-            $sale->update([
-                'status' => 'completed',
-                'payment_status' => $isCreditSale ? 'unpaid' : 'paid',
-                'amount_paid' => $isCreditSale ? 0 : $sale->total,
-                'credit_balance' => $isCreditSale ? $sale->total : 0,
-                'is_credit_sale' => $isCreditSale,
-                'due_date' => $isCreditSale ? ($payload['sale']['due_date'] ?? null) : null,
-            ]);
-
-            $this->markQuotationConverted($sale);
-            $this->consumeStockReservations($intent);
+            $this->attachCertificationToSale($intent, $sale);
             $intent->update(['status' => FiscalDocumentIntent::FINALIZED, 'finalized_at' => now(), 'last_finalization_error' => null]);
+
+            return $intent->refresh();
+        });
+    }
+
+    /**
+     * Completes the commercial side of an ambiguous POS invoice without
+     * treating the fiscal result as certified. Reconciliation later attaches
+     * the DTE to this same Sale.
+     */
+    public function acceptProvisionalCommercialFinalization(FiscalDocumentIntent $intent, int $acceptedBy): FiscalDocumentIntent
+    {
+        return DB::transaction(function () use ($intent, $acceptedBy) {
+            $intent = FiscalDocumentIntent::query()->lockForUpdate()->findOrFail($intent->id);
+            if ($intent->status === FiscalDocumentIntent::FINALIZED
+                && $intent->provisional_accepted_at
+                && $intent->finalized_sale_id) {
+                return $intent;
+            }
+            if ($intent->status !== FiscalDocumentIntent::UNKNOWN || $intent->operation_type !== 'sale') {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'intent' => 'La constancia provisional sólo puede aceptarse mientras la certificación FEL esté en verificación.',
+                ]);
+            }
+
+            $payload = $intent->operation_payload ?? [];
+            $sale = $intent->finalizedSale()->with('items')->lockForUpdate()->first();
+            if (! $sale) {
+                $sale = $this->createFinalSale($intent, $payload, 'unknown');
+                $intent->update(['finalized_sale_id' => $sale->id]);
+                $sale->load('items');
+            }
+
+            if ($sale->status !== 'completed') {
+                $this->applyCommercialEffects($intent, $sale, $payload);
+            }
+
+            if (! $intent->provisional_accepted_at) {
+                $intent->update([
+                    'provisional_accepted_at' => now(),
+                    'provisional_accepted_by' => $acceptedBy,
+                ]);
+            }
 
             return $intent->refresh();
         });
@@ -450,7 +405,7 @@ class FiscalDocumentIntentService
     private function finalizeExistingSaleCertification(FiscalDocumentIntent $intent): FiscalDocumentIntent
     {
         $sale = $intent->finalizedSale()->lockForUpdate()->firstOrFail();
-        $ids = app(DigifactInvoiceService::class)->extractCertificationIdentifiers($intent->provider_response ?? []);
+        $ids = $this->invoiceService->extractCertificationIdentifiers($intent->provider_response ?? []);
         $document = $sale->electronicDocument ?: new ElectronicDocument([
             'business_id' => $sale->business_id,
             'sale_id' => $sale->id,
@@ -503,6 +458,7 @@ class FiscalDocumentIntentService
             'payments' => $operationPayload['payments'] ?? [],
             'cash_register_session_id' => $operationPayload['cash_register_session_id'] ?? null,
             'credit_line_ids' => $operationPayload['credit_line_ids'] ?? [],
+            'draft_id' => $operationPayload['draft_id'] ?? null,
         ];
     }
 
@@ -550,7 +506,100 @@ class FiscalDocumentIntentService
             ->update(['status' => 'released', 'released_at' => now()]);
     }
 
-    private function createFinalSale(FiscalDocumentIntent $intent, array $payload): Sale
+    private function applyCommercialEffects(FiscalDocumentIntent $intent, Sale $sale, array $payload): void
+    {
+        $isCreditSale = (bool) ($payload['sale']['is_credit_sale'] ?? false);
+        $payments = $payload['payments'] ?? [];
+        $cashAmount = $isCreditSale ? 0.0 : CashRegister::cashAmountFromPayments($payments);
+        $session = $cashAmount > 0 ? $intent->cashRegisterSession()->lockForUpdate()->first() : null;
+        if ($cashAmount > 0 && (! $session || $session->status !== 'open')) {
+            throw new \RuntimeException('La caja reservada ya no está disponible para finalizar la venta.');
+        }
+        $business = Business::query()->findOrFail($sale->business_id);
+        $creditLineIds = $payload['credit_line_ids'] ?? [];
+
+        foreach ($sale->items as $saleItem) {
+            $product = Product::query()->where('business_id', $sale->business_id)->whereKey($saleItem->product_id)->lockForUpdate()->firstOrFail();
+            $available = StockAvailability::availableStock($product, null, $sale->branch_id);
+            $available += (float) StockReservation::query()
+                ->where('business_id', $intent->business_id)
+                ->where('source_type', 'fiscal_document_intent')
+                ->where('source_id', $intent->id)
+                ->where('product_id', $product->id)
+                ->where('status', 'active')
+                ->sum('quantity');
+            $creditLineId = $creditLineIds[$saleItem->product_id] ?? null;
+            $creditLine = filled($creditLineId)
+                ? CreditReceiptLine::query()->lockForUpdate()->find($creditLineId)
+                : null;
+
+            if ($creditLine && Credits::reserveStockOnCreditReservations($sale->business_id) && (int) $creditLine->qty_reserved > 0) {
+                $available += min((int) $saleItem->quantity, (int) $creditLine->qty_reserved);
+            }
+            if (! StockPolicy::allowsNegativeStock($business) && $available < (int) $saleItem->quantity) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['items' => 'No hay suficiente stock disponible para finalizar la venta.']);
+            }
+
+            [$previousStock, $newStock] = BranchInventory::decrease($product, $sale->branch_id, $saleItem->quantity);
+            \App\Models\StockMovement::query()->create([
+                'business_id' => $sale->business_id,
+                'branch_id' => $sale->branch_id,
+                'product_id' => $product->id,
+                'type' => 'sale',
+                'quantity' => -1 * $saleItem->quantity,
+                'previous_stock' => $previousStock,
+                'new_stock' => $newStock,
+                'note' => stockMovementNote('sale', $sale->business_number ?: $sale->id),
+                'created_by' => $sale->created_by,
+            ]);
+
+            if ($creditLine) {
+                $creditLine->increment('qty_invoiced', (int) $saleItem->quantity);
+                $creditLine = Credits::refreshLine($creditLine->refresh());
+                Credits::refreshReceipt($creditLine->receipt);
+                CreditReceiptLineInvoice::query()->create([
+                    'business_id' => $sale->business_id,
+                    'credit_receipt_line_id' => $creditLine->id,
+                    'sale_id' => $sale->id,
+                    'sale_line_id' => $saleItem->id,
+                    'quantity' => (int) $saleItem->quantity,
+                    'amount' => $saleItem->total,
+                ]);
+            }
+        }
+
+        foreach ($payments as $payment) {
+            $sale->payments()->create([
+                'business_id' => $sale->business_id,
+                'method' => $payment['method'],
+                'amount' => round((float) $payment['amount'], 2),
+                'reference' => $payment['reference'] ?? null,
+                'details' => $payment['details'] ?? null,
+            ]);
+        }
+
+        if ($cashAmount > 0 && $session) {
+            CashRegister::recordMovement($session, 'sale_cash', $cashAmount, 'sale', $sale->id, stockMovementNote('sale', $sale->business_number ?: $sale->id), $sale->created_by);
+        }
+        if ($isCreditSale) {
+            $intent->update(['credit_hold_amount' => 0]);
+            AccountsReceivable::createCharge($sale, $sale->created_by);
+        }
+
+        $sale->update([
+            'status' => 'completed',
+            'payment_status' => $isCreditSale ? 'unpaid' : 'paid',
+            'amount_paid' => $isCreditSale ? 0 : $sale->total,
+            'credit_balance' => $isCreditSale ? $sale->total : 0,
+            'is_credit_sale' => $isCreditSale,
+            'due_date' => $isCreditSale ? ($payload['sale']['due_date'] ?? null) : null,
+        ]);
+
+        $this->markQuotationConverted($sale);
+        $this->consumeStockReservations($intent);
+    }
+
+    private function createFinalSale(FiscalDocumentIntent $intent, array $payload, string $certificationStatus = 'certified'): Sale
     {
         $header = $payload['sale'] ?? [];
         if (! is_array($header) || $header === []) {
@@ -567,8 +616,8 @@ class FiscalDocumentIntentService
             'amount_paid' => 0,
             'credit_balance' => 0,
             'fel_internal_reference' => $intent->internal_reference,
-            'certification_status' => 'certified',
-            'fel_status' => 'CERTIFIED',
+            'certification_status' => $certificationStatus,
+            'fel_status' => strtoupper($certificationStatus),
         ]);
 
         foreach (($payload['items'] ?? []) as $item) {
@@ -578,26 +627,43 @@ class FiscalDocumentIntentService
             ]);
         }
 
-        $ids = app(DigifactInvoiceService::class)->extractCertificationIdentifiers($intent->provider_response ?? []);
-        $document = ElectronicDocument::query()->create([
-            'business_id' => $intent->business_id,
-            'sale_id' => $sale->id,
-            'provider' => $intent->provider,
-            'environment' => $intent->environment,
-            'document_type' => $intent->document_type,
+        return $sale->refresh();
+    }
+
+    private function attachCertificationToSale(FiscalDocumentIntent $intent, Sale $sale): void
+    {
+        $ids = $this->invoiceService->extractCertificationIdentifiers($intent->provider_response ?? []);
+        $document = ElectronicDocument::query()
+            ->where('business_id', $sale->business_id)
+            ->where('sale_id', $sale->id)
+            ->lockForUpdate()
+            ->first() ?: new ElectronicDocument([
+                'business_id' => $sale->business_id,
+                'sale_id' => $sale->id,
+                'provider' => $intent->provider,
+                'environment' => $intent->environment,
+                'document_type' => $intent->document_type,
+                'created_by' => $intent->created_by,
+            ]);
+
+        $document->fill([
             'internal_reference' => $intent->internal_reference,
             'status' => 'certified',
-            'uuid' => $ids['uuid'] ?? null,
-            'series' => $ids['series'] ?? null,
-            'number' => $ids['number'] ?? null,
+            'uuid' => $ids['uuid'] ?? $document->uuid,
+            'series' => $ids['series'] ?? $document->series,
+            'number' => $ids['number'] ?? $document->number,
             'certification_date' => $ids['certification_date'] ?? $intent->certified_at,
             'issued_at' => $this->frozenIssuedAt($intent),
             'request_payload' => $intent->fiscal_payload,
             'response_payload' => $intent->provider_response,
-            'created_by' => $intent->created_by,
-        ]);
+            'error_message' => null,
+        ])->save();
+
         $sale->update([
             'electronic_document_id' => $document->id,
+            'certification_status' => 'certified',
+            'fel_status' => 'CERTIFIED',
+            'fel_internal_reference' => $intent->internal_reference,
             'fel_uuid' => $document->uuid,
             'fel_series' => $document->series,
             'fel_number' => $document->number,
@@ -605,8 +671,6 @@ class FiscalDocumentIntentService
             'fel_issued_at' => $document->issued_at,
             'fel_raw_response' => $intent->provider_response,
         ]);
-
-        return $sale->refresh();
     }
 
     private function markQuotationConverted(Sale $sale): void

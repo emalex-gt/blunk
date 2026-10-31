@@ -32,6 +32,7 @@ use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\SalePayment;
 use App\Models\StockMovement;
+use App\Models\StockReservation;
 use App\Models\TenantFelPhrase;
 use App\Models\TenantFelSetting;
 use App\Models\TenantModule;
@@ -4516,8 +4517,57 @@ class CriticalPosFelFlowTest extends TestCase
 
     public function test_provisional_receipt_is_tenant_scoped_non_fiscal_and_only_available_while_unresolved(): void
     {
-        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt', 'pos'], allowInvoices: true);
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt', 'pos', 'cash_register'], allowInvoices: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
         $intent = $this->unknownFiscalIntent($business, $user);
+        $session = CashRegisterSession::query()->where('business_id', $business->id)->sole();
+        $intent->update([
+            'cash_register_session_id' => $session->id,
+            'operation_payload' => [
+                'sale' => [
+                    'business_id' => $business->id,
+                    'branch_id' => $intent->branch_id,
+                    'customer_name' => 'Consumidor Final',
+                    'customer_doc_type' => 'CF',
+                    'customer_doc_number' => 'CF',
+                    'customer_country' => 'GT',
+                    'subtotal_before_discount' => 100,
+                    'discount_amount' => 0,
+                    'total' => 100,
+                    'payment_method' => 'cash',
+                    'is_credit_sale' => false,
+                    'document_type' => 'invoice',
+                    'created_by' => $user->id,
+                ],
+                'items' => [[
+                    'product_id' => $product->id,
+                    'product_name' => $product->name,
+                    'quantity' => 1,
+                    'unit_price' => 100,
+                    'original_price' => 100,
+                    'unit_cost' => 50,
+                    'total_cost' => 50,
+                    'profit_amount' => 50,
+                    'total' => 100,
+                    'total_before_discount' => 100,
+                    'total_after_discount' => 100,
+                    'discount_amount' => 0,
+                ]],
+                'payments' => [['method' => 'cash', 'amount' => 100]],
+                'cash_register_session_id' => $session->id,
+            ],
+        ]);
+        StockReservation::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $intent->branch_id,
+            'product_id' => $product->id,
+            'source_type' => 'fiscal_document_intent',
+            'source_id' => $intent->id,
+            'quantity' => 1,
+            'status' => 'active',
+            'created_by' => $user->id,
+        ]);
 
         $this->actingAs($user)
             ->post(route('fiscal-intents.provisional-receipt.accept', $intent))
@@ -4526,8 +4576,21 @@ class CriticalPosFelFlowTest extends TestCase
         $intent->refresh();
         $this->assertNotNull($intent->provisional_accepted_at);
         $this->assertSame($user->id, $intent->provisional_accepted_by);
-        $this->assertDatabaseCount('sales', 0);
-        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertSame(FiscalDocumentIntent::UNKNOWN, $intent->status);
+        $sale = $intent->finalizedSale()->firstOrFail();
+        $this->assertSame('completed', $sale->status);
+        $this->assertSame('unknown', $sale->certification_status);
+        $this->assertDatabaseCount('sales', 1);
+        $this->assertDatabaseCount('sale_items', 1);
+        $this->assertDatabaseCount('sale_payments', 1);
+        $this->assertDatabaseCount('stock_movements', 1);
+        $this->assertDatabaseCount('cash_movements', 1);
+        $this->assertDatabaseMissing('electronic_documents', ['sale_id' => $sale->id]);
+        $this->assertDatabaseHas('stock_reservations', ['id' => StockReservation::query()->where('source_id', $intent->id)->sole()->id, 'status' => 'consumed']);
+        $this->assertSame(9.0, (float) ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
 
         $provisionalReceipt = $this->actingAs($user)
             ->get(route('fiscal-intents.provisional-receipt', $intent))
@@ -4547,8 +4610,31 @@ class CriticalPosFelFlowTest extends TestCase
         $acceptedAt = $intent->provisional_accepted_at;
         $this->actingAs($user)->post(route('fiscal-intents.provisional-receipt.accept', $intent))->assertSessionHasNoErrors();
         $this->assertTrue($acceptedAt->equalTo($intent->refresh()->provisional_accepted_at));
+        $this->assertSame($sale->id, $intent->finalized_sale_id);
+        $this->assertDatabaseCount('sales', 1);
+        $this->assertDatabaseCount('stock_movements', 1);
 
-        $intent->update(['status' => FiscalDocumentIntent::FINALIZED]);
+        $session->update(['status' => 'closed']);
+        $reconciliation = Mockery::mock(DigifactReconciliationService::class);
+        $reconciliation->shouldReceive('findByInternalReference')->once()->andReturn([
+            'found' => true,
+            'raw' => ['GUID' => 'FEL-PROVISIONAL-UUID', 'Serie' => 'A', 'Numero' => '1'],
+        ]);
+        $invoice = Mockery::mock(DigifactInvoiceService::class);
+        $invoice->shouldReceive('extractCertificationIdentifiers')->once()->andReturn([
+            'uuid' => 'FEL-PROVISIONAL-UUID',
+            'series' => 'A',
+            'number' => '1',
+            'certification_date' => now(),
+        ]);
+
+        $result = (new FiscalDocumentIntentService($invoice, $reconciliation))->reconcile($intent);
+        $this->assertSame(FiscalDocumentIntent::FINALIZED, $result->status);
+        $this->assertSame($sale->id, $result->finalized_sale_id);
+        $this->assertDatabaseCount('sales', 1);
+        $this->assertDatabaseCount('stock_movements', 1);
+        $this->assertDatabaseHas('electronic_documents', ['sale_id' => $sale->id, 'uuid' => 'FEL-PROVISIONAL-UUID']);
+
         $this->actingAs($user)
             ->get(route('fiscal-intents.provisional-receipt', $intent))
             ->assertNotFound();
