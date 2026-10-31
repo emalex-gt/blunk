@@ -514,6 +514,143 @@ class SaleDuplicateIdempotencyTest extends TestCase
         $this->assertSame([$customers->first()->id], $saleCustomerIds->all());
     }
 
+    public function test_pos_keeps_final_consumer_delivery_details_only_in_the_sale_snapshot(): void
+    {
+        [$business, $user] = $this->tenant();
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, 'generic-cf-delivery-details', customer: [
+                'name' => 'Consumidor Final',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
+                'consumidor_final' => true,
+                'address' => '5a Avenida 10-25',
+                'address_reference' => 'Frente al mercado',
+                'department' => 'Guatemala',
+                'municipality' => 'Mixco',
+                'phone' => '5555-0101',
+            ]))
+            ->assertRedirect();
+
+        $generic = Customer::getOrCreateGenericFinalConsumer($business);
+        $sale = Sale::query()->where('business_id', $business->id)->sole();
+
+        $this->assertSame($generic->id, $sale->customer_id);
+        $this->assertNull($generic->fresh()->address);
+        $this->assertNull($generic->fresh()->address_reference);
+        $this->assertNull($generic->fresh()->phone);
+        $this->assertNull($generic->fresh()->department);
+        $this->assertNull($generic->fresh()->municipality);
+        $this->assertSame('5a Avenida 10-25', $sale->customer_address);
+        $this->assertSame('Frente al mercado', $sale->customer_address_reference);
+        $this->assertSame('Guatemala', $sale->customer_department);
+        $this->assertSame('Mixco', $sale->customer_municipality);
+        $this->assertSame('5555-0101', $sale->customer_phone);
+    }
+
+    public function test_a_new_final_consumer_sale_does_not_inherit_previous_delivery_details(): void
+    {
+        [$business, $user] = $this->tenant();
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, 'generic-cf-with-delivery-details', customer: [
+                'name' => 'Consumidor Final',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
+                'consumidor_final' => true,
+                'address' => 'Dirección temporal',
+                'department' => 'Guatemala',
+                'municipality' => 'Guatemala',
+                'phone' => '5555-0101',
+            ]))
+            ->assertRedirect();
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, 'generic-cf-without-delivery-details', customer: [
+                'name' => 'Consumidor Final',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
+                'consumidor_final' => true,
+            ]))
+            ->assertRedirect();
+
+        $sales = Sale::query()->where('business_id', $business->id)->orderBy('id')->get();
+
+        $this->assertCount(2, $sales);
+        $this->assertSame('Dirección temporal', $sales->first()->customer_address);
+        $this->assertNull($sales->last()->customer_address);
+        $this->assertNull($sales->last()->customer_phone);
+        $this->assertSame($sales->first()->customer_id, $sales->last()->customer_id);
+    }
+
+    public function test_fel_invoice_uses_the_active_branch_location_for_a_customer_without_one(): void
+    {
+        [$business, $user] = $this->tenant();
+        $this->enableFelInvoices($business);
+        BranchInventory::defaultBranchForBusiness($business)->update([
+            'department' => 'Guatemala',
+            'municipality' => 'Mixco',
+        ]);
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $invoice = Mockery::mock(DigifactInvoiceService::class);
+        $invoice->shouldReceive('buildIntentPayload')->once()->withArgs(function (Sale $sale): bool {
+            $this->assertSame('Guatemala', $sale->customer_department);
+            $this->assertSame('Mixco', $sale->customer_municipality);
+
+            return true;
+        })->andReturn([
+            'Header' => ['IssuedDateTime' => now('America/Guatemala')->format('Y-m-d\\TH:i:sP')],
+        ]);
+        $invoice->shouldReceive('certifyIntent')->once()->andThrow(new FelException('Resultado fiscal incierto.'));
+        $this->app->instance(DigifactInvoiceService::class, $invoice);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, 'fel-branch-location-fallback', 'invoice', [
+                'name' => 'Consumidor Final',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
+                'consumidor_final' => true,
+            ]))
+            ->assertSessionHasNoErrors();
+
+        $intent = FiscalDocumentIntent::query()->where('business_id', $business->id)->sole();
+
+        $this->assertSame('Guatemala', data_get($intent->operation_payload, 'sale.customer_department'));
+        $this->assertSame('Mixco', data_get($intent->operation_payload, 'sale.customer_municipality'));
+    }
+
+    public function test_personalized_final_consumer_never_mutates_the_selected_generic_customer(): void
+    {
+        [$business, $user] = $this->tenant();
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $generic = Customer::getOrCreateGenericFinalConsumer($business);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, 'personalized-cf-from-generic', customer: [
+                'id' => $generic->id,
+                'name' => 'Cliente mostrador',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
+                'consumidor_final' => true,
+                'department' => 'Guatemala',
+                'municipality' => 'Guatemala',
+            ]))
+            ->assertRedirect();
+
+        $sale = Sale::query()->where('business_id', $business->id)->sole();
+
+        $this->assertNotSame($generic->id, $sale->customer_id);
+        $this->assertSame('Consumidor Final', $generic->fresh()->name);
+        $this->assertNull($generic->fresh()->department);
+        $this->assertSame('Cliente mostrador', $sale->customer_name);
+    }
+
     public function test_pos_keeps_personalized_final_consumer_separate_from_generic_customer(): void
     {
         [$business, $user] = $this->tenant();

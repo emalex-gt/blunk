@@ -438,6 +438,15 @@ class SaleController extends Controller
             ]);
         }
 
+        if (($data['document_type'] ?? null) === 'invoice'
+            && $country === 'GT'
+            && $felModuleEnabled) {
+            $data['customer'] = $this->customerDataWithBranchLocationFallback(
+                $data['customer'] ?? null,
+                $activeBranch,
+            );
+        }
+
         if (($data['document_type'] ?? null) === 'invoice') {
             $this->validateInvoiceConfiguration($business, $data['customer'] ?? null, $felSettings, $felModuleEnabled);
         }
@@ -2448,6 +2457,56 @@ class SaleController extends Controller
         ];
     }
 
+    private function customerDataWithBranchLocationFallback(?array $customerData, Branch $branch): array
+    {
+        $customerData ??= [];
+
+        if (($customerData['country'] ?? 'GT') !== 'GT') {
+            return $customerData;
+        }
+
+        $department = trim((string) ($customerData['department'] ?? ''));
+        $municipality = trim((string) ($customerData['municipality'] ?? ''));
+        $branchDepartment = trim((string) $branch->department);
+        $branchMunicipality = trim((string) $branch->municipality);
+
+        if ($department !== '' || $municipality !== '') {
+            if ($department === '' || $municipality === '') {
+                throw ValidationException::withMessages([
+                    $department === '' ? 'customer.department' : 'customer.municipality' => 'Selecciona un departamento y municipio válidos para emitir FEL.',
+                ]);
+            }
+
+            if ((! GuatemalaLocations::isValidDepartment($department)
+                || ! GuatemalaLocations::isValidMunicipality($department, $municipality))
+                && $department === $branchDepartment
+                && $municipality === $branchMunicipality) {
+                throw ValidationException::withMessages([
+                    'customer.department' => 'La sucursal activa debe tener un departamento y municipio de Guatemala válidos para emitir FEL.',
+                ]);
+            }
+
+            $this->validateCustomerLocation('GT', $department, $municipality);
+
+            return $customerData;
+        }
+
+        if (! GuatemalaLocations::isValidDepartment($branchDepartment)
+            || ! GuatemalaLocations::isValidMunicipality($branchDepartment, $branchMunicipality)
+            || $branchDepartment === ''
+            || $branchMunicipality === '') {
+            throw ValidationException::withMessages([
+                'customer.department' => 'La sucursal activa debe tener un departamento y municipio de Guatemala válidos para emitir FEL.',
+            ]);
+        }
+
+        return [
+            ...$customerData,
+            'department' => $branchDepartment,
+            'municipality' => $branchMunicipality,
+        ];
+    }
+
     private function resolveCustomer(Request $request, ?array $customerData): ?Customer
     {
         $businessId = currentBusinessId();
@@ -2461,6 +2520,11 @@ class SaleController extends Controller
         $commercialName = trim((string) ($customerData['commercial_name'] ?? ''));
         $department = trim((string) ($customerData['department'] ?? ''));
         $municipality = trim((string) ($customerData['municipality'] ?? ''));
+        $selectedCustomer = filled($customerData['id'] ?? null)
+            ? Customer::query()
+                ->where('business_id', $businessId)
+                ->find($customerData['id'])
+            : null;
 
         $this->validateCustomerLocation($customerCountry, $department, $municipality);
 
@@ -2485,6 +2549,30 @@ class SaleController extends Controller
 
         if ($isFinalConsumerRequest) {
             $name = $name !== '' ? $name : ($commercialName !== '' ? $commercialName : 'Consumidor Final');
+            $isGenericFinalConsumerIdentity = CustomerIdentity::normalizeName($name) === 'CONSUMIDOR FINAL'
+                && $commercialName === '';
+            $isSelectedGenericFinalConsumer = $selectedCustomer !== null
+                && $selectedCustomer->is_final_consumer
+                && CustomerIdentity::isGenericFinalConsumer(
+                    $selectedCustomer->normalized_tax_id,
+                    $selectedCustomer->name,
+                    $selectedCustomer->only([
+                        'commercial_name',
+                        'contact_name',
+                        'address',
+                        'address_reference',
+                        'phone',
+                        'postal_code',
+                        'department',
+                        'municipality',
+                    ]),
+                );
+
+            if ($isGenericFinalConsumerIdentity
+                && ($selectedCustomer === null || $isSelectedGenericFinalConsumer)) {
+                return Customer::getOrCreateGenericFinalConsumer($businessId);
+            }
+
             $payload = [
                 'name' => $name,
                 'doc_type' => 'CF',
@@ -2500,27 +2588,14 @@ class SaleController extends Controller
                 'name_locked' => false,
             ];
 
-            if (CustomerIdentity::isGenericFinalConsumer('CF', $name, [
-                'commercial_name' => $commercialName,
-                ...$payload,
-            ])) {
-                return Customer::getOrCreateGenericFinalConsumer($businessId);
-            }
-
-            if (! empty($customerData['id'])) {
-                $customer = Customer::query()
-                    ->where('business_id', $businessId)
-                    ->find($customerData['id']);
-
-                if ($customer) {
-                    if ($commercialName !== '') {
-                        $payload['commercial_name'] = $commercialName;
-                    }
-
-                    $customer->update($payload);
-
-                    return $customer;
+            if ($selectedCustomer && ! $isSelectedGenericFinalConsumer) {
+                if ($commercialName !== '') {
+                    $payload['commercial_name'] = $commercialName;
                 }
+
+                $selectedCustomer->update($payload);
+
+                return $selectedCustomer;
             }
 
             return Customer::create([
