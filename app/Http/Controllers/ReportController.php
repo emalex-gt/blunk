@@ -445,7 +445,17 @@ class ReportController extends Controller
         $categoryId = $request->integer('category_id') ?: null;
         $productSearch = trim((string) $request->query('product_search', ''));
         $sellerId = $request->integer('seller_id') ?: null;
-        $canViewProfit = $request->user()?->hasPermission('reports.profit.view') ?? false;
+        $canViewProfit = $request->user()?->hasPermission(Permissions::REPORTS_PROFIT_VIEW) ?? false;
+        $sortBy = (string) $request->query('sort_by', 'quantity');
+        $allowedSorts = ['quantity', 'total'];
+
+        if ($canViewProfit) {
+            $allowedSorts[] = 'profit';
+        }
+
+        if (! in_array($sortBy, $allowedSorts, true)) {
+            $sortBy = 'quantity';
+        }
 
         $base = DB::table('sale_items')
             ->join('sales', 'sale_items.sale_id', '=', 'sales.id')
@@ -476,6 +486,17 @@ class ReportController extends Controller
             ->orderByDesc(DB::raw('SUM(sale_items.quantity)'))
             ->value('sale_items.product_name');
 
+        $financialSummary = $canViewProfit
+            ? (clone $base)->selectRaw('
+                SUM(sale_items.total_cost) as total_cost,
+                SUM(sale_items.profit_amount) as profit,
+                SUM(CASE WHEN sale_items.total_cost IS NULL OR sale_items.profit_amount IS NULL THEN 1 ELSE 0 END) as incomplete_cost_lines
+            ')->first()
+            : null;
+        $hasIncompleteCost = $canViewProfit && (int) ($financialSummary->incomplete_cost_lines ?? 0) > 0;
+        $totalCost = $hasIncompleteCost ? null : (float) ($financialSummary->total_cost ?? 0);
+        $totalProfit = $hasIncompleteCost ? null : (float) ($financialSummary->profit ?? 0);
+
         $columns = [
             ['key' => 'product', 'label' => 'Producto'],
             ['key' => 'code', 'label' => 'Código/SKU'],
@@ -485,30 +506,79 @@ class ReportController extends Controller
         ];
 
         if ($canViewProfit) {
+            $columns[] = ['key' => 'cost', 'label' => 'Costo histórico vendido', 'type' => 'money'];
             $columns[] = ['key' => 'profit', 'label' => 'Utilidad', 'type' => 'money'];
+            $columns[] = ['key' => 'margin', 'label' => 'Margen %', 'type' => 'number'];
+            $columns[] = ['key' => 'financial_status', 'label' => 'Información de costo'];
         }
 
-        $products = $base
+        $productsQuery = $base
             ->select([
                 'sale_items.product_name as product',
                 DB::raw('COALESCE(products.code, products.barcode) as code'),
                 DB::raw("COALESCE(categories.name, '-') as category"),
                 DB::raw('SUM(sale_items.quantity) as quantity_sold'),
                 DB::raw('SUM(sale_items.total) as total_sold'),
-                DB::raw('SUM(COALESCE(sale_items.profit_amount, 0)) as profit'),
             ])
             ->groupBy('sale_items.product_id', 'sale_items.product_name', 'products.code', 'products.barcode', 'categories.name')
-            ->orderByDesc(DB::raw('SUM(sale_items.quantity)'))
+            ->when($canViewProfit, fn ($query) => $query->selectRaw('
+                SUM(sale_items.total_cost) as total_cost,
+                SUM(sale_items.profit_amount) as profit,
+                SUM(CASE WHEN sale_items.total_cost IS NULL OR sale_items.profit_amount IS NULL THEN 1 ELSE 0 END) as incomplete_cost_lines
+            '));
+
+        $sortExpression = match ($sortBy) {
+            'total' => 'SUM(sale_items.total)',
+            'profit' => 'CASE WHEN SUM(CASE WHEN sale_items.total_cost IS NULL OR sale_items.profit_amount IS NULL THEN 1 ELSE 0 END) > 0 THEN NULL ELSE SUM(sale_items.profit_amount) END',
+            default => 'SUM(sale_items.quantity)',
+        };
+
+        $products = $productsQuery
+            ->orderByRaw("{$sortExpression} DESC NULLS LAST")
+            ->orderBy('sale_items.product_name')
             ->paginate($this->reportPerPage($request))
             ->withQueryString()
-            ->through(fn ($row) => [
-                'product' => $row->product,
-                'code' => $row->code,
-                'category' => $row->category,
-                'quantity' => (float) $row->quantity_sold,
-                'total' => (float) $row->total_sold,
-                'profit' => $canViewProfit ? (float) $row->profit : null,
-            ]);
+            ->through(function ($row) use ($canViewProfit) {
+                $costDataComplete = $canViewProfit && (int) $row->incomplete_cost_lines === 0;
+                $total = (float) $row->total_sold;
+                $profit = $costDataComplete ? (float) $row->profit : null;
+
+                $data = [
+                    'product' => $row->product,
+                    'code' => $row->code,
+                    'category' => $row->category,
+                    'quantity' => (float) $row->quantity_sold,
+                    'total' => $total,
+                ];
+
+                if ($canViewProfit) {
+                    $data += [
+                        'cost' => $costDataComplete ? (float) $row->total_cost : null,
+                        'profit' => $profit,
+                        'margin' => $costDataComplete && $total > 0 ? round(($profit / $total) * 100, 2) : null,
+                        'financial_status' => ! $costDataComplete ? 'Información de costo histórico incompleta' : null,
+                    ];
+                }
+
+                return $data;
+            });
+
+        $summary = [
+            ['label' => 'Total unidades vendidas', 'value' => $unitsSold],
+            ['label' => 'Total monetario vendido', 'value' => $totalSold, 'money' => true],
+        ];
+
+        if ($canViewProfit) {
+            $summary[] = ['label' => 'Costo histórico vendido', 'value' => $hasIncompleteCost ? 'Información de costo histórico incompleta' : $totalCost, 'money' => ! $hasIncompleteCost];
+            $summary[] = ['label' => 'Utilidad total', 'value' => $hasIncompleteCost ? 'Información de costo histórico incompleta' : $totalProfit, 'money' => ! $hasIncompleteCost];
+            $summary[] = ['label' => 'Margen %', 'value' => $hasIncompleteCost ? 'Información de costo histórico incompleta' : ($totalSold > 0 ? round(($totalProfit / $totalSold) * 100, 2) : 0)];
+
+            if ($hasIncompleteCost) {
+                $summary[] = ['label' => 'Líneas con costo histórico incompleto', 'value' => (int) $financialSummary->incomplete_cost_lines];
+            }
+        }
+
+        $summary[] = ['label' => 'Producto más vendido', 'value' => $topProduct ?: '-'];
 
         return $this->report('Productos más vendidos', 'reports.top-products', $columns, $products, [
             'filters' => [
@@ -517,14 +587,16 @@ class ReportController extends Controller
                 'category_id' => $categoryId,
                 'product_search' => $productSearch,
                 'seller_id' => $sellerId,
+                'sort_by' => $sortBy,
             ],
-            'summary' => [
-                ['label' => 'Total unidades vendidas', 'value' => $unitsSold],
-                ['label' => 'Total monetario vendido', 'value' => $totalSold, 'money' => true],
-                ['label' => 'Producto más vendido', 'value' => $topProduct ?: '-'],
-            ],
+            'summary' => $summary,
             'categories' => Category::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
             'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
+            'sortOptions' => collect([
+                ['value' => 'quantity', 'label' => 'Cantidad vendida'],
+                ['value' => 'total', 'label' => 'Importe vendido'],
+                $canViewProfit ? ['value' => 'profit', 'label' => 'Utilidad'] : null,
+            ])->filter()->values(),
             'branch' => $scope->payload(),
         ]);
     }

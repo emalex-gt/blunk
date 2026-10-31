@@ -25,6 +25,11 @@ type Option = {
     doc_number?: string | null;
 };
 
+type SortOption = {
+    value: string;
+    label: string;
+};
+
 type Branch = {
     id: number;
     name: string;
@@ -56,6 +61,7 @@ type Props = {
     customers?: Option[];
     sellers?: Option[];
     suppliers?: Option[];
+    sortOptions?: SortOption[];
     fixedFilters?: Record<string, string | number | null>;
     productContext?: ProductContext | null;
     branch?: Branch | null;
@@ -112,6 +118,7 @@ export default function GenericReport({
     customers = [],
     sellers = [],
     suppliers = [],
+    sortOptions = [],
     fixedFilters = {},
     productContext = null,
     branch = null,
@@ -310,6 +317,15 @@ export default function GenericReport({
                                     <option value="0">Todos</option>
                                 </SelectField>
                             )}
+                            {filterKeys.includes('sort_by') && sortOptions.length > 0 && (
+                                <SelectField label="Ordenar por" value={form.sort_by ?? sortOptions[0].value} onChange={(value) => setField('sort_by', value)}>
+                                    {sortOptions.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </SelectField>
+                            )}
                             {filterKeys.includes('search') && (
                                 <TextField label="Buscar" value={form.search ?? ''} onChange={(value) => setField('search', value)} />
                             )}
@@ -481,6 +497,10 @@ function renderCell(
 
 function formatCell(value: unknown, column: Column, country: string): string {
     if (column.type === 'money') {
+        if (value === null || value === undefined || value === '') {
+            return '-';
+        }
+
         return formatCurrency(value as number | string | null, country, column.decimals ?? 2);
     }
 

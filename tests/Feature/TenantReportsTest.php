@@ -463,7 +463,82 @@ class TenantReportsTest extends TestCase
                 ->where('rows.total', 1)
                 ->where('rows.data.0.product', 'Top A')
                 ->where('rows.data.0.quantity', 2)
-                ->where('rows.data.0.total', 250));
+                ->where('rows.data.0.total', 250)
+                ->where('rows.data.0.cost', 100)
+                ->where('rows.data.0.profit', 150)
+                ->where('rows.data.0.margin', 60));
+    }
+
+    public function test_top_products_uses_historical_costs_excludes_cancelled_sales_and_marks_incomplete_costs(): void
+    {
+        [$business, $user, $main] = $this->tenant();
+        $profitable = $this->product($business, $main, name: 'Histórico completo', stock: 10, salePrice: 100);
+        $incomplete = $this->product($business, $main, name: 'Histórico incompleto', stock: 10, salePrice: 100);
+        $highestRevenue = $this->product($business, $main, name: 'Mayor importe', stock: 10, salePrice: 100);
+
+        $this->sale($business, $main, $user, $profitable, total: 100, unitCost: 30, profit: 70);
+        $this->sale($business, $main, $user, $profitable, total: 200, unitCost: 120, profit: 80);
+        $this->sale($business, $main, $user, $profitable, total: 999, unitCost: 1, profit: 998, status: 'cancelled');
+        $incompleteSale = $this->sale($business, $main, $user, $incomplete, total: 50, unitCost: 10, profit: 40);
+        $this->sale($business, $main, $user, $highestRevenue, total: 500, unitCost: 480, profit: 20);
+        SaleItem::query()->where('sale_id', $incompleteSale->id)->update([
+            'total_cost' => null,
+            'profit_amount' => null,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('reports.top-products', ['sort_by' => 'profit']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('filters.sort_by', 'profit')
+                ->where('rows.total', 3)
+                ->where('rows.data.0.product', 'Histórico completo')
+                ->where('rows.data.0.quantity', 2)
+                ->where('rows.data.0.total', 300)
+                ->where('rows.data.0.cost', 150)
+                ->where('rows.data.0.profit', 150)
+                ->where('rows.data.0.margin', 50)
+                ->where('rows.data.2.product', 'Histórico incompleto')
+                ->where('rows.data.2.cost', null)
+                ->where('rows.data.2.profit', null)
+                ->where('rows.data.2.margin', null)
+                ->where('rows.data.2.financial_status', 'Información de costo histórico incompleta')
+                ->where('summary.1.value', 850)
+                ->where('summary.2.value', 'Información de costo histórico incompleta')
+                ->where('summary.3.value', 'Información de costo histórico incompleta')
+                ->where('summary.4.value', 'Información de costo histórico incompleta')
+                ->where('summary.5.value', 1));
+
+        $this->actingAs($user)
+            ->get(route('reports.top-products', ['sort_by' => 'total']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('filters.sort_by', 'total')
+                ->where('rows.data.0.product', 'Mayor importe'));
+    }
+
+    public function test_top_products_hides_financial_data_and_profit_sort_without_profit_permission(): void
+    {
+        [$business, $user, $main] = $this->tenant('cashier');
+        Permissions::assignDirectPermissions($user, [Permissions::REPORTS_TOP_PRODUCTS_VIEW]);
+        $product = $this->product($business, $main, name: 'Producto restringido', stock: 10, salePrice: 100);
+        $this->sale($business, $main, $user, $product, total: 100, unitCost: 40, profit: 60);
+
+        $this->actingAs($user)
+            ->get(route('reports.top-products', ['sort_by' => 'profit']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('filters.sort_by', 'quantity')
+                ->missing('rows.data.0.cost')
+                ->missing('rows.data.0.profit')
+                ->missing('rows.data.0.margin')
+                ->missing('rows.data.0.financial_status')
+                ->where('sortOptions', [
+                    ['value' => 'quantity', 'label' => 'Cantidad vendida'],
+                    ['value' => 'total', 'label' => 'Importe vendido'],
+                ]));
     }
 
     public function test_operational_report_exports_are_available_with_export_permission(): void
