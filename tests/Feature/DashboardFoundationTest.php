@@ -15,6 +15,11 @@ use App\Models\StockReservation;
 use App\Models\PreSale;
 use App\Models\RouteCashSettlement;
 use App\Models\RouteCashSettlementReversal;
+use App\Models\RouteCashSettlementVariance;
+use App\Models\RouteDeliveryBatch;
+use App\Models\RouteDeliveryBatchPreSale;
+use App\Models\RouteDeliveryRun;
+use App\Models\RouteDeliveryStop;
 use App\Models\RouteVisit;
 use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
@@ -558,6 +563,47 @@ class DashboardFoundationTest extends TestCase
         $this->assertSame([], app(DashboardService::class)->resolve($restricted, 'route_supervisor')['widgets']);
     }
 
+    public function test_route_supervisor_delivery_settlement_and_attention_panels_use_operational_states(): void
+    {
+        [$business, $owner, $branch] = $this->tenant('owner', branches: true, modules: ['routes']);
+        $zone = RouteZone::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'name' => 'Entregas', 'is_active' => true]);
+        $workDay = RouteWorkDay::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_zone_id' => $zone->id, 'seller_id' => $owner->id, 'work_date' => today(), 'status' => 'open', 'started_at' => now()]);
+        $product = $this->product($business, $branch, 'Producto de entrega', 10, 1);
+        $customer = $this->customer($business, 'Cliente entrega');
+        $run = RouteDeliveryRun::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'delivery_user_id' => $owner->id, 'created_by' => $owner->id, 'started_by' => $owner->id, 'started_at' => now(), 'status' => 'open', 'delivery_tracking_snapshot' => 'in_app', 'collection_responsibility_snapshot' => 'delivery_agent']);
+        $batch = RouteDeliveryBatch::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_work_day_id' => $workDay->id, 'route_zone_id' => $zone->id, 'delivered_by' => $owner->id, 'delivered_at' => now(), 'status' => RouteDeliveryBatch::STATUS_COMPLETED, 'stock_deduction_timing' => 'invoice', 'invoicing_mode' => 'manual', 'fel_automation_enabled' => false, 'delivery_tracking_snapshot' => 'in_app', 'collection_responsibility_snapshot' => 'delivery_agent', 'total_pre_sales' => 3, 'total_items' => 3, 'total_amount' => 225]);
+        $this->deliveryStop($business, $branch, $owner, $zone, $workDay, $run, $batch, $customer, $product, 'pending', 'paid');
+        $this->deliveryStop($business, $branch, $owner, $zone, $workDay, $run, $batch, $customer, $product, 'delivered', 'unpaid');
+        $this->deliveryStop($business, $branch, $owner, $zone, $workDay, $run, $batch, $customer, $product, 'not_delivered', 'paid');
+        $this->settlement($business, $branch, $owner, 'confirmed', 40);
+        $this->settlement($business, $branch, $owner, 'reversed', 60);
+        RouteCashSettlement::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'collector_user_id' => $owner->id, 'recorded_by' => $owner->id, 'expected_amount' => 0, 'status' => 'draft']);
+        $this->settlementWithOpenShortage($business, $branch, $owner, 100, 90);
+
+        $context = new DashboardContext($business, $owner, $branch, true, [
+            Permissions::ROUTES_VIEW,
+            Permissions::ROUTES_PRE_SALES_ADMIN_VIEW,
+            Permissions::ROUTES_DELIVERY_RUNS_VIEW,
+            Permissions::ROUTES_CASH_SETTLEMENTS_VIEW,
+            Permissions::ROUTES_CASH_VARIANCES_VIEW,
+        ], ['routes'], 'America/Guatemala');
+        $overview = app(DashboardService::class)->resolve($context, 'route_supervisor')['widgets'][0]['data'];
+
+        $this->assertSame(1, $overview['delivery_overview']['pending_backlog']);
+        $this->assertSame(1, $overview['delivery_overview']['delivered_today']);
+        $this->assertSame(1, $overview['delivery_overview']['not_delivered_today']);
+        $this->assertSame(1, $overview['delivery_overview']['unpaid_delivered']['count']);
+        $this->assertSame('75.00', $overview['delivery_overview']['unpaid_delivered']['amount']);
+        $this->assertSame(2, $overview['settlement_overview']['confirmed_today']['count']);
+        $this->assertSame('130.00', $overview['settlement_overview']['confirmed_today']['amount']);
+        $this->assertSame(1, $overview['settlement_overview']['draft_count']);
+        $this->assertSame(1, $overview['settlement_overview']['open_variances']['count']);
+        $this->assertSame('10.00', $overview['settlement_overview']['open_variances']['shortages_amount']);
+        $this->assertSame(route('routes.cash-settlements.index', absolute: false), $overview['settlement_overview']['href']);
+        $this->assertSame(route('routes.cash-settlement-variances.index', absolute: false), $overview['settlement_overview']['variances_href']);
+        $this->assertCount(4, $overview['operational_alerts']);
+    }
+
     private function tenant(string $role, bool $branches = false, array $modules = ['pos', 'inventory', 'cash_register']): array
     {
         $business = Business::query()->create([
@@ -678,6 +724,66 @@ class DashboardFoundationTest extends TestCase
                     'cash_correction_type' => 'ledger_only',
                 ]);
             }
+
+            return $settlement;
+        });
+    }
+
+    private function deliveryStop(Business $business, Branch $branch, User $actor, RouteZone $zone, RouteWorkDay $workDay, RouteDeliveryRun $run, RouteDeliveryBatch $batch, \App\Models\Customer $customer, Product $product, string $status, string $paymentStatus): RouteDeliveryStop
+    {
+        $sale = $this->sale($business, $branch, $actor, $product, 75, 1);
+        $sale->forceFill(['payment_status' => $paymentStatus])->save();
+        $preSale = PreSale::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'route_work_day_id' => $workDay->id,
+            'route_zone_id' => $zone->id,
+            'customer_id' => $customer->id,
+            'seller_id' => $actor->id,
+            'status' => PreSale::STATUS_CONVERTED,
+            'subtotal' => 75,
+            'discount_total' => 0,
+            'total' => 75,
+            'converted_sale_id' => $sale->id,
+            'converted_at' => now(),
+        ]);
+        $entry = RouteDeliveryBatchPreSale::query()->create([
+            'route_delivery_batch_id' => $batch->id,
+            'pre_sale_id' => $preSale->id,
+            'sale_id' => $sale->id,
+            'status' => $status === 'pending' ? 'pending' : 'delivered',
+            'payment_method' => 'cash',
+        ]);
+
+        return RouteDeliveryStop::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'route_delivery_run_id' => $run->id,
+            'route_delivery_batch_id' => $batch->id,
+            'route_delivery_batch_pre_sale_id' => $entry->id,
+            'pre_sale_id' => $preSale->id,
+            'sale_id' => $sale->id,
+            'customer_id' => $customer->id,
+            'position' => $entry->id,
+            'delivery_tracking_snapshot' => 'in_app',
+            'collection_responsibility_snapshot' => 'delivery_agent',
+            'status' => $status,
+            'not_delivered_reason_code' => $status === 'not_delivered' ? 'customer_absent' : null,
+            'assigned_by' => $actor->id,
+            'assigned_at' => now(),
+            'completed_by' => $status === 'pending' ? null : $actor->id,
+            'completed_at' => $status === 'pending' ? null : now(),
+        ]);
+    }
+
+    private function settlementWithOpenShortage(Business $business, Branch $branch, User $actor, int $expected, int $received): RouteCashSettlement
+    {
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($business, $branch, $actor, $expected, $received) {
+            $session = CashRegisterSession::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'opened_by' => $actor->id, 'status' => 'open', 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now()]);
+            $movement = CashMovement::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'cash_register_session_id' => $session->id, 'type' => 'route_cash_settlement', 'amount' => $received, 'reference_type' => 'route_cash_settlement', 'reference_id' => 0, 'description' => 'Dashboard variance fixture', 'created_by' => $actor->id]);
+            $settlement = RouteCashSettlement::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'collector_user_id' => $actor->id, 'received_by' => $actor->id, 'recorded_by' => $actor->id, 'confirmed_by' => $actor->id, 'cash_register_session_id' => $session->id, 'cash_movement_id' => $movement->id, 'expected_amount' => $expected, 'received_amount' => $received, 'difference_amount' => $received - $expected, 'status' => 'confirmed', 'confirmed_at' => now()]);
+            $movement->update(['reference_id' => $settlement->id]);
+            RouteCashSettlementVariance::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'route_cash_settlement_id' => $settlement->id, 'collector_user_id' => $actor->id, 'difference_amount' => $received - $expected, 'status' => 'open', 'reason_code' => 'missing_cash', 'explanation' => 'Faltante de prueba', 'opened_by' => $actor->id, 'opened_at' => now()]);
 
             return $settlement;
         });

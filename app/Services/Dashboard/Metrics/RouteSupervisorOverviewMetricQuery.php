@@ -3,11 +3,15 @@
 namespace App\Services\Dashboard\Metrics;
 
 use App\Models\PreSale;
+use App\Models\RouteCashSettlement;
+use App\Models\RouteCashSettlementVariance;
+use App\Models\RouteDeliveryStop;
 use App\Models\RouteVisit;
 use App\Models\RouteWorkDay;
 use App\Services\Dashboard\DashboardContext;
 use App\Services\Dashboard\DashboardMetricQuery;
 use App\Services\Dashboard\DashboardPeriod;
+use App\Support\Permissions;
 use Illuminate\Support\Facades\DB;
 
 final class RouteSupervisorOverviewMetricQuery implements DashboardMetricQuery
@@ -21,6 +25,9 @@ final class RouteSupervisorOverviewMetricQuery implements DashboardMetricQuery
             'pending_delivery_stops' => new RouteOperationsMetricQuery('pending_delivery_stops'),
             'effective_settlements' => new RouteOperationsMetricQuery('effective_settlements'),
         ];
+        $today = $context->period(DashboardPeriod::TODAY);
+        $deliveryOverview = $this->deliveryOverview($context, $today);
+        $settlementOverview = $this->settlementOverview($context, $today);
 
         return [
             'open_work_days' => [
@@ -49,7 +56,10 @@ final class RouteSupervisorOverviewMetricQuery implements DashboardMetricQuery
                 ...$operations['effective_settlements']->resolve($context, $period),
             ],
             'seller_work_days' => $this->sellerWorkDays($context),
-            'pre_sale_flow' => $this->preSaleFlow($context, $context->period(DashboardPeriod::TODAY)),
+            'pre_sale_flow' => $this->preSaleFlow($context, $today),
+            'delivery_overview' => $deliveryOverview,
+            'settlement_overview' => $settlementOverview,
+            'operational_alerts' => $this->operationalAlerts($deliveryOverview, $settlementOverview),
         ];
     }
 
@@ -137,5 +147,98 @@ final class RouteSupervisorOverviewMetricQuery implements DashboardMetricQuery
             'picked' => (int) $summary->picked,
             'converted_today' => (int) $summary->converted_today,
         ];
+    }
+
+    /** @return array{pending_backlog:int,delivered_today:int,not_delivered_today:int,unpaid_delivered:array{count:int,amount:string},href:string} */
+    private function deliveryOverview(DashboardContext $context, DashboardPeriod $today): array
+    {
+        $summary = RouteDeliveryStop::query()
+            ->join('sales', function ($join) {
+                $join->on('sales.id', '=', 'route_delivery_stops.sale_id')
+                    ->whereColumn('sales.business_id', 'route_delivery_stops.business_id')
+                    ->whereColumn('sales.branch_id', 'route_delivery_stops.branch_id');
+            })
+            ->where('route_delivery_stops.business_id', $context->business->id)
+            ->when($context->branchIdForScopedMetric(), fn ($query, int $branchId) => $query->where('route_delivery_stops.branch_id', $branchId))
+            ->selectRaw("COUNT(*) FILTER (WHERE route_delivery_stops.status = 'pending') as pending_backlog")
+            ->selectRaw("COUNT(*) FILTER (WHERE route_delivery_stops.status = 'delivered' AND route_delivery_stops.completed_at BETWEEN ? AND ?) as delivered_today", [$today->start, $today->end])
+            ->selectRaw("COUNT(*) FILTER (WHERE route_delivery_stops.status = 'not_delivered' AND route_delivery_stops.completed_at BETWEEN ? AND ?) as not_delivered_today", [$today->start, $today->end])
+            ->selectRaw("COUNT(*) FILTER (WHERE route_delivery_stops.status = 'delivered' AND sales.status = 'completed' AND sales.payment_status = 'unpaid') as unpaid_delivered_count")
+            ->selectRaw("COALESCE(SUM(sales.total) FILTER (WHERE route_delivery_stops.status = 'delivered' AND sales.status = 'completed' AND sales.payment_status = 'unpaid'), 0) as unpaid_delivered_amount")
+            ->first();
+
+        return [
+            'pending_backlog' => (int) $summary->pending_backlog,
+            'delivered_today' => (int) $summary->delivered_today,
+            'not_delivered_today' => (int) $summary->not_delivered_today,
+            'unpaid_delivered' => [
+                'count' => (int) $summary->unpaid_delivered_count,
+                'amount' => number_format((float) $summary->unpaid_delivered_amount, 2, '.', ''),
+            ],
+            'href' => route('routes.delivery-runs.index', absolute: false),
+        ];
+    }
+
+    /** @return array{confirmed_today:array{count:int,amount:string},draft_count:?int,open_variances:?array{count:int,shortages_amount:string,overages_amount:string},href:?string,variances_href:?string} */
+    private function settlementOverview(DashboardContext $context, DashboardPeriod $today): array
+    {
+        $scope = RouteCashSettlement::query()
+            ->where('business_id', $context->business->id)
+            ->when($context->branchIdForScopedMetric(), fn ($query, int $branchId) => $query->where('branch_id', $branchId));
+        $confirmed = (clone $scope)
+            ->where('status', 'confirmed')
+            ->whereBetween('confirmed_at', [$today->start, $today->end])
+            ->selectRaw('COUNT(*) as count, COALESCE(SUM(received_amount), 0) as amount')
+            ->first();
+        $canViewSettlements = $context->hasPermission(Permissions::ROUTES_CASH_SETTLEMENTS_VIEW)
+            || $context->hasPermission(Permissions::ROUTES_CASH_SETTLEMENTS_REVIEW);
+        $canViewVariances = $context->hasPermission(Permissions::ROUTES_CASH_VARIANCES_VIEW);
+        $draftCount = $canViewSettlements ? (clone $scope)->where('status', 'draft')->count() : null;
+        $openVariances = null;
+        if ($canViewVariances) {
+            $variance = RouteCashSettlementVariance::query()
+                ->where('business_id', $context->business->id)
+                ->when($context->branchIdForScopedMetric(), fn ($query, int $branchId) => $query->where('branch_id', $branchId))
+                ->where('status', 'open')
+                ->selectRaw('COUNT(*) as count')
+                ->selectRaw('COALESCE(SUM(CASE WHEN difference_amount < 0 THEN ABS(difference_amount) ELSE 0 END), 0) as shortages_amount')
+                ->selectRaw('COALESCE(SUM(CASE WHEN difference_amount > 0 THEN difference_amount ELSE 0 END), 0) as overages_amount')
+                ->first();
+            $openVariances = [
+                'count' => (int) $variance->count,
+                'shortages_amount' => number_format((float) $variance->shortages_amount, 2, '.', ''),
+                'overages_amount' => number_format((float) $variance->overages_amount, 2, '.', ''),
+            ];
+        }
+
+        return [
+            'confirmed_today' => ['count' => (int) $confirmed->count, 'amount' => number_format((float) $confirmed->amount, 2, '.', '')],
+            'draft_count' => $draftCount,
+            'open_variances' => $openVariances,
+            'href' => $canViewSettlements ? route('routes.cash-settlements.index', absolute: false) : null,
+            'variances_href' => $canViewVariances ? route('routes.cash-settlement-variances.index', absolute: false) : null,
+        ];
+    }
+
+    /** @param array{pending_backlog:int,delivered_today:int,not_delivered_today:int,unpaid_delivered:array{count:int,amount:string},href:string} $delivery */
+    /** @param array{confirmed_today:array{count:int,amount:string},draft_count:?int,open_variances:?array{count:int,shortages_amount:string,overages_amount:string},href:?string,variances_href:?string} $settlements */
+    /** @return array<int,array{key:string,severity:string,title:string,detail:string,href:?string}> */
+    private function operationalAlerts(array $delivery, array $settlements): array
+    {
+        $alerts = [];
+        if ($delivery['unpaid_delivered']['count'] > 0) {
+            $alerts[] = ['key' => 'deliveries.unpaid', 'severity' => 'warning', 'title' => "{$delivery['unpaid_delivered']['count']} entrega(s) sin cobro", 'detail' => 'Entrega realizada con venta pendiente de cobro.', 'href' => $delivery['href']];
+        }
+        if ($delivery['not_delivered_today'] > 0) {
+            $alerts[] = ['key' => 'deliveries.not_delivered', 'severity' => 'warning', 'title' => "{$delivery['not_delivered_today']} entrega(s) no realizada(s)", 'detail' => 'Requieren seguimiento de la jornada de hoy.', 'href' => $delivery['href']];
+        }
+        if (($settlements['draft_count'] ?? 0) > 0) {
+            $alerts[] = ['key' => 'settlements.draft', 'severity' => 'info', 'title' => "{$settlements['draft_count']} liquidación(es) pendiente(s)", 'detail' => 'Hay borradores pendientes de confirmación.', 'href' => $settlements['href']];
+        }
+        if (($settlements['open_variances']['count'] ?? 0) > 0) {
+            $alerts[] = ['key' => 'settlements.variances', 'severity' => 'critical', 'title' => "{$settlements['open_variances']['count']} diferencia(s) abierta(s)", 'detail' => 'Requieren revisión de caja.', 'href' => $settlements['variances_href']];
+        }
+
+        return $alerts;
     }
 }

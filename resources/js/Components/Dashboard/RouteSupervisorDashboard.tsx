@@ -38,6 +38,21 @@ export type RouteSupervisorDashboardData = {
         href: string;
     };
     pre_sale_flow: { submitted: number; processing: number; picked: number; converted_today: number };
+    delivery_overview: {
+        pending_backlog: number;
+        delivered_today: number;
+        not_delivered_today: number;
+        unpaid_delivered: { count: number; amount: string | number };
+        href: string;
+    };
+    settlement_overview: {
+        confirmed_today: { count: number; amount: string | number };
+        draft_count: number | null;
+        open_variances: { count: number; shortages_amount: string | number; overages_amount: string | number } | null;
+        href: string | null;
+        variances_href: string | null;
+    };
+    operational_alerts: Array<{ key: string; severity: 'critical' | 'warning' | 'info'; title: string; detail: string; href: string | null }>;
 };
 
 export default function RouteSupervisorDashboard({ data, country }: { data: RouteSupervisorDashboardData; country: string }) {
@@ -71,8 +86,35 @@ export default function RouteSupervisorDashboard({ data, country }: { data: Rout
                 <SellerWorkDays data={data.seller_work_days} country={country} />
                 <PreSaleFlow data={data.pre_sale_flow} />
             </div>
+            <div className="grid gap-5 xl:grid-cols-3">
+                <DeliveryOverview data={data.delivery_overview} country={country} />
+                <SettlementOverview data={data.settlement_overview} country={country} />
+                <OperationalAlerts rows={data.operational_alerts} />
+            </div>
         </section>
     );
+}
+
+function DeliveryOverview({ data, country }: { data: RouteSupervisorDashboardData['delivery_overview']; country: string }) {
+    return <Panel title="Entregas y cobros" subtitle="Actividad diaria y pendientes acumulados">
+        <div className="grid grid-cols-2 gap-3"><Stat label="Entregadas" value={data.delivered_today} detail="Hoy" /><Stat label="No realizadas" value={data.not_delivered_today} detail="Hoy" /><Stat label="Pendientes" value={data.pending_backlog} detail="Backlog" /><Stat label="Sin cobro" value={data.unpaid_delivered.count} detail={formatCurrency(data.unpaid_delivered.amount, country)} /></div>
+        <Link href={data.href} className="mt-4 inline-flex text-sm font-semibold text-orange-700 hover:text-orange-800">Ver entregas</Link>
+    </Panel>;
+}
+
+function SettlementOverview({ data, country }: { data: RouteSupervisorDashboardData['settlement_overview']; country: string }) {
+    const variance = data.open_variances;
+
+    return <Panel title="Liquidaciones" subtitle="Confirmaciones y diferencias de caja">
+        <div className="grid grid-cols-2 gap-3"><Stat label="Confirmadas" value={data.confirmed_today.count} detail={`${formatCurrency(data.confirmed_today.amount, country)} · Hoy`} /><Stat label="Borradores" value={data.draft_count ?? '—'} detail={data.draft_count === null ? 'Sin permiso de consulta' : 'Pendientes'} />{variance && <><Stat label="Diferencias abiertas" value={variance.count} detail="Requieren revisión" /><Stat label="Faltantes / sobrantes" value={formatCurrency(variance.shortages_amount, country)} detail={`Sobrantes ${formatCurrency(variance.overages_amount, country)}`} /></>}</div>
+        <div className="mt-4 flex flex-wrap gap-3">{data.href && <Link href={data.href} className="text-sm font-semibold text-orange-700 hover:text-orange-800">Ver liquidaciones</Link>}{data.variances_href && <Link href={data.variances_href} className="text-sm font-semibold text-orange-700 hover:text-orange-800">Ver diferencias</Link>}</div>
+    </Panel>;
+}
+
+function OperationalAlerts({ rows }: { rows: RouteSupervisorDashboardData['operational_alerts'] }) {
+    const tones = { critical: 'border-red-200 bg-red-50 text-red-800', warning: 'border-amber-200 bg-amber-50 text-amber-800', info: 'border-slate-200 bg-slate-50 text-slate-700' };
+
+    return <Panel title="Requiere atención" subtitle="Incidencias operativas accionables">{rows.length === 0 ? <Empty>No hay incidencias operativas pendientes.</Empty> : <div className="space-y-2">{rows.map((row) => <div key={row.key} className={`rounded-lg border p-3 ${tones[row.severity]}`}><p className="text-sm font-semibold">{row.title}</p><p className="mt-1 text-xs opacity-80">{row.detail}</p>{row.href && <Link href={row.href} className="mt-2 inline-flex text-xs font-semibold underline">Ver detalle</Link>}</div>)}</div>}</Panel>;
 }
 
 function SellerWorkDays({ data, country }: { data: RouteSupervisorDashboardData['seller_work_days']; country: string }) {
