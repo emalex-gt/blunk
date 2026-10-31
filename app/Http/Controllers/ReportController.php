@@ -1204,6 +1204,7 @@ class ReportController extends Controller
             'customers' => $extra['customers'] ?? [],
             'sellers' => $extra['sellers'] ?? [],
             'suppliers' => $extra['suppliers'] ?? [],
+            'sortOptions' => $extra['sortOptions'] ?? [],
             'fixedFilters' => $extra['fixedFilters'] ?? [],
             'productContext' => $extra['productContext'] ?? null,
             'branch' => $extra['branch'] ?? null,
