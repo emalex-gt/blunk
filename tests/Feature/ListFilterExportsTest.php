@@ -314,6 +314,42 @@ class ListFilterExportsTest extends TestCase
             ->assertDontSee('Doc.: CF');
     }
 
+    public function test_sale_receipt_keeps_snapshot_address_visible_and_delivery_toggle_only_for_reference_or_phone(): void
+    {
+        [$business, $user, $branch] = $this->tenant('owner', ['pos']);
+        $product = $this->product($business, 'Producto entrega');
+        $customer = Customer::query()->create(['business_id' => $business->id, 'name' => 'Cliente entrega', 'doc_type' => 'NIT', 'doc_number' => '57289085', 'country' => 'GT']);
+        $sale = $this->sale($business, $branch, $user, $product, $customer);
+        $sale->forceFill(['customer_address' => 'Avenida Entrega 10', 'customer_address_reference' => null, 'customer_phone' => null])->save();
+
+        foreach (['document', 'ticket'] as $format) {
+            $business->tenantSetting->forceFill(['receipt_format' => $format])->save();
+            $response = $this->actingAs($user)->get(route('sales.receipt', $sale));
+
+            $response->assertOk()
+                ->assertSee('Avenida Entrega 10')
+                ->assertDontSee('Imprimir Datos de Entrega')
+                ->assertSee('Le atendió');
+            $this->assertSame(1, substr_count($response->getContent(), 'Avenida Entrega 10'));
+        }
+
+        $sale->forceFill(['customer_address_reference' => 'Portón verde', 'customer_phone' => null])->save();
+        $this->actingAs($user)->get(route('sales.receipt', $sale))
+            ->assertOk()
+            ->assertSee('Imprimir Datos de Entrega')
+            ->assertSee('Referencia de dirección:');
+
+        $sale->forceFill(['customer_address_reference' => null, 'customer_phone' => '5555-0101'])->save();
+        $this->actingAs($user)->get(route('sales.receipt', $sale))
+            ->assertOk()
+            ->assertSee('Imprimir Datos de Entrega')
+            ->assertSee('Teléfono:');
+
+        $toggle = file_get_contents(resource_path('views/print/partials/delivery-print-toggle.blade.php'));
+        $this->assertStringContainsString('data-delivery-print-toggle', $toggle);
+        $this->assertStringContainsString("classList.toggle('is-visible', toggle.checked)", $toggle);
+    }
+
     public function test_sale_ticket_never_renders_logo_for_receipt_or_invoice(): void
     {
         [$business, $user, $branch] = $this->tenant('owner', ['pos']);

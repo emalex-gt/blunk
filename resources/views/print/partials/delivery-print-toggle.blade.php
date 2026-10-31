@@ -1,5 +1,9 @@
 @php
-    $hasDeliveryData = collect($delivery ?? [])
+    $delivery = $delivery ?? [];
+    $hasDeliveryData = collect([
+        $delivery['address_reference'] ?? null,
+        $delivery['phone'] ?? null,
+    ])
         ->contains(fn ($value) => filled(trim((string) $value)));
 @endphp
 

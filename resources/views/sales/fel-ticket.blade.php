@@ -47,6 +47,7 @@
             default => [],
         })->filter();
     };
+    $customerAddress = trim((string) ($delivery['address'] ?? '')) ?: trim((string) ($customer['address'] ?? ''));
 @endphp
 <div class="toolbar no-print">
     <button type="button" onclick="window.close()">Cerrar</button>
@@ -92,7 +93,9 @@
     <div class="center">{{ $createdAtLocal ?: '-' }}</div>
     <div class="center"><strong>NIT: {{ $customer['tax_id'] }}</strong></div>
     <div class="center"><strong>{{ $customer['name'] }}</strong></div>
-    <div class="center">Dirección: {{ $customer['address'] }}</div>
+    @if (filled($customerAddress))
+        <div class="center">Dirección: {{ $customerAddress }}</div>
+    @endif
     <div class="center">Le atendió: {{ $attendedBy }}</div>
     @if (! empty($customer['municipality']) || ! empty($customer['department']))
         <div class="center">{{ $customer['municipality'] }} {{ $customer['department'] }}</div>
@@ -100,7 +103,7 @@
 
     <div class="separator"></div>
     @include('print.partials.delivery-details', ['delivery' => $delivery])
-    @if (collect($delivery)->contains(fn ($value) => filled(trim((string) $value))))
+    @if (collect([$delivery['address_reference'] ?? null, $delivery['phone'] ?? null])->contains(fn ($value) => filled(trim((string) $value))))
         <div class="separator delivery-details" data-delivery-details></div>
     @endif
     <table>

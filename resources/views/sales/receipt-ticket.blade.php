@@ -93,6 +93,12 @@
             <span>Cliente</span>
             <span class="right">{{ $customerDisplayName ?? 'Consumidor final' }}</span>
         </div>
+        @if (filled($delivery['address'] ?? null))
+            <div class="row">
+                <span>Dirección</span>
+                <span class="right">{{ $delivery['address'] }}</span>
+            </div>
+        @endif
         <div class="row">
             <span>Le atendió</span>
             <span class="right">{{ $attendedBy }}</span>
@@ -103,7 +109,7 @@
 
     @include('print.partials.delivery-details', ['delivery' => $delivery])
 
-    @if (collect($delivery)->contains(fn ($value) => filled(trim((string) $value))))
+    @if (collect([$delivery['address_reference'] ?? null, $delivery['phone'] ?? null])->contains(fn ($value) => filled(trim((string) $value))))
         <div class="line delivery-details" data-delivery-details></div>
     @endif
 

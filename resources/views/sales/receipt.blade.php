@@ -98,6 +98,9 @@
         <div>
             <strong>Cliente</strong>
             <p>{{ $customerDisplayName ?? 'Consumidor final' }}</p>
+            @if (filled($delivery['address'] ?? null))
+                <p><strong>Dirección:</strong> {{ $delivery['address'] }}</p>
+            @endif
         </div>
         <div class="right">
             <strong>Le atendió</strong>
