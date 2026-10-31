@@ -33,6 +33,8 @@ type FiscalIntent = {
     last_reconciliation_result: Record<string, unknown> | null;
     last_reconciliation_error: string | null;
     last_finalization_error: string | null;
+    provisional_accepted_at: string | null;
+    provisional_accepted_by: string | null;
     created_at: string | null;
 };
 
@@ -160,7 +162,7 @@ export default function Index({ incidents, intents, reconciliations }: { inciden
                                     <tr key={intent.id} className="align-top">
                                         <td className="px-3 py-3 font-semibold text-gray-900">{intent.business?.name ?? '-'}<div className="text-xs font-normal text-gray-500">Sucursal #{intent.branch_id ?? '-'}</div></td>
                                         <td className="px-3 py-3 font-mono text-xs text-gray-700">#{intent.id}<br />{intent.internal_reference}<div className="mt-1 font-sans text-gray-500">Venta final: {intent.sale_id ?? '-'}</div><div className="font-sans text-gray-500">{intent.provider} / {intent.environment}</div></td>
-                                        <td className="px-3 py-3"><div className="font-medium text-gray-800">{intent.status}</div><div className="mt-1 max-w-md text-xs text-gray-500">{intent.last_reconciliation_error ?? '-'}</div>{intent.last_finalization_error && <div className="mt-1 max-w-md text-xs text-red-700">Finalización: {intent.last_finalization_error}</div>}</td>
+                                        <td className="px-3 py-3"><div className="font-medium text-gray-800">{intent.status}</div><div className="mt-1 max-w-md text-xs text-gray-500">{intent.last_reconciliation_error ?? '-'}</div>{intent.last_finalization_error && <div className="mt-1 max-w-md text-xs text-red-700">Finalización: {intent.last_finalization_error}</div>}{intent.provisional_accepted_at && <div className="mt-1 max-w-md text-xs text-amber-700">Constancia aceptada: {formatLocalDateTime(intent.provisional_accepted_at)} · {intent.provisional_accepted_by ?? 'Usuario no registrado'}</div>}</td>
                                         <td className="px-3 py-3 text-xs text-gray-600"><div>Negativas válidas: {intent.negative_reconciliation_count}</div><div>Última: {formatLocalDateTime(intent.last_reconciliation_at)}</div><div>Siguiente: {formatLocalDateTime(intent.next_reconciliation_at)}</div><div className="mt-1 break-all">Resultado: {intent.last_reconciliation_result ? JSON.stringify(intent.last_reconciliation_result) : '-'}</div></td>
                                         <td className="px-3 py-3"><div className="flex justify-end gap-2">{intent.status === 'unknown' && <button type="button" onClick={() => reconcileIntent(intent.id)} disabled={activeIntentAction !== null} className="rounded-md border border-orange-200 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-60">{activeIntentAction === intent.id ? 'Consultando Digifact...' : 'Consultar Digifact ahora'}</button>}{intent.status === 'certified' && <button type="button" onClick={() => finalizeIntent(intent.id)} className="rounded-md border border-orange-200 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-50">Reintentar finalización local</button>}{intent.status === 'retryable' && <button type="button" onClick={() => retryIntent(intent.id)} className="rounded-md bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-700">Reintentar certificación</button>}</div></td>
                                     </tr>

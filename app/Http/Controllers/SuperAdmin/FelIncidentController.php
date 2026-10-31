@@ -42,7 +42,7 @@ class FelIncidentController extends Controller
             ]);
 
         $intents = FiscalDocumentIntent::query()
-            ->with(['business:id,name', 'finalizedSale:id,business_id'])
+            ->with(['business:id,name', 'finalizedSale:id,business_id', 'provisionalAcceptedBy:id,name'])
             ->whereIn('status', [
                 FiscalDocumentIntent::PENDING,
                 FiscalDocumentIntent::UNKNOWN,
@@ -68,6 +68,8 @@ class FelIncidentController extends Controller
                 'last_reconciliation_result' => $intent->last_reconciliation_result,
                 'last_reconciliation_error' => $intent->last_reconciliation_error,
                 'last_finalization_error' => $intent->last_finalization_error,
+                'provisional_accepted_at' => $this->serializeTimestamp($intent->provisional_accepted_at),
+                'provisional_accepted_by' => $intent->provisionalAcceptedBy?->name,
                 'created_at' => $this->serializeTimestamp($intent->created_at),
             ]);
 

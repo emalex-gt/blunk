@@ -191,6 +191,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/fiscal-intents/{intent}/provisional-receipt', [FiscalDocumentIntentController::class, 'provisionalReceipt'])
             ->middleware(['module:pos', 'permission:sales.print'])
             ->name('fiscal-intents.provisional-receipt');
+        Route::post('/fiscal-intents/{intent}/provisional-receipt/accept', [FiscalDocumentIntentController::class, 'acceptProvisionalReceipt'])
+            ->middleware(['module:pos', 'permission:sales.print'])
+            ->name('fiscal-intents.provisional-receipt.accept');
         Route::get('/customers', [CustomerController::class, 'index'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.index');
         Route::get('/customers/search', [CustomerController::class, 'search'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.search');
         Route::get('/customers/lookup/nit', [CustomerController::class, 'lookupNit'])->middleware(['module:customers', 'permission:customers.view'])->name('customers.lookup.nit');

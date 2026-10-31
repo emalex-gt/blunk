@@ -4520,12 +4520,26 @@ class CriticalPosFelFlowTest extends TestCase
         $intent = $this->unknownFiscalIntent($business, $user);
 
         $this->actingAs($user)
+            ->post(route('fiscal-intents.provisional-receipt.accept', $intent))
+            ->assertSessionHasNoErrors();
+
+        $intent->refresh();
+        $this->assertNotNull($intent->provisional_accepted_at);
+        $this->assertSame($user->id, $intent->provisional_accepted_by);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+
+        $this->actingAs($user)
             ->get(route('fiscal-intents.provisional-receipt', $intent))
             ->assertOk()
             ->assertSeeInOrder([
-                'COMPROBANTE PROVISIONAL',
-                'NO ES FACTURA NI DOCUMENTO TRIBUTARIO FEL',
+                'CONSTANCIA PROVISIONAL DE OPERACIÓN',
+                'NO ES FACTURA NI DOCUMENTO TRIBUTARIO',
             ]);
+
+        $acceptedAt = $intent->provisional_accepted_at;
+        $this->actingAs($user)->post(route('fiscal-intents.provisional-receipt.accept', $intent))->assertSessionHasNoErrors();
+        $this->assertTrue($acceptedAt->equalTo($intent->refresh()->provisional_accepted_at));
 
         $intent->update(['status' => FiscalDocumentIntent::FINALIZED]);
         $this->actingAs($user)
@@ -5530,7 +5544,8 @@ class CriticalPosFelFlowTest extends TestCase
 
         $this->assertStringContainsString("if (effectiveDocumentType === 'invoice' && !felPrintSaleId)", $source);
         $this->assertStringContainsString('Conserva la operación y no la reenvíes.', $source);
-        $this->assertStringContainsString('setProvisionalReceiptUrl(flash?.provisional_receipt_url ?? null);', $source);
+        $this->assertStringContainsString("route('fiscal-intents.provisional-receipt.accept', provisionalIntent.id)", $source);
+        $this->assertStringContainsString('Aceptar y generar constancia', $source);
         $this->assertStringContainsString("if (effectiveDocumentType === 'invoice' && felPrintSaleId)", $source);
     }
 

@@ -20,7 +20,7 @@ class FiscalDocumentIntent extends Model
         'idempotency_key', 'status', 'operation_payload', 'fiscal_payload',
         'provider_response', 'negative_reconciliation_count', 'last_reconciliation_at',
         'next_reconciliation_at', 'last_reconciliation_result', 'last_reconciliation_error', 'last_finalization_error',
-        'certified_at', 'finalized_at',
+        'certified_at', 'finalized_at', 'provisional_accepted_at', 'provisional_accepted_by',
     ];
 
     protected $casts = [
@@ -34,6 +34,7 @@ class FiscalDocumentIntent extends Model
         'next_reconciliation_at' => 'datetime',
         'certified_at' => 'datetime',
         'finalized_at' => 'datetime',
+        'provisional_accepted_at' => 'datetime',
     ];
 
     public function business(): BelongsTo { return $this->belongsTo(Business::class); }
@@ -42,6 +43,7 @@ class FiscalDocumentIntent extends Model
     public function cashRegisterSession(): BelongsTo { return $this->belongsTo(CashRegisterSession::class); }
     public function creditCustomer(): BelongsTo { return $this->belongsTo(Customer::class, 'credit_customer_id'); }
     public function createdBy(): BelongsTo { return $this->belongsTo(User::class, 'created_by'); }
+    public function provisionalAcceptedBy(): BelongsTo { return $this->belongsTo(User::class, 'provisional_accepted_by'); }
 
     public function isUnresolved(): bool
     {

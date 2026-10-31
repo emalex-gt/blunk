@@ -834,7 +834,8 @@ export default function POS({
     const [cart, setCart] = useState<CartItem[]>([]);
     const [message, setMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
-    const [provisionalReceiptUrl, setProvisionalReceiptUrl] = useState<string | null>(null);
+    const [provisionalIntent, setProvisionalIntent] = useState<{ id: number; receiptUrl: string } | null>(null);
+    const [acceptingProvisionalReceipt, setAcceptingProvisionalReceipt] = useState(false);
     const [recentProductIds, setRecentProductIds] = useState<number[]>([]);
     const [productViewMode, setProductViewMode] = useState<ProductViewMode>(() => loadProductViewMode(productViewModeKey));
     const [hasHeldSale, setHasHeldSale] = useState(false);
@@ -1686,7 +1687,7 @@ export default function POS({
         setSearch('');
         setErrorMessage('');
         setMessage('');
-        setProvisionalReceiptUrl(null);
+        setProvisionalIntent(null);
         setData('note', '');
         setData('branch_id', activeBranchId);
         setData('customer', defaultCustomer);
@@ -1733,7 +1734,6 @@ export default function POS({
     function beginOperationSubmit() {
         latestSubmitSucceededRef.current = false;
         latestSubmitFailureHandledRef.current = false;
-        setProvisionalReceiptUrl(null);
     }
 
     function finalizeOperationSubmit() {
@@ -1747,6 +1747,29 @@ export default function POS({
         clearDraft(draftKey);
         latestDraftRef.current = null;
         focusSearch();
+    }
+
+    function acceptProvisionalReceipt() {
+        if (!provisionalIntent || acceptingProvisionalReceipt) {
+            return;
+        }
+
+        setAcceptingProvisionalReceipt(true);
+        router.post(route('fiscal-intents.provisional-receipt.accept', provisionalIntent.id), {}, {
+            preserveScroll: true,
+            onSuccess: (page) => {
+                const flash = page.props.flash as { provisional_receipt_url?: string | null } | undefined;
+                window.open(flash?.provisional_receipt_url ?? provisionalIntent.receiptUrl, '_blank');
+                setProvisionalIntent(null);
+                clearPosDraftAndState();
+                showMessage('Constancia provisional de operación generada. La certificación FEL sigue en verificación.');
+                toast.warning('Constancia provisional generada. No reenvíes la factura mientras se concilia.', { persistent: true });
+            },
+            onError: (errors) => {
+                showError(Object.values(errors)[0] ?? 'No se pudo registrar la constancia provisional.');
+            },
+            onFinish: () => setAcceptingProvisionalReceipt(false),
+        });
     }
 
     function closeQuotationStateAfterSave() {
@@ -2777,7 +2800,11 @@ export default function POS({
 
                     latestSubmitSucceededRef.current = false;
                     setFailedSubmission(true);
-                    setProvisionalReceiptUrl(flash?.provisional_receipt_url ?? null);
+                    setProvisionalIntent(
+                        flash?.fiscal_intent_id && flash.provisional_receipt_url
+                            ? { id: flash.fiscal_intent_id, receiptUrl: flash.provisional_receipt_url }
+                            : null,
+                    );
                     showError(fiscalMessage);
                     toast.warning(fiscalMessage, { persistent: true });
 
@@ -2808,7 +2835,7 @@ export default function POS({
                 setCustomerEditing(false);
                 setIdempotencyKey(makeOperationKey());
                 setFailedSubmission(false);
-                setProvisionalReceiptUrl(null);
+                setProvisionalIntent(null);
                 focusSearch();
 
                 if (effectiveDocumentType === 'receipt' && receiptSaleId) {
@@ -3731,16 +3758,6 @@ export default function POS({
                             {(errorMessage || errors.items || errors.note || customerError || paymentsError || cashRegisterError) && (
                                 <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
                                     <div>{errorMessage || errors.items || errors.note || customerError || paymentsError || cashRegisterError}</div>
-                                    {provisionalReceiptUrl && (
-                                        <a
-                                            href={provisionalReceiptUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="mt-2 inline-flex font-semibold underline underline-offset-2"
-                                        >
-                                            Abrir comprobante provisional no fiscal
-                                        </a>
-                                    )}
                                 </div>
                             )}
 
@@ -5029,6 +5046,21 @@ export default function POS({
                             >
                                 Limpiar venta
                             </button>
+                        </div>
+                    </section>
+                </div>
+            )}
+
+            {provisionalIntent && (
+                <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+                    <section role="dialog" aria-modal="true" aria-labelledby="provisional-receipt-title" className="w-full max-w-lg rounded-2xl border border-amber-200 bg-white p-6 shadow-2xl">
+                        <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Certificación FEL en verificación</p>
+                        <h2 id="provisional-receipt-title" className="mt-2 text-xl font-bold text-slate-950">La factura podría haberse certificado</h2>
+                        <p className="mt-3 text-sm leading-6 text-slate-600">Digifact no devolvió una confirmación concluyente. No reenvíes esta factura: Blunk conservará la intención y su reserva de stock mientras se concilia.</p>
+                        <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm font-semibold text-amber-900">La constancia provisional no es factura ni documento tributario.</p>
+                        <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                            <button type="button" onClick={() => setProvisionalIntent(null)} disabled={acceptingProvisionalReceipt} className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 disabled:opacity-60">Cancelar</button>
+                            <button type="button" onClick={acceptProvisionalReceipt} disabled={acceptingProvisionalReceipt} className="rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 disabled:opacity-60">{acceptingProvisionalReceipt ? 'Generando constancia...' : 'Aceptar y generar constancia'}</button>
                         </div>
                     </section>
                 </div>
