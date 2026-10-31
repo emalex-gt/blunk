@@ -399,12 +399,13 @@ class DashboardFoundationTest extends TestCase
             'started_at' => now(),
         ]);
         $customer = $this->customer($business, 'Cliente de ruta');
+        $secondCustomer = $this->customer($business, 'Segundo cliente de ruta');
         RouteVisit::query()->create([
             'business_id' => $business->id,
             'branch_id' => $branch->id,
             'route_work_day_id' => $workDay->id,
             'route_zone_id' => $zone->id,
-            'customer_id' => $customer->id,
+            'customer_id' => $secondCustomer->id,
             'seller_id' => $owner->id,
             'status' => 'pending',
         ]);
@@ -522,15 +523,17 @@ class DashboardFoundationTest extends TestCase
                 'started_at' => now(),
             ]);
         }
-        $mainZoneId = (int) RouteZone::query()
-            ->where('business_id', $business->id)
-            ->where('branch_id', $branch->id)
-            ->value('id');
         for ($number = 1; $number < 16; $number++) {
+            $zone = RouteZone::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'name' => 'Zona adicional '.$number,
+                'is_active' => true,
+            ]);
             RouteWorkDay::query()->create([
                 'business_id' => $business->id,
                 'branch_id' => $branch->id,
-                'route_zone_id' => $mainZoneId,
+                'route_zone_id' => $zone->id,
                 'seller_id' => $owner->id,
                 'work_date' => today(),
                 'status' => 'open',
