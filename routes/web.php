@@ -41,6 +41,7 @@ use App\Http\Controllers\SuperAdmin\DeployController as SuperAdminDeployControll
 use App\Http\Controllers\SuperAdmin\FelIncidentController as SuperAdminFelIncidentController;
 use App\Http\Controllers\SuperAdmin\MaintenanceAnnouncementController as SuperAdminMaintenanceAnnouncementController;
 use App\Http\Controllers\SuperAdmin\ProductImportController as SuperAdminProductImportController;
+use App\Http\Controllers\SuperAdmin\ProductCostRecalculationController as SuperAdminProductCostRecalculationController;
 use App\Http\Controllers\SuperAdmin\SecurityController as SuperAdminSecurityController;
 use App\Http\Controllers\SuperAdmin\TenantController as SuperAdminTenantController;
 use App\Http\Controllers\SuperAdmin\TenantBranchController as SuperAdminTenantBranchController;
@@ -133,6 +134,8 @@ Route::middleware(['auth', 'super.admin'])
         Route::post('/businesses/{business}/product-imports/confirm', [SuperAdminProductImportController::class, 'confirm'])->name('product-imports.confirm');
         Route::get('/product-import-template', [SuperAdminProductImportController::class, 'template'])->name('product-imports.template');
         Route::get('/product-imports/reports/{token}', [SuperAdminProductImportController::class, 'report'])->name('product-imports.report');
+        Route::get('/tools/product-cost-recalculation', [SuperAdminProductCostRecalculationController::class, 'index'])->name('tools.product-cost-recalculation.index');
+        Route::post('/tools/product-cost-recalculation/apply', [SuperAdminProductCostRecalculationController::class, 'apply'])->name('tools.product-cost-recalculation.apply');
     });
 
 Route::middleware('auth')->group(function () {

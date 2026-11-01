@@ -10,6 +10,7 @@ class HistoricalProductCostAverageService
 {
     private const CALCULATION_SCALE = 10;
     private const RESULT_SCALE = 5;
+    private const CHUNK_SIZE = 200;
 
     /**
      * Returns a read-only historical weighted-average simulation for a tenant.
@@ -34,9 +35,45 @@ class HistoricalProductCostAverageService
             return collect();
         }
 
-        $products = Product::query()
+        if ($productIds !== null) {
+            return $this->simulateProducts($businessId, $productIds);
+        }
+
+        $results = collect();
+
+        Product::query()
             ->where('business_id', $businessId)
-            ->when($productIds !== null, fn ($query) => $query->whereIn('id', $productIds))
+            ->orderBy('id')
+            ->chunkById(self::CHUNK_SIZE, function (Collection $products) use ($businessId, &$results): void {
+                $results = $results->concat($this->simulateProducts(
+                    $businessId,
+                    $products->pluck('id')->all(),
+                    $products,
+                ));
+            }, 'id');
+
+        return $results->values();
+    }
+
+    /**
+     * Calculates only the requested product IDs. Consumers rendering a page or
+     * applying a batch should use this method rather than loading a tenant's
+     * full acquisition history at once.
+     *
+     * @param array<int, int> $productIds
+     * @param Collection<int, Product>|null $products
+     */
+    public function simulateProducts(int $businessId, array $productIds, ?Collection $products = null): Collection
+    {
+        $productIds = array_values(array_unique(array_map('intval', $productIds)));
+
+        if ($productIds === []) {
+            return collect();
+        }
+
+        $products ??= Product::query()
+            ->where('business_id', $businessId)
+            ->whereIn('id', $productIds)
             ->orderBy('id')
             ->get(['id', 'cost_price']);
 
@@ -44,7 +81,7 @@ class HistoricalProductCostAverageService
             return collect();
         }
 
-        $productIds = $products->pluck('id')->all();
+        $productIds = $products->pluck('id')->map(fn (mixed $id) => (int) $id)->all();
         $observations = ProductPurchaseCostHistory::normalized($businessId)
             ->whereIn('product_id', $productIds)
             ->orderBy('product_id')
@@ -85,6 +122,66 @@ class HistoricalProductCostAverageService
                 ...$result,
             ];
         });
+    }
+
+    /**
+     * Produces a bounded-memory summary and deterministic snapshot fingerprint.
+     * The fingerprint binds confirmation to both historical inputs and the
+     * current product costs observed during the simulation.
+     *
+     * @return array{examined:int,calculable:int,different:int,without_history:int,ambiguous:int,invalid:int,fingerprint:string}
+     */
+    public function summary(int $businessId): array
+    {
+        $summary = [
+            'examined' => 0,
+            'calculable' => 0,
+            'different' => 0,
+            'without_history' => 0,
+            'ambiguous' => 0,
+            'invalid' => 0,
+        ];
+        $fingerprint = hash_init('sha256');
+
+        Product::query()
+            ->where('business_id', $businessId)
+            ->orderBy('id')
+            ->chunkById(self::CHUNK_SIZE, function (Collection $products) use ($businessId, &$summary, $fingerprint): void {
+                foreach ($this->simulateProducts(
+                    $businessId,
+                    $products->pluck('id')->all(),
+                    $products,
+                ) as $row) {
+                    $summary['examined']++;
+                    $summary['invalid'] += $row['invalid_acquisition_count'] > 0 ? 1 : 0;
+
+                    if ($row['status'] === 'calculable') {
+                        $summary['calculable']++;
+                        if (bccomp($row['current_cost'], (string) $row['proposed_cost'], self::RESULT_SCALE) !== 0) {
+                            $summary['different']++;
+                        }
+                    } elseif ($row['status'] === 'ambiguous') {
+                        $summary['ambiguous']++;
+                    } else {
+                        $summary['without_history']++;
+                    }
+
+                    hash_update($fingerprint, implode('|', [
+                        $row['product_id'],
+                        $row['current_cost'],
+                        $row['proposed_cost'] ?? '',
+                        $row['weighted_quantity'],
+                        $row['acquisition_count'],
+                        $row['source'] ?? '',
+                        $row['status'],
+                        $row['duplicate_acquisition_count'],
+                        $row['ambiguous_acquisition_count'],
+                        $row['invalid_acquisition_count'],
+                    ])."\n");
+                }
+            }, 'id');
+
+        return [...$summary, 'fingerprint' => hash_final($fingerprint)];
     }
 
     /**

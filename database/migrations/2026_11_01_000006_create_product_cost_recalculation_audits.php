@@ -24,7 +24,8 @@ return new class extends Migration
             $table->foreignId('product_cost_recalculation_run_id')
                 ->constrained('product_cost_recalculation_runs')
                 ->cascadeOnDelete();
-            $table->foreignId('product_id')->constrained()->cascadeOnDelete();
+            // Preserve the immutable audit snapshot when a product is removed.
+            $table->foreignId('product_id')->nullable()->constrained()->nullOnDelete();
             $table->decimal('previous_cost', 15, 5);
             $table->decimal('proposed_cost', 15, 5);
             $table->decimal('weighted_quantity', 20, 5);

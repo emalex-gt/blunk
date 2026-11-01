@@ -71,6 +71,37 @@ class HistoricalProductCostAverageServiceTest extends TestCase
         $this->assertSame(1, $ambiguous['ambiguous_acquisition_count']);
     }
 
+    public function test_zero_cost_is_valid_and_branch_acquisitions_are_consolidated_with_final_rounding(): void
+    {
+        [$business, $branch, $product, $supplier] = $this->context('1.00000');
+        $otherBranch = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Secundaria',
+            'code' => 'SEC',
+            'is_active' => true,
+        ]);
+        $this->purchase($business, $branch, $product, $supplier, '1.00000', '0.00000');
+        $this->purchase($business, $otherBranch, $product, $supplier, '2.00000', '10.00000');
+
+        $result = app(HistoricalProductCostAverageService::class)->simulate($business->id)->sole();
+
+        $this->assertSame('6.66667', $result['proposed_cost']);
+        $this->assertSame('3.00000', $result['weighted_quantity']);
+        $this->assertSame(2, $result['acquisition_count']);
+    }
+
+    public function test_product_without_history_is_reported_without_proposing_zero_cost(): void
+    {
+        [$business, , $product] = $this->context('7.50000');
+
+        $result = app(HistoricalProductCostAverageService::class)->simulate($business->id)->sole();
+
+        $this->assertSame($product->id, $result['product_id']);
+        $this->assertSame('sin_historial', $result['status']);
+        $this->assertNull($result['proposed_cost']);
+        $this->assertSame('7.50000', $result['current_cost']);
+    }
+
     /** @return array{Business, Branch, Product, Supplier} */
     private function context(string $cost): array
     {
