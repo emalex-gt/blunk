@@ -107,7 +107,7 @@ class ProductCostRecalculationController extends Controller
 
         return redirect()
             ->route('super-admin.tools.product-cost-recalculation.index', ['business_id' => $business->id])
-            ->with('success', "Recálculo aplicado. {$run->metadata['applied_count']} productos actualizados.");
+            ->with('success', "Costo promedio de existencias aplicado. {$run->metadata['applied_count']} productos actualizados.");
     }
 
     private function simulationRows(Business $business): LengthAwarePaginator
@@ -134,11 +134,14 @@ class ProductCostRecalculationController extends Controller
                 'current_cost' => $row['current_cost'],
                 'proposed_cost' => $row['proposed_cost'],
                 'difference' => $row['difference'],
-                'weighted_quantity' => $row['weighted_quantity'],
+                'physical_stock' => $row['physical_stock'],
+                'covered_quantity' => $row['covered_quantity'],
+                'missing_quantity' => $row['missing_quantity'],
                 'acquisition_count' => $row['acquisition_count'],
                 'source' => $row['source'],
                 'status' => $row['status'],
                 'invalid_acquisition_count' => $row['invalid_acquisition_count'],
+                'selected_acquisitions' => $row['selected_acquisitions'],
             ];
         }));
 

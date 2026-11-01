@@ -26,7 +26,7 @@ export default function SuperAdminLayout({ title, actions, children }: Props) {
             active: route().current('super-admin.fel-incidents.*'),
         },
         {
-            label: 'Herramientas',
+            label: 'Recalcular costo promedio de existencias',
             href: route('super-admin.tools.product-cost-recalculation.index'),
             active: route().current('super-admin.tools.*'),
         },

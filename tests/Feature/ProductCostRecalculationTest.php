@@ -7,6 +7,7 @@ use App\Models\Branch;
 use App\Models\Business;
 use App\Models\HistoricalProductPurchaseCost;
 use App\Models\Product;
+use App\Models\ProductBranchStock;
 use App\Models\ProductCostRecalculationRun;
 use App\Models\Supplier;
 use App\Models\User;
@@ -42,6 +43,8 @@ class ProductCostRecalculationTest extends TestCase
         [$business, $branch, $product, $supplier] = $this->context('10.00000');
         $withoutHistory = $this->product($business, 'Sin historial', '5.00000');
         $ambiguous = $this->product($business, 'Ambiguo', '2.00000');
+        $this->stock($business, $branch, $product, '2.00000');
+        $this->stock($business, $branch, $ambiguous, '1.00000');
         $this->historical($business, $branch, $product, $supplier, '2.00000', '15.123456', 'acquisition-1');
         $this->historical($business, $branch, $ambiguous, $supplier, '1.00000', '9.00000', 'missing-native', 'blunk');
         $actor = User::factory()->create(['is_super_admin' => true]);
@@ -67,6 +70,8 @@ class ProductCostRecalculationTest extends TestCase
             'product_id' => $product->id,
             'previous_cost' => '10.00000',
             'proposed_cost' => '15.12346',
+            'physical_stock' => '2.00000',
+            'covered_quantity' => '2.00000',
         ]);
         $this->assertDatabaseMissing('product_cost_recalculation_items', ['product_id' => $withoutHistory->id]);
         $this->assertDatabaseMissing('product_cost_recalculation_items', ['product_id' => $ambiguous->id]);
@@ -75,9 +80,10 @@ class ProductCostRecalculationTest extends TestCase
     public function test_application_rejects_a_changed_snapshot_without_writing_any_cost(): void
     {
         [$business, $branch, $product, $supplier] = $this->context('10.00000');
+        $this->stock($business, $branch, $product, '1.00000');
         $this->historical($business, $branch, $product, $supplier, '1.00000', '20.00000', 'before-change');
         $summary = app(HistoricalProductCostAverageService::class)->summary($business->id);
-        $this->historical($business, $branch, $product, $supplier, '1.00000', '30.00000', 'after-change');
+        $this->stock($business, $branch, $product, '2.00000');
 
         try {
             app(ProductCostRecalculationService::class)->apply($business, User::factory()->create(['is_super_admin' => true]), [
@@ -93,6 +99,45 @@ class ProductCostRecalculationTest extends TestCase
             ]);
             $this->assertDatabaseCount('product_cost_recalculation_items', 0);
         }
+    }
+
+    public function test_uses_newest_acquisitions_until_current_stock_is_covered_with_a_partial_row(): void
+    {
+        [$business, $branch, $product, $supplier] = $this->context('100.00000');
+        $otherBranch = Branch::query()->create(['business_id' => $business->id, 'name' => 'Secundaria', 'code' => 'SEC', 'is_active' => true]);
+        $this->stock($business, $branch, $product, '5.00000');
+        $this->stock($business, $otherBranch, $product, '3.00000');
+        $this->historical($business, $branch, $product, $supplier, '4.00000', '332.61000', 'recent', 'legacy', '2026-03-03 12:00:00');
+        $this->historical($business, $branch, $product, $supplier, '2.00000', '375.37000', 'middle', 'legacy', '2026-03-02 12:00:00');
+        $this->historical($business, $branch, $product, $supplier, '6.00000', '292.50000', 'old', 'legacy', '2026-03-01 12:00:00');
+
+        $row = app(HistoricalProductCostAverageService::class)->simulate($business->id)->sole();
+
+        $this->assertSame('8.00000', $row['physical_stock']);
+        $this->assertSame('8.00000', $row['covered_quantity']);
+        $this->assertSame('0.00000', $row['missing_quantity']);
+        $this->assertSame('333.27250', $row['proposed_cost']);
+        $this->assertCount(3, $row['selected_acquisitions']);
+        $this->assertTrue($row['selected_acquisitions'][2]['partial']);
+        $this->assertSame('2.00000', $row['selected_acquisitions'][2]['taken_quantity']);
+    }
+
+    public function test_distinguishes_insufficient_zero_and_negative_physical_stock(): void
+    {
+        [$business, $branch, $product, $supplier] = $this->context('5.00000');
+        $this->stock($business, $branch, $product, '3.00000');
+        $this->historical($business, $branch, $product, $supplier, '2.00000', '5.00000', 'short');
+        $insufficient = app(HistoricalProductCostAverageService::class)->simulate($business->id)->sole();
+        $this->assertSame('historial_insuficiente', $insufficient['status']);
+        $this->assertSame('1.00000', $insufficient['missing_quantity']);
+
+        $this->stock($business, $branch, $product, '0.00000');
+        $zero = app(HistoricalProductCostAverageService::class)->simulate($business->id)->sole();
+        $this->assertSame('sin_existencias', $zero['status']);
+
+        $this->stock($business, $branch, $product, '-1.00000');
+        $negative = app(HistoricalProductCostAverageService::class)->simulate($business->id)->sole();
+        $this->assertSame('stock_negativo', $negative['status']);
     }
 
     /** @return array{Business, Branch, Product, Supplier} */
@@ -115,12 +160,21 @@ class ProductCostRecalculationTest extends TestCase
         ]);
     }
 
-    private function historical(Business $business, Branch $branch, Product $product, Supplier $supplier, string $quantity, string $cost, string $recordId, string $source = 'legacy'): void
+    private function historical(Business $business, Branch $branch, Product $product, Supplier $supplier, string $quantity, string $cost, string $recordId, string $source = 'legacy', string $acquiredAt = '2026-01-01 12:00:00'): void
     {
         HistoricalProductPurchaseCost::query()->create([
             'business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id, 'supplier_id' => $supplier->id,
-            'acquired_at' => '2026-01-01 12:00:00', 'quantity' => $quantity, 'unit_cost' => $cost,
+            'acquired_at' => $acquiredAt, 'quantity' => $quantity, 'unit_cost' => $cost,
             'supplier_invoice_number' => 'H-'.$recordId, 'source_system' => $source, 'source_record_id' => $recordId, 'imported_at' => now(),
         ]);
+    }
+
+    private function stock(Business $business, Branch $branch, Product $product, string $quantity): void
+    {
+        ProductBranchStock::query()->updateOrCreate([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+        ], ['stock' => $quantity]);
     }
 }

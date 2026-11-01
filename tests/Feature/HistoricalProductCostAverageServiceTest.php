@@ -6,6 +6,7 @@ use App\Models\Branch;
 use App\Models\Business;
 use App\Models\HistoricalProductPurchaseCost;
 use App\Models\Product;
+use App\Models\ProductBranchStock;
 use App\Models\Purchase;
 use App\Models\PurchaseItem;
 use App\Models\Supplier;
@@ -20,6 +21,7 @@ class HistoricalProductCostAverageServiceTest extends TestCase
     public function test_simulates_weighted_historical_average_with_five_decimal_precision_without_updating_product(): void
     {
         [$business, $branch, $product, $supplier] = $this->context('10.00000');
+        $this->stock($business, $branch, $product, '5.00000');
         $this->purchase($business, $branch, $product, $supplier, '2.00000', '10.00000');
         $this->historical($business, $branch, $product, $supplier, '3.00000', '20.00000', 'legacy-1');
 
@@ -33,10 +35,12 @@ class HistoricalProductCostAverageServiceTest extends TestCase
         $this->assertSame('10.00000', $product->fresh()->cost_price);
     }
 
-    public function test_simulation_is_tenant_scoped_and_ignores_invalid_acquisitions(): void
+    public function test_simulation_is_tenant_scoped_and_blocks_invalid_acquisitions_that_can_affect_current_stock(): void
     {
         [$businessA, $branchA, $productA, $supplierA] = $this->context('1.00000');
         [$businessB, $branchB, $productB, $supplierB] = $this->context('1.00000');
+        $this->stock($businessA, $branchA, $productA, '1.00000');
+        $this->stock($businessB, $branchB, $productB, '1.00000');
         $this->historical($businessA, $branchA, $productA, $supplierA, '1.00000', '4.00000', 'valid-a');
         $this->historical($businessA, $branchA, $productA, $supplierA, '0.00000', '99.00000', 'zero-quantity');
         $this->historical($businessA, $branchA, $productA, $supplierA, '2.00000', '-1.00000', 'negative-cost');
@@ -45,14 +49,15 @@ class HistoricalProductCostAverageServiceTest extends TestCase
         $result = app(HistoricalProductCostAverageService::class)->simulate($businessA->id)->sole();
 
         $this->assertSame($productA->id, $result['product_id']);
-        $this->assertSame('4.00000', $result['proposed_cost']);
-        $this->assertSame(1, $result['acquisition_count']);
-        $this->assertSame(2, $result['invalid_acquisition_count']);
+        $this->assertSame('datos_invalidos', $result['status']);
+        $this->assertNull($result['proposed_cost']);
+        $this->assertSame(1, $result['invalid_acquisition_count']);
     }
 
     public function test_native_and_historical_blunk_duplicate_is_counted_once_but_unmatched_blunk_row_is_ambiguous(): void
     {
         [$business, $branch, $product, $supplier] = $this->context('1.00000');
+        $this->stock($business, $branch, $product, '2.00000');
         $item = $this->purchase($business, $branch, $product, $supplier, '2.00000', '10.00000');
         $this->historical($business, $branch, $product, $supplier, '2.00000', '10.00000', (string) $item->id, 'blunk');
 
@@ -62,6 +67,7 @@ class HistoricalProductCostAverageServiceTest extends TestCase
         $this->assertSame(1, $deduplicated['acquisition_count']);
         $this->assertSame(1, $deduplicated['duplicate_acquisition_count']);
 
+        $this->stock($business, $branch, $product, '3.00000');
         $this->historical($business, $branch, $product, $supplier, '1.00000', '9.00000', 'missing-native-item', 'blunk');
 
         $ambiguous = app(HistoricalProductCostAverageService::class)->simulate($business->id)->sole();
@@ -82,6 +88,8 @@ class HistoricalProductCostAverageServiceTest extends TestCase
         ]);
         $this->purchase($business, $branch, $product, $supplier, '1.00000', '0.00000');
         $this->purchase($business, $otherBranch, $product, $supplier, '2.00000', '10.00000');
+        $this->stock($business, $branch, $product, '1.00000');
+        $this->stock($business, $otherBranch, $product, '2.00000');
 
         $result = app(HistoricalProductCostAverageService::class)->simulate($business->id)->sole();
 
@@ -93,6 +101,8 @@ class HistoricalProductCostAverageServiceTest extends TestCase
     public function test_product_without_history_is_reported_without_proposing_zero_cost(): void
     {
         [$business, , $product] = $this->context('7.50000');
+        $branch = $business->branches()->sole();
+        $this->stock($business, $branch, $product, '1.00000');
 
         $result = app(HistoricalProductCostAverageService::class)->simulate($business->id)->sole();
 
@@ -175,5 +185,14 @@ class HistoricalProductCostAverageServiceTest extends TestCase
             'source_record_id' => $recordId,
             'imported_at' => now(),
         ]);
+    }
+
+    private function stock(Business $business, Branch $branch, Product $product, string $quantity): void
+    {
+        ProductBranchStock::query()->updateOrCreate([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+        ], ['stock' => $quantity]);
     }
 }

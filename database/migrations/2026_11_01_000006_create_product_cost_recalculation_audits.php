@@ -28,9 +28,13 @@ return new class extends Migration
             $table->foreignId('product_id')->nullable()->constrained()->nullOnDelete();
             $table->decimal('previous_cost', 15, 5);
             $table->decimal('proposed_cost', 15, 5);
+            $table->decimal('physical_stock', 20, 5);
+            $table->decimal('covered_quantity', 20, 5);
+            $table->decimal('missing_quantity', 20, 5);
             $table->decimal('weighted_quantity', 20, 5);
             $table->unsignedInteger('acquisition_count');
             $table->json('sources')->nullable();
+            $table->json('selected_acquisitions')->nullable();
             $table->string('calculation_status', 32);
 
             $table->unique(['product_cost_recalculation_run_id', 'product_id'], 'product_cost_recalculation_item_unique');

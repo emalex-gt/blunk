@@ -34,7 +34,10 @@ class ProductCostRecalculationService
             'executed_by' => $actor->id,
             'executed_at' => now(),
             'status' => ProductCostRecalculationRun::STATUS_RUNNING,
-            'metadata' => ['expected_fingerprint' => $expected['fingerprint']],
+            'metadata' => [
+                'algorithm' => 'current_physical_stock_recent_acquisitions_fifo_assumption',
+                'expected_fingerprint' => $expected['fingerprint'],
+            ],
         ]);
 
         try {
@@ -88,9 +91,13 @@ class ProductCostRecalculationService
                                 'product_id' => $product->id,
                                 'previous_cost' => $row['current_cost'],
                                 'proposed_cost' => $row['proposed_cost'],
+                                'physical_stock' => $row['physical_stock'],
+                                'covered_quantity' => $row['covered_quantity'],
+                                'missing_quantity' => $row['missing_quantity'],
                                 'weighted_quantity' => $row['weighted_quantity'],
                                 'acquisition_count' => $row['acquisition_count'],
                                 'sources' => $row['source'] === null ? [] : explode(', ', $row['source']),
+                                'selected_acquisitions' => $row['selected_acquisitions'],
                                 'calculation_status' => $row['status'],
                             ]);
                             $applied++;
@@ -100,6 +107,7 @@ class ProductCostRecalculationService
                 $run->update([
                     'status' => ProductCostRecalculationRun::STATUS_COMPLETED,
                     'metadata' => [
+                        'algorithm' => 'current_physical_stock_recent_acquisitions_fifo_assumption',
                         'fingerprint' => $summary['fingerprint'],
                         'summary' => $summary,
                         'applied_count' => $applied,
@@ -113,6 +121,7 @@ class ProductCostRecalculationService
                 'status' => ProductCostRecalculationRun::STATUS_FAILED,
                 'metadata' => [
                     'expected_fingerprint' => $expected['fingerprint'],
+                    'algorithm' => 'current_physical_stock_recent_acquisitions_fifo_assumption',
                     'failure' => $exception instanceof ProductCostRecalculationSnapshotChanged
                         ? 'snapshot_changed'
                         : 'application_failed',

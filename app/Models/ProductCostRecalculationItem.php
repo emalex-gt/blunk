@@ -14,9 +14,13 @@ class ProductCostRecalculationItem extends Model
         'product_id',
         'previous_cost',
         'proposed_cost',
+        'physical_stock',
+        'covered_quantity',
+        'missing_quantity',
         'weighted_quantity',
         'acquisition_count',
         'sources',
+        'selected_acquisitions',
         'calculation_status',
     ];
 
@@ -24,7 +28,11 @@ class ProductCostRecalculationItem extends Model
         'sources' => 'array',
         'previous_cost' => 'decimal:5',
         'proposed_cost' => 'decimal:5',
+        'physical_stock' => 'decimal:5',
+        'covered_quantity' => 'decimal:5',
+        'missing_quantity' => 'decimal:5',
         'weighted_quantity' => 'decimal:5',
+        'selected_acquisitions' => 'array',
     ];
 
     public function run(): BelongsTo
