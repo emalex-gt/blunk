@@ -109,6 +109,7 @@ export default function Authenticated({
     const reportItems: NavItem[] = [
         hasModule('reports') && can('reports.sales.view') ? { label: 'Ventas', href: route('reports.sales'), active: route().current('reports.sales') } : null,
         hasModule('reports') && can('reports.inventory.view') ? { label: 'Inventario', href: route('reports.inventory'), active: route().current('reports.inventory') } : null,
+        hasModule('reports') && can('reports.inventory.view') ? { label: 'Productos sin ventas', href: route('reports.products-without-sales'), active: route().current('reports.products-without-sales') } : null,
         hasModule('reports') && can('reports.low_stock.view') ? { label: 'Stock bajo', href: route('reports.low-stock'), active: route().current('reports.low-stock') } : null,
         hasModule('reports') && can('reports.daily.view') ? { label: 'Diario', href: route('reports.daily'), active: route().current('reports.daily') } : null,
         hasModule('reports') && can('reports.profit.view') ? { label: 'Utilidades', href: route('reports.profit'), active: route().current('reports.profit') } : null,

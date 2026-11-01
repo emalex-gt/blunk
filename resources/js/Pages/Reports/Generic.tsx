@@ -65,6 +65,7 @@ type Props = {
     fixedFilters?: Record<string, string | number | null>;
     productContext?: ProductContext | null;
     branch?: Branch | null;
+    notice?: string | null;
     maxRangeLabel?: string;
 };
 
@@ -122,6 +123,7 @@ export default function GenericReport({
     fixedFilters = {},
     productContext = null,
     branch = null,
+    notice = null,
     maxRangeLabel = 'Rango máximo: 3 meses',
 }: Props) {
     const page = usePage();
@@ -347,6 +349,12 @@ export default function GenericReport({
                             </div>
                         </form>
                     </section>
+
+                    {notice && (
+                        <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="note">
+                            {notice}
+                        </section>
+                    )}
 
                     {visibleSummary.length > 0 && (
                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

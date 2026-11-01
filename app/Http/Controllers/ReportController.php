@@ -54,6 +54,7 @@ class ReportController extends Controller
         'products-sold-detailed' => ['method' => 'productsSoldDetailed', 'permission' => Permissions::REPORTS_PRODUCTS_SOLD_DETAILED_VIEW, 'title' => 'Productos vendidos detallado'],
         'products-sold-summary' => ['method' => 'productsSoldSummary', 'permission' => Permissions::REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW, 'title' => 'Productos vendidos resumido'],
         'low-stock' => ['method' => 'lowStock', 'permission' => Permissions::REPORTS_LOW_STOCK_VIEW, 'title' => 'Stock bajo'],
+        'products-without-sales' => ['method' => 'productsWithoutSales', 'permission' => Permissions::REPORTS_INVENTORY_VIEW, 'title' => 'Productos sin ventas'],
         'top-products' => ['method' => 'topProducts', 'permission' => Permissions::REPORTS_TOP_PRODUCTS_VIEW, 'title' => 'Productos más vendidos'],
         'purchase-cost-history' => ['method' => 'purchaseCostHistory', 'permission' => Permissions::REPORTS_PURCHASE_COST_HISTORY_VIEW, 'title' => 'Historial de precios de compra'],
     ];
@@ -598,6 +599,100 @@ class ReportController extends Controller
                 $canViewProfit ? ['value' => 'profit', 'label' => 'Utilidad'] : null,
             ])->filter()->values(),
             'branch' => $scope->payload(),
+        ]);
+    }
+
+    public function productsWithoutSales(Request $request): Response
+    {
+        $businessId = currentBusinessId();
+        $business = Business::query()->select('id', 'country')->findOrFail($businessId);
+        $scope = BranchReportScope::current($businessId);
+        $range = ReportDateRange::monthToDate($request, $business);
+        $categoryId = $request->integer('category_id') ?: null;
+        $productSearch = trim((string) $request->query('product_search', ''));
+
+        $firstEntryByProduct = DB::table('stock_movements')
+            ->selectRaw('product_id, MIN(created_at) as first_entry_at')
+            ->where('business_id', $businessId)
+            ->where('branch_id', $scope->branch->id)
+            ->where('quantity', '>', 0)
+            ->groupBy('product_id');
+
+        $products = Product::query()
+            ->join('product_branch_stocks', function ($join) use ($businessId, $scope) {
+                $join->on('product_branch_stocks.product_id', '=', 'products.id')
+                    ->where('product_branch_stocks.business_id', '=', $businessId)
+                    ->where('product_branch_stocks.branch_id', '=', $scope->branch->id);
+            })
+            ->leftJoinSub($firstEntryByProduct, 'first_entries', fn ($join) => $join->on('first_entries.product_id', '=', 'products.id'))
+            ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
+            ->where('products.business_id', $businessId)
+            ->where('product_branch_stocks.stock', '>', 0)
+            ->whereNotExists(function ($query) use ($businessId, $scope, $range) {
+                $query->selectRaw('1')
+                    ->from('sale_items')
+                    ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
+                    ->whereColumn('sale_items.product_id', 'products.id')
+                    ->where('sale_items.business_id', $businessId)
+                    ->where('sales.business_id', $businessId)
+                    ->where('sales.branch_id', $scope->branch->id)
+                    ->where(fn ($sales) => $sales->where('sales.status', 'completed')->orWhereNull('sales.status'))
+                    ->whereBetween('sales.created_at', [$range->start, $range->end]);
+            })
+            ->when($categoryId, fn ($query) => $query->where('products.category_id', $categoryId))
+            ->when($productSearch !== '', function ($query) use ($productSearch) {
+                $query->where(function ($products) use ($productSearch) {
+                    $products->where('products.name', 'ilike', "%{$productSearch}%")
+                        ->orWhere('products.code', 'ilike', "%{$productSearch}%")
+                        ->orWhere('products.barcode', 'ilike', "%{$productSearch}%");
+                });
+            })
+            ->select([
+                'products.id',
+                'products.name',
+                'products.code',
+                'products.barcode',
+                'categories.name as category_name',
+                'product_branch_stocks.stock',
+                'first_entries.first_entry_at',
+            ])
+            ->orderByRaw('first_entries.first_entry_at ASC NULLS LAST')
+            ->orderBy('products.name')
+            ->orderBy('products.id')
+            ->paginate($this->reportPerPage($request))
+            ->withQueryString()
+            ->through(function ($product) use ($business) {
+                $firstEntry = $product->first_entry_at
+                    ? Carbon::parse($product->first_entry_at)->timezone(tenantTimezone($business))
+                    : null;
+
+                return [
+                    'code' => $product->code ?: $product->barcode ?: '-',
+                    'product' => $product->name,
+                    'category' => $product->category_name ?: '-',
+                    'stock' => (float) $product->stock,
+                    'first_entry_at' => $firstEntry?->format('Y-m-d H:i') ?? 'Sin registro',
+                    'days_since_first_entry' => $firstEntry?->startOfDay()->diffInDays(now(tenantTimezone($business))->startOfDay()) ?? 'Sin registro',
+                ];
+            });
+
+        return $this->report('Productos sin ventas', 'reports.products-without-sales', [
+            ['key' => 'code', 'label' => 'Código/SKU'],
+            ['key' => 'product', 'label' => 'Producto'],
+            ['key' => 'category', 'label' => 'Categoría'],
+            ['key' => 'stock', 'label' => 'Stock actual', 'type' => 'number'],
+            ['key' => 'first_entry_at', 'label' => 'Primera entrada registrada'],
+            ['key' => 'days_since_first_entry', 'label' => 'Días transcurridos', 'type' => 'number'],
+        ], $products, [
+            'filters' => [
+                'date_from' => $range->dateFrom,
+                'date_to' => $range->dateTo,
+                'category_id' => $categoryId,
+                'product_search' => $productSearch,
+            ],
+            'categories' => Category::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
+            'branch' => $scope->payload(),
+            'notice' => 'Ordenado por la primera entrada de inventario registrada, de la más antigua a la más reciente. Esta fecha no representa necesariamente la antigüedad exacta de las existencias actuales.',
         ]);
     }
 
@@ -1209,6 +1304,7 @@ class ReportController extends Controller
             'productContext' => $extra['productContext'] ?? null,
             'branch' => $extra['branch'] ?? null,
             'exportBranchName' => $extra['exportBranchName'] ?? null,
+            'notice' => $extra['notice'] ?? null,
             'maxRangeLabel' => $extra['maxRangeLabel'] ?? 'Rango máximo: 3 meses',
         ]);
     }

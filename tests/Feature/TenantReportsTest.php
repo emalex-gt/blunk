@@ -17,6 +17,7 @@ use App\Models\Product;
 use App\Models\ProductBranchStock;
 use App\Models\ProductPrice;
 use App\Models\StockReservation;
+use App\Models\StockMovement;
 use App\Models\Supplier;
 use App\Models\Purchase;
 use App\Models\PurchaseItem;
@@ -469,6 +470,46 @@ class TenantReportsTest extends TestCase
                 ->where('rows.data.0.margin', 60));
     }
 
+    public function test_products_without_sales_reports_positive_branch_stock_by_oldest_entry_and_excludes_effective_sales(): void
+    {
+        [$business, $user, $main, $other] = $this->tenant();
+        [$foreignBusiness, , $foreignMain] = $this->tenant();
+        $oldest = $this->product($business, $main, name: 'Sin ventas antiguo', stock: 4, salePrice: 100);
+        $recent = $this->product($business, $main, name: 'Sin ventas reciente', stock: 3, salePrice: 100);
+        $withoutEntry = $this->product($business, $main, name: 'Sin entrada registrada', stock: 2, salePrice: 100);
+        $sold = $this->product($business, $main, name: 'Con venta efectiva', stock: 5, salePrice: 100);
+        $cancelled = $this->product($business, $main, name: 'Venta anulada', stock: 6, salePrice: 100);
+        $otherBranch = $this->product($business, $other, name: 'Solo otra sucursal', stock: 7, salePrice: 100);
+        $foreign = $this->product($foreignBusiness, $foreignMain, name: 'Otro tenant', stock: 8, salePrice: 100);
+
+        $this->stockEntry($business, $main, $oldest, '2026-01-10 12:00:00');
+        $this->stockEntry($business, $main, $recent, '2026-01-20 12:00:00', 'transfer_in');
+        $this->stockEntry($business, $main, $sold, '2026-01-05 12:00:00');
+        $this->stockEntry($business, $main, $cancelled, '2026-01-06 12:00:00');
+        $this->stockEntry($business, $other, $otherBranch, '2025-12-01 12:00:00');
+        $this->stockEntry($foreignBusiness, $foreignMain, $foreign, '2025-11-01 12:00:00');
+        $this->sale($business, $main, $user, $sold, total: 100, createdAt: '2026-02-01 12:00:00');
+        $this->sale($business, $main, $user, $cancelled, total: 100, createdAt: '2026-02-02 12:00:00', status: 'cancelled');
+
+        $this->actingAs($user)
+            ->get(route('reports.products-without-sales', [
+                'date_from' => '2026-02-01',
+                'date_to' => '2026-02-28',
+            ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('rows.total', 4)
+                ->where('rows.data.0.product', 'Venta anulada')
+                ->where('rows.data.1.product', 'Sin ventas antiguo')
+                ->where('rows.data.2.product', 'Sin ventas reciente')
+                ->where('rows.data.3.product', 'Sin entrada registrada')
+                ->where('rows.data.3.first_entry_at', 'Sin registro')
+                ->where('rows.data.3.days_since_first_entry', 'Sin registro')
+                ->where('notice', 'Ordenado por la primera entrada de inventario registrada, de la más antigua a la más reciente. Esta fecha no representa necesariamente la antigüedad exacta de las existencias actuales.')
+            );
+    }
+
     public function test_top_products_uses_historical_costs_excludes_cancelled_sales_and_marks_incomplete_costs(): void
     {
         [$business, $user, $main] = $this->tenant();
@@ -559,6 +600,10 @@ class TenantReportsTest extends TestCase
 
         $this->actingAs($user)
             ->get(route('reports.top-products.export.excel'))
+            ->assertOk();
+
+        $this->actingAs($user)
+            ->get(route('reports.export', ['report' => 'products-without-sales', 'format' => 'excel']))
             ->assertOk();
     }
 
@@ -860,5 +905,23 @@ class TenantReportsTest extends TestCase
         ]);
 
         return $sale;
+    }
+
+    private function stockEntry(Business $business, Branch $branch, Product $product, string $createdAt, string $type = 'purchase'): void
+    {
+        $movement = StockMovement::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+            'type' => $type,
+            'quantity' => 1,
+            'previous_stock' => 0,
+            'new_stock' => 1,
+        ]);
+
+        $movement->forceFill([
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
+        ])->save();
     }
 }
