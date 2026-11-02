@@ -51,11 +51,17 @@ class RouteCashSettlementAuthorizationTest extends TestCase
     public function test_authorized_user_cannot_access_other_tenant_or_branch_settlement(): void
     {
         [$businessA, $branchA, $ownerA] = $this->userWithRole('owner');
+        TenantSetting::query()->where('business_id', $businessA->id)->update(['use_branches' => true]);
+        TenantModule::query()->create(['business_id' => $businessA->id, 'module' => 'branches', 'is_enabled' => true, 'enabled_at' => now()]);
+        $ownerA->update(['all_branches_access' => false]);
+        $ownerA->branchAccesses()->create(['business_id' => $businessA->id, 'branch_id' => $branchA->id]);
         $branchB = \App\Models\Branch::query()->create(['business_id' => $businessA->id, 'name' => 'Otra '.uniqid(), 'code' => 'B-'.uniqid(), 'is_active' => true]);
+        $ownSettlement = $this->settlement($businessA, $branchA, $ownerA);
         $otherBranchSettlement = $this->settlement($businessA, $branchB, $ownerA);
         [$businessB, $branchOther, $ownerB] = $this->userWithRole('owner');
         $foreignSettlement = $this->settlement($businessB, $branchOther, $ownerB);
 
+        $this->actingAs($ownerA)->get(route('routes.cash-settlements.show', $ownSettlement))->assertOk();
         $this->actingAs($ownerA)->get(route('routes.cash-settlements.show', $otherBranchSettlement))->assertForbidden();
         $this->actingAs($ownerA)->get(route('routes.cash-settlements.show', $foreignSettlement))->assertForbidden();
         $this->actingAs($ownerA)->post(route('routes.cash-settlements.confirm', $foreignSettlement), [])->assertForbidden();
