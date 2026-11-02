@@ -28,6 +28,7 @@ class ProductPermissionVisibilityTest extends TestCase
         [$business, $user, $product] = $this->fixture([Permissions::PRODUCTS_VIEW]);
 
         $this->as($user, $business)->get(route('products.index'))->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->component('Products/Index')
             ->missing('products.data.0.cost_price')
             ->missing('products.data.0.supplier_cost_history'));
         $this->as($user, $business)->post(route('products.store'), $this->payload())->assertForbidden();
@@ -42,7 +43,7 @@ class ProductPermissionVisibilityTest extends TestCase
         $this->as($creator, $business)->put(route('products.update', $product), [...$this->payload(), 'name' => 'No permitido'])->assertForbidden();
         $this->assertSame('Producto', $product->fresh()->name);
 
-        $editor = User::factory()->create(['business_id' => $business->id, 'is_super_admin' => false]);
+        $editor = User::factory()->create(['business_id' => $business->id, 'is_super_admin' => false, 'is_active' => true]);
         Permissions::assignDirectPermissions($editor, [Permissions::PRODUCTS_VIEW, Permissions::PRODUCTS_UPDATE]);
         $this->as($editor, $business)->post(route('products.store'), $this->payload())->assertForbidden();
         $this->as($editor, $business)->put(route('products.update', $product), [...$this->payload(), 'name' => 'Actualizado'])->assertRedirect()->assertSessionHasNoErrors();
@@ -52,13 +53,15 @@ class ProductPermissionVisibilityTest extends TestCase
     public function test_financial_permissions_expose_only_their_authorized_data(): void
     {
         [$business, $profitUser] = $this->fixture([Permissions::PRODUCTS_VIEW, Permissions::REPORTS_PROFIT_VIEW]);
-        $this->as($profitUser, $business)->get(route('products.index'))->assertInertia(fn (Assert $page) => $page
+        $this->as($profitUser, $business)->get(route('products.index'))->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->component('Products/Index')
             ->has('products.data.0.cost_price')
             ->missing('products.data.0.supplier_cost_history'));
 
-        $historyUser = User::factory()->create(['business_id' => $business->id, 'is_super_admin' => false]);
+        $historyUser = User::factory()->create(['business_id' => $business->id, 'is_super_admin' => false, 'is_active' => true]);
         Permissions::assignDirectPermissions($historyUser, [Permissions::PRODUCTS_VIEW, Permissions::REPORTS_PURCHASE_COST_HISTORY_VIEW]);
-        $this->as($historyUser, $business)->get(route('products.index'))->assertInertia(fn (Assert $page) => $page
+        $this->as($historyUser, $business)->get(route('products.index'))->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->component('Products/Index')
             ->missing('products.data.0.cost_price')
             ->has('products.data.0.supplier_cost_history'));
     }
@@ -69,7 +72,7 @@ class ProductPermissionVisibilityTest extends TestCase
         [$otherBusiness, , $otherProduct] = $this->fixture([Permissions::PRODUCTS_VIEW]);
         $this->as($user, $business)->put(route('products.update', $otherProduct), $this->payload())->assertForbidden();
 
-        $superAdmin = User::factory()->create(['is_super_admin' => true]);
+        $superAdmin = User::factory()->create(['business_id' => $otherBusiness->id, 'is_super_admin' => true, 'is_active' => true]);
         $this->as($superAdmin, $otherBusiness)->get(route('products.index'))->assertOk();
     }
 
@@ -78,7 +81,7 @@ class ProductPermissionVisibilityTest extends TestCase
         $business = Business::query()->create(['name' => uniqid('Productos '), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
         TenantModule::query()->create(['business_id' => $business->id, 'module' => 'inventory', 'is_enabled' => true, 'enabled_at' => now()]);
         $branch = BranchInventory::defaultBranch($business->id);
-        $user = User::factory()->create(['business_id' => $business->id, 'is_super_admin' => false]);
+        $user = User::factory()->create(['business_id' => $business->id, 'is_super_admin' => false, 'is_active' => true]);
         Permissions::assignDirectPermissions($user, $permissions);
         $product = Product::query()->create(['business_id' => $business->id, 'name' => 'Producto', 'code' => uniqid('SKU'), 'cost_price' => 10, 'sale_price' => 20, 'stock' => 0, 'min_stock' => 0, 'is_active' => true]);
         BranchInventory::adjust($product, $branch->id, 2);
