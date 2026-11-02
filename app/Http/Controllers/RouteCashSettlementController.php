@@ -36,7 +36,8 @@ class RouteCashSettlementController extends Controller
 
         $actor = $request->user();
         $branchId = $this->activeBranchId($request);
-        $collectorId = $request->integer('collector_id') ?: null;
+        $canCreate = Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CREATE);
+        $collectorId = $canCreate ? ($request->integer('collector_id') ?: null) : null;
         $collectors = User::query()
             ->where('business_id', currentBusinessId())
             ->where('current_branch_id', $branchId)
@@ -62,10 +63,10 @@ class RouteCashSettlementController extends Controller
             'settlements' => $settlements,
             'collectors' => $collectors,
             'selected_collector_id' => $collectorId,
-            'eligible_collections' => $collectorId
+            'eligible_collections' => $canCreate && $collectorId
                 ? $this->eligiblePayload($eligibility->forCollector(currentBusinessId(), $branchId, $collectorId))
                 : [],
-            'can_create' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CREATE),
+            'can_create' => $canCreate,
             'can_confirm' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM),
             'can_confirm_variance' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM_VARIANCE),
             'can_view_variances' => Permissions::userHas($actor, Permissions::ROUTES_CASH_VARIANCES_VIEW),
@@ -82,6 +83,8 @@ class RouteCashSettlementController extends Controller
 
         $actor = $request->user();
         $branchId = $this->activeBranchId($request);
+        $canCreate = Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CREATE);
+        $canConfirm = Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM);
         $settlement->load([
             'collector:id,name',
             'reversal.reversedBy:id,name',
@@ -131,19 +134,19 @@ class RouteCashSettlementController extends Controller
                     'compensating_cash_movement_id' => $settlement->reversal->compensating_cash_movement_id,
                 ] : null,
             ],
-            'eligible_collections' => $settlement->status === 'draft'
+            'eligible_collections' => $canCreate && $settlement->status === 'draft'
                 ? $this->eligiblePayload($eligibility->forCollector(currentBusinessId(), $branchId, (int) $settlement->collector_user_id))
                 : [],
-            'receivers' => User::query()
+            'receivers' => $canConfirm ? User::query()
                 ->where('business_id', currentBusinessId())
                 ->where('current_branch_id', $branchId)
                 ->where('is_active', true)
                 ->orderBy('name')
                 ->get(['id', 'name'])
                 ->map(fn (User $user) => ['id' => $user->id, 'name' => $user->name])
-                ->values(),
-            'can_create' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CREATE),
-            'can_confirm' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM),
+                ->values() : [],
+            'can_create' => $canCreate,
+            'can_confirm' => $canConfirm,
             'can_confirm_variance' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM_VARIANCE),
             'can_review' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_REVIEW),
             'can_reverse' => Permissions::userHas($actor, Permissions::ROUTES_CASH_SETTLEMENTS_REVERSE),

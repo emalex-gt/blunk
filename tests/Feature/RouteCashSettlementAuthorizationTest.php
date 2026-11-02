@@ -3,7 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\Business;
+use App\Models\Customer;
+use App\Models\PreSale;
 use App\Models\RouteCashSettlement;
+use App\Models\RoutePreSaleCollection;
 use App\Models\Role;
 use App\Models\TenantSetting;
 use App\Models\User;
@@ -19,6 +22,7 @@ class RouteCashSettlementAuthorizationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->withoutVite();
         Permissions::syncDefaults();
     }
 
@@ -56,6 +60,93 @@ class RouteCashSettlementAuthorizationTest extends TestCase
         $this->actingAs($ownerA)->post(route('routes.cash-settlements.confirm', $foreignSettlement), [])->assertForbidden();
     }
 
+    public function test_viewer_and_reviewer_do_not_receive_eligible_collections_without_create_permission(): void
+    {
+        [$business, $branch] = $this->businessWithBranch();
+        $collector = $this->activeUser($business, $branch);
+        $eligible = $this->eligibleCollection($business, $branch, $collector);
+        $settlement = $this->settlement($business, $branch, $collector);
+        $viewer = $this->activeUser($business, $branch, [Permissions::ROUTES_CASH_SETTLEMENTS_VIEW]);
+        $reviewer = $this->activeUser($business, $branch, [Permissions::ROUTES_CASH_SETTLEMENTS_REVIEW]);
+
+        foreach ([$viewer, $reviewer] as $user) {
+            $this->withSession(['active_business_id' => $business->id])->actingAs($user)
+                ->get(route('routes.cash-settlements.index', ['collector_id' => $collector->id]))
+                ->assertOk()
+                ->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+                    ->component('Routes/CashSettlements/Index')
+                    ->where('can_create', false)
+                    ->where('eligible_collections', []));
+            $this->withSession(['active_business_id' => $business->id])->actingAs($user)
+                ->get(route('routes.cash-settlements.show', $settlement))
+                ->assertOk()
+                ->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+                    ->component('Routes/CashSettlements/Show')
+                    ->where('eligible_collections', [])
+                    ->where('receivers', []));
+        }
+
+        $this->assertDatabaseHas('route_pre_sale_collections', ['id' => $eligible->id, 'custody_status' => 'held_by_collector']);
+    }
+
+    public function test_create_permission_receives_eligible_collections_only_within_the_current_business_and_branch(): void
+    {
+        [$business, $branch] = $this->businessWithBranch();
+        $collector = $this->activeUser($business, $branch);
+        $eligible = $this->eligibleCollection($business, $branch, $collector);
+        $settlement = $this->settlement($business, $branch, $collector);
+        $creator = $this->activeUser($business, $branch, [
+            Permissions::ROUTES_CASH_SETTLEMENTS_VIEW,
+            Permissions::ROUTES_CASH_SETTLEMENTS_CREATE,
+        ]);
+
+        $this->withSession(['active_business_id' => $business->id])->actingAs($creator)
+            ->get(route('routes.cash-settlements.index', ['collector_id' => $collector->id]))
+            ->assertOk()
+            ->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+                ->component('Routes/CashSettlements/Index')
+                ->where('can_create', true)
+                ->has('eligible_collections', 1)
+                ->where('eligible_collections.0.collection_id', $eligible->id));
+        $this->withSession(['active_business_id' => $business->id])->actingAs($creator)
+            ->get(route('routes.cash-settlements.show', $settlement))
+            ->assertOk()
+            ->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+                ->where('can_create', true)
+                ->has('eligible_collections', 1)
+                ->where('eligible_collections.0.collection_id', $eligible->id));
+    }
+
+    public function test_confirmer_can_read_a_draft_without_receiving_creation_collections(): void
+    {
+        [$business, $branch] = $this->businessWithBranch();
+        $collector = $this->activeUser($business, $branch);
+        $eligible = $this->eligibleCollection($business, $branch, $collector);
+        $settlement = $this->settlement($business, $branch, $collector);
+        $confirmer = $this->activeUser($business, $branch, [
+            Permissions::ROUTES_CASH_SETTLEMENTS_VIEW,
+            Permissions::ROUTES_CASH_SETTLEMENTS_CONFIRM,
+        ]);
+
+        $this->withSession(['active_business_id' => $business->id])->actingAs($confirmer)
+            ->get(route('routes.cash-settlements.index', ['collector_id' => $collector->id]))
+            ->assertOk()
+            ->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+                ->where('can_create', false)
+                ->where('can_confirm', true)
+                ->where('eligible_collections', []));
+        $this->withSession(['active_business_id' => $business->id])->actingAs($confirmer)
+            ->get(route('routes.cash-settlements.show', $settlement))
+            ->assertOk()
+            ->assertInertia(fn (\Inertia\Testing\AssertableInertia $page) => $page
+                ->where('can_create', false)
+                ->where('can_confirm', true)
+                ->where('eligible_collections', [])
+                ->has('receivers'));
+
+        $this->assertDatabaseHas('route_pre_sale_collections', ['id' => $eligible->id, 'custody_status' => 'held_by_collector']);
+    }
+
     /** @return array{0: Business, 1: \App\Models\Branch, 2: User} */
     private function userWithRole(string $role): array
     {
@@ -70,5 +161,30 @@ class RouteCashSettlementAuthorizationTest extends TestCase
     private function settlement(Business $business, \App\Models\Branch $branch, User $collector): RouteCashSettlement
     {
         return RouteCashSettlement::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'collector_user_id' => $collector->id, 'recorded_by' => $collector->id, 'status' => 'draft']);
+    }
+
+    /** @return array{0: Business, 1: \App\Models\Branch} */
+    private function businessWithBranch(): array
+    {
+        $business = Business::query()->create(['name' => 'Settlement visibility '.uniqid(), 'slug' => 'settlement-visibility-'.uniqid(), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
+        TenantSetting::query()->create(['business_id' => $business->id]);
+
+        return [$business, BranchInventory::defaultBranchForBusiness($business)];
+    }
+
+    private function activeUser(Business $business, \App\Models\Branch $branch, array $permissions = []): User
+    {
+        $user = User::factory()->create(['business_id' => $business->id, 'current_branch_id' => $branch->id, 'is_active' => true]);
+        Permissions::assignDirectPermissions($user, $permissions);
+
+        return $user->fresh();
+    }
+
+    private function eligibleCollection(Business $business, \App\Models\Branch $branch, User $collector): RoutePreSaleCollection
+    {
+        $customer = Customer::query()->create(['business_id' => $business->id, 'name' => 'Eligible customer '.uniqid(), 'country' => 'GT']);
+        $preSale = PreSale::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'customer_id' => $customer->id, 'seller_id' => $collector->id, 'status' => PreSale::STATUS_DRAFT, 'subtotal' => 25, 'discount_total' => 0, 'total' => 25]);
+
+        return RoutePreSaleCollection::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'pre_sale_id' => $preSale->id, 'collected_by' => $collector->id, 'recorded_by' => $collector->id, 'amount' => 25, 'payment_method' => 'cash', 'collected_at' => now(), 'status' => 'captured', 'custody_status' => 'held_by_collector']);
     }
 }
