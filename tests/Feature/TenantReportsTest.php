@@ -128,7 +128,10 @@ class TenantReportsTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->where('rows.data.0.product', 'Margen mínimo')
                 ->where('rows.data.0.classification', 'Diferencia mínima')
-                ->where('rows.data.0.markup_percent', '10.0000000000000000'));
+                ->where(
+                    'rows.data.0.markup_percent',
+                    fn ($value) => bccomp((string) $value, '10', 5) === 0,
+                ));
     }
 
     public function test_low_stock_without_stock_filter_uses_physical_stock_not_reservations(): void
@@ -223,6 +226,8 @@ class TenantReportsTest extends TestCase
     public function test_daily_report_cash_summary_uses_branch_cash_movements(): void
     {
         [$business, $user, $main] = $this->tenant();
+        $localDay = now(tenantTimezone($business))->setDate(2026, 6, 15)->setTime(12, 0);
+        $utcTimestamp = $localDay->copy()->utc()->toDateTimeString();
         $product = $this->product($business, $main, stock: 10, salePrice: 100);
         $session = CashRegisterSession::query()->create([
             'business_id' => $business->id,
@@ -231,10 +236,10 @@ class TenantReportsTest extends TestCase
             'status' => 'open',
             'opening_amount' => 50,
             'expected_cash' => 0,
-            'opened_at' => now(),
+            'opened_at' => $utcTimestamp,
         ]);
-        $this->sale($business, $main, $user, $product, total: 100, method: 'cash');
-        Purchase::query()->create([
+        $this->sale($business, $main, $user, $product, total: 100, method: 'cash', createdAt: $utcTimestamp);
+        $purchase = Purchase::query()->create([
             'business_id' => $business->id,
             'branch_id' => $main->id,
             'status' => 'completed',
@@ -244,7 +249,8 @@ class TenantReportsTest extends TestCase
             'cash_register_session_id' => $session->id,
             'created_by' => $user->id,
         ]);
-        CashExpense::query()->create([
+        $purchase->forceFill(['created_at' => $utcTimestamp, 'updated_at' => $utcTimestamp])->save();
+        $expense = CashExpense::query()->create([
             'business_id' => $business->id,
             'branch_id' => $main->id,
             'cash_register_session_id' => $session->id,
@@ -252,9 +258,10 @@ class TenantReportsTest extends TestCase
             'amount' => 10,
             'created_by' => $user->id,
         ]);
+        $expense->forceFill(['created_at' => $utcTimestamp, 'updated_at' => $utcTimestamp])->save();
 
         $this->actingAs($user)
-            ->get(route('reports.daily', ['date' => now()->toDateString(), 'payment_method' => 'cash']))
+            ->get(route('reports.daily', ['date' => $localDay->toDateString(), 'payment_method' => 'cash']))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Reports/Generic')
@@ -269,11 +276,13 @@ class TenantReportsTest extends TestCase
     public function test_daily_report_non_cash_ignores_cash_only_movements(): void
     {
         [$business, $user, $main] = $this->tenant();
+        $localDay = now(tenantTimezone($business))->setDate(2026, 6, 15)->setTime(12, 0);
+        $utcTimestamp = $localDay->copy()->utc()->toDateTimeString();
         $product = $this->product($business, $main, stock: 10, salePrice: 80);
-        $this->sale($business, $main, $user, $product, total: 80, method: 'card');
+        $this->sale($business, $main, $user, $product, total: 80, method: 'card', createdAt: $utcTimestamp);
 
         $this->actingAs($user)
-            ->get(route('reports.daily', ['date' => now()->toDateString(), 'payment_method' => 'card']))
+            ->get(route('reports.daily', ['date' => $localDay->toDateString(), 'payment_method' => 'card']))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Reports/Generic')
@@ -755,8 +764,8 @@ class TenantReportsTest extends TestCase
             ->get(route('reports.purchase-cost-history', [
                 'date_from' => '2020-01-01',
                 'date_to' => '2026-01-01',
-                'product_search' => 'Martillo',
-                'supplier_search' => 'histórico',
+                'product_id' => $product->id,
+                'supplier_id' => $supplier->id,
             ]))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
@@ -767,7 +776,12 @@ class TenantReportsTest extends TestCase
                 ->where('maxRangeLabel', 'Historial completo; rango de fechas opcional.'));
 
         $this->actingAs($user)
-            ->get(route('reports.export', ['report' => 'purchase-cost-history', 'format' => 'excel']))
+            ->get(route('reports.export', [
+                'report' => 'purchase-cost-history',
+                'format' => 'excel',
+                'product_id' => $product->id,
+                'supplier_id' => $supplier->id,
+            ]))
             ->assertOk();
     }
 
