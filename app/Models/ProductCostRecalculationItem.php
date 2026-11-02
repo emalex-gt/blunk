@@ -21,6 +21,7 @@ class ProductCostRecalculationItem extends Model
         'acquisition_count',
         'sources',
         'selected_acquisitions',
+        'calculation_method',
         'calculation_status',
     ];
 

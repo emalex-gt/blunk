@@ -137,9 +137,11 @@ class ProductCostRecalculationController extends Controller
                 'physical_stock' => $row['physical_stock'],
                 'covered_quantity' => $row['covered_quantity'],
                 'missing_quantity' => $row['missing_quantity'],
+                'weighted_quantity' => $row['weighted_quantity'],
                 'acquisition_count' => $row['acquisition_count'],
                 'source' => $row['source'],
                 'status' => $row['status'],
+                'calculation_method' => $row['calculation_method'],
                 'invalid_acquisition_count' => $row['invalid_acquisition_count'],
                 'selected_acquisitions' => $row['selected_acquisitions'],
             ];

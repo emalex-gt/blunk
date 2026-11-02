@@ -76,6 +76,7 @@ class ProductCostRecalculationTest extends TestCase
             'proposed_cost' => '15.12346',
             'physical_stock' => '2.00000',
             'covered_quantity' => '2.00000',
+            'calculation_method' => HistoricalProductCostAverageService::METHOD_CURRENT_STOCK_FIFO,
         ]);
         $this->assertDatabaseMissing('product_cost_recalculation_items', ['product_id' => $withoutHistory->id]);
         $this->assertDatabaseMissing('product_cost_recalculation_items', ['product_id' => $ambiguous->id]);
@@ -160,11 +161,42 @@ class ProductCostRecalculationTest extends TestCase
 
         $this->stock($business, $branch, $product, '0.00000');
         $zero = app(HistoricalProductCostAverageService::class)->simulate($business->id)->sole();
-        $this->assertSame('sin_existencias', $zero['status']);
+        $this->assertSame('calculable', $zero['status']);
+        $this->assertSame(HistoricalProductCostAverageService::METHOD_HISTORICAL_WEIGHTED_AVERAGE, $zero['calculation_method']);
+        $this->assertSame('5.00000', $zero['proposed_cost']);
 
         $this->stock($business, $branch, $product, '-1.00000');
         $negative = app(HistoricalProductCostAverageService::class)->simulate($business->id)->sole();
         $this->assertSame('stock_negativo', $negative['status']);
+    }
+
+    public function test_zero_stock_uses_all_valid_historical_acquisitions_as_a_weighted_average(): void
+    {
+        [$business, $branch, $product, $supplier] = $this->context('10.00000');
+        $this->historical($business, $branch, $product, $supplier, '10.00000', '20.00000', 'first', 'legacy', '2026-01-01 12:00:00');
+        $this->historical($business, $branch, $product, $supplier, '5.00000', '24.00000', 'second', 'legacy', '2026-02-01 12:00:00');
+        $this->historical($business, $branch, $product, $supplier, '15.00000', '30.00000', 'third', 'legacy', '2026-03-01 12:00:00');
+
+        $row = app(HistoricalProductCostAverageService::class)->simulate($business->id)->sole();
+
+        $this->assertSame('0.00000', $row['physical_stock']);
+        $this->assertSame(HistoricalProductCostAverageService::METHOD_HISTORICAL_WEIGHTED_AVERAGE, $row['calculation_method']);
+        $this->assertSame('0.00000', $row['covered_quantity']);
+        $this->assertSame('30.00000', $row['weighted_quantity']);
+        $this->assertSame('25.66667', $row['proposed_cost']);
+        $this->assertCount(3, $row['selected_acquisitions']);
+    }
+
+    public function test_zero_stock_without_history_keeps_the_current_cost(): void
+    {
+        [$business, , $product] = $this->context('7.50000');
+
+        $row = app(HistoricalProductCostAverageService::class)->simulate($business->id)->sole();
+
+        $this->assertSame('sin_historial', $row['status']);
+        $this->assertSame(HistoricalProductCostAverageService::METHOD_HISTORICAL_WEIGHTED_AVERAGE, $row['calculation_method']);
+        $this->assertNull($row['proposed_cost']);
+        $this->assertSame('7.50000', $product->fresh()->cost_price);
     }
 
     /** @return array{Business, Branch, Product, Supplier} */

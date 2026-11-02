@@ -43,7 +43,7 @@ class ProductCostRecalculationService
             'executed_at' => now(),
             'status' => ProductCostRecalculationRun::STATUS_RUNNING,
             'metadata' => [
-                'algorithm' => 'current_physical_stock_recent_acquisitions_fifo_assumption',
+                'algorithm' => 'current_stock_fifo_or_historical_weighted_average',
                 'expected_fingerprint' => $expected['fingerprint'],
             ],
         ]);
@@ -117,6 +117,7 @@ class ProductCostRecalculationService
                                 'acquisition_count' => $row['acquisition_count'],
                                 'sources' => $row['source'] === null ? [] : explode(', ', $row['source']),
                                 'selected_acquisitions' => $row['selected_acquisitions'],
+                                'calculation_method' => $row['calculation_method'],
                                 'calculation_status' => $row['status'],
                             ]);
                             $applied++;
@@ -126,7 +127,7 @@ class ProductCostRecalculationService
                 $run->update([
                     'status' => ProductCostRecalculationRun::STATUS_COMPLETED,
                     'metadata' => [
-                        'algorithm' => 'current_physical_stock_recent_acquisitions_fifo_assumption',
+                        'algorithm' => 'current_stock_fifo_or_historical_weighted_average',
                         'fingerprint' => $summary['fingerprint'],
                         'summary' => $summary,
                         'applied_count' => $applied,
@@ -140,7 +141,7 @@ class ProductCostRecalculationService
                 'status' => ProductCostRecalculationRun::STATUS_FAILED,
                 'metadata' => [
                     'expected_fingerprint' => $expected['fingerprint'],
-                    'algorithm' => 'current_physical_stock_recent_acquisitions_fifo_assumption',
+                    'algorithm' => 'current_stock_fifo_or_historical_weighted_average',
                     'failure' => $exception instanceof ProductCostRecalculationSnapshotChanged
                         ? 'snapshot_changed'
                         : 'application_failed',
