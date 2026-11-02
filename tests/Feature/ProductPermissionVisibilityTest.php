@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Business;
 use App\Models\Product;
+use App\Models\TenantModule;
 use App\Models\User;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
@@ -18,6 +19,7 @@ class ProductPermissionVisibilityTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->withoutVite();
         Permissions::syncDefaults();
     }
 
@@ -35,13 +37,16 @@ class ProductPermissionVisibilityTest extends TestCase
     public function test_create_and_update_permissions_are_independent(): void
     {
         [$business, $creator, $product] = $this->fixture([Permissions::PRODUCTS_VIEW, Permissions::PRODUCTS_CREATE]);
-        $this->as($creator, $business)->post(route('products.store'), $this->payload())->assertRedirect();
-        $this->as($creator, $business)->put(route('products.update', $product), $this->payload())->assertForbidden();
+        $this->as($creator, $business)->post(route('products.store'), $this->payload())->assertRedirect()->assertSessionHasNoErrors();
+        $this->assertDatabaseHas('products', ['business_id' => $business->id, 'name' => 'Producto nuevo']);
+        $this->as($creator, $business)->put(route('products.update', $product), [...$this->payload(), 'name' => 'No permitido'])->assertForbidden();
+        $this->assertSame('Producto', $product->fresh()->name);
 
         $editor = User::factory()->create(['business_id' => $business->id, 'is_super_admin' => false]);
         Permissions::assignDirectPermissions($editor, [Permissions::PRODUCTS_VIEW, Permissions::PRODUCTS_UPDATE]);
         $this->as($editor, $business)->post(route('products.store'), $this->payload())->assertForbidden();
-        $this->as($editor, $business)->put(route('products.update', $product), $this->payload())->assertRedirect();
+        $this->as($editor, $business)->put(route('products.update', $product), [...$this->payload(), 'name' => 'Actualizado'])->assertRedirect()->assertSessionHasNoErrors();
+        $this->assertSame('Actualizado', $product->fresh()->name);
     }
 
     public function test_financial_permissions_expose_only_their_authorized_data(): void
@@ -71,6 +76,7 @@ class ProductPermissionVisibilityTest extends TestCase
     private function fixture(array $permissions): array
     {
         $business = Business::query()->create(['name' => uniqid('Productos '), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
+        TenantModule::query()->create(['business_id' => $business->id, 'module' => 'inventory', 'is_enabled' => true, 'enabled_at' => now()]);
         $branch = BranchInventory::defaultBranch($business->id);
         $user = User::factory()->create(['business_id' => $business->id, 'is_super_admin' => false]);
         Permissions::assignDirectPermissions($user, $permissions);
@@ -81,7 +87,7 @@ class ProductPermissionVisibilityTest extends TestCase
 
     private function as(User $user, Business $business): static
     {
-        return $this->actingAs($user)->withSession(['current_business_id' => $business->id]);
+        return $this->actingAs($user)->withSession(['active_business_id' => $business->id, 'current_business_id' => $business->id]);
     }
 
     private function payload(): array

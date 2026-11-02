@@ -1031,6 +1031,7 @@ export default function ProductIndex({
                     <aside className="min-w-0 rounded-2xl border border-slate-200/80 bg-white/95 p-4 shadow-[0_8px_30px_rgba(15,23,42,0.06)] 2xl:p-5">
                         <h3 className="text-base font-semibold text-slate-950">Consultar producto</h3>
                         {selectedProduct ? (
+                            <>
                             <dl className="mt-4 space-y-2 text-sm text-slate-700">
                                 <div><dt className="font-semibold">Producto</dt><dd>{selectedProduct.name}</dd></div>
                                 <div><dt className="font-semibold">Código</dt><dd>{selectedProduct.code ?? '-'}</dd></div>
@@ -1040,6 +1041,7 @@ export default function ProductIndex({
                                 <div><dt className="font-semibold">Ubicación</dt><dd>{selectedProduct.product_location?.name ?? selectedProduct.location ?? '-'}</dd></div>
                             </dl>
                             {canViewPurchaseCostHistory && selectedProduct.supplier_cost_history && <SupplierCostHistorySection product={selectedProduct} history={selectedProduct.supplier_cost_history} country={country} canViewFullHistory />}
+                            </>
                         ) : <p className="mt-2 text-sm text-slate-600">Selecciona un producto de la lista para consultar sus datos.</p>}
                     </aside>
                 )}
