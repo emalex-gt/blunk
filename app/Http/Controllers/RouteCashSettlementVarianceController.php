@@ -47,6 +47,7 @@ class RouteCashSettlementVarianceController extends Controller
 
     public function show(Request $request, RouteCashSettlementVariance $variance): Response
     {
+        $this->guard($request, Permissions::ROUTES_CASH_VARIANCES_VIEW);
         $this->scope($request, $variance);
         $variance->load([
             'settlement.collector:id,name',
