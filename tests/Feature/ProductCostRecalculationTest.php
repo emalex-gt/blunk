@@ -77,7 +77,7 @@ class ProductCostRecalculationTest extends TestCase
         $this->assertDatabaseMissing('product_cost_recalculation_items', ['product_id' => $ambiguous->id]);
     }
 
-    public function test_application_rejects_a_changed_snapshot_without_writing_any_cost(): void
+    public function test_application_rejects_a_stock_change_after_simulation_without_writing_any_cost(): void
     {
         [$business, $branch, $product, $supplier] = $this->context('10.00000');
         $this->stock($business, $branch, $product, '1.00000');

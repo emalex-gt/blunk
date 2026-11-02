@@ -42,9 +42,20 @@ class ProductCostRecalculationService
 
         try {
             return DB::transaction(function () use ($business, $expected, $run): ProductCostRecalculationRun {
+                // PostgreSQL serialization additionally detects writes by an
+                // importer that does not participate in these application locks.
+                if (DB::getDriverName() === 'pgsql') {
+                    DB::statement('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+                }
+
                 // Locking the tenant row serializes recalculations for this tenant,
                 // including the initial case where no product needs an update.
                 Business::query()->lockForUpdate()->findOrFail($business->id);
+
+                // Acquire the cooperating application locks before calculating the
+                // definitive fingerprint. This covers products, physical stock,
+                // native purchases and imported acquisition history.
+                $this->lockSimulationInputs($business->id);
 
                 $summary = $this->averages->summary($business->id);
 
@@ -130,5 +141,39 @@ class ProductCostRecalculationService
 
             throw $exception;
         }
+    }
+
+    private function lockSimulationInputs(int $businessId): void
+    {
+        Product::query()
+            ->where('business_id', $businessId)
+            ->select('id')
+            ->lockForUpdate()
+            ->eachById(static fn () => null, self::CHUNK_SIZE);
+
+        DB::table('product_branch_stocks')
+            ->where('business_id', $businessId)
+            ->select('id')
+            ->lockForUpdate()
+            ->orderBy('id')
+            ->eachById(static fn () => null, self::CHUNK_SIZE);
+
+        DB::table('historical_product_purchase_costs')
+            ->where('business_id', $businessId)
+            ->select('id')
+            ->lockForUpdate()
+            ->orderBy('id')
+            ->eachById(static fn () => null, self::CHUNK_SIZE);
+
+        DB::table('purchase_items')
+            ->join('purchases', function ($join) {
+                $join->on('purchases.id', '=', 'purchase_items.purchase_id')
+                    ->whereColumn('purchases.business_id', 'purchase_items.business_id');
+            })
+            ->where('purchase_items.business_id', $businessId)
+            ->select('purchase_items.id')
+            ->orderBy('purchase_items.id')
+            ->lock('FOR UPDATE OF purchase_items, purchases')
+            ->eachById(static fn () => null, self::CHUNK_SIZE, 'purchase_items.id', 'id');
     }
 }
