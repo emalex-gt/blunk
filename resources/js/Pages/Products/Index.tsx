@@ -344,6 +344,8 @@ export default function ProductIndex({
     const permissions = auth?.permissions ?? [];
     const canCreateProducts = isSuperAdmin || permissions.includes('products.create');
     const canUpdateProducts = isSuperAdmin || permissions.includes('products.update');
+    const canViewBrands = isSuperAdmin || permissions.includes('brands.view');
+    const canViewLocations = isSuperAdmin || permissions.includes('product_locations.view');
     const enabledModules = (page.props.enabled_modules as string[] | undefined) ?? [];
     const canViewPurchaseCostHistory = enabledModules.includes('reports')
         && (Boolean(auth?.user?.is_super_admin) || (auth?.permissions ?? []).includes('reports.purchase_cost_history.view'));
@@ -761,7 +763,7 @@ export default function ProductIndex({
                     <div className="relative">
                         <div className="flex items-center justify-between gap-3">
                             <InputLabel htmlFor="category_name" value={t('products.category')} />
-                            {(canCreateProducts || canUpdateProducts) && <Link href={route('categories.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
+                            <Link href={route('categories.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
                                 Gestionar categorías
                             </Link>}
                         </div>
@@ -818,7 +820,7 @@ export default function ProductIndex({
                     <div className="relative">
                         <div className="flex items-center justify-between gap-3">
                             <InputLabel htmlFor="brand_name" value="Marca" />
-                            {(canCreateProducts || canUpdateProducts) && <Link href={route('brands.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
+                            {canViewBrands && <Link href={route('brands.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
                                 Gestionar marcas
                             </Link>}
                         </div>
@@ -944,7 +946,7 @@ export default function ProductIndex({
                     <div className="relative">
                         <div className="flex items-center justify-between gap-3">
                             <InputLabel htmlFor="location_name" value={t('common.location')} />
-                            {(canCreateProducts || canUpdateProducts) && <Link href={route('product-locations.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
+                            {canViewLocations && <Link href={route('product-locations.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
                                 Gestionar ubicaciones
                             </Link>}
                         </div>
@@ -1036,6 +1038,7 @@ export default function ProductIndex({
                                 <div><dt className="font-semibold">Stock</dt><dd>{selectedProduct.stock}</dd></div>
                                 <div><dt className="font-semibold">Precio de venta</dt><dd>{formatCurrency(selectedProduct.sale_price, country)}</dd></div>
                                 <div><dt className="font-semibold">Ubicación</dt><dd>{selectedProduct.product_location?.name ?? selectedProduct.location ?? '-'}</dd></div>
+                                {canViewPurchaseCostHistory && selectedProduct.supplier_cost_history && <SupplierCostHistorySection product={selectedProduct} history={selectedProduct.supplier_cost_history} country={country} canViewFullHistory />}
                             </dl>
                         ) : <p className="mt-2 text-sm text-slate-600">Selecciona un producto de la lista para consultar sus datos.</p>}
                     </aside>
@@ -1137,14 +1140,14 @@ export default function ProductIndex({
                                                     <span className="col-span-2">Ubicación: <strong>{match.location ?? '-'}</strong></span>
                                                 </div>
                                                 <div className="mt-3 flex gap-2">
-                                                    <button
+                                                    {canUpdateProducts ? <button
                                                         type="button"
                                                         className="rounded-lg px-2 py-1 text-xs font-semibold text-orange-600 hover:bg-orange-50 disabled:cursor-not-allowed disabled:text-slate-400"
                                                         disabled={!visibleProduct}
                                                         onClick={() => visibleProduct && edit(visibleProduct)}
                                                     >
                                                         Editar
-                                                    </button>
+                                                    </button> : visibleProduct ? <button type="button" onClick={() => consult(visibleProduct)} className="rounded-lg px-2 py-1 text-xs font-semibold text-orange-600 hover:bg-orange-50">Consultar</button> : null}
                                                     <Link
                                                         href={route('products.stock-history', match.id)}
                                                         className="rounded-lg px-2 py-1 text-xs font-semibold text-orange-600 hover:bg-orange-50"
