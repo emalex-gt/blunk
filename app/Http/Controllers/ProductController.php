@@ -39,6 +39,11 @@ class ProductController extends Controller
     public function index(Request $request): Response
     {
         $businessId = currentBusinessId();
+        $canManageProducts = Permissions::userHas($request->user(), Permissions::PRODUCTS_CREATE)
+            || Permissions::userHas($request->user(), Permissions::PRODUCTS_UPDATE);
+        $canViewCosts = $canManageProducts
+            || Permissions::userHas($request->user(), Permissions::REPORTS_PROFIT_VIEW);
+        $canViewSupplierCostHistory = Permissions::userHas($request->user(), Permissions::REPORTS_PURCHASE_COST_HISTORY_VIEW);
         $search = $request->string('search')->toString();
         $perPage = in_array($request->integer('per_page', 25), [25, 50, 100], true)
             ? $request->integer('per_page', 25)
@@ -60,7 +65,6 @@ class ProductController extends Controller
                 'name',
                 'code',
                 'barcode',
-                'cost_price',
                 'sale_price',
                 'stock',
                 'min_stock',
@@ -70,6 +74,7 @@ class ProductController extends Controller
                 'image_public_id',
                 'created_at',
             ])
+            ->when($canViewCosts, fn ($query) => $query->addSelect('cost_price'))
             ->with([
                 'category:id,name',
                 'brand:id,name',
@@ -103,17 +108,20 @@ class ProductController extends Controller
         $pageProducts = $products->getCollection();
         BranchInventory::applyBranchStockAndPrices($pageProducts, $businessId, $activeBranch->id);
         PriceLists::applyBranchPricesToProducts($pageProducts, $businessId, $activeBranch->id);
-        $supplierCostHistory = ProductSupplierCostHistory::forProducts(
-            $businessId,
-            $pageProducts->pluck('id')->all(),
-        );
+        if ($canViewCosts) {
+            $pageProducts->each(fn (Product $product) => $product->setAttribute('cost_price', $product->getRawOriginal('cost_price')));
+        }
 
-        $pageProducts->each(function (Product $product) use ($supplierCostHistory) {
-            $product->setAttribute(
-                'supplier_cost_history',
-                $supplierCostHistory->get($product->id, collect())->values(),
+        if ($canViewSupplierCostHistory) {
+            $supplierCostHistory = ProductSupplierCostHistory::forProducts(
+                $businessId,
+                $pageProducts->pluck('id')->all(),
             );
-        });
+
+            $pageProducts->each(function (Product $product) use ($supplierCostHistory) {
+                $product->setAttribute('supplier_cost_history', $supplierCostHistory->get($product->id, collect())->values());
+            });
+        }
         $products->setCollection($pageProducts);
 
         return Inertia::render('Products/Index', [

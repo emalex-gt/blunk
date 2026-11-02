@@ -35,7 +35,7 @@ type Product = {
     name: string;
     code: string | null;
     barcode: string | null;
-    cost_price: string;
+    cost_price?: string;
     sale_price: string;
     stock: number;
     min_stock: number;
@@ -49,7 +49,7 @@ type Product = {
     brand: Brand | null;
     location_id: number | null;
     product_location: ProductLocation | null;
-    supplier_cost_history: SupplierCostHistory[];
+    supplier_cost_history?: SupplierCostHistory[];
     prices: ProductPrice[];
 };
 
@@ -340,12 +340,17 @@ export default function ProductIndex({
     const page = usePage();
     const business = page.props.business as { country?: string | null } | null;
     const auth = page.props.auth as { user?: { is_super_admin?: boolean }; permissions?: string[] } | undefined;
+    const isSuperAdmin = Boolean(auth?.user?.is_super_admin);
+    const permissions = auth?.permissions ?? [];
+    const canCreateProducts = isSuperAdmin || permissions.includes('products.create');
+    const canUpdateProducts = isSuperAdmin || permissions.includes('products.update');
     const enabledModules = (page.props.enabled_modules as string[] | undefined) ?? [];
     const canViewPurchaseCostHistory = enabledModules.includes('reports')
         && (Boolean(auth?.user?.is_super_admin) || (auth?.permissions ?? []).includes('reports.purchase_cost_history.view'));
     const country = business?.country ?? 'GT';
     const toast = useToast();
     const [editing, setEditing] = useState<Product | null>(null);
+    const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
     const [search, setSearch] = useState(filters.search ?? '');
     const didMountSearch = useRef(false);
     const [filterState, setFilterState] = useState({
@@ -443,12 +448,16 @@ export default function ProductIndex({
     }
 
     function edit(product: Product) {
+        if (!canUpdateProducts) {
+            return;
+        }
+
         setEditing(product);
         setData({
             name: product.name,
             code: product.code ?? '',
             barcode: product.barcode ?? '',
-            cost_price: product.cost_price,
+            cost_price: product.cost_price ?? '0',
             sale_price: product.sale_price,
             stock: String(product.stock),
             min_stock: String(product.min_stock),
@@ -466,6 +475,10 @@ export default function ProductIndex({
             }, {}),
         });
         clearImagePreview();
+    }
+
+    function consult(product: Product) {
+        setSelectedProduct(product);
     }
 
     const categorySuggestions = useMemo(() => {
@@ -697,7 +710,7 @@ export default function ProductIndex({
             <Toast toasts={toast.toasts} onClose={toast.removeToast} />
 
             <div className="mx-auto grid max-w-[1800px] gap-5 px-4 py-5 sm:px-5 lg:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)] 2xl:grid-cols-[420px_minmax(0,1fr)]">
-                <form
+                {(canCreateProducts || editing) ? <form
                     onSubmit={submit}
                     autoComplete="off"
                     className="min-w-0 space-y-4 rounded-2xl border border-slate-200/80 bg-white/95 p-4 shadow-[0_8px_30px_rgba(15,23,42,0.06)] 2xl:p-5"
@@ -748,9 +761,9 @@ export default function ProductIndex({
                     <div className="relative">
                         <div className="flex items-center justify-between gap-3">
                             <InputLabel htmlFor="category_name" value={t('products.category')} />
-                            <Link href={route('categories.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
+                            {(canCreateProducts || canUpdateProducts) && <Link href={route('categories.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
                                 Gestionar categorías
-                            </Link>
+                            </Link>}
                         </div>
                         <input
                             type="text"
@@ -805,9 +818,9 @@ export default function ProductIndex({
                     <div className="relative">
                         <div className="flex items-center justify-between gap-3">
                             <InputLabel htmlFor="brand_name" value="Marca" />
-                            <Link href={route('brands.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
+                            {(canCreateProducts || canUpdateProducts) && <Link href={route('brands.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
                                 Gestionar marcas
-                            </Link>
+                            </Link>}
                         </div>
                         <TextInput
                             id="brand_name"
@@ -931,9 +944,9 @@ export default function ProductIndex({
                     <div className="relative">
                         <div className="flex items-center justify-between gap-3">
                             <InputLabel htmlFor="location_name" value={t('common.location')} />
-                            <Link href={route('product-locations.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
+                            {(canCreateProducts || canUpdateProducts) && <Link href={route('product-locations.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
                                 Gestionar ubicaciones
-                            </Link>
+                            </Link>}
                         </div>
                         <TextInput
                             id="location_name"
@@ -1012,7 +1025,21 @@ export default function ProductIndex({
                             canViewFullHistory={canViewPurchaseCostHistory}
                         />
                     )}
-                </form>
+                </form> : (
+                    <aside className="min-w-0 rounded-2xl border border-slate-200/80 bg-white/95 p-4 shadow-[0_8px_30px_rgba(15,23,42,0.06)] 2xl:p-5">
+                        <h3 className="text-base font-semibold text-slate-950">Consultar producto</h3>
+                        {selectedProduct ? (
+                            <dl className="mt-4 space-y-2 text-sm text-slate-700">
+                                <div><dt className="font-semibold">Producto</dt><dd>{selectedProduct.name}</dd></div>
+                                <div><dt className="font-semibold">Código</dt><dd>{selectedProduct.code ?? '-'}</dd></div>
+                                <div><dt className="font-semibold">Código de barras</dt><dd>{selectedProduct.barcode ?? '-'}</dd></div>
+                                <div><dt className="font-semibold">Stock</dt><dd>{selectedProduct.stock}</dd></div>
+                                <div><dt className="font-semibold">Precio de venta</dt><dd>{formatCurrency(selectedProduct.sale_price, country)}</dd></div>
+                                <div><dt className="font-semibold">Ubicación</dt><dd>{selectedProduct.product_location?.name ?? selectedProduct.location ?? '-'}</dd></div>
+                            </dl>
+                        ) : <p className="mt-2 text-sm text-slate-600">Selecciona un producto de la lista para consultar sus datos.</p>}
+                    </aside>
+                )}
 
                 <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 p-4 shadow-[0_8px_30px_rgba(15,23,42,0.06)] 2xl:p-5">
                     <form onSubmit={applySearch} className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-[minmax(18rem,1fr)_150px_150px_150px_130px_140px_auto]">
@@ -1212,9 +1239,8 @@ export default function ProductIndex({
                                             >
                                                 Historial
                                             </Link>
-                                            <button type="button" onClick={() => edit(product)} className="rounded-lg px-1 py-1 font-medium text-orange-600 hover:bg-orange-50 xl:px-2">
-                                                {t('actions.edit')}
-                                            </button>
+                                            {canUpdateProducts ? <button type="button" onClick={() => edit(product)} className="rounded-lg px-1 py-1 font-medium text-orange-600 hover:bg-orange-50 xl:px-2">{t('actions.edit')}</button>
+                                                : <button type="button" onClick={() => consult(product)} className="rounded-lg px-1 py-1 font-medium text-orange-600 hover:bg-orange-50 xl:px-2">Consultar</button>}
                                         </td>
                                         </tr>
                                     );
