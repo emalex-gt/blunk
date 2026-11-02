@@ -451,14 +451,16 @@ class Permissions
                 $rolePayload['is_active'] = true;
             }
 
-            $role = Role::query()->updateOrCreate(
+            $role = Role::query()->firstOrCreate(
                 ['business_id' => null, 'key' => $key],
                 $rolePayload,
             );
 
-            $role->permissions()->sync(array_values(array_filter(
-                array_map(fn (string $permission) => $permissionIds[$permission] ?? null, $permissions)
-            )));
+            if ($role->wasRecentlyCreated) {
+                $role->permissions()->sync(array_values(array_filter(
+                    array_map(fn (string $permission) => $permissionIds[$permission] ?? null, $permissions)
+                )));
+            }
         }
 
         self::backfillUserRoles();
@@ -474,6 +476,7 @@ class Permissions
 
         User::query()
             ->select(['id', 'role', 'is_super_admin'])
+            ->doesntHave('roles')
             ->chunkById(200, function ($users) use ($roles) {
                 foreach ($users as $user) {
                     $key = $user->is_super_admin ? 'super_admin' : ($user->role ?: 'cashier');

@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -39,35 +40,44 @@ class SecurityController extends Controller
     {
         $data = $this->validateRole($request);
 
-        $role = Role::query()->create([
-            'business_id' => $data['scope'] === 'tenant' ? $data['business_id'] : null,
-            'name' => $data['name'],
-            'key' => $data['key'],
-            'is_system' => false,
-            'is_active' => (bool) ($data['is_active'] ?? true),
-        ]);
+        DB::transaction(function () use ($data): void {
+            $role = Role::query()->create([
+                'business_id' => $data['scope'] === 'tenant' ? $data['business_id'] : null,
+                'name' => $data['name'],
+                'key' => $data['key'],
+                'is_system' => false,
+                'is_active' => (bool) ($data['is_active'] ?? true),
+            ]);
 
-        $this->syncRolePermissions($role, $data['permissions'] ?? []);
+            $this->syncRolePermissions($role, $data['permissions'] ?? []);
+        });
 
         return back()->with('success', 'Rol creado.');
     }
 
     public function updateRole(Request $request, Role $role): RedirectResponse
     {
+        abort_if($this->isProtectedSuperAdminRole($role), 422, 'No se pueden modificar los permisos del rol Super Admin.');
+
         $data = $this->validateRole($request, $role);
 
-        $payload = [
-            'name' => $data['name'],
-        ];
+        DB::transaction(function () use ($data, $role): void {
+            $lockedRole = Role::query()->lockForUpdate()->findOrFail($role->id);
+            abort_if($this->isProtectedSuperAdminRole($lockedRole), 422, 'No se pueden modificar los permisos del rol Super Admin.');
 
-        if (! $role->is_system) {
-            $payload['key'] = $data['key'];
-            $payload['business_id'] = $data['scope'] === 'tenant' ? $data['business_id'] : null;
-            $payload['is_active'] = (bool) ($data['is_active'] ?? true);
-        }
+            $payload = [
+                'name' => $data['name'],
+            ];
 
-        $role->update($payload);
-        $this->syncRolePermissions($role, $data['permissions'] ?? []);
+            if (! $lockedRole->is_system) {
+                $payload['key'] = $data['key'];
+                $payload['business_id'] = $data['scope'] === 'tenant' ? $data['business_id'] : null;
+                $payload['is_active'] = (bool) ($data['is_active'] ?? true);
+            }
+
+            $lockedRole->update($payload);
+            $this->syncRolePermissions($lockedRole, $data['permissions'] ?? []);
+        });
 
         return back()->with('success', 'Rol actualizado.');
     }
@@ -246,5 +256,10 @@ class SecurityController extends Controller
             ->all();
 
         $role->permissions()->sync($ids);
+    }
+
+    private function isProtectedSuperAdminRole(Role $role): bool
+    {
+        return $role->business_id === null && $role->key === 'super_admin';
     }
 }

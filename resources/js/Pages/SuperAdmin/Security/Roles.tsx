@@ -17,6 +17,7 @@ type Role = {
 
 export default function Roles({ roles, permissions, businesses }: { roles: Role[]; permissions: Permission[]; businesses: Business[] }) {
     const [editing, setEditing] = useState<Role | null>(null);
+    const isProtectedSuperAdminRole = editing?.business_id === null && editing?.key === 'super_admin';
     const form = useForm({
         scope: 'global',
         business_id: '',
@@ -79,6 +80,16 @@ export default function Roles({ roles, permissions, businesses }: { roles: Role[
             <div className="grid gap-6 lg:grid-cols-[440px_1fr]">
                 <form onSubmit={submit} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                     <h2 className="text-lg font-semibold text-slate-900">{editing ? 'Editar rol' : 'Crear rol'}</h2>
+                    {editing && editing.business_id === null && (
+                        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                            Los cambios de permisos de este rol afectarán a todos los usuarios que lo tengan asignado, independientemente de su empresa.
+                        </p>
+                    )}
+                    {isProtectedSuperAdminRole && (
+                        <p className="mt-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+                            Los permisos del rol Super Admin están protegidos.
+                        </p>
+                    )}
                     <div className="mt-4 grid gap-3">
                         <select
                             className={inputClass}
@@ -103,7 +114,7 @@ export default function Roles({ roles, permissions, businesses }: { roles: Role[
                             </select>
                         )}
                         <input className={inputClass} placeholder="Clave" value={form.data.key} disabled={Boolean(editing?.is_system)} onChange={(event) => form.setData('key', event.target.value)} />
-                        <input className={inputClass} placeholder="Nombre" value={form.data.name} onChange={(event) => form.setData('name', event.target.value)} />
+                        <input className={inputClass} placeholder="Nombre" value={form.data.name} disabled={isProtectedSuperAdminRole} onChange={(event) => form.setData('name', event.target.value)} />
                         <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                             <input
                                 type="checkbox"
@@ -124,6 +135,7 @@ export default function Roles({ roles, permissions, businesses }: { roles: Role[
                                             <input
                                                 type="checkbox"
                                                 checked={form.data.permissions.includes(permission.key)}
+                                                disabled={isProtectedSuperAdminRole}
                                                 onChange={() => togglePermission(permission.key)}
                                             />
                                             <span>{permission.name}</span>
@@ -135,7 +147,7 @@ export default function Roles({ roles, permissions, businesses }: { roles: Role[
                         ))}
                     </div>
                     <div className="mt-4 flex gap-2">
-                        <button className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={form.processing}>
+                        <button className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={form.processing || isProtectedSuperAdminRole}>
                             Guardar
                         </button>
                         {editing && (
