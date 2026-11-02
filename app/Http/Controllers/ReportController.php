@@ -55,9 +55,9 @@ class ReportController extends Controller
         'products-sold-detailed' => ['method' => 'productsSoldDetailed', 'permission' => Permissions::REPORTS_PRODUCTS_SOLD_DETAILED_VIEW, 'title' => 'Productos vendidos detallado'],
         'products-sold-summary' => ['method' => 'productsSoldSummary', 'permission' => Permissions::REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW, 'title' => 'Productos vendidos resumido'],
         'low-stock' => ['method' => 'lowStock', 'permission' => Permissions::REPORTS_LOW_STOCK_VIEW, 'title' => 'Stock bajo'],
-        'products-without-sales' => ['method' => 'productsWithoutSales', 'permission' => Permissions::REPORTS_INVENTORY_VIEW, 'title' => 'Productos sin ventas'],
-        'products-without-cost' => ['method' => 'productsWithoutCost', 'permission' => Permissions::REPORTS_PROFIT_VIEW, 'title' => 'Productos sin costo'],
-        'anomalous-prices' => ['method' => 'anomalousPrices', 'permission' => Permissions::REPORTS_PROFIT_VIEW, 'title' => 'Productos con precios anómalos'],
+        'products-without-sales' => ['method' => 'productsWithoutSales', 'permission' => Permissions::REPORTS_PRODUCTS_WITHOUT_SALES_VIEW, 'title' => 'Productos sin ventas'],
+        'products-without-cost' => ['method' => 'productsWithoutCost', 'permission' => Permissions::REPORTS_PRODUCTS_WITHOUT_COST_VIEW, 'title' => 'Productos sin costo'],
+        'anomalous-prices' => ['method' => 'anomalousPrices', 'permission' => Permissions::REPORTS_ANOMALOUS_PRICES_VIEW, 'title' => 'Productos con precios anómalos'],
         'top-products' => ['method' => 'topProducts', 'permission' => Permissions::REPORTS_TOP_PRODUCTS_VIEW, 'title' => 'Productos más vendidos'],
         'purchase-cost-history' => ['method' => 'purchaseCostHistory', 'permission' => Permissions::REPORTS_PURCHASE_COST_HISTORY_VIEW, 'title' => 'Historial de precios de compra'],
     ];

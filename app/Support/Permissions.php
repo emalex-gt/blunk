@@ -57,8 +57,11 @@ class Permissions
     public const REPORTS_LOW_STOCK_VIEW = 'reports.low_stock.view';
     public const REPORTS_TOP_PRODUCTS_VIEW = 'reports.top_products.view';
     public const REPORTS_INVENTORY_VIEW = 'reports.inventory.view';
+    public const REPORTS_PRODUCTS_WITHOUT_SALES_VIEW = 'reports.products_without_sales.view';
     public const REPORTS_DAILY_VIEW = 'reports.daily.view';
     public const REPORTS_PROFIT_VIEW = 'reports.profit.view';
+    public const REPORTS_PRODUCTS_WITHOUT_COST_VIEW = 'reports.products_without_cost.view';
+    public const REPORTS_ANOMALOUS_PRICES_VIEW = 'reports.anomalous_prices.view';
     public const REPORTS_WAREHOUSE_MONEY_VIEW = 'reports.warehouse_money.view';
     public const REPORTS_SALES_BY_SELLER_VIEW = 'reports.sales_by_seller.view';
     public const REPORTS_SALES_BY_DATE_VIEW = 'reports.sales_by_date.view';
@@ -203,12 +206,15 @@ class Permissions
             self::REPORTS_LOW_STOCK_VIEW => ['name' => 'Ver reporte de stock bajo', 'group' => 'Reportes'],
             self::REPORTS_TOP_PRODUCTS_VIEW => ['name' => 'Ver productos más vendidos', 'group' => 'Reportes'],
             self::REPORTS_INVENTORY_VIEW => ['name' => 'Ver reporte de inventario', 'group' => 'Reportes'],
+            self::REPORTS_PRODUCTS_WITHOUT_SALES_VIEW => ['name' => 'Ver productos sin ventas', 'group' => 'Reportes', 'description' => 'Permite identificar productos con existencias y sin ventas en el período seleccionado.'],
             self::REPORTS_DAILY_VIEW => ['name' => 'Ver reporte diario', 'group' => 'Reportes'],
             self::REPORTS_PROFIT_VIEW => [
                 'name' => 'Ver márgenes y rentabilidad',
                 'group' => 'Reportes',
                 'description' => 'Permite ver costos, márgenes, utilidad estimada y rentabilidad.',
             ],
+            self::REPORTS_PRODUCTS_WITHOUT_COST_VIEW => ['name' => 'Ver productos sin costo', 'group' => 'Reportes', 'description' => 'Permite revisar productos sin costo configurado.'],
+            self::REPORTS_ANOMALOUS_PRICES_VIEW => ['name' => 'Ver precios anómalos', 'group' => 'Reportes', 'description' => 'Permite revisar precios de venta anómalos respecto del costo.'],
             self::REPORTS_WAREHOUSE_MONEY_VIEW => ['name' => 'Ver dinero en bodega', 'group' => 'Reportes'],
             self::REPORTS_SALES_BY_SELLER_VIEW => ['name' => 'Ver ventas por vendedor', 'group' => 'Reportes'],
             self::REPORTS_SALES_BY_DATE_VIEW => ['name' => 'Ver ventas por fecha', 'group' => 'Reportes'],
@@ -378,8 +384,11 @@ class Permissions
                 self::REPORTS_LOW_STOCK_VIEW,
                 self::REPORTS_TOP_PRODUCTS_VIEW,
                 self::REPORTS_INVENTORY_VIEW,
+                self::REPORTS_PRODUCTS_WITHOUT_SALES_VIEW,
                 self::REPORTS_DAILY_VIEW,
                 self::REPORTS_PROFIT_VIEW,
+                self::REPORTS_PRODUCTS_WITHOUT_COST_VIEW,
+                self::REPORTS_ANOMALOUS_PRICES_VIEW,
                 self::REPORTS_WAREHOUSE_MONEY_VIEW,
                 self::REPORTS_SALES_BY_SELLER_VIEW,
                 self::REPORTS_SALES_BY_DATE_VIEW,

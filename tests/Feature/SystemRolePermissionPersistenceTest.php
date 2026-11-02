@@ -113,6 +113,28 @@ class SystemRolePermissionPersistenceTest extends TestCase
         $this->assertSame($permissionIds, $role->fresh()->permissions()->pluck('id')->sort()->values()->all());
     }
 
+    public function test_product_report_permissions_are_catalogued_without_granting_them_to_existing_roles(): void
+    {
+        $cashier = Role::query()->whereNull('business_id')->where('key', 'cashier')->firstOrFail();
+        $permissions = [
+            Permissions::REPORTS_PRODUCTS_WITHOUT_COST_VIEW,
+            Permissions::REPORTS_ANOMALOUS_PRICES_VIEW,
+            Permissions::REPORTS_PRODUCTS_WITHOUT_SALES_VIEW,
+        ];
+
+        foreach ($permissions as $permission) {
+            $this->assertArrayHasKey($permission, Permissions::catalog());
+            $this->assertTrue(Permission::query()->where('key', $permission)->exists());
+            $this->assertFalse($cashier->permissions()->where('key', $permission)->exists());
+        }
+
+        Permissions::syncDefaults();
+
+        foreach ($permissions as $permission) {
+            $this->assertFalse($cashier->fresh()->permissions()->where('key', $permission)->exists());
+        }
+    }
+
     private function business(): Business
     {
         return Business::query()->create([
