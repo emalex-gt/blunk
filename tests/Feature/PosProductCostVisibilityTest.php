@@ -48,7 +48,7 @@ class PosProductCostVisibilityTest extends TestCase
 
         $productPayload = collect($response->json('products'))->firstWhere('id', $product->id);
         $this->assertSame('30', $productPayload['sale_price']);
-        $this->assertSame(4.0, $productPayload['physical_stock']);
+        $this->assertSame(4.0, (float) $productPayload['physical_stock']);
     }
 
     public function test_products_create_permission_receives_cost_price_in_pos_search(): void
@@ -102,7 +102,7 @@ class PosProductCostVisibilityTest extends TestCase
             ->assertOk()
             ->json('products.0');
 
-        $this->assertSame(9.0, $payload['physical_stock']);
+        $this->assertSame(9.0, (float) $payload['physical_stock']);
         $this->assertArrayNotHasKey('cost_price', $payload);
     }
 
