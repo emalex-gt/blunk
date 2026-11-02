@@ -5078,7 +5078,7 @@ export default function POS({
                 </div>
             )}
 
-            {canViewAssistantCosts && <BlunkAssistant alerts={assistantPricingAlerts} positionClassName="bottom-24 right-4 sm:bottom-5 lg:right-[calc(30rem+1.25rem)]" />}
+            {canViewAssistantCosts && <BlunkAssistant alerts={assistantPricingAlerts} />}
 
             {showClearSaleModal && (
                 <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
