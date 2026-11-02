@@ -25,12 +25,14 @@ class RoutePendingCollectionService
         abort_unless(Permissions::userHas($actor, Permissions::ROUTES_PENDING_COLLECTIONS_COLLECT), 403);
         $this->assertActorScope($case, $actor);
         $historicalCollectedAt = array_key_exists('collected_at', $data);
-        $payload = [
+        $idempotencyPayload = [
             ...$data,
             'collected_by' => $data['collected_by'] ?? $actor->id,
-            'collected_at' => $data['collected_at'] ?? now()->toDateTimeString(),
             '_historical_collected_at' => $historicalCollectedAt,
         ];
+        if (! $historicalCollectedAt) {
+            unset($idempotencyPayload['collected_at']);
+        }
 
         return app(IdempotencyService::class)->run(
             (int) $case->business_id,
@@ -38,8 +40,17 @@ class RoutePendingCollectionService
             (int) $actor->id,
             'route_pending_collection_collect',
             $key,
-            ['case_id' => $case->id, ...$payload],
-            function () use ($case, $payload, $actor) {
+            ['case_id' => $case->id, ...$idempotencyPayload],
+            function () use ($case, $data, $historicalCollectedAt, $actor) {
+                $payload = [
+                    ...$data,
+                    'collected_by' => $data['collected_by'] ?? $actor->id,
+                    'collected_at' => $historicalCollectedAt
+                        ? $data['collected_at']
+                        : now()->toDateTimeString(),
+                    '_historical_collected_at' => $historicalCollectedAt,
+                ];
+
                 return DB::transaction(function () use ($case, $payload, $actor) {
                     $lockedCase = RoutePendingCollectionCase::query()->whereKey($case->id)->lockForUpdate()->firstOrFail();
                     $this->assertActorScope($lockedCase, $actor);

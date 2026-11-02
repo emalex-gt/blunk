@@ -235,13 +235,19 @@ class RoutePendingCollectionEligibilityTest extends TestCase
         TenantSetting::query()->where('business_id', $business->id)->update(['route_cash_custody_policy' => 'immediate_branch_register']);
         $session = \App\Models\CashRegisterSession::query()->where('business_id', $business->id)->where('branch_id', $branch->id)->where('status', 'open')->firstOrFail();
 
-        $result = app(RoutePendingCollectionService::class)->collect($case, [
+        $payload = [
             'amount' => 60,
             'payment_method' => 'cash',
             'receive_cash_in_current_session' => true,
-        ], $actor, 'pending-late-cash-immediate-0001');
+        ];
+        $service = app(RoutePendingCollectionService::class);
+        $result = $service->collect($case, $payload, $actor, 'pending-late-cash-immediate-0001');
+        $replay = $service->collect($case->fresh(), $payload, $actor, 'pending-late-cash-immediate-0001');
 
         $collection = \App\Models\RouteDeliveryCollection::query()->findOrFail($result->resultId);
+        $this->assertFalse($result->replayed);
+        $this->assertTrue($replay->replayed);
+        $this->assertSame($result->resultId, $replay->resultId);
         $this->assertSame('posted_to_branch_cash', $collection->custody_status);
         $this->assertSame($session->id, $collection->cash_register_session_id);
         $this->assertNotNull($collection->cash_movement_id);
@@ -295,13 +301,71 @@ class RoutePendingCollectionEligibilityTest extends TestCase
         } catch (\Illuminate\Validation\ValidationException) {
         }
 
-        $result = app(RoutePendingCollectionService::class)->collect($case, ['amount' => 60, 'payment_method' => 'cash', 'collected_by' => $otherCollector->id, 'collected_at' => $historical->toDateTimeString(), 'override_reason' => 'Cobro informado por el cobrador original.'], $actor, 'pending-override-ok-0001');
+        $payload = ['amount' => 60, 'payment_method' => 'cash', 'collected_by' => $otherCollector->id, 'collected_at' => $historical->toDateTimeString(), 'override_reason' => 'Cobro informado por el cobrador original.'];
+        $service = app(RoutePendingCollectionService::class);
+        $result = $service->collect($case, $payload, $actor, 'pending-override-ok-0001');
+        $replay = $service->collect($case->fresh(), $payload, $actor, 'pending-override-ok-0001');
         $collection = \App\Models\RouteDeliveryCollection::query()->findOrFail($result->resultId);
+        $this->assertFalse($result->replayed);
+        $this->assertTrue($replay->replayed);
+        $this->assertSame($result->resultId, $replay->resultId);
         $this->assertSame($otherCollector->id, $collection->collected_by);
         $this->assertSame($actor->id, $collection->recorded_by);
         $this->assertSame('Cobro informado por el cobrador original.', $collection->override_reason);
         $this->assertSame($historical->format('Y-m-d H:i:s'), $collection->collected_at->format('Y-m-d H:i:s'));
         $this->assertSame('held_by_collector', $collection->custody_status);
+        $this->assertDatabaseCount('cash_movements', 0);
+    }
+
+    public function test_collection_without_an_explicit_timestamp_replays_with_the_original_effective_time(): void
+    {
+        $initial = now()->startOfSecond();
+        $this->travelTo($initial);
+
+        try {
+            [, , $item] = $this->externalDeliveredUnpaid();
+            $actor = User::query()->findOrFail($item->reconciled_by);
+            $case = RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->firstOrFail();
+            $payload = ['amount' => 60, 'payment_method' => 'transfer'];
+            $service = app(RoutePendingCollectionService::class);
+
+            $first = $service->collect($case, $payload, $actor, 'pending-timestamp-replay-0001');
+            $collection = \App\Models\RouteDeliveryCollection::query()->findOrFail($first->resultId);
+            $originalCollectedAt = $collection->collected_at->format('Y-m-d H:i:s');
+
+            $this->travelTo($initial->copy()->addSeconds(5));
+            $second = $service->collect($case->fresh(), $payload, $actor, 'pending-timestamp-replay-0001');
+
+            $this->assertFalse($first->replayed);
+            $this->assertTrue($second->replayed);
+            $this->assertSame($first->resultId, $second->resultId);
+            $this->assertSame($originalCollectedAt, $collection->fresh()->collected_at->format('Y-m-d H:i:s'));
+            $this->assertDatabaseCount('route_delivery_collections', 1);
+            $this->assertDatabaseCount('sale_payments', 1);
+            $this->assertDatabaseCount('cash_movements', 0);
+        } finally {
+            $this->travelBack();
+        }
+    }
+
+    public function test_collection_rejects_a_reused_key_when_the_financial_payload_changes(): void
+    {
+        [, , $item] = $this->externalDeliveredUnpaid();
+        $actor = User::query()->findOrFail($item->reconciled_by);
+        $case = RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->firstOrFail();
+        $service = app(RoutePendingCollectionService::class);
+        $key = 'pending-payload-conflict-0001';
+
+        $service->collect($case, ['amount' => 60, 'payment_method' => 'transfer'], $actor, $key);
+
+        try {
+            $service->collect($case->fresh(), ['amount' => 59, 'payment_method' => 'transfer'], $actor, $key);
+            $this->fail('A completed collection key cannot be reused with another amount.');
+        } catch (\App\Support\IdempotencyConflictException) {
+        }
+
+        $this->assertDatabaseCount('route_delivery_collections', 1);
+        $this->assertDatabaseCount('sale_payments', 1);
         $this->assertDatabaseCount('cash_movements', 0);
     }
 
