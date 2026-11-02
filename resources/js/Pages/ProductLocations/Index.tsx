@@ -1,5 +1,5 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, Link, router, useForm } from '@inertiajs/react';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import { FormEvent, useState } from 'react';
 
 type ProductLocation = {
@@ -16,6 +16,9 @@ type Paginated<T> = {
 };
 
 export default function Index({ locations, filters }: { locations: Paginated<ProductLocation>; filters: { search?: string } }) {
+    const auth = usePage().props.auth as { user?: { is_super_admin?: boolean }; permissions?: string[] };
+    const can = (permission: string) => Boolean(auth?.user?.is_super_admin) || (auth?.permissions ?? []).includes(permission);
+    const canCreate = can('product_locations.create'); const canEdit = can('product_locations.edit'); const canDelete = can('product_locations.delete');
     const form = useForm({ name: '', description: '', is_active: true });
     const [editing, setEditing] = useState<ProductLocation | null>(null);
     const [search, setSearch] = useState(filters.search ?? '');
@@ -54,7 +57,7 @@ export default function Index({ locations, filters }: { locations: Paginated<Pro
             <Head title="Ubicaciones" />
 
             <div className="mx-auto grid max-w-7xl gap-5 px-5 py-5 lg:grid-cols-[360px_1fr] sm:px-6">
-                <form onSubmit={submit} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                {(canCreate || editing) ? <form onSubmit={submit} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                     <div>
                         <h3 className="text-base font-semibold text-slate-950">
                             {editing ? 'Editar ubicación' : 'Nueva ubicación'}
@@ -114,7 +117,7 @@ export default function Index({ locations, filters }: { locations: Paginated<Pro
                             </button>
                         )}
                     </div>
-                </form>
+                </form> : <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h3 className="font-semibold">Consultar ubicaciones</h3><p className="mt-1 text-sm text-slate-500">No tienes permiso para crear o editar ubicaciones.</p></aside>}
 
                 <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                     <form
@@ -158,10 +161,10 @@ export default function Index({ locations, filters }: { locations: Paginated<Pro
                                             </span>
                                         </td>
                                         <td className="space-x-2 px-3 py-3 text-right">
-                                            <button onClick={() => edit(location)} className="rounded-lg px-2 py-1 font-semibold text-orange-600 hover:bg-orange-50">
+                                            {canEdit && <button onClick={() => edit(location)} className="rounded-lg px-2 py-1 font-semibold text-orange-600 hover:bg-orange-50">
                                                 Editar
-                                            </button>
-                                            {location.is_active && (
+                                            </button>}
+                                            {canDelete && location.is_active && (
                                                 <button onClick={() => router.delete(route('product-locations.destroy', location.id), { preserveScroll: true })} className="rounded-lg px-2 py-1 font-semibold text-red-600 hover:bg-red-50">
                                                     Desactivar
                                                 </button>
