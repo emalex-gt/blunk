@@ -159,7 +159,7 @@ class CustomerManagementTest extends TestCase
         [$business, $user] = $this->tenantUser('owner');
         $customer = Customer::query()->create([
             'business_id' => $business->id,
-            'name' => 'Consumidor Final',
+            'name' => 'Cliente CF personalizado',
             'doc_type' => 'CF',
             'doc_number' => 'C/F',
             'is_final_consumer' => true,
