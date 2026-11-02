@@ -15,4 +15,11 @@ class CatalogPermissionVisibilityTest extends TestCase
             $this->assertStringContainsString('canDelete', $source);
         }
     }
+
+    public function test_price_list_index_uses_view_permission_without_mutating_defaults(): void
+    {
+        $controller = file_get_contents(app_path('Http/Controllers/PriceListController.php'));
+        $this->assertStringContainsString('authorizeView($request)', $controller);
+        $this->assertStringNotContainsString('PriceLists::ensureDefault($businessId);\n\n        return Inertia::render(\'PriceLists/Index\'', $controller);
+    }
 }

@@ -1,5 +1,5 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, Link, router } from '@inertiajs/react';
+import { Head, Link, router, usePage } from '@inertiajs/react';
 
 type PriceType = {
     id: number;
@@ -16,6 +16,8 @@ export default function Index({
     priceTypes: PriceType[];
     activeCount: number;
 }) {
+    const auth = usePage().props.auth as { user?: { is_super_admin?: boolean }; permissions?: string[] };
+    const canManage = Boolean(auth?.user?.is_super_admin) || (auth?.permissions ?? []).includes('price_lists.manage');
     function destroy(priceType: PriceType) {
         if (!confirm(`¿Eliminar la lista "${priceType.name}"?`)) {
             return;
@@ -42,9 +44,9 @@ export default function Index({
                         <h1 className="text-2xl font-bold text-slate-950">Listas de precios</h1>
                         <p className="mt-1 text-sm text-slate-500">Gestiona listas, predeterminados y precios por producto.</p>
                     </div>
-                    <Link href={route('price-lists.create')} className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700">
+                    {canManage && <Link href={route('price-lists.create')} className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700">
                         Nueva lista
-                    </Link>
+                    </Link>}
                 </div>
 
                 <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -74,7 +76,7 @@ export default function Index({
                                     </td>
                                     <td className="px-4 py-3 text-slate-700">{priceType.products_with_price_count}</td>
                                     <td className="px-4 py-3 text-right">
-                                        <div className="flex flex-wrap justify-end gap-2">
+                                        {canManage && <div className="flex flex-wrap justify-end gap-2">
                                             <Link className="rounded-lg px-2 py-1 font-semibold text-orange-600 hover:bg-orange-50" href={route('price-lists.edit', priceType.id)}>
                                                 Editar
                                             </Link>
@@ -92,7 +94,7 @@ export default function Index({
                                             <button type="button" disabled={priceType.is_active && activeCount <= 1} onClick={() => destroy(priceType)} className="rounded-lg px-2 py-1 font-semibold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40">
                                                 Eliminar
                                             </button>
-                                        </div>
+                                        </div>}
                                     </td>
                                 </tr>
                             ))}

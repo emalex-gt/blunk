@@ -19,9 +19,8 @@ class PriceListController extends Controller
 {
     public function index(Request $request): Response
     {
-        $this->authorizeManage($request);
+        $this->authorizeView($request);
         $businessId = currentBusinessId();
-        PriceLists::ensureDefault($businessId);
 
         return Inertia::render('PriceLists/Index', [
             'priceTypes' => PriceType::query()
@@ -243,6 +242,13 @@ class PriceListController extends Controller
 
         abort_unless(module_enabled('inventory') || module_enabled('pos'), 403);
         abort_unless(Permissions::canManagePriceLists($user), 403);
+    }
+
+    private function authorizeView(Request $request): void
+    {
+        $user = $request->user();
+        abort_unless(module_enabled('inventory') || module_enabled('pos'), 403);
+        abort_unless(Permissions::userHas($user, Permissions::PRICE_LISTS_VIEW), 403);
     }
 
     private function activeCount(int $businessId): int
