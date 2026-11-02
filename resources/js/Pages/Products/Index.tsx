@@ -1,5 +1,6 @@
 import InputError from '@/Components/InputError';
 import InputLabel from '@/Components/InputLabel';
+import BlunkAssistant from '@/Components/Assistant/BlunkAssistant';
 import PrimaryButton from '@/Components/PrimaryButton';
 import SecondaryButton from '@/Components/SecondaryButton';
 import SupplierInfoPopover from '@/Components/SupplierInfoPopover';
@@ -8,6 +9,7 @@ import Toast from '@/Components/Toast';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { getProductImageUrl } from '@/lib/cloudinary';
 import { compressImage } from '@/lib/images';
+import { evaluateAssistantPricing } from '@/lib/assistantPricing';
 import { t } from '@/lib/i18n';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency } from '@/utils/currency';
@@ -344,6 +346,7 @@ export default function ProductIndex({
     const permissions = auth?.permissions ?? [];
     const canCreateProducts = isSuperAdmin || permissions.includes('products.create');
     const canUpdateProducts = isSuperAdmin || permissions.includes('products.update');
+    const canViewAssistantCosts = canCreateProducts || canUpdateProducts || permissions.includes('reports.profit.view');
     const canViewBrands = isSuperAdmin || permissions.includes('brands.view');
     const canViewLocations = isSuperAdmin || permissions.includes('product_locations.view');
     const enabledModules = (page.props.enabled_modules as string[] | undefined) ?? [];
@@ -383,6 +386,48 @@ export default function ProductIndex({
     );
     const currentProducts = products.data;
     const createdProductId = filters.created_product_id ?? null;
+    const assistantPricingAlerts = useMemo(() => {
+        if (!canViewAssistantCosts) {
+            return [];
+        }
+
+        const hasConfiguredPrice = Number(data.sale_price) > 0
+            || Object.values(data.prices).some((price) => Number(price) > 0);
+        if (!data.name.trim() && !hasConfiguredPrice) {
+            return [];
+        }
+
+        const productId = editing?.id ?? 'draft-product';
+        const productName = data.name.trim() || 'Producto en edición';
+        const primaryPrice = Number(data.sale_price);
+        const prices = [{
+            productId,
+            productName,
+            price: data.sale_price,
+            label: pricingScope === 'branch' && activeBranch ? `Precio de sucursal: ${activeBranch.name}` : 'Precio principal',
+        }];
+
+        priceTypes.forEach((priceType) => {
+            const price = data.prices[String(priceType.id)];
+
+            if (price === undefined || price.trim() === '') {
+                return;
+            }
+
+            if (priceType.is_default && Number(price) === primaryPrice) {
+                return;
+            }
+
+            prices.push({
+                productId,
+                productName,
+                price,
+                label: `Lista: ${priceType.name}`,
+            });
+        });
+
+        return evaluateAssistantPricing(data.cost_price, prices);
+    }, [activeBranch, canViewAssistantCosts, data.cost_price, data.name, data.prices, data.sale_price, editing?.id, priceTypes, pricingScope]);
 
     function submit(event: FormEvent) {
         event.preventDefault();
@@ -1282,6 +1327,7 @@ export default function ProductIndex({
                     </div>
                 </section>
             </div>
+            {canViewAssistantCosts && <BlunkAssistant alerts={assistantPricingAlerts} />}
         </AuthenticatedLayout>
     );
 }

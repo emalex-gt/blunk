@@ -1,7 +1,9 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import BlunkAssistant from '@/Components/Assistant/BlunkAssistant';
 import GuatemalaLocationSelects from '@/Components/GuatemalaLocationSelects';
 import Toast from '@/Components/Toast';
 import { getProductImageUrl } from '@/lib/cloudinary';
+import { evaluateAssistantPricing } from '@/lib/assistantPricing';
 import { useToast } from '@/hooks/useToast';
 import { t } from '@/lib/i18n';
 import { clearDraft, loadDraft, makeDraftKey, saveDraft } from '@/lib/draftStorage';
@@ -790,6 +792,12 @@ export default function POS({
     const canApplyDiscount = (pageProps.enabled_modules ?? []).includes('discounts')
         && (Boolean(pageProps.auth?.user?.is_super_admin)
             || (pageProps.auth?.permissions ?? []).includes('sales.discount.apply'));
+    const canViewAssistantCosts = Boolean(pageProps.auth?.user?.is_super_admin)
+        || (pageProps.auth?.permissions ?? []).some((permission) => [
+            'products.create',
+            'products.update',
+            'reports.profit.view',
+        ].includes(permission));
     const canUseManualPrice = Boolean(price_settings.allow_manual_price)
         && (Boolean(price_settings.can_use_manual_price)
             || Boolean(pageProps.auth?.user?.is_super_admin)
@@ -1441,6 +1449,36 @@ export default function POS({
         () => roundMoney(Math.max(0, subtotalBeforeDiscount - discountAmount)),
         [discountAmount, subtotalBeforeDiscount],
     );
+    const assistantPricingAlerts = useMemo(() => {
+        if (!canViewAssistantCosts || cart.length === 0) {
+            return [];
+        }
+
+        return cart.flatMap((item) => {
+            const quantity = quantityNumber(item.quantity);
+            const unitPrice = Number(item.unit_price);
+            const lineSubtotal = unitPrice * quantity;
+            const allocatedDiscount = subtotalBeforeDiscount > 0
+                ? discountAmount * (lineSubtotal / subtotalBeforeDiscount)
+                : 0;
+            const effectiveUnitPrice = quantity > 0
+                ? (lineSubtotal - allocatedDiscount) / quantity
+                : unitPrice;
+            const priceType = price_types.find((type) => type.id === item.price_type_id);
+            const label = item.manual_price
+                ? 'Precio manual efectivo'
+                : priceType
+                    ? `Lista: ${priceType.name}`
+                    : 'Precio efectivo';
+
+            return evaluateAssistantPricing(item.product.cost_price, [{
+                productId: item.product.id,
+                productName: item.product.name,
+                price: effectiveUnitPrice,
+                label,
+            }]);
+        });
+    }, [canViewAssistantCosts, cart, discountAmount, price_types, subtotalBeforeDiscount]);
 
     const paidTotal = useMemo(
         () =>
@@ -5018,6 +5056,8 @@ export default function POS({
                     </section>
                 </div>
             )}
+
+            {canViewAssistantCosts && <BlunkAssistant alerts={assistantPricingAlerts} positionClassName="bottom-24 right-4 sm:bottom-5 lg:right-[calc(30rem+1.25rem)]" />}
 
             {showClearSaleModal && (
                 <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
