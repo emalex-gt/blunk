@@ -3801,8 +3801,6 @@ class CriticalPosFelFlowTest extends TestCase
         $settings = $this->felSettings($business);
 
         BranchInventory::defaultBranchForBusiness($business)->update([
-            'department' => 'Guatemala',
-            'municipality' => 'Guatemala',
             'fel_establishment_code' => '1',
             'fel_establishment_name' => 'Establecimiento A',
             'fel_address' => 'Direccion A',
@@ -6016,6 +6014,8 @@ class CriticalPosFelFlowTest extends TestCase
         ]);
 
         BranchInventory::defaultBranchForBusiness($business)->update([
+            'department' => 'Guatemala',
+            'municipality' => 'Guatemala',
             'fel_establishment_code' => '1',
             'fel_establishment_name' => 'Casa Matriz',
             'fel_address' => 'Ciudad',
