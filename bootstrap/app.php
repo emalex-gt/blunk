@@ -1,6 +1,7 @@
 <?php
 
 use App\Support\IdempotencyConflictException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -32,6 +33,15 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        $forbiddenResponse = function (Request $request) {
+            if ($request->header('X-Inertia') !== 'true' && $request->expectsJson()) {
+                return response()->json(['message' => 'No tienes permiso para realizar esta acción.'], 403);
+            }
+
+            return Inertia::render('Errors/Forbidden', [
+                'message' => 'No tienes permiso para acceder a esta sección.',
+            ])->toResponse($request)->setStatusCode(403);
+        };
         $sessionExpiredResponse = function (Request $request) {
             $message = 'Por seguridad, tu sesión expiró. Inicia sesión nuevamente para continuar.';
 
@@ -68,7 +78,14 @@ return Application::configure(basePath: dirname(__DIR__))
             return back()->withErrors(['idempotency_key' => $message]);
         });
 
-        $exceptions->render(function (HttpException $exception, Request $request) use ($sessionExpiredResponse) {
+        $exceptions->render(function (AuthorizationException $exception, Request $request) use ($forbiddenResponse) {
+            return $forbiddenResponse($request);
+        });
+
+        $exceptions->render(function (HttpException $exception, Request $request) use ($sessionExpiredResponse, $forbiddenResponse) {
+            if ($exception->getStatusCode() === 403) {
+                return $forbiddenResponse($request);
+            }
             if ($exception->getStatusCode() !== 419) {
                 return null;
             }
