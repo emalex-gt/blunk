@@ -150,6 +150,9 @@ class SaleController extends Controller
 
         $businessId = currentBusinessId();
         $activeBranch = BranchInventory::activeBranch($businessId);
+        $canViewCosts = Permissions::userHas($request->user(), Permissions::PRODUCTS_CREATE)
+            || Permissions::userHas($request->user(), Permissions::PRODUCTS_UPDATE)
+            || Permissions::userHas($request->user(), Permissions::REPORTS_PROFIT_VIEW);
         $tenantSettings = TenantSetting::query()->where('business_id', $businessId)->first();
         $showOtherBranchesStock = (bool) ($tenantSettings?->show_other_branches_stock_in_pos ?? false);
         $search = trim((string) $request->query('q', ''));
@@ -292,9 +295,9 @@ class SaleController extends Controller
         $exactCodeMatches = $exactCodeMatches->where('business_id', $businessId)->values();
 
         return response()->json([
-            'products' => $this->posProductPayload($products, $businessId, $activeBranch->id, $showOtherBranchesStock),
-            'exact_barcode_matches' => $this->posProductPayload($exactBarcodeMatches, $businessId, $activeBranch->id, $showOtherBranchesStock),
-            'exact_code_matches' => $this->posProductPayload($exactCodeMatches, $businessId, $activeBranch->id, $showOtherBranchesStock),
+            'products' => $this->posProductPayload($products, $businessId, $activeBranch->id, $showOtherBranchesStock, $canViewCosts),
+            'exact_barcode_matches' => $this->posProductPayload($exactBarcodeMatches, $businessId, $activeBranch->id, $showOtherBranchesStock, $canViewCosts),
+            'exact_code_matches' => $this->posProductPayload($exactCodeMatches, $businessId, $activeBranch->id, $showOtherBranchesStock, $canViewCosts),
         ]);
     }
 
@@ -2187,7 +2190,13 @@ class SaleController extends Controller
         ];
     }
 
-    private function posProductPayload(Collection $products, int $businessId, int $branchId, bool $includeOtherBranches = false): array
+    private function posProductPayload(
+        Collection $products,
+        int $businessId,
+        int $branchId,
+        bool $includeOtherBranches = false,
+        bool $includeCostPrice = false,
+    ): array
     {
         if ($products->isEmpty()) {
             return [];
@@ -2231,7 +2240,8 @@ class SaleController extends Controller
             $priceTypes,
             $defaultPriceType,
             $otherBranchAvailability,
-            $includeOtherBranches
+            $includeOtherBranches,
+            $includeCostPrice,
         ) {
             $productId = (int) $product->id;
             $breakdown = $stockBreakdown->get($productId, []);
@@ -2274,7 +2284,6 @@ class SaleController extends Controller
                 'name' => $product->name,
                 'code' => $product->code,
                 'barcode' => $product->barcode,
-                'cost_price' => (string) $product->cost_price,
                 'sale_price' => (string) $salePrice,
                 'stock' => $stock,
                 'physical_stock' => $stock,
@@ -2290,6 +2299,10 @@ class SaleController extends Controller
                 'prices' => $prices,
                 'branch_price_applied' => $defaultPayloadPrice && ($defaultPayloadPrice['source'] ?? null) === 'branch_specific',
             ];
+
+            if ($includeCostPrice) {
+                $payload['cost_price'] = (string) $product->cost_price;
+            }
 
             if ($includeOtherBranches) {
                 $payload['other_branch_availability'] = $otherBranchAvailability->get($productId, []);

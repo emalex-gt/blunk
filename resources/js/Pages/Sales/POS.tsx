@@ -32,7 +32,7 @@ type Product = {
     name: string;
     code: string | null;
     barcode: string | null;
-    cost_price: string;
+    cost_price?: string;
     sale_price: string;
     stock: number;
     physical_stock?: number;
@@ -532,10 +532,14 @@ function priceSourceLabel(source: CartItem['price_source']) {
     }[source];
 }
 
-function productCost(product: Product) {
-    const cost = Number(product.cost_price ?? 0);
+function productCost(product: Product): number | null {
+    if (product.cost_price === undefined || product.cost_price === null || product.cost_price.trim() === '') {
+        return null;
+    }
 
-    return Number.isFinite(cost) ? cost : 0;
+    const cost = Number(product.cost_price);
+
+    return Number.isFinite(cost) ? cost : null;
 }
 
 function mainProductPrice(product: Product, defaultPriceTypeId: number | null | undefined) {
@@ -577,6 +581,10 @@ function minimumManualPrice(item: CartItem, policy: ManualPricePolicyConfig, def
     if (policy.mode === 'cost_markup') {
         const cost = productCost(item.product);
 
+        if (cost === null) {
+            return null;
+        }
+
         return cost > 0
             ? roundMoney(cost * (1 + Math.max(0, policy.minMarkupPercent) / 100))
             : 0;
@@ -611,6 +619,10 @@ function priceFromManualPercentage(item: CartItem, percent: number, policy: Manu
 
         const cost = productCost(item.product);
 
+        if (cost === null) {
+            return { price: null, error: 'No puedes calcular un precio manual sobre costo con tu autorización actual.' };
+        }
+
         if (cost <= 0) {
             return { price: null, error: 'Este producto no tiene costo configurado.' };
         }
@@ -632,8 +644,16 @@ function manualPriceError(item: CartItem, policy: ManualPricePolicyConfig, defau
         return 'Este precio no está permitido.';
     }
 
-    if (policy.mode === 'cost_markup' && productCost(item.product) <= 0) {
-        return 'Este producto no tiene costo configurado.';
+    if (policy.mode === 'cost_markup') {
+        const cost = productCost(item.product);
+
+        if (cost === null) {
+            return 'No puedes validar un precio manual sobre costo con tu autorización actual.';
+        }
+
+        if (cost <= 0) {
+            return 'Este producto no tiene costo configurado.';
+        }
     }
 
     if (policy.mode === 'price_discount' && mainProductPrice(item.product, defaultPriceTypeId) <= 0) {
@@ -642,7 +662,7 @@ function manualPriceError(item: CartItem, policy: ManualPricePolicyConfig, defau
 
     const minimum = minimumManualPrice(item, policy, defaultPriceTypeId);
 
-    if (minimum > 0 && price < minimum) {
+    if (minimum !== null && minimum > 0 && price < minimum) {
         return `El precio mínimo permitido es Q ${minimum.toFixed(2)}.`;
     }
 
@@ -4284,7 +4304,8 @@ export default function POS({
                 };
                 const activeManualPriceError = manualPriceError(draftItem, manualPricePolicy, default_price_type_id);
                 const percentageSteps = manualPercentageSteps(manualPricePolicy);
-                const showPercentageControls = manualPricePolicy.mode !== 'none';
+                const showPercentageControls = manualPricePolicy.mode !== 'none'
+                    && !(manualPricePolicy.mode === 'cost_markup' && productCost(item.product) === null);
 
                 return (
                     <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/50 p-4 backdrop-blur-sm sm:items-center">
