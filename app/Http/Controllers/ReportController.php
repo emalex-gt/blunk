@@ -9,6 +9,7 @@ use App\Models\CashRegisterSession;
 use App\Models\Category;
 use App\Models\Customer;
 use App\Models\Product;
+use App\Models\PriceType;
 use App\Models\Purchase;
 use App\Models\Sale;
 use App\Models\User;
@@ -55,6 +56,8 @@ class ReportController extends Controller
         'products-sold-summary' => ['method' => 'productsSoldSummary', 'permission' => Permissions::REPORTS_PRODUCTS_SOLD_SUMMARY_VIEW, 'title' => 'Productos vendidos resumido'],
         'low-stock' => ['method' => 'lowStock', 'permission' => Permissions::REPORTS_LOW_STOCK_VIEW, 'title' => 'Stock bajo'],
         'products-without-sales' => ['method' => 'productsWithoutSales', 'permission' => Permissions::REPORTS_INVENTORY_VIEW, 'title' => 'Productos sin ventas'],
+        'products-without-cost' => ['method' => 'productsWithoutCost', 'permission' => Permissions::REPORTS_PROFIT_VIEW, 'title' => 'Productos sin costo'],
+        'anomalous-prices' => ['method' => 'anomalousPrices', 'permission' => Permissions::REPORTS_PROFIT_VIEW, 'title' => 'Productos con precios anómalos'],
         'top-products' => ['method' => 'topProducts', 'permission' => Permissions::REPORTS_TOP_PRODUCTS_VIEW, 'title' => 'Productos más vendidos'],
         'purchase-cost-history' => ['method' => 'purchaseCostHistory', 'permission' => Permissions::REPORTS_PURCHASE_COST_HISTORY_VIEW, 'title' => 'Historial de precios de compra'],
     ];
@@ -304,7 +307,11 @@ class ReportController extends Controller
         $scope = BranchReportScope::current($businessId);
         $categoryId = $request->integer('category_id') ?: null;
         $productSearch = trim((string) $request->query('product_search', ''));
-        $onlyBelowMinimum = filter_var($request->query('only_below_minimum', true), FILTER_VALIDATE_BOOLEAN);
+        $legacyOnlyBelowMinimum = filter_var($request->query('only_below_minimum', true), FILTER_VALIDATE_BOOLEAN);
+        $stockFilter = (string) $request->query('stock_filter', $legacyOnlyBelowMinimum ? 'below_minimum' : 'all');
+        $stockFilter = in_array($stockFilter, ['below_minimum', 'all', 'out_of_stock'], true)
+            ? $stockFilter
+            : 'below_minimum';
         $reserveCreditStock = Credits::reserveStockOnCreditReservations($businessId);
 
         $preSaleReservedSubquery = DB::table('stock_reservations')
@@ -378,7 +385,8 @@ class ReportController extends Controller
                         ->orWhere('products.barcode', 'ilike', "%{$productSearch}%");
                 });
             })
-            ->when($onlyBelowMinimum, fn ($query) => $query->whereRaw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_pre_sales.reserved, 0) - COALESCE(reserved_credit.reserved, 0) - COALESCE(reserved_other.reserved, 0)) <= products.min_stock'))
+            ->when($stockFilter === 'below_minimum', fn ($query) => $query->whereRaw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_pre_sales.reserved, 0) - COALESCE(reserved_credit.reserved, 0) - COALESCE(reserved_other.reserved, 0)) <= products.min_stock'))
+            ->when($stockFilter === 'out_of_stock', fn ($query) => $query->whereRaw('COALESCE(pbs.stock, 0) <= 0'))
             ->orderByRaw('(COALESCE(pbs.stock, 0) - COALESCE(reserved_pre_sales.reserved, 0) - COALESCE(reserved_credit.reserved, 0) - COALESCE(reserved_other.reserved, 0)) ASC')
             ->orderBy('products.name')
             ->paginate($this->reportPerPage($request), [
@@ -431,9 +439,112 @@ class ReportController extends Controller
             ['key' => 'last_in_at', 'label' => 'Último ingreso'],
             ['key' => 'cardex_url', 'label' => 'Acción', 'type' => 'link', 'link_label' => 'Ver cardex'],
         ], $products, [
-            'filters' => ['category_id' => $categoryId, 'product_search' => $productSearch, 'only_below_minimum' => $onlyBelowMinimum ? '1' : '0'],
+            'filters' => ['category_id' => $categoryId, 'product_search' => $productSearch, 'stock_filter' => $stockFilter],
             'categories' => Category::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
             'branch' => $scope->payload(),
+        ]);
+    }
+
+    public function productsWithoutCost(Request $request): Response
+    {
+        $businessId = currentBusinessId();
+        $scope = BranchReportScope::current($businessId);
+        $categoryId = $request->integer('category_id') ?: null;
+        $productSearch = trim((string) $request->query('product_search', ''));
+        $stockState = (string) $request->query('stock_state', 'all');
+        $stockState = in_array($stockState, ['all', 'with_stock', 'without_stock'], true) ? $stockState : 'all';
+        $priceType = $this->reportPriceType($request, $businessId);
+
+        $products = Product::query()
+            ->where('products.business_id', $businessId)
+            ->leftJoin('categories', function ($join) use ($businessId) {
+                $join->on('categories.id', '=', 'products.category_id')->where('categories.business_id', '=', $businessId);
+            })
+            ->leftJoin('product_branch_stocks as pbs', function ($join) use ($businessId, $scope) {
+                $join->on('pbs.product_id', '=', 'products.id')->where('pbs.business_id', '=', $businessId)->where('pbs.branch_id', '=', $scope->branch->id);
+            })
+            ->where(fn ($query) => $query->whereNull('products.cost_price')->orWhere('products.cost_price', '<=', 0));
+        $priceExpression = $this->applyReportPriceJoins($products, $businessId, $scope->branch->id, $priceType->id);
+
+        $rows = $products
+            ->when($categoryId, fn ($query) => $query->where('products.category_id', $categoryId))
+            ->when($productSearch !== '', fn ($query) => $query->where(fn ($query) => $query->where('products.name', 'ilike', "%{$productSearch}%")->orWhere('products.code', 'ilike', "%{$productSearch}%")->orWhere('products.barcode', 'ilike', "%{$productSearch}%")))
+            ->when($stockState === 'with_stock', fn ($query) => $query->whereRaw('COALESCE(pbs.stock, 0) > 0'))
+            ->when($stockState === 'without_stock', fn ($query) => $query->whereRaw('COALESCE(pbs.stock, 0) <= 0'))
+            ->orderBy('products.name')
+            ->paginate($this->reportPerPage($request), [
+                'products.id', 'products.name as product', DB::raw('COALESCE(products.code, products.barcode) as code'),
+                DB::raw("COALESCE(categories.name, '-') as category"), 'products.cost_price', DB::raw("{$priceExpression} as sale_price"),
+                DB::raw('COALESCE(pbs.stock, 0) as physical_stock'),
+            ])
+            ->withQueryString()
+            ->through(fn ($row) => [
+                'code' => $row->code ?: '-', 'product' => $row->product, 'category' => $row->category,
+                'cost_price' => $row->cost_price, 'sale_price' => $row->sale_price, 'physical_stock' => $row->physical_stock,
+                'status' => $row->cost_price === null ? 'Sin costo' : ((string) $row->cost_price === '0.00000' ? 'Costo cero' : 'Costo negativo'),
+            ]);
+
+        return $this->report('Productos sin costo', 'reports.products-without-cost', [
+            ['key' => 'code', 'label' => 'Código/SKU'], ['key' => 'product', 'label' => 'Producto'], ['key' => 'category', 'label' => 'Categoría'],
+            ['key' => 'cost_price', 'label' => 'Costo actual', 'type' => 'money', 'decimals' => 5], ['key' => 'sale_price', 'label' => 'Precio de venta', 'type' => 'money'],
+            ['key' => 'physical_stock', 'label' => 'Stock físico', 'type' => 'number'], ['key' => 'status', 'label' => 'Estado'],
+        ], $rows, [
+            'filters' => ['category_id' => $categoryId, 'product_search' => $productSearch, 'stock_state' => $stockState, 'price_type_id' => $priceType->id],
+            'categories' => $this->reportCategories($businessId), 'priceTypes' => PriceLists::active($businessId), 'branch' => $scope->payload(),
+        ]);
+    }
+
+    public function anomalousPrices(Request $request): Response
+    {
+        $businessId = currentBusinessId();
+        $scope = BranchReportScope::current($businessId);
+        $categoryId = $request->integer('category_id') ?: null;
+        $productSearch = trim((string) $request->query('product_search', ''));
+        $classification = (string) $request->query('classification', 'all');
+        $allowed = ['all', 'sin_costo', 'sin_precio', 'precio_inferior_costo', 'diferencia_cero', 'diferencia_minima', 'diferencia_excesiva'];
+        $classification = in_array($classification, $allowed, true) ? $classification : 'all';
+        $priceType = $this->reportPriceType($request, $businessId);
+
+        $products = Product::query()
+            ->where('products.business_id', $businessId)
+            ->leftJoin('categories', function ($join) use ($businessId) {
+                $join->on('categories.id', '=', 'products.category_id')->where('categories.business_id', '=', $businessId);
+            });
+        $priceExpression = $this->applyReportPriceJoins($products, $businessId, $scope->branch->id, $priceType->id);
+        $classificationExpression = "CASE WHEN products.cost_price IS NULL OR products.cost_price <= 0 THEN 'sin_costo' WHEN {$priceExpression} <= 0 THEN 'sin_precio' WHEN {$priceExpression} < products.cost_price THEN 'precio_inferior_costo' WHEN {$priceExpression} = products.cost_price THEN 'diferencia_cero' WHEN (({$priceExpression} - products.cost_price) / products.cost_price) * 100 <= 10 THEN 'diferencia_minima' WHEN (({$priceExpression} - products.cost_price) / products.cost_price) * 100 > 200 THEN 'diferencia_excesiva' ELSE 'normal' END";
+
+        $rows = $products
+            ->when($categoryId, fn ($query) => $query->where('products.category_id', $categoryId))
+            ->when($productSearch !== '', fn ($query) => $query->where(fn ($query) => $query->where('products.name', 'ilike', "%{$productSearch}%")->orWhere('products.code', 'ilike', "%{$productSearch}%")->orWhere('products.barcode', 'ilike', "%{$productSearch}%")))
+            ->when($classification !== 'all', fn ($query) => $query->whereRaw("{$classificationExpression} = ?", [$classification]))
+            ->whereRaw("{$classificationExpression} <> 'normal'")
+            ->orderByRaw("{$classificationExpression}")
+            ->orderBy('products.name')
+            ->paginate($this->reportPerPage($request), [
+                'products.id', 'products.name as product', DB::raw('COALESCE(products.code, products.barcode) as code'), DB::raw("COALESCE(categories.name, '-') as category"),
+                'products.cost_price', DB::raw("{$priceExpression} as sale_price"), DB::raw("({$priceExpression} - products.cost_price) as difference_amount"),
+                DB::raw("CASE WHEN products.cost_price > 0 THEN (({$priceExpression} - products.cost_price) / products.cost_price) * 100 ELSE NULL END as markup_percent"),
+                DB::raw("{$classificationExpression} as classification"),
+            ])
+            ->withQueryString()
+            ->through(fn ($row) => [
+                'code' => $row->code ?: '-', 'product' => $row->product, 'category' => $row->category, 'cost_price' => $row->cost_price,
+                'sale_price' => $row->sale_price, 'difference_amount' => $row->difference_amount, 'markup_percent' => $row->markup_percent,
+                'classification' => match ($row->classification) {
+                    'sin_costo' => 'Sin costo', 'sin_precio' => 'Sin precio configurado', 'precio_inferior_costo' => 'Precio inferior al costo',
+                    'diferencia_cero' => 'Diferencia cero', 'diferencia_minima' => 'Diferencia mínima', 'diferencia_excesiva' => 'Diferencia excesiva', default => $row->classification,
+                },
+                'price_list' => $priceType->name,
+            ]);
+
+        return $this->report('Productos con precios anómalos', 'reports.anomalous-prices', [
+            ['key' => 'code', 'label' => 'Código/SKU'], ['key' => 'product', 'label' => 'Producto'], ['key' => 'category', 'label' => 'Categoría'],
+            ['key' => 'cost_price', 'label' => 'Costo', 'type' => 'money', 'decimals' => 5], ['key' => 'sale_price', 'label' => 'Precio', 'type' => 'money'],
+            ['key' => 'difference_amount', 'label' => 'Diferencia', 'type' => 'money', 'decimals' => 5], ['key' => 'markup_percent', 'label' => 'Recargo %', 'type' => 'number'],
+            ['key' => 'classification', 'label' => 'Clasificación'], ['key' => 'price_list', 'label' => 'Lista de precios'],
+        ], $rows, [
+            'filters' => ['classification' => $classification, 'category_id' => $categoryId, 'product_search' => $productSearch, 'price_type_id' => $priceType->id],
+            'categories' => $this->reportCategories($businessId), 'priceTypes' => PriceLists::active($businessId), 'branch' => $scope->payload(),
         ]);
     }
 
@@ -1299,6 +1410,7 @@ class ReportController extends Controller
             'customers' => $extra['customers'] ?? [],
             'sellers' => $extra['sellers'] ?? [],
             'suppliers' => $extra['suppliers'] ?? [],
+            'priceTypes' => $extra['priceTypes'] ?? [],
             'sortOptions' => $extra['sortOptions'] ?? [],
             'fixedFilters' => $extra['fixedFilters'] ?? [],
             'productContext' => $extra['productContext'] ?? null,
@@ -1307,6 +1419,48 @@ class ReportController extends Controller
             'notice' => $extra['notice'] ?? null,
             'maxRangeLabel' => $extra['maxRangeLabel'] ?? 'Rango máximo: 3 meses',
         ]);
+    }
+
+    private function reportPriceType(Request $request, int $businessId): PriceType
+    {
+        $default = PriceLists::getDefaultPriceType($businessId);
+        $requestedId = $request->integer('price_type_id');
+
+        return $requestedId
+            ? PriceType::query()
+                ->where('business_id', $businessId)
+                ->where('is_active', true)
+                ->find($requestedId) ?? $default
+            : $default;
+    }
+
+    private function applyReportPriceJoins($query, int $businessId, int $branchId, int $priceTypeId): string
+    {
+        $query->leftJoin('product_prices as report_prices', function ($join) use ($businessId, $priceTypeId) {
+            $join->on('report_prices.product_id', '=', 'products.id')
+                ->where('report_prices.business_id', '=', $businessId)
+                ->where('report_prices.price_type_id', '=', $priceTypeId)
+                ->where('report_prices.is_active', '=', true);
+        });
+
+        if (BranchInventory::pricingScope($businessId) === 'branch') {
+            $query->leftJoin('branch_product_prices as report_branch_prices', function ($join) use ($businessId, $branchId, $priceTypeId) {
+                $join->on('report_branch_prices.product_id', '=', 'products.id')
+                    ->where('report_branch_prices.business_id', '=', $businessId)
+                    ->where('report_branch_prices.branch_id', '=', $branchId)
+                    ->where('report_branch_prices.price_type_id', '=', $priceTypeId)
+                    ->where('report_branch_prices.is_active', '=', true);
+            });
+
+            return 'COALESCE(report_branch_prices.price, report_prices.price, products.sale_price)';
+        }
+
+        return 'COALESCE(report_prices.price, products.sale_price)';
+    }
+
+    private function reportCategories(int $businessId)
+    {
+        return Category::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']);
     }
 
     private function purchaseCostSourceLabel(string $source): string

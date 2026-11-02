@@ -61,6 +61,7 @@ type Props = {
     customers?: Option[];
     sellers?: Option[];
     suppliers?: Option[];
+    priceTypes?: Option[];
     sortOptions?: SortOption[];
     fixedFilters?: Record<string, string | number | null>;
     productContext?: ProductContext | null;
@@ -119,6 +120,7 @@ export default function GenericReport({
     customers = [],
     sellers = [],
     suppliers = [],
+    priceTypes = [],
     sortOptions = [],
     fixedFilters = {},
     productContext = null,
@@ -317,6 +319,38 @@ export default function GenericReport({
                                 <SelectField label="Stock bajo" value={form.only_below_minimum ?? '1'} onChange={(value) => setField('only_below_minimum', value)}>
                                     <option value="1">Solo bajo mínimo</option>
                                     <option value="0">Todos</option>
+                                </SelectField>
+                            )}
+                            {filterKeys.includes('stock_filter') && (
+                                <SelectField label="Existencia" value={form.stock_filter ?? 'below_minimum'} onChange={(value) => setField('stock_filter', value)}>
+                                    <option value="below_minimum">Solo bajo mínimo</option>
+                                    <option value="all">Todos</option>
+                                    <option value="out_of_stock">Sin stock</option>
+                                </SelectField>
+                            )}
+                            {filterKeys.includes('stock_state') && (
+                                <SelectField label="Existencia" value={form.stock_state ?? 'all'} onChange={(value) => setField('stock_state', value)}>
+                                    <option value="all">Todas</option>
+                                    <option value="with_stock">Con stock</option>
+                                    <option value="without_stock">Sin stock</option>
+                                </SelectField>
+                            )}
+                            {filterKeys.includes('classification') && (
+                                <SelectField label="Clasificación" value={form.classification ?? 'all'} onChange={(value) => setField('classification', value)}>
+                                    <option value="all">Todas las anomalías</option>
+                                    <option value="sin_costo">Sin costo</option>
+                                    <option value="sin_precio">Sin precio configurado</option>
+                                    <option value="precio_inferior_costo">Precio inferior al costo</option>
+                                    <option value="diferencia_cero">Diferencia cero</option>
+                                    <option value="diferencia_minima">Diferencia mínima</option>
+                                    <option value="diferencia_excesiva">Diferencia excesiva</option>
+                                </SelectField>
+                            )}
+                            {filterKeys.includes('price_type_id') && (
+                                <SelectField label="Lista de precios" value={form.price_type_id ?? ''} onChange={(value) => setField('price_type_id', value)}>
+                                    {priceTypes.map((priceType) => (
+                                        <option key={priceType.id} value={priceType.id}>{priceType.name}</option>
+                                    ))}
                                 </SelectField>
                             )}
                             {filterKeys.includes('sort_by') && sortOptions.length > 0 && (

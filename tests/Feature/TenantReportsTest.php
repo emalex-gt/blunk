@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Business;
 use App\Models\Branch;
+use App\Models\BranchProductPrice;
 use App\Models\CashExpense;
 use App\Models\CashRegisterSession;
 use App\Models\HistoricalProductPurchaseCost;
@@ -81,6 +82,84 @@ class TenantReportsTest extends TestCase
                 ->where('rows.data.0.stock', 5)
                 ->where('rows.data.0.available', 5)
                 ->where('branch.id', $main->id));
+    }
+
+    public function test_products_without_cost_is_financially_authorized_and_branch_scoped(): void
+    {
+        [$business, $user, $main, $other] = $this->tenant();
+        $withoutCost = $this->product($business, $main, 'Sin costo', stock: 4);
+        $withoutCost->update(['cost_price' => 0]);
+        $withCost = $this->product($business, $main, 'Con costo', stock: 4);
+        $otherTenant = Business::query()->create(['name' => 'Otro', 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
+        Product::query()->create(['business_id' => $otherTenant->id, 'name' => 'Ajeno', 'cost_price' => 0, 'sale_price' => 10, 'stock' => 9, 'min_stock' => 0, 'is_active' => true]);
+
+        ProductBranchStock::query()->updateOrCreate(
+            ['business_id' => $business->id, 'branch_id' => $other->id, 'product_id' => $withoutCost->id],
+            ['stock' => 99],
+        );
+
+        $this->actingAs($user)
+            ->get(route('reports.products-without-cost'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('rows.data.0.product', 'Sin costo')
+                ->where('rows.data.0.physical_stock', '4.00')
+                ->where('rows.data.0.status', 'Costo cero'));
+
+        $this->assertNotSame($withoutCost->id, $withCost->id);
+    }
+
+    public function test_anomalous_prices_use_decimal_classification_and_branch_price(): void
+    {
+        [$business, $user, $main] = $this->tenant();
+        TenantSetting::query()->where('business_id', $business->id)->update(['pricing_scope' => 'branch']);
+        $product = $this->product($business, $main, 'Margen mínimo', stock: 1, salePrice: 110);
+        $product->update(['cost_price' => '100.00000']);
+        $priceType = PriceType::query()->where('business_id', $business->id)->where('is_default', true)->firstOrFail();
+        BranchProductPrice::query()->create([
+            'business_id' => $business->id, 'branch_id' => $main->id, 'product_id' => $product->id,
+            'price_type_id' => $priceType->id, 'price' => '110.00', 'is_active' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('reports.anomalous-prices', ['classification' => 'diferencia_minima', 'price_type_id' => $priceType->id]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('rows.data.0.product', 'Margen mínimo')
+                ->where('rows.data.0.classification', 'Diferencia mínima')
+                ->where('rows.data.0.markup_percent', '10.0000000000000000'));
+    }
+
+    public function test_low_stock_without_stock_filter_uses_physical_stock_not_reservations(): void
+    {
+        [$business, $user, $main] = $this->tenant();
+        $negative = $this->product($business, $main, 'Negativo', stock: -2);
+        $positive = $this->product($business, $main, 'Positivo', stock: 5);
+
+        $this->actingAs($user)
+            ->get(route('reports.low-stock', ['stock_filter' => 'out_of_stock']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('rows.data.0.product', 'Negativo')
+                ->where('rows.data.0.physical_stock', -2));
+
+        $this->assertNotSame($negative->id, $positive->id);
+    }
+
+    public function test_cost_and_anomalous_price_reports_export_through_generic_exporter(): void
+    {
+        [$business, $user, $main] = $this->tenant();
+        $product = $this->product($business, $main, 'Exportable', stock: 1);
+        $product->update(['cost_price' => 0]);
+
+        $this->actingAs($user)
+            ->get(route('reports.export', ['report' => 'products-without-cost', 'format' => 'excel']))
+            ->assertOk();
+
+        $this->actingAs($user)
+            ->get(route('reports.export', ['report' => 'anomalous-prices', 'format' => 'pdf']))
+            ->assertOk();
     }
 
     public function test_inventory_report_includes_reserved_breakdown_and_available_stock(): void

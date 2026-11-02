@@ -598,6 +598,8 @@ Route::middleware('auth')->group(function () {
             Route::get('/reports/low-stock/export/excel', [ReportController::class, 'lowStockExportExcel'])->middleware(['permission:reports.low_stock.view', 'permission:reports.export'])->name('reports.low-stock.export.excel');
             Route::get('/reports/low-stock/export/pdf', [ReportController::class, 'lowStockExportPdf'])->middleware(['permission:reports.low_stock.view', 'permission:reports.export'])->name('reports.low-stock.export.pdf');
             Route::get('/reports/products-without-sales', [ReportController::class, 'productsWithoutSales'])->middleware('permission:reports.inventory.view')->name('reports.products-without-sales');
+            Route::get('/reports/products-without-cost', [ReportController::class, 'productsWithoutCost'])->middleware('permission:reports.profit.view')->name('reports.products-without-cost');
+            Route::get('/reports/anomalous-prices', [ReportController::class, 'anomalousPrices'])->middleware('permission:reports.profit.view')->name('reports.anomalous-prices');
             Route::get('/reports/top-products', [ReportController::class, 'topProducts'])->middleware('permission:reports.top_products.view')->name('reports.top-products');
             Route::get('/reports/top-products/export/excel', [ReportController::class, 'topProductsExportExcel'])->middleware(['permission:reports.top_products.view', 'permission:reports.export'])->name('reports.top-products.export.excel');
             Route::get('/reports/top-products/export/pdf', [ReportController::class, 'topProductsExportPdf'])->middleware(['permission:reports.top_products.view', 'permission:reports.export'])->name('reports.top-products.export.pdf');
