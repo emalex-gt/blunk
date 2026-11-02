@@ -188,7 +188,20 @@ class HistoricalProductCostAverageService
         $weightedTotal = '0';
         $covered = '0';
         $acquisitionCount = 0;
-        $duplicateCount = 0;
+        // Deduplication is diagnostic and applies to the complete normalized
+        // history, not only to the newest rows consumed for current stock.
+        // Otherwise a native acquisition that fully covers stock hides its
+        // older documentary duplicate from the audit counter.
+        $duplicateCount = $observations
+            ->filter(function (object $observation) use ($nativeProductByRecord): bool {
+                $source = mb_strtolower(trim((string) $observation->source_system));
+
+                return $observation->purchase_id === null
+                    && $source === 'blunk'
+                    && $nativeProductByRecord->has((string) $observation->source_record_id)
+                    && (int) $nativeProductByRecord->get((string) $observation->source_record_id) === (int) $observation->product_id;
+            })
+            ->count();
         $ambiguousCount = 0;
         $invalidCount = 0;
         $sources = [];
@@ -211,7 +224,6 @@ class HistoricalProductCostAverageService
             if (! $isNative && $source === 'blunk') {
                 if ($nativeProductByRecord->has($recordId)
                     && (int) $nativeProductByRecord->get($recordId) === (int) $observation->product_id) {
-                    $duplicateCount++;
                     continue;
                 }
 
