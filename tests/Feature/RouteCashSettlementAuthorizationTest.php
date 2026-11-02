@@ -8,6 +8,7 @@ use App\Models\PreSale;
 use App\Models\RouteCashSettlement;
 use App\Models\RoutePreSaleCollection;
 use App\Models\Role;
+use App\Models\TenantModule;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\BranchInventory;
@@ -152,6 +153,7 @@ class RouteCashSettlementAuthorizationTest extends TestCase
     {
         $business = Business::query()->create(['name' => 'Auth '.uniqid(), 'slug' => 'auth-'.uniqid(), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
         TenantSetting::query()->create(['business_id' => $business->id]);
+        TenantModule::query()->create(['business_id' => $business->id, 'module' => 'routes', 'is_enabled' => true, 'enabled_at' => now()]);
         $branch = BranchInventory::defaultBranchForBusiness($business);
         $user = User::factory()->create(['business_id' => $business->id, 'current_branch_id' => $branch->id, 'role' => $role, 'is_active' => true]);
         $user->roles()->attach(Role::query()->whereNull('business_id')->where('key', $role)->firstOrFail());
@@ -168,6 +170,7 @@ class RouteCashSettlementAuthorizationTest extends TestCase
     {
         $business = Business::query()->create(['name' => 'Settlement visibility '.uniqid(), 'slug' => 'settlement-visibility-'.uniqid(), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
         TenantSetting::query()->create(['business_id' => $business->id]);
+        TenantModule::query()->create(['business_id' => $business->id, 'module' => 'routes', 'is_enabled' => true, 'enabled_at' => now()]);
 
         return [$business, BranchInventory::defaultBranchForBusiness($business)];
     }
