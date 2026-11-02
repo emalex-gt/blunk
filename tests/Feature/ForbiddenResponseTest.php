@@ -24,7 +24,9 @@ class ForbiddenResponseTest extends TestCase
         $this->as($user, $business)->get(route('brands.index'))->assertStatus(403)->assertInertia(fn (Assert $page) => $page->component('Errors/Forbidden')->where('message', 'No tienes permiso para acceder a esta sección.'));
         $this->as($user, $business)->get(route('brands.index'), ['X-Inertia' => 'true', 'X-Inertia-Version' => Inertia::getVersion()])
             ->assertStatus(403)->assertHeader('X-Inertia', 'true')
-            ->assertInertia(fn (Assert $page) => $page->component('Errors/Forbidden')->where('message', 'No tienes permiso para acceder a esta sección.'));
+            ->assertJsonStructure(['component', 'props' => ['message'], 'url', 'version'])
+            ->assertJsonPath('component', 'Errors/Forbidden')
+            ->assertJsonPath('props.message', 'No tienes permiso para acceder a esta sección.');
     }
 
     public function test_inertia_asset_version_mismatch_remains_a_409(): void
