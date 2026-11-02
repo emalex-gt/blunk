@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Exceptions\ProductCostRecalculationSnapshotChanged;
+use App\Exceptions\ProductCostRecalculationRequiresOwnTransaction;
 use App\Models\Branch;
 use App\Models\Business;
 use App\Models\HistoricalProductPurchaseCost;
@@ -13,13 +14,16 @@ use App\Models\Supplier;
 use App\Models\User;
 use App\Services\HistoricalProductCostAverageService;
 use App\Services\ProductCostRecalculationService;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Support\Facades\DB;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
 class ProductCostRecalculationTest extends TestCase
 {
-    use RefreshDatabase;
+    // apply() requires its own real PostgreSQL transaction so it can set
+    // SERIALIZABLE as the transaction's first statement.
+    use DatabaseMigrations;
 
     public function test_tool_is_exclusive_to_super_admins(): void
     {
@@ -98,6 +102,29 @@ class ProductCostRecalculationTest extends TestCase
                 'status' => ProductCostRecalculationRun::STATUS_FAILED,
             ]);
             $this->assertDatabaseCount('product_cost_recalculation_items', 0);
+        }
+    }
+
+    public function test_application_refuses_an_existing_outer_transaction_without_weaker_isolation(): void
+    {
+        [$business, $branch, $product, $supplier] = $this->context('10.00000');
+        $this->stock($business, $branch, $product, '1.00000');
+        $this->historical($business, $branch, $product, $supplier, '1.00000', '20.00000', 'outer-transaction');
+        $summary = app(HistoricalProductCostAverageService::class)->summary($business->id);
+
+        DB::beginTransaction();
+
+        try {
+            app(ProductCostRecalculationService::class)->apply($business, User::factory()->create(['is_super_admin' => true]), [
+                'fingerprint' => $summary['fingerprint'],
+                'different' => $summary['different'],
+            ]);
+            $this->fail('Expected an outer transaction to be refused.');
+        } catch (ProductCostRecalculationRequiresOwnTransaction) {
+            $this->assertSame('10.00000', $product->fresh()->cost_price);
+            $this->assertDatabaseCount('product_cost_recalculation_runs', 0);
+        } finally {
+            DB::rollBack();
         }
     }
 

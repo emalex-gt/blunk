@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\ProductCostRecalculationSnapshotChanged;
+use App\Exceptions\ProductCostRecalculationRequiresOwnTransaction;
 use App\Models\Business;
 use App\Models\Product;
 use App\Models\ProductCostRecalculationItem;
@@ -29,6 +30,13 @@ class ProductCostRecalculationService
      */
     public function apply(Business $business, User $actor, array $expected): ProductCostRecalculationRun
     {
+        // A nested transaction is a savepoint on PostgreSQL. It cannot raise
+        // isolation, so refusing it is safer than silently using the caller's
+        // weaker isolation level for a cost-changing operation.
+        if (DB::transactionLevel() > 0) {
+            throw new ProductCostRecalculationRequiresOwnTransaction;
+        }
+
         $run = ProductCostRecalculationRun::query()->create([
             'business_id' => $business->id,
             'executed_by' => $actor->id,
