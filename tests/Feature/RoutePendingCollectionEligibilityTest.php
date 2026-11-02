@@ -447,19 +447,64 @@ class RoutePendingCollectionEligibilityTest extends TestCase
         [$business, $branch, $item] = $this->externalDeliveredUnpaid();
         $actor = User::query()->findOrFail($item->reconciled_by);
         RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->delete();
-
-        $result = app(RoutePendingCollectionService::class)->collectForEligibleSale($item->sale_id, [
+        $service = app(RoutePendingCollectionService::class);
+        $payload = [
             'amount' => 60,
             'payment_method' => 'transfer',
-        ], $actor, 'pending-derived-collect-0001');
+        ];
+        $key = 'pending-derived-collect-0001';
+
+        $result = $service->collectForEligibleSale($item->sale_id, $payload, $actor, $key);
 
         $case = RoutePendingCollectionCase::query()->where('sale_id', $item->sale_id)->firstOrFail();
+        $collection = \App\Models\RouteDeliveryCollection::query()->findOrFail($result->resultId);
+        $originalCollectedAt = $collection->collected_at->format('Y-m-d H:i:s');
+        $this->travelTo(now()->addSeconds(5));
+        $replay = $service->collectForEligibleSale($item->sale_id, $payload, $actor, $key);
+        $this->travelBack();
+
+        try {
+            $service->collectForEligibleSale($item->sale_id, ['amount' => 59, 'payment_method' => 'transfer'], $actor, $key);
+            $this->fail('A derived collection key cannot be reused with another amount.');
+        } catch (\App\Support\IdempotencyConflictException) {
+        }
+
+        try {
+            $service->collectForEligibleSale($item->sale_id, $payload, $actor, 'pending-derived-collect-new-key-0001');
+            $this->fail('A new key cannot collect an already resolved derived case.');
+        } catch (\Illuminate\Validation\ValidationException) {
+        }
+
+        $otherBranch = \App\Models\Branch::query()->create(['business_id' => $business->id, 'name' => 'Pending other '.uniqid(), 'code' => 'PEND-'.uniqid(), 'is_active' => true]);
+        $otherBranchActor = User::factory()->create(['business_id' => $business->id, 'current_branch_id' => $otherBranch->id, 'is_active' => true]);
+        Permissions::assignDirectPermissions($otherBranchActor, [Permissions::ROUTES_PENDING_COLLECTIONS_COLLECT]);
+        try {
+            $service->collectForEligibleSale($item->sale_id, $payload, $otherBranchActor, $key);
+            $this->fail('An actor from another branch cannot replay a derived collection.');
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+        }
+
+        $foreignBusiness = Business::query()->create(['name' => 'Pending foreign '.uniqid(), 'slug' => 'pending-foreign-'.uniqid(), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
+        $foreignBranch = BranchInventory::defaultBranchForBusiness($foreignBusiness);
+        $foreignActor = User::factory()->create(['business_id' => $foreignBusiness->id, 'current_branch_id' => $foreignBranch->id, 'is_active' => true]);
+        Permissions::assignDirectPermissions($foreignActor, [Permissions::ROUTES_PENDING_COLLECTIONS_COLLECT]);
+        try {
+            $service->collectForEligibleSale($item->sale_id, $payload, $foreignActor, $key);
+            $this->fail('An actor from another tenant cannot replay a derived collection.');
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+        }
+
         $this->assertSame('resolved', $case->status);
         $this->assertSame($item->reconciled_at?->format('Y-m-d H:i:s'), $case->opened_at?->format('Y-m-d H:i:s'));
         $this->assertSame($result->resultId, $case->resolution_route_delivery_collection_id);
+        $this->assertFalse($result->replayed);
+        $this->assertTrue($replay->replayed);
+        $this->assertSame($result->resultId, $replay->resultId);
+        $this->assertSame($originalCollectedAt, $collection->fresh()->collected_at->format('Y-m-d H:i:s'));
         $this->assertDatabaseCount('route_pending_collection_cases', 1);
         $this->assertDatabaseCount('route_delivery_collections', 1);
         $this->assertDatabaseCount('sale_payments', 1);
+        $this->assertDatabaseCount('cash_movements', 0);
         $this->assertDatabaseCount('customer_account_movements', 0);
         $this->assertCount(0, app(RoutePendingCollectionEligibility::class)->queue($business->id, $branch->id));
     }

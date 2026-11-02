@@ -76,7 +76,14 @@ class RoutePendingCollectionService
         abort_unless(Permissions::userHas($actor, Permissions::ROUTES_PENDING_COLLECTIONS_COLLECT), 403);
 
         return DB::transaction(function () use ($saleId, $data, $actor, $key) {
-            $case = $this->cases->ensureForEligibleCandidate($saleId, $actor);
+            $case = RoutePendingCollectionCase::query()
+                ->where('business_id', $actor->business_id)
+                ->where('branch_id', $actor->current_branch_id)
+                ->where('sale_id', $saleId)
+                ->lockForUpdate()
+                ->first();
+            $case ??= $this->cases->ensureForEligibleCandidate($saleId, $actor);
+
             return $this->collect($case, $data, $actor, $key);
         });
     }
