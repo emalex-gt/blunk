@@ -675,15 +675,19 @@ class DashboardFoundationTest extends TestCase
     private function settlement(Business $business, Branch $branch, User $actor, string $status, int $amount): RouteCashSettlement
     {
         return \Illuminate\Support\Facades\DB::transaction(function () use ($business, $branch, $actor, $status, $amount) {
-            $session = CashRegisterSession::query()->create([
-                'business_id' => $business->id,
-                'branch_id' => $branch->id,
-                'opened_by' => $actor->id,
-                'status' => 'open',
-                'opening_amount' => 0,
-                'expected_cash' => 0,
-                'opened_at' => now(),
-            ]);
+            $session = CashRegisterSession::query()->firstOrCreate(
+                [
+                    'business_id' => $business->id,
+                    'branch_id' => $branch->id,
+                    'status' => 'open',
+                ],
+                [
+                    'opened_by' => $actor->id,
+                    'opening_amount' => 0,
+                    'expected_cash' => 0,
+                    'opened_at' => now(),
+                ],
+            );
             $movement = CashMovement::query()->create([
                 'business_id' => $business->id,
                 'branch_id' => $branch->id,
@@ -779,7 +783,10 @@ class DashboardFoundationTest extends TestCase
     private function settlementWithOpenShortage(Business $business, Branch $branch, User $actor, int $expected, int $received): RouteCashSettlement
     {
         return \Illuminate\Support\Facades\DB::transaction(function () use ($business, $branch, $actor, $expected, $received) {
-            $session = CashRegisterSession::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'opened_by' => $actor->id, 'status' => 'open', 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now()]);
+            $session = CashRegisterSession::query()->firstOrCreate(
+                ['business_id' => $business->id, 'branch_id' => $branch->id, 'status' => 'open'],
+                ['opened_by' => $actor->id, 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now()],
+            );
             $movement = CashMovement::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'cash_register_session_id' => $session->id, 'type' => 'route_cash_settlement', 'amount' => $received, 'reference_type' => 'route_cash_settlement', 'reference_id' => 0, 'description' => 'Dashboard variance fixture', 'created_by' => $actor->id]);
             $settlement = RouteCashSettlement::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'collector_user_id' => $actor->id, 'received_by' => $actor->id, 'recorded_by' => $actor->id, 'confirmed_by' => $actor->id, 'cash_register_session_id' => $session->id, 'cash_movement_id' => $movement->id, 'expected_amount' => $expected, 'received_amount' => $received, 'difference_amount' => $received - $expected, 'status' => 'confirmed', 'confirmed_at' => now()]);
             $movement->update(['reference_id' => $settlement->id]);

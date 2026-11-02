@@ -193,7 +193,7 @@ class ProductImportTest extends TestCase
         $this->assertSame('Existente', $existing->name);
         $this->assertSame($category->id, $existing->category_id);
         $this->assertSame($brand->id, $existing->brand_id);
-        $this->assertSame('5.00', $existing->cost_price);
+        $this->assertSame('5.00000', $existing->cost_price);
         $this->assertSame('8.00', $existing->sale_price);
         $this->assertSame(12.0, (float) BranchInventory::stockMap($business->id, [$existing->id], $branch->id)[$existing->id]);
         $this->assertSame(1, Product::query()->where('business_id', $business->id)->count());
@@ -295,7 +295,7 @@ class ProductImportTest extends TestCase
         $product = Product::query()->where('business_id', $business->id)->where('code', 'COD-N')->firstOrFail();
         $this->assertSame('Producto nuevo', $product->name);
         $this->assertSame('Descripción nueva', $product->description);
-        $this->assertSame('12.50', $product->cost_price);
+        $this->assertSame('12.50000', $product->cost_price);
         $this->assertSame('18.75', $product->sale_price);
         $defaultPriceType = PriceType::query()
             ->where('business_id', $business->id)
