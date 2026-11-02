@@ -73,10 +73,9 @@ class DashboardFinancialVisibilityTest extends TestCase
                 ->missing('dashboard.widgets.0.data.margin_today'));
     }
 
-    public function test_cash_register_totals_require_cash_register_view_permission(): void
+    public function test_cashier_cash_session_actions_and_attention_require_cash_register_view_permission(): void
     {
         [$business, $user] = $this->tenantUser('cashier', ['pos', 'cash_register']);
-        Permissions::assignDirectPermissions($user, [Permissions::CASH_REGISTER_VIEW]);
         $this->saleWithProfit($business, $user, total: 100, cost: 40, profit: 60);
 
         $this->actingAs($user)
@@ -85,8 +84,32 @@ class DashboardFinancialVisibilityTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Dashboard')
                 ->where('dashboard.widgets.0.key', 'cashier.workspace')
+                ->where('dashboard.widgets.0.data.cash_session', null)
+                ->where('dashboard.actions', fn ($actions) => ! collect($actions)->contains(
+                    fn (array $action) => ($action['key'] ?? null) === 'cash-register.index.cashier'
+                ))
+                ->where('dashboard.widgets.0.data.attention', fn ($attention) => ! collect($attention)->contains(
+                    fn (array $alert) => ($alert['key'] ?? null) === 'cash.closed'
+                ))
+                ->missing('dashboard.widgets.1'));
+
+        Permissions::assignDirectPermissions($user, [Permissions::CASH_REGISTER_VIEW]);
+
+        $this->actingAs($user)
+            ->get(route('dashboard'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Dashboard')
+                ->where('dashboard.widgets.0.key', 'cashier.workspace')
                 ->where('dashboard.widgets.0.data.cash_session.status', 'closed')
-                ->where('dashboard.widgets.0.data.cash_action.href', route('cash-register.index', absolute: false))
+                ->where('dashboard.actions', fn ($actions) => collect($actions)->contains(
+                    fn (array $action) => ($action['key'] ?? null) === 'cash-register.index.cashier'
+                        && ($action['href'] ?? null) === route('cash-register.index', absolute: false)
+                ))
+                ->where('dashboard.widgets.0.data.attention', fn ($attention) => collect($attention)->contains(
+                    fn (array $alert) => ($alert['key'] ?? null) === 'cash.closed'
+                        && ($alert['href'] ?? null) === route('cash-register.index', absolute: false)
+                ))
                 ->missing('dashboard.widgets.1'));
     }
 
