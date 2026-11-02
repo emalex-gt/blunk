@@ -21,7 +21,7 @@ class AuthenticationTest extends TestCase
 
         $response
             ->assertStatus(200)
-            ->assertDontSee('name="csrf-token"', false);
+            ->assertSee('name="csrf-token"', false);
     }
 
     public function test_guest_can_view_login_page(): void

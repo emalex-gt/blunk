@@ -42,7 +42,7 @@ export default function BlunkAssistant({ alerts }: Props) {
     }, [alerts]);
 
     return (
-        <aside className="fixed bottom-4 right-4 z-[70] sm:bottom-5 sm:right-5" aria-label="Asistente Blunk">
+        <aside className="fixed bottom-4 right-4 z-[70] flex flex-col items-end sm:bottom-5 sm:right-5" aria-label="Asistente Blunk">
             <span className="sr-only" role="status" aria-live="polite">{announcement}</span>
             {open && (
                 <section className="mb-3 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
@@ -55,7 +55,7 @@ export default function BlunkAssistant({ alerts }: Props) {
                     </div>
                 </section>
             )}
-            <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label={open ? 'Cerrar asistente' : 'Abrir asistente'} className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-lg text-white shadow-lg hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2" title={open ? 'Cerrar asistente' : 'Abrir asistente'}>
+            <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label={open ? 'Cerrar asistente' : 'Abrir asistente'} className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-900 text-lg text-white shadow-lg hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2" title={open ? 'Cerrar asistente' : 'Abrir asistente'}>
                 <span aria-hidden="true">✦</span><span className="sr-only">{open ? 'Cerrar asistente' : 'Abrir asistente'}</span>
             </button>
         </aside>
