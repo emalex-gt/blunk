@@ -15,6 +15,7 @@ use App\Services\Routes\RouteCashSettlementDraftService;
 use App\Services\Routes\RouteCashSettlementService;
 use App\Services\Routes\RouteCashSettlementVarianceService;
 use App\Support\BranchInventory;
+use App\Support\IdempotencyConflictException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -52,6 +53,103 @@ class RouteCashSettlementVarianceTest extends TestCase
         $service->resolve($variance->fresh(), ['idempotency_key' => 'variance-resolve-2', 'type' => 'shortage_cash_received', 'amount' => 2, 'counterparty_user_id' => $collector->id, 'note' => 'Cierre físico.'], $actor);
         $this->assertSame('resolved', $variance->fresh()->status);
         $this->assertDatabaseHas('cash_movements', ['type' => 'route_cash_variance_shortage_received', 'amount' => 3]);
+    }
+
+    public function test_partial_resolution_replays_the_same_intention_without_a_second_cash_movement(): void
+    {
+        [$actor, $collector, $variance, $service] = $this->openShortageVariance();
+        $payload = [
+            'idempotency_key' => 'variance-partial-replay-0001',
+            'type' => 'shortage_cash_received',
+            'amount' => 5,
+            'counterparty_user_id' => $collector->id,
+            'note' => 'Recepción física parcial.',
+        ];
+
+        $first = $service->resolve($variance, $payload, $actor);
+        $replay = $service->resolve($variance->fresh(), $payload, $actor);
+
+        $this->assertFalse($first->replayed);
+        $this->assertTrue($replay->replayed);
+        $this->assertSame($first->resultId, $replay->resultId);
+        $this->assertSame(1, RouteCashSettlementVarianceResolution::query()->where('variance_id', $variance->id)->count());
+        $this->assertSame(1, \App\Models\CashMovement::query()->where('reference_type', 'route_cash_settlement_variance_resolution')->count());
+        $this->assertSame(5.0, $service->remainingAmount($variance->fresh()));
+    }
+
+    public function test_two_sequential_partial_resolutions_with_distinct_keys_are_recorded_independently(): void
+    {
+        [$actor, $collector, $variance, $service] = $this->openShortageVariance();
+
+        $service->resolve($variance, [
+            'idempotency_key' => 'variance-partial-first-0001',
+            'type' => 'shortage_cash_received',
+            'amount' => 5,
+            'counterparty_user_id' => $collector->id,
+            'note' => 'Primer abono físico.',
+        ], $actor);
+        $service->resolve($variance->fresh(), [
+            'idempotency_key' => 'variance-partial-second-0001',
+            'type' => 'shortage_cash_received',
+            'amount' => 5,
+            'counterparty_user_id' => $collector->id,
+            'note' => 'Segundo abono físico.',
+        ], $actor);
+
+        $this->assertSame(2, RouteCashSettlementVarianceResolution::query()->where('variance_id', $variance->id)->count());
+        $this->assertSame(2, \App\Models\CashMovement::query()->where('reference_type', 'route_cash_settlement_variance_resolution')->count());
+        $this->assertSame(0.0, $service->remainingAmount($variance->fresh()));
+        $this->assertSame('resolved', $variance->fresh()->status);
+    }
+
+    public function test_completed_resolution_key_rejects_a_changed_payload_without_another_movement(): void
+    {
+        [$actor, $collector, $variance, $service] = $this->openShortageVariance();
+        $payload = [
+            'idempotency_key' => 'variance-partial-conflict-0001',
+            'type' => 'shortage_cash_received',
+            'amount' => 5,
+            'counterparty_user_id' => $collector->id,
+            'note' => 'Recepción física parcial.',
+        ];
+        $service->resolve($variance, $payload, $actor);
+
+        try {
+            $service->resolve($variance->fresh(), [...$payload, 'amount' => 4], $actor);
+            $this->fail('Expected an idempotency conflict for a changed resolution payload.');
+        } catch (IdempotencyConflictException $exception) {
+            $this->assertSame(IdempotencyConflictException::PAYLOAD_MISMATCH, $exception->kind);
+        }
+
+        $this->assertSame(1, RouteCashSettlementVarianceResolution::query()->where('variance_id', $variance->id)->count());
+        $this->assertSame(1, \App\Models\CashMovement::query()->where('reference_type', 'route_cash_settlement_variance_resolution')->count());
+        $this->assertSame(5.0, $service->remainingAmount($variance->fresh()));
+    }
+
+    public function test_new_partial_resolution_cannot_exceed_the_remaining_amount(): void
+    {
+        [$actor, $collector, $variance, $service] = $this->openShortageVariance();
+        $service->resolve($variance, [
+            'idempotency_key' => 'variance-partial-balance-first-0001',
+            'type' => 'shortage_cash_received',
+            'amount' => 5,
+            'counterparty_user_id' => $collector->id,
+            'note' => 'Primer abono físico.',
+        ], $actor);
+
+        try {
+            $service->resolve($variance->fresh(), [
+                'idempotency_key' => 'variance-partial-balance-over-0001',
+                'type' => 'shortage_cash_received',
+                'amount' => 6,
+                'counterparty_user_id' => $collector->id,
+                'note' => 'Intento que excede el saldo.',
+            ], $actor);
+            $this->fail('Expected a resolution above the remaining amount to be rejected.');
+        } catch (\Illuminate\Validation\ValidationException) {
+            $this->assertSame(1, RouteCashSettlementVarianceResolution::query()->where('variance_id', $variance->id)->count());
+            $this->assertSame(5.0, $service->remainingAmount($variance->fresh()));
+        }
     }
 
     public function test_overage_confirmation_and_return_use_actual_signed_cash(): void
@@ -185,5 +283,20 @@ class RouteCashSettlementVarianceTest extends TestCase
         $preSale = PreSale::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'customer_id' => $customer->id, 'seller_id' => $collector->id, 'status' => PreSale::STATUS_DRAFT, 'subtotal' => 45, 'discount_total' => 0, 'total' => 45]);
         $collection = RoutePreSaleCollection::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'pre_sale_id' => $preSale->id, 'collected_by' => $collector->id, 'recorded_by' => $collector->id, 'amount' => 45, 'payment_method' => 'cash', 'collected_at' => now(), 'status' => 'captured', 'custody_status' => 'held_by_collector']);
         return [$actor, $collector, $collection];
+    }
+
+    /** @return array{0: User, 1: User, 2: \App\Models\RouteCashSettlementVariance, 3: RouteCashSettlementVarianceService} */
+    private function openShortageVariance(): array
+    {
+        [$actor, $collector, $collection] = $this->fixture();
+        $draft = app(RouteCashSettlementDraftService::class)->create($actor, $collector->id, [['origin' => 'pre_sale_collection', 'collection_id' => $collection->id]], 'variance-open-shortage-draft-'.uniqid());
+        $settlement = RouteCashSettlement::query()->findOrFail($draft->resultId);
+        app(RouteCashSettlementService::class)->confirm($settlement, $actor, $actor->id, 35, null, 'variance-open-shortage-confirm-'.uniqid(), [
+            'reason_code' => 'missing_cash',
+            'explanation' => 'Faltante de diez quetzales.',
+            'confirmed' => true,
+        ]);
+
+        return [$actor, $collector, $settlement->fresh()->variance, app(RouteCashSettlementVarianceService::class)];
     }
 }
