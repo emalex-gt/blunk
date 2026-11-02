@@ -765,7 +765,7 @@ export default function ProductIndex({
                             <InputLabel htmlFor="category_name" value={t('products.category')} />
                             <Link href={route('categories.index')} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
                                 Gestionar categorías
-                            </Link>}
+                            </Link>
                         </div>
                         <input
                             type="text"
@@ -1038,8 +1038,8 @@ export default function ProductIndex({
                                 <div><dt className="font-semibold">Stock</dt><dd>{selectedProduct.stock}</dd></div>
                                 <div><dt className="font-semibold">Precio de venta</dt><dd>{formatCurrency(selectedProduct.sale_price, country)}</dd></div>
                                 <div><dt className="font-semibold">Ubicación</dt><dd>{selectedProduct.product_location?.name ?? selectedProduct.location ?? '-'}</dd></div>
-                                {canViewPurchaseCostHistory && selectedProduct.supplier_cost_history && <SupplierCostHistorySection product={selectedProduct} history={selectedProduct.supplier_cost_history} country={country} canViewFullHistory />}
                             </dl>
+                            {canViewPurchaseCostHistory && selectedProduct.supplier_cost_history && <SupplierCostHistorySection product={selectedProduct} history={selectedProduct.supplier_cost_history} country={country} canViewFullHistory />}
                         ) : <p className="mt-2 text-sm text-slate-600">Selecciona un producto de la lista para consultar sus datos.</p>}
                     </aside>
                 )}
