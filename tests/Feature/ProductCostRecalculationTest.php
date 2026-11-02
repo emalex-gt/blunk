@@ -14,16 +14,16 @@ use App\Models\Supplier;
 use App\Models\User;
 use App\Services\HistoricalProductCostAverageService;
 use App\Services\ProductCostRecalculationService;
-use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Foundation\Testing\DatabaseTruncation;
 use Illuminate\Support\Facades\DB;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
 class ProductCostRecalculationTest extends TestCase
 {
-    // apply() requires its own real PostgreSQL transaction so it can set
-    // SERIALIZABLE as the transaction's first statement.
-    use DatabaseMigrations;
+    // DatabaseTruncation uses phpunit.xml's blunk_test connection without
+    // wrapping each test in a transaction, so apply() owns SERIALIZABLE.
+    use DatabaseTruncation;
 
     public function test_tool_is_exclusive_to_super_admins(): void
     {
