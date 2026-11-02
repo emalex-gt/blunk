@@ -54,7 +54,7 @@ export function evaluateAssistantPricing(
         }];
     }
 
-    return availablePrices.flatMap((entry) => {
+    return availablePrices.flatMap<AssistantPricingAlert>((entry) => {
         const price = numeric(entry.price);
 
         if (price === null) {
