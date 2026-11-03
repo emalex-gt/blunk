@@ -709,7 +709,7 @@ class RouteExternalDeliveryReconciliationTest extends TestCase
         $this->assertNotContains('cancelled_sale_cash_not_reversed', $salesIssues);
 
         $this->as($actor, $business)
-            ->get(route('reports.daily', ['date' => now()->toDateString(), 'payment_method' => 'cash']))
+            ->get(route('reports.daily', ['date' => now(tenantTimezone($business))->toDateString(), 'payment_method' => 'cash']))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->where('summary.0.value', 100)

@@ -212,35 +212,48 @@ class RouteCashSettlementReversalServiceTest extends TestCase
         ]);
     }
 
-    public function test_open_original_session_that_is_no_longer_current_is_rejected_without_a_cash_adjustment(): void
+    public function test_open_session_in_another_branch_does_not_affect_current_session_adjustment(): void
     {
         [$settlement, $actor, $collection, $originalSession] = $this->confirmedSettlement();
-        $newSession = CashRegisterSession::query()->create([
+        $otherBranch = \App\Models\Branch::query()->create([
             'business_id' => $settlement->business_id,
-            'branch_id' => $settlement->branch_id,
+            'name' => 'Sucursal aislada '.uniqid(),
+            'code' => 'AIS-'.uniqid(),
+            'is_active' => true,
+        ]);
+        $otherSession = CashRegisterSession::query()->create([
+            'business_id' => $settlement->business_id,
+            'branch_id' => $otherBranch->id,
             'opened_by' => $actor->id,
             'status' => 'open',
             'opening_amount' => 0,
             'expected_cash' => 0,
-            'opened_at' => now()->addSecond(),
+            'opened_at' => now(),
         ]);
 
-        try {
-            app(RouteCashSettlementReversalService::class)->reverse($settlement, [
-                'reason_code' => 'cash_not_received_by_branch',
-                'explanation' => 'La caja original dejó de ser la caja actual.',
-                'confirm_cash_adjustment' => true,
-            ], $actor, 'settlement-reversal-non-current-0001');
-            $this->fail('Expected an open but non-current original session to be rejected.');
-        } catch (ValidationException $exception) {
-            $this->assertArrayHasKey('settlement', $exception->errors());
-        }
+        $result = app(RouteCashSettlementReversalService::class)->reverse($settlement, [
+            'reason_code' => 'cash_not_received_by_branch',
+            'explanation' => 'La otra sucursal no debe recibir el ajuste.',
+            'confirm_cash_adjustment' => true,
+        ], $actor, 'settlement-reversal-branch-isolation-0001');
 
-        $this->assertSame('confirmed', $settlement->fresh()->status);
-        $this->assertSame('posted_to_branch_cash', $collection->fresh()->custody_status);
-        $this->assertSame(1, CashMovement::query()->count());
-        $this->assertSame(0, CashMovement::query()->where('cash_register_session_id', $newSession->id)->count());
+        $this->assertSame('reversed', $settlement->fresh()->status);
+        $this->assertSame('held_by_collector', $collection->fresh()->custody_status);
+        $this->assertDatabaseHas('route_cash_settlement_reversals', [
+            'id' => $result->resultId,
+            'cash_correction_type' => 'current_session_adjustment',
+        ]);
+        $this->assertSame(1, CashMovement::query()
+            ->where('cash_register_session_id', $originalSession->id)
+            ->where('type', 'route_cash_settlement_reversal_current_session')
+            ->where('amount', -45)
+            ->count());
+        $this->assertSame(0, CashMovement::query()
+            ->where('cash_register_session_id', $otherSession->id)
+            ->where('type', 'route_cash_settlement_reversal_current_session')
+            ->count());
         $this->assertSame('open', $originalSession->fresh()->status);
+        $this->assertSame('open', $otherSession->fresh()->status);
     }
 
     public function test_ledger_failure_rolls_back_cash_adjustment_and_a_retry_can_succeed(): void
