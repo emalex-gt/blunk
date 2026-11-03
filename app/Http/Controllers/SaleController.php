@@ -493,7 +493,7 @@ class SaleController extends Controller
             );
             $cashAmount = $isCreditSale ? 0 : CashRegister::cashAmountFromPayments($data['payments'] ?? []);
             $customer = $this->resolveCustomer($request, $data['customer'] ?? null, $usesResilientFiscalIntent);
-            $customerSnapshot = $this->saleCustomerSnapshot($customer, $data['customer'] ?? null);
+            $customerSnapshot = $this->saleCustomerSnapshot($customer, $data['customer'] ?? null, $usesResilientFiscalIntent);
 
             if ($isCreditSale) {
                 $docType = strtoupper(trim((string) ($customerSnapshot['customer_doc_type'] ?? '')));
@@ -2436,12 +2436,18 @@ class SaleController extends Controller
         ];
     }
 
-    private function saleCustomerSnapshot(?Customer $customer, ?array $customerData): array
+    private function saleCustomerSnapshot(?Customer $customer, ?array $customerData, bool $useFelLocationFallback = false): array
     {
         $customerData ??= [];
         $customerCountry = $customerData['country'] ?? $customer?->country ?? 'GT';
         $document = $customerData['doc_number'] ?? $customer?->doc_number;
         $documentType = $customerData['doc_type'] ?? $customer?->doc_type;
+
+        [$customerDepartment, $customerMunicipality] = $this->saleCustomerLocationSnapshot(
+            $customer,
+            $customerData,
+            $useFelLocationFallback,
+        );
 
         return [
             'customer_name' => trim((string) ($customerData['name'] ?? '')) ?: $customer?->name,
@@ -2454,11 +2460,38 @@ class SaleController extends Controller
             'customer_address' => trim((string) ($customerData['address'] ?? '')) ?: $customer?->address,
             'customer_address_reference' => trim((string) ($customerData['address_reference'] ?? '')) ?: $customer?->address_reference,
             'customer_postal_code' => $customer?->postal_code,
-            'customer_municipality' => trim((string) ($customerData['municipality'] ?? '')) ?: $customer?->municipality,
-            'customer_department' => trim((string) ($customerData['department'] ?? '')) ?: $customer?->department,
+            'customer_municipality' => $customerMunicipality,
+            'customer_department' => $customerDepartment,
             'customer_country' => $customerCountry,
             'customer_phone' => trim((string) ($customerData['phone'] ?? '')) ?: $customer?->phone,
         ];
+    }
+
+    /** @return array{?string, ?string} */
+    private function saleCustomerLocationSnapshot(?Customer $customer, array $customerData, bool $useFelLocationFallback): array
+    {
+        $submittedDepartment = trim((string) ($customerData['department'] ?? ''));
+        $submittedMunicipality = trim((string) ($customerData['municipality'] ?? ''));
+
+        if (! $useFelLocationFallback) {
+            return [
+                $submittedDepartment ?: $customer?->department,
+                $submittedMunicipality ?: $customer?->municipality,
+            ];
+        }
+
+        if ($submittedDepartment !== '' && $submittedMunicipality !== '') {
+            return [$submittedDepartment, $submittedMunicipality];
+        }
+
+        $customerDepartment = trim((string) $customer?->department);
+        $customerMunicipality = trim((string) $customer?->municipality);
+
+        if ($customerDepartment !== '' && $customerMunicipality !== '') {
+            return [$customerDepartment, $customerMunicipality];
+        }
+
+        return [null, null];
     }
 
     private function resolveCustomer(Request $request, ?array $customerData, bool $allowMissingGuatemalaLocation = false): ?Customer
@@ -2474,6 +2507,9 @@ class SaleController extends Controller
         $commercialName = trim((string) ($customerData['commercial_name'] ?? ''));
         $department = trim((string) ($customerData['department'] ?? ''));
         $municipality = trim((string) ($customerData['municipality'] ?? ''));
+        $preserveFelCustomerLocation = $allowMissingGuatemalaLocation
+            && $customerCountry === 'GT'
+            && ($department === '' || $municipality === '');
         $selectedCustomer = filled($customerData['id'] ?? null)
             ? Customer::query()
                 ->where('business_id', $businessId)
@@ -2538,8 +2574,8 @@ class SaleController extends Controller
                 'tax_condition' => null,
                 'address' => $customerData['address'] ?? null,
                 'address_reference' => $customerData['address_reference'] ?? null,
-                'department' => $department !== '' ? $department : null,
-                'municipality' => $municipality !== '' ? $municipality : null,
+                'department' => $preserveFelCustomerLocation ? null : ($department !== '' ? $department : null),
+                'municipality' => $preserveFelCustomerLocation ? null : ($municipality !== '' ? $municipality : null),
                 'phone' => $customerData['phone'] ?? null,
                 'country' => 'GT',
                 'is_final_consumer' => true,
@@ -2547,6 +2583,10 @@ class SaleController extends Controller
             ];
 
             if ($selectedCustomer && ! $isSelectedGenericFinalConsumer) {
+                if ($preserveFelCustomerLocation) {
+                    unset($payload['department'], $payload['municipality']);
+                }
+
                 if ($commercialName !== '') {
                     $payload['commercial_name'] = $commercialName;
                 }
@@ -2645,8 +2685,8 @@ class SaleController extends Controller
                 'tax_condition' => $customerData['tax_condition'] ?? null,
                 'address' => $customerData['address'] ?? null,
                 'address_reference' => $customerData['address_reference'] ?? null,
-                'department' => $department !== '' ? $department : null,
-                'municipality' => $municipality !== '' ? $municipality : null,
+                'department' => $preserveFelCustomerLocation ? null : ($department !== '' ? $department : null),
+                'municipality' => $preserveFelCustomerLocation ? null : ($municipality !== '' ? $municipality : null),
                 'phone' => $customerData['phone'] ?? null,
                 'country' => $customerCountry,
                 'is_final_consumer' => false,
@@ -2662,8 +2702,8 @@ class SaleController extends Controller
             'doc_number' => $docNumber !== '' ? $docNumber : null,
             'tax_condition' => $customerData['tax_condition'] ?? null,
             'address' => $customerData['address'] ?? null,
-            'department' => $department !== '' ? $department : null,
-            'municipality' => $municipality !== '' ? $municipality : null,
+            'department' => $preserveFelCustomerLocation ? null : ($department !== '' ? $department : null),
+            'municipality' => $preserveFelCustomerLocation ? null : ($municipality !== '' ? $municipality : null),
             'phone' => $customerData['phone'] ?? null,
             'country' => $customerCountry,
             'is_final_consumer' => $customerCountry === 'GT' ? false : ($docType === 'Consumidor Final'),
@@ -2682,6 +2722,10 @@ class SaleController extends Controller
         }
 
         if (isset($customer)) {
+            if ($preserveFelCustomerLocation) {
+                unset($payload['department'], $payload['municipality']);
+            }
+
             if ($commercialName !== '') {
                 $payload['commercial_name'] = $commercialName;
             }

@@ -116,6 +116,12 @@ class CreditReceiptController extends Controller
 
         $docType = CustomerIdentity::normalizeTaxId($data['customer']['doc_type']) ?? '';
         $docNumber = CustomerIdentity::normalizeTaxId($data['customer']['doc_number']) ?? '';
+
+        if ($docType === CustomerIdentity::CF || $docNumber === CustomerIdentity::CF) {
+            $docType = CustomerIdentity::CF;
+            $docNumber = CustomerIdentity::CF;
+        }
+
         $activeBranch = BranchInventory::activeBranch($businessId);
 
         if (filled($data['branch_id'] ?? null)) {

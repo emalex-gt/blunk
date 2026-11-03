@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\Business;
+use App\Models\Branch;
+use App\Models\Customer;
 use App\Models\ElectronicDocument;
 use App\Models\FiscalDocumentIntent;
 use App\Models\Product;
@@ -91,6 +93,79 @@ class DigifactInternalReferenceContractTest extends TestCase
 
         $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
 
+        $this->assertSame('Quiché', $payload['Buyer']['AddressInfo']['State']);
+        $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
+    }
+
+    public function test_fel_buyer_location_uses_a_complete_persisted_customer_pair_without_mixing_a_partial_snapshot(): void
+    {
+        [$business, $sale, $settings] = $this->saleFixture();
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente con ubicación',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+            'is_final_consumer' => true,
+            'department' => 'Quiché',
+            'municipality' => 'Chichicastenango',
+        ]);
+        $sale->update([
+            'customer_id' => $customer->id,
+            'customer_department' => 'Guatemala',
+            'customer_municipality' => null,
+        ]);
+
+        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
+
+        $this->assertSame('Quiché', $payload['Buyer']['AddressInfo']['State']);
+        $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
+    }
+
+    public function test_fel_buyer_location_ignores_an_invalid_customer_pair_and_uses_the_issuing_branch_pair(): void
+    {
+        [, $sale, $settings] = $this->saleFixture();
+        $branch = BranchInventory::defaultBranch($sale->business_id);
+        $branch->update([
+            'fel_department' => 'Quiché',
+            'fel_municipality' => 'Chichicastenango',
+        ]);
+        $sale->update([
+            'customer_department' => 'Departamento inexistente',
+            'customer_municipality' => 'Municipio inexistente',
+        ]);
+
+        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
+
+        $this->assertSame('Quiché', $payload['Buyer']['AddressInfo']['State']);
+        $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
+    }
+
+    public function test_fel_buyer_location_uses_the_historical_sale_branch_even_when_branches_are_currently_disabled(): void
+    {
+        [$business, $sale, $settings] = $this->saleFixture();
+        $historicalBranch = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal histórica',
+            'code' => 'HIST',
+            'is_active' => true,
+            'fel_establishment_code' => '2',
+            'fel_establishment_name' => 'Sucursal histórica FEL',
+            'fel_address' => 'Dirección histórica',
+            'fel_postal_code' => '14006',
+            'fel_department' => 'Quiché',
+            'fel_municipality' => 'Chichicastenango',
+            'fel_country' => 'GT',
+        ]);
+        $sale->update([
+            'branch_id' => $historicalBranch->id,
+            'customer_department' => null,
+            'customer_municipality' => null,
+        ]);
+
+        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
+
+        $this->assertSame('2', $payload['Seller']['BranchInfo']['Code']);
         $this->assertSame('Quiché', $payload['Buyer']['AddressInfo']['State']);
         $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
     }

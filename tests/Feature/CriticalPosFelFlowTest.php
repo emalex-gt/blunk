@@ -702,6 +702,54 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertNull($sale->customer->municipality);
     }
 
+    public function test_fel_invoice_with_a_partial_submitted_location_preserves_the_customer_pair_and_snapshots_it_as_a_pair(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'cash_register', 'fel_gt'],
+            allowInvoices: true,
+        );
+        $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente CF con ubicación',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+            'is_final_consumer' => true,
+            'department' => 'Quiché',
+            'municipality' => 'Chichicastenango',
+        ]);
+        $this->mockResilientIntentCertification('UUID-CF-PARTIAL-LOCATION');
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                documentType: 'invoice',
+                customer: [
+                    'id' => $customer->id,
+                    'name' => 'Cliente CF con ubicación',
+                    'doc_type' => 'CF',
+                    'doc_number' => 'CF',
+                    'country' => 'GT',
+                    'consumidor_final' => true,
+                    'department' => 'Guatemala',
+                    'municipality' => '',
+                ],
+            ))
+            ->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->where('business_id', $business->id)->sole();
+        $this->assertSame('Quiché', $customer->fresh()->department);
+        $this->assertSame('Chichicastenango', $customer->fresh()->municipality);
+        $this->assertSame('Quiché', $sale->customer_department);
+        $this->assertSame('Chichicastenango', $sale->customer_municipality);
+    }
+
     public function test_fel_invoice_blocks_existing_unverified_customer_with_clear_message(): void
     {
         [$business, $user] = $this->tenant(
@@ -3576,7 +3624,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame(2, $line->refresh()->qty_pending);
     }
 
-    public function test_credit_receipt_reuses_generic_final_consumer_customer(): void
+    public function test_credit_receipt_rejects_generic_final_consumer_without_creating_a_reservation(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'credits'], enableCredits: true);
         $product = $this->product($business, stock: 10, salePrice: 100);
@@ -3590,12 +3638,10 @@ class CriticalPosFelFlowTest extends TestCase
         $this->actingAs($user)
             ->from(route('sales.create'))
             ->post(route('credits.receipts.store'), $payload)
-            ->assertSessionHasNoErrors();
+            ->assertSessionHasErrors('customer.name');
 
-        $this->assertDatabaseHas('credit_receipts', [
-            'business_id' => $business->id,
-            'customer_id' => $generic->id,
-        ]);
+        $this->assertDatabaseCount('credit_receipts', 0);
+        $this->assertTrue($generic->fresh()->isGenericFinalConsumer());
     }
 
     public function test_credit_line_cancellation_releases_reserved_stock_without_deleting_line(): void

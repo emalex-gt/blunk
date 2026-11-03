@@ -87,6 +87,19 @@ class CreditReceiptCustomerIdentityTest extends TestCase
         $this->assertSame($personalized->id, CreditReceipt::query()->sole()->customer_id);
     }
 
+    public function test_credit_reservation_normalizes_a_personalized_final_consumer_document_variant_to_cf(): void
+    {
+        [$business, $user, $product] = $this->creditTenant();
+
+        $this->storeCreditReceipt($user, $product, 'C/F', 'Cliente CF histórico');
+
+        $receipt = CreditReceipt::query()->sole();
+        $this->assertSame('CF', $receipt->customer_doc_type);
+        $this->assertSame('CF', $receipt->customer_doc_number);
+        $this->assertSame('CF', $receipt->customer->doc_type);
+        $this->assertSame('CF', $receipt->customer->doc_number);
+    }
+
     public function test_credit_reservation_with_a_selected_generic_and_personalized_name_creates_a_separate_customer(): void
     {
         [$business, $user, $product] = $this->creditTenant();

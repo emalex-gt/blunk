@@ -332,7 +332,7 @@ function uniqueRecentProductIds(items: Array<number | { id?: number | string | n
     return Array.from(new Set(ids)).slice(0, 8);
 }
 
-function emptyCustomer(country: string, defaults: Partial<Pick<CustomerForm, 'department' | 'municipality'>> = {}): CustomerForm {
+function emptyCustomer(country: string): CustomerForm {
     return {
         id: null,
         consumidor_final: country === 'GT',
@@ -343,8 +343,8 @@ function emptyCustomer(country: string, defaults: Partial<Pick<CustomerForm, 'de
         commercial_name: '',
         address: '',
         address_reference: '',
-        department: defaults.department ?? '',
-        municipality: defaults.municipality ?? '',
+        department: '',
+        municipality: '',
         phone: '',
         country,
         name_locked: false,
@@ -370,10 +370,9 @@ function normalizedFiscalNit(value: string | null | undefined) {
 function normalizeCustomerValidationState(
     customer: Partial<CustomerForm> | null | undefined,
     country: string,
-    defaults: Partial<Pick<CustomerForm, 'department' | 'municipality'>> = {},
 ): CustomerForm {
     const normalized = {
-        ...emptyCustomer(country, defaults),
+        ...emptyCustomer(country),
         ...(customer ?? {}),
     };
     const docType = String(normalized.doc_type ?? (country === 'GT' ? 'CF' : ''));
@@ -393,8 +392,8 @@ function normalizeCustomerValidationState(
         commercial_name: String(normalized.commercial_name ?? ''),
         address: String(normalized.address ?? ''),
         address_reference: String(normalized.address_reference ?? ''),
-        department: String(normalized.department ?? defaults.department ?? ''),
-        municipality: String(normalized.municipality ?? defaults.municipality ?? ''),
+        department: String(normalized.department ?? ''),
+        municipality: String(normalized.municipality ?? ''),
         phone: String(normalized.phone ?? ''),
         country: String(normalized.country ?? country),
         name_locked: Boolean(normalized.name_locked),
@@ -802,13 +801,6 @@ export default function POS({
     const businessId = pageProps.current_business_id ?? business?.id ?? null;
     const userId = pageProps.auth?.user?.id ?? null;
     const activeBranchId = pageProps.active_branch?.id ?? null;
-    const activeBranchLocationDefaults = useMemo(
-        () => ({
-            department: pageProps.active_branch?.department ?? '',
-            municipality: pageProps.active_branch?.municipality ?? '',
-        }),
-        [pageProps.active_branch?.department, pageProps.active_branch?.municipality],
-    );
     const canApplyDiscount = (pageProps.enabled_modules ?? []).includes('discounts')
         && (Boolean(pageProps.auth?.user?.is_super_admin)
             || (pageProps.auth?.permissions ?? []).includes('sales.discount.apply'));
@@ -842,8 +834,8 @@ export default function POS({
     ]);
     const country = business?.country ?? 'GT';
     const defaultCustomer = useMemo(
-        () => emptyCustomer(country, activeBranchLocationDefaults),
-        [activeBranchLocationDefaults, country],
+        () => emptyCustomer(country),
+        [country],
     );
     const draftKey = useMemo(() => makeDraftKey('pos', businessId, userId, activeBranchId), [activeBranchId, businessId, userId]);
     const isQuotationEditMode = Boolean(quotation_edit_source);
@@ -1253,11 +1245,11 @@ export default function POS({
         creditInvoiceLoadedRef.current = true;
         setCart(creditItems);
         cartRef.current = creditItems;
-        setData('customer', normalizeCustomerValidationState(credit_invoice.customer, country, activeBranchLocationDefaults));
+        setData('customer', normalizeCustomerValidationState(credit_invoice.customer, country));
         setDiscount(null);
         setDocumentType(singleDocumentType ?? (available_document_types[0] ?? 'receipt'));
         showMessage('Facturando productos a crédito.');
-    }, [activeBranchLocationDefaults, available_document_types, country, credit_invoice, productsById, setData, singleDocumentType]);
+    }, [available_document_types, country, credit_invoice, productsById, setData, singleDocumentType]);
 
     useEffect(() => {
         if (!quotation_source || quotationLoadedRef.current || productsById.size === 0) {
@@ -1298,7 +1290,7 @@ export default function POS({
             name_locked: false,
             tax_lookup_verified_at: null,
             tax_lookup_verified_doc_number: null,
-        }, country, activeBranchLocationDefaults);
+        }, country);
 
         quotationLoadedRef.current = true;
         setCart(quotationItems);
@@ -1309,7 +1301,7 @@ export default function POS({
         setErrorMessage('');
         setMessage(`Carrito cargado desde ${quotation_source.number}. Revisa la venta antes de confirmar.`);
         toast.info(`Carrito cargado desde ${quotation_source.number}.`);
-    }, [activeBranchLocationDefaults, country, defaultCustomer, productsById, quotation_source, setData, toast]);
+    }, [country, defaultCustomer, productsById, quotation_source, setData, toast]);
 
     useEffect(() => {
         if (!quotation_edit_source || quotationEditLoadedRef.current || productsById.size === 0) {
@@ -1350,7 +1342,7 @@ export default function POS({
             name_locked: false,
             tax_lookup_verified_at: null,
             tax_lookup_verified_doc_number: null,
-        }, country, activeBranchLocationDefaults);
+        }, country);
 
         quotationEditLoadedRef.current = true;
         setCart(quotationItems);
@@ -1362,7 +1354,7 @@ export default function POS({
         setQuotationNote(quotation_edit_source.note ?? '');
         setErrorMessage('');
         setMessage(`Editando cotización ${quotation_edit_source.number}.`);
-    }, [activeBranchLocationDefaults, country, defaultCustomer, productsById, quotation_edit_source, setData]);
+    }, [country, defaultCustomer, productsById, quotation_edit_source, setData]);
 
     const customerSearchTerm = useMemo(() => {
         if (country === 'GT' && data.customer.consumidor_final && data.customer.doc_type === 'CF') {
@@ -1639,7 +1631,7 @@ export default function POS({
 
     function preparePosDraftRestore(draft: PosDraft, productMap = productsById) {
         const issues: string[] = [];
-        const customer = normalizeCustomerValidationState(draft.customer, country, activeBranchLocationDefaults);
+        const customer = normalizeCustomerValidationState(draft.customer, country);
 
         if (String(draft.branch_id ?? 'default') !== String(draftBranchId)) {
             return {
@@ -1982,7 +1974,9 @@ export default function POS({
             id: customer.id,
             consumidor_final: customer.doc_type === 'CF' || customer.doc_type === 'Consumidor Final',
             doc_type: customer.doc_type ?? (country === 'AR' ? 'DNI' : 'NIT'),
-            doc_number: customer.doc_number ?? '',
+            doc_number: customer.doc_type === 'CF' || customer.doc_type === 'Consumidor Final'
+                ? (customer.doc_number || 'CF')
+                : (customer.doc_number ?? ''),
             tax_condition: customer.tax_condition ?? (country === 'AR' ? 'Consumidor Final' : ''),
             name: customer.name,
             commercial_name: customer.commercial_name ?? '',
@@ -3409,7 +3403,7 @@ export default function POS({
                                                 type="button"
                                                 onClick={() => {
                                                     renewOperationKeyAfterFailedMutation();
-                                                    setData('customer', emptyCustomer('GT', activeBranchLocationDefaults));
+                                                    setData('customer', emptyCustomer('GT'));
                                                     setNitLookupMessage('');
                                                     setCustomerEditing(true);
                                                 }}
@@ -3427,7 +3421,7 @@ export default function POS({
                                                 onClick={() => {
                                                     renewOperationKeyAfterFailedMutation();
                                                     setData('customer', {
-                                                        ...emptyCustomer('GT', activeBranchLocationDefaults),
+                                                        ...emptyCustomer('GT'),
                                                         consumidor_final: false,
                                                         doc_type: 'NIT',
                                                         doc_number: '',
@@ -3452,7 +3446,7 @@ export default function POS({
                                                 onClick={() => {
                                                     renewOperationKeyAfterFailedMutation();
                                                     setData('customer', {
-                                                        ...emptyCustomer('GT', activeBranchLocationDefaults),
+                                                        ...emptyCustomer('GT'),
                                                         consumidor_final: false,
                                                         doc_type: 'CUI',
                                                         doc_number: '',

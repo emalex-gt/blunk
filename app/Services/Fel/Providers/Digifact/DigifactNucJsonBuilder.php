@@ -303,16 +303,19 @@ class DigifactNucJsonBuilder
     /** @return array{string, string} */
     private function buyerLocation(Sale $sale, ?\App\Models\Customer $customer, Branch $felBranch): array
     {
-        $department = trim((string) ($sale->customer_department ?: $customer?->department));
-        $municipality = trim((string) ($sale->customer_municipality ?: $customer?->municipality));
+        foreach ([
+            [$sale->customer_department, $sale->customer_municipality],
+            [$customer?->department, $customer?->municipality],
+        ] as [$department, $municipality]) {
+            $department = trim((string) $department);
+            $municipality = trim((string) $municipality);
 
-        if ($department !== '' && $municipality !== '') {
-            if (! GuatemalaLocations::isValidDepartment($department)
-                || ! GuatemalaLocations::isValidMunicipality($department, $municipality)) {
-                throw new FelException('El cliente debe tener un departamento y municipio de Guatemala válidos para emitir FEL.');
+            if ($department !== ''
+                && $municipality !== ''
+                && GuatemalaLocations::isValidDepartment($department)
+                && GuatemalaLocations::isValidMunicipality($department, $municipality)) {
+                return [$department, $municipality];
             }
-
-            return [$department, $municipality];
         }
 
         return [(string) $felBranch->fel_department, (string) $felBranch->fel_municipality];
