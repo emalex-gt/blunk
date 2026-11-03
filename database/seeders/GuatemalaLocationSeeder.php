@@ -3,8 +3,10 @@
 namespace Database\Seeders;
 
 use App\Support\GuatemalaLocations;
+use App\Support\GuatemalaPostalCodes;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class GuatemalaLocationSeeder extends Seeder
 {
@@ -30,15 +32,21 @@ class GuatemalaLocationSeeder extends Seeder
             }
 
             foreach ($municipalities as $municipality) {
+                $values = [
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+
+                if (Schema::hasColumn('guatemala_municipalities', 'postal_code')) {
+                    $values['postal_code'] = GuatemalaPostalCodes::confirmed()[$department][$municipality] ?? null;
+                }
+
                 DB::table('guatemala_municipalities')->updateOrInsert(
                     [
                         'guatemala_department_id' => $departmentId,
                         'name' => $municipality,
                     ],
-                    [
-                        'created_at' => $now,
-                        'updated_at' => $now,
-                    ],
+                    $values,
                 );
             }
         }
