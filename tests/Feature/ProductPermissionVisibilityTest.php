@@ -66,6 +66,23 @@ class ProductPermissionVisibilityTest extends TestCase
             ->has('products.data.0.supplier_cost_history'));
     }
 
+    public function test_product_index_rechecks_inventory_module_for_each_http_request(): void
+    {
+        [$business, $user] = $this->fixture([Permissions::PRODUCTS_VIEW]);
+        $module = TenantModule::query()
+            ->where('business_id', $business->id)
+            ->where('module', 'inventory')
+            ->firstOrFail();
+
+        $this->as($user, $business)->get(route('products.index'))->assertOk();
+
+        $module->update(['is_enabled' => false, 'disabled_at' => now()]);
+        $this->as($user, $business)->get(route('products.index'))->assertForbidden();
+
+        $module->update(['is_enabled' => true, 'disabled_at' => null, 'enabled_at' => now()]);
+        $this->as($user, $business)->get(route('products.index'))->assertOk();
+    }
+
     public function test_product_updates_are_tenant_scoped_and_super_admin_retains_access(): void
     {
         [$business, $user] = $this->fixture([Permissions::PRODUCTS_VIEW, Permissions::PRODUCTS_UPDATE]);

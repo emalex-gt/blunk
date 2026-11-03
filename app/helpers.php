@@ -73,21 +73,34 @@ if (! function_exists('module_enabled')) {
             return false;
         }
 
-        static $cache = [];
+        if (! Schema::hasTable('tenant_modules')) {
+            return false;
+        }
 
-        if (! array_key_exists($businessId, $cache)) {
-            if (! Schema::hasTable('tenant_modules')) {
-                $cache[$businessId] = [];
-            } else {
-                $cache[$businessId] = TenantModule::query()
+        $enabledModules = null;
+
+        if (! app()->runningInConsole() && app()->bound('request')) {
+            $request = app('request');
+            $cacheKey = "blunk.enabled_modules.{$businessId}";
+
+            if (! $request->attributes->has($cacheKey)) {
+                $request->attributes->set($cacheKey, TenantModule::query()
                     ->where('business_id', $businessId)
                     ->where('is_enabled', true)
                     ->pluck('module')
-                    ->all();
+                    ->all());
             }
+
+            $enabledModules = $request->attributes->get($cacheKey);
         }
 
-        return in_array($module, $cache[$businessId], true);
+        $enabledModules ??= TenantModule::query()
+            ->where('business_id', $businessId)
+            ->where('is_enabled', true)
+            ->pluck('module')
+            ->all();
+
+        return in_array($module, $enabledModules, true);
     }
 }
 
