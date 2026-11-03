@@ -769,7 +769,17 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.zones.work-day.start', $zone))
-            ->assertForbidden();
+            ->assertForbidden()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Errors/Forbidden')
+                ->where('message', 'No tienes permiso para acceder a esta sección.'));
+
+        $this->assertDatabaseCount('route_work_days', 0);
+        $this->assertDatabaseMissing('user_branch_accesses', [
+            'user_id' => $seller->id,
+            'business_id' => $business->id,
+        ]);
+        $this->assertNull($seller->fresh()->current_branch_id);
     }
 
     public function test_seller_can_create_customer_from_open_work_day_and_visit_is_created(): void

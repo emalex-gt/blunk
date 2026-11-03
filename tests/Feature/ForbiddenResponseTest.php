@@ -5,7 +5,9 @@ namespace Tests\Feature;
 use App\Models\Brand;
 use App\Models\Business;
 use App\Models\TenantModule;
+use App\Models\TenantSetting;
 use App\Models\User;
+use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -60,6 +62,47 @@ class ForbiddenResponseTest extends TestCase
         [$business, $user] = $this->fixture([Permissions::BRANDS_VIEW]);
         $user->update(['is_active' => false]);
         $this->as($user->fresh(), $business)->get(route('brands.index'))->assertStatus(403)->assertInertia(fn (Assert $page) => $page->component('TenantBlocked'));
+    }
+
+    public function test_forbidden_response_is_safe_for_a_multibranch_user_without_any_branch_access(): void
+    {
+        [$business, $user] = $this->fixture([]);
+        TenantModule::query()->create(['business_id' => $business->id, 'module' => 'branches', 'is_enabled' => true, 'enabled_at' => now()]);
+        TenantSetting::query()->create(['business_id' => $business->id, 'use_branches' => true]);
+        BranchInventory::defaultBranchForBusiness($business);
+        $user->forceFill(['all_branches_access' => false, 'current_branch_id' => null])->save();
+
+        $this->as($user->fresh(), $business)
+            ->get(route('brands.index'))
+            ->assertStatus(403)
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Errors/Forbidden')
+                ->where('active_branch', null)
+                ->where('branches', [])
+                ->where('navigation_brand.branch_name', null));
+
+        $this->assertDatabaseMissing('user_branch_accesses', ['user_id' => $user->id, 'business_id' => $business->id]);
+        $this->assertNull($user->fresh()->current_branch_id);
+    }
+
+    public function test_authorized_multibranch_user_keeps_active_branch_props(): void
+    {
+        [$business, $user] = $this->fixture([Permissions::BRANDS_VIEW]);
+        TenantModule::query()->create(['business_id' => $business->id, 'module' => 'branches', 'is_enabled' => true, 'enabled_at' => now()]);
+        TenantSetting::query()->create(['business_id' => $business->id, 'use_branches' => true]);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $user->branchAccesses()->create(['business_id' => $business->id, 'branch_id' => $branch->id]);
+        $user->forceFill(['all_branches_access' => false, 'current_branch_id' => $branch->id])->save();
+
+        $this->as($user->fresh(), $business)
+            ->get(route('brands.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Brands/Index')
+                ->where('active_branch.id', $branch->id)
+                ->where('navigation_brand.branch_name', $branch->name)
+                ->has('branches', 1)
+                ->where('branches.0.id', $branch->id));
     }
 
     public function test_not_found_and_validation_errors_keep_their_statuses(): void

@@ -188,7 +188,7 @@ class HandleInertiaRequests extends Middleware
             'branches_enabled' => fn () => $user && $businessId ? BranchInventory::branchesEnabled($businessId) : false,
             'branch_can_switch' => fn () => $user && $businessId ? BranchInventory::canSwitchBranches($user) : false,
             'active_branch' => function () use ($businessId, $user) {
-                if (! $user || ! $businessId || ! BranchInventory::branchesEnabled($businessId)) {
+                if ($this->authorizedBranches($user, $businessId)->isEmpty()) {
                     return null;
                 }
 
@@ -202,12 +202,7 @@ class HandleInertiaRequests extends Middleware
                 ];
             },
             'branches' => function () use ($businessId, $user) {
-                if (! $user || ! $businessId || ! BranchInventory::branchesEnabled($businessId)) {
-                    return [];
-                }
-
-                return app(BranchAccessService::class)
-                    ->authorizedBranches($user, $businessId)
+                return $this->authorizedBranches($user, $businessId)
                     ->map(fn ($branch) => [
                         'id' => $branch->id,
                         'name' => $branch->name,
@@ -243,7 +238,7 @@ class HandleInertiaRequests extends Middleware
                         ->where('business_id', $businessId)
                         ->value('company_logo_url');
 
-                $branch = BranchInventory::branchesEnabled($businessId)
+                $branch = $this->authorizedBranches($user, $businessId)->isNotEmpty()
                     ? BranchInventory::activeBranch($businessId)
                     : null;
 
@@ -287,6 +282,15 @@ class HandleInertiaRequests extends Middleware
                 'global_sales_result' => fn () => $request->session()->get('global_sales_result'),
             ],
         ]);
+    }
+
+    private function authorizedBranches($user, ?int $businessId): \Illuminate\Support\Collection
+    {
+        if (! $user || ! $businessId || ! BranchInventory::branchesEnabled($businessId)) {
+            return collect();
+        }
+
+        return app(BranchAccessService::class)->authorizedBranches($user, $businessId);
     }
 
     /**
