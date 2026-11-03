@@ -441,15 +441,6 @@ class SaleController extends Controller
             ]);
         }
 
-        if (($data['document_type'] ?? null) === 'invoice'
-            && $country === 'GT'
-            && $felModuleEnabled) {
-            $data['customer'] = $this->customerDataWithBranchLocationFallback(
-                $data['customer'] ?? null,
-                $activeBranch,
-            );
-        }
-
         if (($data['document_type'] ?? null) === 'invoice') {
             $this->validateInvoiceConfiguration($business, $data['customer'] ?? null, $felSettings, $felModuleEnabled);
         }
@@ -501,7 +492,7 @@ class SaleController extends Controller
                 $branch->id,
             );
             $cashAmount = $isCreditSale ? 0 : CashRegister::cashAmountFromPayments($data['payments'] ?? []);
-            $customer = $this->resolveCustomer($request, $data['customer'] ?? null);
+            $customer = $this->resolveCustomer($request, $data['customer'] ?? null, $usesResilientFiscalIntent);
             $customerSnapshot = $this->saleCustomerSnapshot($customer, $data['customer'] ?? null);
 
             if ($isCreditSale) {
@@ -2470,57 +2461,7 @@ class SaleController extends Controller
         ];
     }
 
-    private function customerDataWithBranchLocationFallback(?array $customerData, Branch $branch): array
-    {
-        $customerData ??= [];
-
-        if (($customerData['country'] ?? 'GT') !== 'GT') {
-            return $customerData;
-        }
-
-        $department = trim((string) ($customerData['department'] ?? ''));
-        $municipality = trim((string) ($customerData['municipality'] ?? ''));
-        $branchDepartment = trim((string) $branch->department);
-        $branchMunicipality = trim((string) $branch->municipality);
-
-        if ($department !== '' || $municipality !== '') {
-            if ($department === '' || $municipality === '') {
-                throw ValidationException::withMessages([
-                    $department === '' ? 'customer.department' : 'customer.municipality' => 'Selecciona un departamento y municipio válidos para emitir FEL.',
-                ]);
-            }
-
-            if ((! GuatemalaLocations::isValidDepartment($department)
-                || ! GuatemalaLocations::isValidMunicipality($department, $municipality))
-                && $department === $branchDepartment
-                && $municipality === $branchMunicipality) {
-                throw ValidationException::withMessages([
-                    'customer.department' => 'La sucursal activa debe tener un departamento y municipio de Guatemala válidos para emitir FEL.',
-                ]);
-            }
-
-            $this->validateCustomerLocation('GT', $department, $municipality);
-
-            return $customerData;
-        }
-
-        if (! GuatemalaLocations::isValidDepartment($branchDepartment)
-            || ! GuatemalaLocations::isValidMunicipality($branchDepartment, $branchMunicipality)
-            || $branchDepartment === ''
-            || $branchMunicipality === '') {
-            throw ValidationException::withMessages([
-                'customer.department' => 'La sucursal activa debe tener un departamento y municipio de Guatemala válidos para emitir FEL.',
-            ]);
-        }
-
-        return [
-            ...$customerData,
-            'department' => $branchDepartment,
-            'municipality' => $branchMunicipality,
-        ];
-    }
-
-    private function resolveCustomer(Request $request, ?array $customerData): ?Customer
+    private function resolveCustomer(Request $request, ?array $customerData, bool $allowMissingGuatemalaLocation = false): ?Customer
     {
         $businessId = currentBusinessId();
         $country = \App\Models\Business::query()->whereKey($businessId)->value('country') ?: 'GT';
@@ -2539,7 +2480,11 @@ class SaleController extends Controller
                 ->find($customerData['id'])
             : null;
 
-        $this->validateCustomerLocation($customerCountry, $department, $municipality);
+        if (! ($allowMissingGuatemalaLocation
+            && $customerCountry === 'GT'
+            && ($department === '' || $municipality === ''))) {
+            $this->validateCustomerLocation($customerCountry, $department, $municipality);
+        }
 
         if ($customerCountry === 'GT') {
             $canonicalDocType = CustomerIdentity::normalizeGuatemalaDocType($docType);

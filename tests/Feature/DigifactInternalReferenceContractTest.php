@@ -60,6 +60,41 @@ class DigifactInternalReferenceContractTest extends TestCase
         $this->assertArrayNotHasKey('NumberLine', $serialized['Items'][0]);
     }
 
+    public function test_fel_buyer_location_uses_the_historical_sale_branch_as_a_complete_pair_when_customer_location_is_missing(): void
+    {
+        [, $sale, $settings] = $this->saleFixture();
+        $branch = BranchInventory::defaultBranch($sale->business_id);
+        $branch->update([
+            'fel_department' => 'Quiché',
+            'fel_municipality' => 'Chichicastenango',
+        ]);
+        $sale->update([
+            'customer_department' => null,
+            'customer_municipality' => 'Guatemala',
+        ]);
+
+        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
+
+        $this->assertSame('Quiché', $payload['Buyer']['AddressInfo']['State']);
+        $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
+        $this->assertNull($sale->fresh()->customer_department);
+        $this->assertSame('Guatemala', $sale->fresh()->customer_municipality);
+    }
+
+    public function test_fel_buyer_location_preserves_a_valid_complete_customer_pair(): void
+    {
+        [, $sale, $settings] = $this->saleFixture();
+        $sale->update([
+            'customer_department' => 'Quiché',
+            'customer_municipality' => 'Chichicastenango',
+        ]);
+
+        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
+
+        $this->assertSame('Quiché', $payload['Buyer']['AddressInfo']['State']);
+        $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
+    }
+
     public function test_offset_fiscal_issue_time_is_persisted_as_a_utc_derivative(): void
     {
         $this->travelTo('2026-10-30T21:33:25+00:00');

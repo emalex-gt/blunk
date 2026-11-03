@@ -11,6 +11,7 @@ use App\Services\Fel\FelException;
 use App\Support\BranchInventory;
 use App\Support\CustomerIdentity;
 use App\Support\FelPhraseRenderer;
+use App\Support\GuatemalaLocations;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -61,20 +62,7 @@ class DigifactNucJsonBuilder
             ?: $settings->establishment_postal_code
             ?: ''
         )) ?: '01001';
-        $buyerMunicipality = trim((string) (
-            $sale->customer_municipality
-            ?: $customer?->municipality
-            ?: $felBranch->fel_municipality
-            ?: $settings->establishment_municipality
-            ?: ''
-        )) ?: 'Guatemala';
-        $buyerDepartment = trim((string) (
-            $sale->customer_department
-            ?: $customer?->department
-            ?: $felBranch->fel_department
-            ?: $settings->establishment_department
-            ?: ''
-        )) ?: 'Guatemala';
+        [$buyerDepartment, $buyerMunicipality] = $this->buyerLocation($sale, $customer, $felBranch);
         $buyerCountry = trim((string) (
             $sale->customer_country
             ?: $customer?->country
@@ -280,10 +268,6 @@ class DigifactNucJsonBuilder
         $business = $sale->business;
 
         if ($sale->branch && (int) $sale->branch->business_id === (int) $sale->business_id) {
-            if ($business && ! BranchInventory::branchesEnabled($sale->business_id)) {
-                return BranchInventory::defaultBranchForBusiness($business);
-            }
-
             return $sale->branch;
         }
 
@@ -309,6 +293,29 @@ class DigifactNucJsonBuilder
                 throw new FelException('Faltan datos del establecimiento FEL. Configura código, nombre y dirección del establecimiento.');
             }
         }
+
+        if (! GuatemalaLocations::isValidDepartment($branch->fel_department)
+            || ! GuatemalaLocations::isValidMunicipality($branch->fel_department, $branch->fel_municipality)) {
+            throw new FelException('La sucursal emisora debe tener un departamento y municipio de Guatemala válidos para emitir FEL.');
+        }
+    }
+
+    /** @return array{string, string} */
+    private function buyerLocation(Sale $sale, ?\App\Models\Customer $customer, Branch $felBranch): array
+    {
+        $department = trim((string) ($sale->customer_department ?: $customer?->department));
+        $municipality = trim((string) ($sale->customer_municipality ?: $customer?->municipality));
+
+        if ($department !== '' && $municipality !== '') {
+            if (! GuatemalaLocations::isValidDepartment($department)
+                || ! GuatemalaLocations::isValidMunicipality($department, $municipality)) {
+                throw new FelException('El cliente debe tener un departamento y municipio de Guatemala válidos para emitir FEL.');
+            }
+
+            return [$department, $municipality];
+        }
+
+        return [(string) $felBranch->fel_department, (string) $felBranch->fel_municipality];
     }
 
     private function buildSellerAdditionlInfo(TenantFelSetting $settings): array

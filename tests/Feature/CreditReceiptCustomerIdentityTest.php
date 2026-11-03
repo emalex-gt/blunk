@@ -35,21 +35,21 @@ class CreditReceiptCustomerIdentityTest extends TestCase
         Permissions::syncDefaults();
     }
 
-    public function test_credit_reservation_reuses_generic_final_consumer_for_document_variants(): void
+    public function test_credit_reservation_rejects_generic_final_consumer_document_variants_without_side_effects(): void
     {
         [$business, $user, $product] = $this->creditTenant();
         $generic = Customer::getOrCreateGenericFinalConsumer($business);
 
-        $this->storeCreditReceipt($user, $product, 'C/F', 'Consumidor Final');
-        $this->storeCreditReceipt($user, $product, 'C F', '');
+        foreach ([['C/F', 'Consumidor Final'], ['C F', ''], ['CF', '  consumidor   final  ']] as [$document, $name]) {
+            $this->actingAs($user)
+                ->post(route('credits.receipts.store'), $this->creditReceiptPayload($product, $document, $name))
+                ->assertRedirect()
+                ->assertSessionHasErrors('customer.name');
+        }
 
         $this->assertSame(1, Customer::query()->where('business_id', $business->id)->count());
-        $this->assertSame([$generic->id], CreditReceipt::query()
-            ->where('business_id', $business->id)
-            ->pluck('customer_id')
-            ->unique()
-            ->values()
-            ->all());
+        $this->assertSame(0, CreditReceipt::query()->where('business_id', $business->id)->count());
+        $this->assertTrue($generic->fresh()->isGenericFinalConsumer());
     }
 
     public function test_credit_reservation_keeps_personalized_final_consumer_separate(): void
@@ -67,6 +67,48 @@ class CreditReceiptCustomerIdentityTest extends TestCase
         $this->assertNotSame($generic->id, $personalized->id);
         $this->assertSame('CF', $personalized->normalized_tax_id);
         $this->assertSame($personalized->id, CreditReceipt::query()->sole()->customer_id);
+    }
+
+    public function test_credit_reservation_reuses_existing_personalized_final_consumer_without_creating_a_duplicate(): void
+    {
+        [$business, $user, $product] = $this->creditTenant();
+        $personalized = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Juan Pérez',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+            'is_final_consumer' => true,
+        ]);
+
+        $this->storeCreditReceipt($user, $product, 'CF', 'Juan Pérez', $personalized->id);
+
+        $this->assertSame(1, Customer::query()->where('business_id', $business->id)->count());
+        $this->assertSame($personalized->id, CreditReceipt::query()->sole()->customer_id);
+    }
+
+    public function test_credit_reservation_with_a_selected_generic_and_personalized_name_creates_a_separate_customer(): void
+    {
+        [$business, $user, $product] = $this->creditTenant();
+        $generic = Customer::getOrCreateGenericFinalConsumer($business);
+
+        $this->storeCreditReceipt($user, $product, 'CF', 'María López', $generic->id);
+
+        $this->assertSame('Consumidor Final', $generic->fresh()->name);
+        $this->assertSame(2, Customer::query()->where('business_id', $business->id)->count());
+        $this->assertSame('María López', CreditReceipt::query()->sole()->customer->name);
+    }
+
+    public function test_credit_reservation_replays_a_personalized_final_consumer_request_without_duplicate_effects(): void
+    {
+        [$business, $user, $product] = $this->creditTenant();
+        $payload = $this->creditReceiptPayload($product, 'CF', 'Cliente CF repetible', null, 'credit-cf-replay');
+
+        $this->actingAs($user)->post(route('credits.receipts.store'), $payload)->assertRedirect()->assertSessionHasNoErrors();
+        $this->actingAs($user)->post(route('credits.receipts.store'), $payload)->assertRedirect()->assertSessionHasNoErrors();
+
+        $this->assertSame(1, Customer::query()->where('business_id', $business->id)->count());
+        $this->assertSame(1, CreditReceipt::query()->where('business_id', $business->id)->count());
     }
 
     public function test_credit_reservation_reuses_normalized_real_nit_without_partial_unique_index(): void
@@ -267,24 +309,30 @@ SQL);
         return [$business, $user, $product];
     }
 
-    private function storeCreditReceipt(User $user, Product $product, string $document, string $name): void
+    private function storeCreditReceipt(User $user, Product $product, string $document, string $name, ?int $customerId = null): void
     {
         $this->actingAs($user)
-            ->post(route('credits.receipts.store'), [
-                'idempotency_key' => 'credit-identity-'.str_replace('.', '-', uniqid('', true)),
-                'customer' => [
-                    'name' => $name,
-                    'doc_type' => $document,
-                    'doc_number' => $document,
-                ],
-                'items' => [[
-                    'product_id' => $product->id,
-                    'quantity' => 1,
-                    'unit_price' => 10,
-                ]],
-            ])
+            ->post(route('credits.receipts.store'), $this->creditReceiptPayload($product, $document, $name, $customerId))
             ->assertRedirect()
             ->assertSessionHasNoErrors();
+    }
+
+    private function creditReceiptPayload(Product $product, string $document, string $name, ?int $customerId = null, ?string $idempotencyKey = null): array
+    {
+        return [
+            'idempotency_key' => $idempotencyKey ?? 'credit-identity-'.str_replace('.', '-', uniqid('', true)),
+            'customer' => array_filter([
+                'id' => $customerId,
+                'name' => $name,
+                'doc_type' => $document,
+                'doc_number' => $document,
+            ], static fn ($value): bool => $value !== null),
+            'items' => [[
+                'product_id' => $product->id,
+                'quantity' => 1,
+                'unit_price' => 10,
+            ]],
+        ];
     }
 
     private function duplicateGenericCustomers(Business $business): array

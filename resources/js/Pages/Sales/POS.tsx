@@ -2686,8 +2686,18 @@ export default function POS({
             const docType = data.customer.doc_type.trim().toUpperCase();
             const docNumber = data.customer.doc_number.trim().toUpperCase();
 
-            if (data.customer.consumidor_final || docType === 'CF' || docNumber === 'CF' || docType !== 'NIT' || !docNumber) {
-                const message = 'Para crédito debes ingresar un NIT válido. CF no está permitido.';
+            const isFinalConsumer = data.customer.consumidor_final || docType === 'CF' || docNumber === 'CF';
+            const normalizedCustomerName = data.customer.name.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+
+            if (isFinalConsumer && (normalizedCustomerName === '' || normalizedCustomerName === 'consumidor final')) {
+                const message = 'Para reservar crédito debes seleccionar o registrar un cliente identificable; Consumidor Final no está permitido.';
+                showError(message);
+                toast.error(message);
+                return;
+            }
+
+            if (!isFinalConsumer && (docType !== 'NIT' || !docNumber)) {
+                const message = 'Para crédito debes ingresar un NIT válido.';
                 showError(message);
                 toast.error(message);
                 return;

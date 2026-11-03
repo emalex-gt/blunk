@@ -667,6 +667,41 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('invoice', Sale::query()->where('business_id', $business->id)->firstOrFail()->document_type);
     }
 
+    public function test_fel_invoice_without_customer_location_keeps_customer_and_sale_snapshot_empty_for_branch_fallback(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'cash_register', 'fel_gt'],
+            allowInvoices: true,
+        );
+        $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $this->mockResilientIntentCertification('UUID-CF-NO-LOCATION');
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                documentType: 'invoice',
+                customer: [
+                    'name' => 'Cliente CF sin ubicación',
+                    'doc_type' => 'CF',
+                    'doc_number' => 'CF',
+                    'country' => 'GT',
+                    'consumidor_final' => true,
+                ],
+            ))
+            ->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->where('business_id', $business->id)->sole();
+        $this->assertNull($sale->customer_department);
+        $this->assertNull($sale->customer_municipality);
+        $this->assertNull($sale->customer->department);
+        $this->assertNull($sale->customer->municipality);
+    }
+
     public function test_fel_invoice_blocks_existing_unverified_customer_with_clear_message(): void
     {
         [$business, $user] = $this->tenant(

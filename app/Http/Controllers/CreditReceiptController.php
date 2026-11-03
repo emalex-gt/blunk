@@ -521,8 +521,10 @@ class CreditReceiptController extends Controller
         if ($isFinalConsumer) {
             $name = $name !== '' ? $name : 'Consumidor Final';
 
-            if (CustomerIdentity::isGenericFinalConsumer('CF', $name)) {
-                return Customer::getOrCreateGenericFinalConsumer($businessId);
+            if (CustomerIdentity::isCanonicalGenericFinalConsumer('CF', $name, true)) {
+                throw ValidationException::withMessages([
+                    'customer.name' => 'No puedes reservar crédito para Consumidor Final. Selecciona o registra un cliente identificable.',
+                ]);
             }
 
             $customer = isset($data['id'])
@@ -532,11 +534,7 @@ class CreditReceiptController extends Controller
                     ->find($data['id'])
                 : null;
 
-            if ($customer && CustomerIdentity::isGenericFinalConsumer(
-                $customer->normalized_tax_id,
-                $customer->name,
-                $customer->only(['commercial_name', 'contact_name', 'address', 'phone', 'postal_code', 'department', 'municipality']),
-            )) {
+            if ($customer?->isGenericFinalConsumer()) {
                 $customer = null;
             }
 
@@ -554,10 +552,18 @@ class CreditReceiptController extends Controller
             if ($customer) {
                 $customer->update($payload);
 
-                return $customer->refresh();
+                $customer = $customer->refresh();
+            } else {
+                $customer = Customer::query()->create($payload);
             }
 
-            return Customer::query()->create($payload);
+            if ($customer->isGenericFinalConsumer()) {
+                throw ValidationException::withMessages([
+                    'customer.name' => 'No puedes reservar crédito para Consumidor Final. Selecciona o registra un cliente identificable.',
+                ]);
+            }
+
+            return $customer;
         }
 
         if (! CustomerIdentity::isRealTaxId($docNumber)) {
