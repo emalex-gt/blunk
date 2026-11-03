@@ -18,6 +18,10 @@
         'other' => 'Otro',
     ];
     $country = $business?->country ?: 'GT';
+    $lineDiscountTotal = $items->sum(fn ($item) => (float) ($item->line_discount_amount ?? 0));
+    $generalDiscountTotal = $items->sum(fn ($item) => (float) ($item->general_discount_amount ?? 0));
+    $hasDiscountBreakdown = $items->contains(fn ($item) => $item->line_discount_amount !== null || $item->general_discount_amount !== null);
+    $generalDiscountTotal = $hasDiscountBreakdown ? $generalDiscountTotal : (float) ($sale->discount_amount ?? 0);
     $paymentDetailRows = function ($payment) {
         $details = $payment->details ?? [];
 
@@ -121,6 +125,12 @@
                     <span>{{ number_format((float) $item->quantity, 2, '.', ',') }} x {{ formatMoney($item->unit_price, $country) }}</span>
                     <strong>{{ formatMoney($item->total, $country) }}</strong>
                 </div>
+                @if ((float) ($item->line_discount_amount ?? 0) > 0)
+                    <div class="row muted">
+                        <span>Descuento de línea</span>
+                        <span>-{{ formatMoney($item->line_discount_amount, $country) }}</span>
+                    </div>
+                @endif
             </div>
         @empty
             <p>Sin artículos</p>
@@ -150,17 +160,19 @@
 
     <div class="line"></div>
 
-    @if ((float) ($sale->discount_amount ?? 0) > 0)
+    @if ($lineDiscountTotal > 0 || $generalDiscountTotal > 0)
         <section>
             <div class="row">
                 <span>Subtotal</span>
                 <strong>{{ formatMoney($sale->subtotal_before_discount ?? $sale->total, $country) }}</strong>
             </div>
-            <div class="row">
-                <span>Descuento</span>
-                <strong>-{{ formatMoney($sale->discount_amount, $country) }}</strong>
-            </div>
-            @if ($sale->discount_reason)
+            @if ($generalDiscountTotal > 0)
+                <div class="row">
+                    <span>Descuento general</span>
+                    <strong>-{{ formatMoney($generalDiscountTotal, $country) }}</strong>
+                </div>
+            @endif
+            @if ($generalDiscountTotal > 0 && $sale->discount_reason)
                 <div class="muted">Motivo descuento: {{ $sale->discount_reason }}</div>
             @endif
         </section>

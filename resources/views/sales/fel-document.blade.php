@@ -51,6 +51,10 @@
         'check' => 'Cheque',
         'mercadopago' => 'MercadoPago',
     ];
+    $lineDiscountTotal = $items->sum(fn ($item) => (float) ($item->line_discount_amount ?? 0));
+    $generalDiscountTotal = $items->sum(fn ($item) => (float) ($item->general_discount_amount ?? 0));
+    $hasDiscountBreakdown = $items->contains(fn ($item) => $item->line_discount_amount !== null || $item->general_discount_amount !== null);
+    $generalDiscountTotal = $hasDiscountBreakdown ? $generalDiscountTotal : (float) $discount;
     $paymentDetails = function ($payment) {
         $details = $payment->details ?? [];
 
@@ -141,6 +145,12 @@
                 <td class="right">{{ formatMoney($item->unit_price, 'GT') }}</td>
                 <td class="right">{{ formatMoney($item->total, 'GT') }}</td>
             </tr>
+            @if ((float) ($item->line_discount_amount ?? 0) > 0)
+                <tr>
+                    <td colspan="3">Descuento de línea</td>
+                    <td class="right">-{{ formatMoney($item->line_discount_amount, 'GT') }}</td>
+                </tr>
+            @endif
         @endforeach
         </tbody>
     </table>
@@ -155,9 +165,11 @@
             @endforeach
         </div>
         <table>
-            @if ($discount > 0)
+            @if ($lineDiscountTotal > 0 || $generalDiscountTotal > 0)
                 <tr><td>Subtotal</td><td class="right">{{ formatMoney($subtotal, 'GT') }}</td></tr>
-                <tr><td>Descuento</td><td class="right">-{{ formatMoney($discount, 'GT') }}</td></tr>
+                @if ($generalDiscountTotal > 0)
+                    <tr><td>Descuento general</td><td class="right">-{{ formatMoney($generalDiscountTotal, 'GT') }}</td></tr>
+                @endif
             @endif
             <tr><td>IVA incluido</td><td class="right">{{ formatMoney($iva, 'GT') }}</td></tr>
             <tr class="grand"><td>Total</td><td class="right">{{ formatMoney($total, 'GT') }}</td></tr>

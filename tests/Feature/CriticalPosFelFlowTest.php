@@ -295,6 +295,57 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('0.05', (string) $line->discount_amount);
         $this->assertSame('295.00', (string) $line->total_after_discount);
         $this->assertSame('295.00', (string) $line->sale->total);
+
+        $this->actingAs($user)
+            ->get(route('sales.receipt', $line->sale))
+            ->assertOk()
+            ->assertSee('Descuento de línea')
+            ->assertSee('295.00')
+            ->assertDontSee('294.95');
+    }
+
+    public function test_zero_line_discount_is_treated_as_absent(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'discounts'], role: 'owner');
+        $product = $this->product($business, name: 'No line discount', stock: 10, salePrice: 42.15);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $product,
+            quantity: 1,
+            total: 42.15,
+            items: [[
+                'product' => $product,
+                'quantity' => 1,
+                'line_discount_amount' => 0,
+            ]],
+        ))->assertSessionHasNoErrors();
+
+        $line = SaleItem::query()->sole();
+        $this->assertSame('0.00', (string) $line->line_discount_amount);
+        $this->assertSame('0.00', (string) $line->discount_amount);
+        $this->assertSame('42.15', (string) $line->total);
+    }
+
+    public function test_line_discount_requires_the_existing_sales_discount_permission(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'discounts'], role: 'cashier');
+        $product = $this->product($business, name: 'Permission discount', stock: 10, salePrice: 42.15);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $product,
+            quantity: 1,
+            total: 42.10,
+            items: [[
+                'product' => $product,
+                'quantity' => 1,
+                'line_discount_amount' => 0.05,
+                'line_discount_reason' => 'No autorizado',
+            ]],
+        ))->assertForbidden();
+
+        $this->assertSame(0, Sale::query()->where('business_id', $business->id)->count());
     }
 
     public function test_general_discount_is_distributed_over_line_subtotals_after_fixed_line_discounts(): void

@@ -365,7 +365,7 @@ class SaleController extends Controller
             'items.*.manual_price' => ['nullable', 'boolean'],
             'items.*.quotation_item_id' => ['nullable', 'integer'],
             'items.*.credit_line_id' => ['nullable', 'integer', 'exists:credit_receipt_lines,id'],
-            'items.*.line_discount_amount' => ['nullable', 'numeric', 'decimal:0,2', 'gt:0'],
+            'items.*.line_discount_amount' => ['nullable', 'numeric', 'decimal:0,2', 'min:0'],
             'items.*.line_discount_reason' => ['nullable', 'string', 'max:1000'],
             'discount' => ['nullable', 'array'],
             'discount.type' => ['required_with:discount', 'in:fixed,percent'],
@@ -458,10 +458,12 @@ class SaleController extends Controller
             ]);
         }
 
-        $hasLineDiscount = collect($data['items'])->contains(fn (array $item): bool => filled($item['line_discount_amount'] ?? null));
+        $hasLineDiscount = collect($data['items'])->contains(
+            fn (array $item): bool => (float) ($item['line_discount_amount'] ?? 0) > 0,
+        );
 
         if (collect($data['items'])->contains(fn (array $item): bool => filled($item['credit_line_id'] ?? null)
-            && filled($item['line_discount_amount'] ?? null))) {
+            && (float) ($item['line_discount_amount'] ?? 0) > 0)) {
             throw ValidationException::withMessages([
                 'items' => 'No se puede aplicar descuento de línea al facturar productos reservados a crédito.',
             ]);
@@ -2100,11 +2102,11 @@ class SaleController extends Controller
         $amount = round((float) ($item['line_discount_amount'] ?? 0), 2);
         $reason = trim((string) ($item['line_discount_reason'] ?? ''));
 
-        if ($amount <= 0 && $reason === '') {
+        if ($amount <= 0) {
             return ['amount' => 0.0, 'reason' => null];
         }
 
-        if ($amount <= 0 || $amount >= $lineSubtotal) {
+        if ($amount >= $lineSubtotal) {
             throw ValidationException::withMessages([
                 'items' => 'El descuento de línea debe ser mayor que cero y menor que el subtotal de la línea.',
             ]);
