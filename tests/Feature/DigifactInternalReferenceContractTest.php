@@ -170,6 +170,29 @@ class DigifactInternalReferenceContractTest extends TestCase
         $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
     }
 
+    public function test_fel_preserves_configured_fiscal_branch_location_without_applying_the_operational_catalog(): void
+    {
+        [, $sale, $settings] = $this->saleFixture();
+        $branch = BranchInventory::defaultBranch($sale->business_id);
+        $branch->update([
+            'fel_department' => 'El Quiche',
+            'fel_municipality' => 'Chichicastenango',
+            'fel_postal_code' => '14006',
+        ]);
+        $sale->update([
+            'customer_department' => null,
+            'customer_municipality' => null,
+        ]);
+
+        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
+
+        $this->assertSame('El Quiche', $payload['Seller']['BranchInfo']['AddressInfo']['State']);
+        $this->assertSame('Chichicastenango', $payload['Seller']['BranchInfo']['AddressInfo']['District']);
+        $this->assertSame('14006', $payload['Seller']['BranchInfo']['AddressInfo']['City']);
+        $this->assertSame('El Quiche', $payload['Buyer']['AddressInfo']['State']);
+        $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
+    }
+
     public function test_offset_fiscal_issue_time_is_persisted_as_a_utc_derivative(): void
     {
         $this->travelTo('2026-10-30T21:33:25+00:00');

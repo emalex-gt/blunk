@@ -294,10 +294,6 @@ class DigifactNucJsonBuilder
             }
         }
 
-        if (! GuatemalaLocations::isValidDepartment($branch->fel_department)
-            || ! GuatemalaLocations::isValidMunicipality($branch->fel_department, $branch->fel_municipality)) {
-            throw new FelException('La sucursal emisora debe tener un departamento y municipio de Guatemala válidos para emitir FEL.');
-        }
     }
 
     /** @return array{string, string} */
