@@ -25,7 +25,7 @@
     $country = $business?->country ?: 'GT';
     $lineDiscountTotal = $items->sum(fn ($item) => (float) ($item->line_discount_amount ?? 0));
     $generalDiscountTotal = $items->sum(fn ($item) => (float) ($item->general_discount_amount ?? 0));
-    $hasDiscountBreakdown = $items->contains(fn ($item) => $item->line_discount_amount !== null || $item->general_discount_amount !== null);
+    $hasDiscountBreakdown = $lineDiscountTotal > 0 || $generalDiscountTotal > 0;
     $generalDiscountTotal = $hasDiscountBreakdown ? $generalDiscountTotal : (float) ($sale->discount_amount ?? 0);
     $paymentDetailRows = function ($payment) {
         $details = $payment->details ?? [];
@@ -133,7 +133,7 @@
             </tr>
             @if ((float) ($item->line_discount_amount ?? 0) > 0)
                 <tr class="small muted">
-                    <td colspan="3">Descuento de línea</td>
+                    <td colspan="3">Descuento de línea (incluido)</td>
                     <td class="right">-{{ formatMoney($item->line_discount_amount, $country) }}</td>
                 </tr>
             @endif

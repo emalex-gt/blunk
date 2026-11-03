@@ -299,7 +299,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->actingAs($user)
             ->get(route('sales.receipt', $line->sale))
             ->assertOk()
-            ->assertSee('Descuento de línea')
+            ->assertSee('Descuento de línea (incluido)')
             ->assertSee('295.00')
             ->assertDontSee('294.95');
     }
@@ -371,6 +371,42 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('5.26', (string) $lines[1]->general_discount_amount);
         $this->assertSame('20.00', number_format($lines->sum(fn (SaleItem $line) => (float) $line->discount_amount), 2, '.', ''));
         $this->assertSame('180.00', (string) $lines->first()->sale->total);
+
+        $this->actingAs($user)
+            ->get(route('sales.receipt', $lines->first()->sale))
+            ->assertOk()
+            ->assertSee('Descuento de línea (incluido)')
+            ->assertSee('Descuento general')
+            ->assertSee('180.00')
+            ->assertDontSee('170.00');
+    }
+
+    public function test_historical_general_discount_uses_the_sale_header_when_line_breakdown_is_zero(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos'], role: 'owner');
+        $sale = $this->invoiceSale($business);
+        $sale->update([
+            'subtotal_before_discount' => 100,
+            'discount_amount' => 10,
+            'discount_reason' => 'Descuento histórico',
+            'total' => 90,
+        ]);
+        $sale->items()->update([
+            'discount_amount' => 10,
+            'line_discount_amount' => 0,
+            'general_discount_amount' => 0,
+            'total_before_discount' => 100,
+            'total_after_discount' => 90,
+            'total' => 90,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('sales.receipt', $sale))
+            ->assertOk()
+            ->assertSee('Descuento general')
+            ->assertSee('10.00')
+            ->assertDontSee('Descuento de línea (incluido)')
+            ->assertSee('90.00');
     }
 
     public function test_administration_cannot_disable_both_sale_document_types(): void
