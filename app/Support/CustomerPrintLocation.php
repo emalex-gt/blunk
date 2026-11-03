@@ -17,12 +17,19 @@ final class CustomerPrintLocation
         }
 
         $normalizedAddress = mb_strtolower($address);
-        $administrativeLocation = array_values(array_filter(
-            $administrativeLocation,
-            fn (string $component): bool => ! str_ends_with($normalizedAddress, mb_strtolower($component)),
-        ));
+        $completeLocation = implode(', ', $administrativeLocation);
 
-        if ($administrativeLocation === []) {
+        if (str_ends_with($normalizedAddress, mb_strtolower($completeLocation))) {
+            return $address;
+        }
+
+        if ($municipality !== '' && str_ends_with($normalizedAddress, mb_strtolower($municipality))) {
+            return $department !== '' && mb_strtolower($municipality) !== mb_strtolower($department)
+                ? implode(', ', [$address, $department])
+                : $address;
+        }
+
+        if ($department !== '' && str_ends_with($normalizedAddress, mb_strtolower($department))) {
             return $address;
         }
 
