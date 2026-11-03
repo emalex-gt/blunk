@@ -124,6 +124,87 @@ class CreditReceiptCustomerIdentityTest extends TestCase
         $this->assertSame(1, CreditReceipt::query()->where('business_id', $business->id)->count());
     }
 
+    public function test_credit_reservation_snapshots_and_prints_complete_customer_location_in_both_formats(): void
+    {
+        [$business, $user, $product] = $this->creditTenant();
+        $payload = $this->creditReceiptPayload($product, 'CF', 'Cliente con ubicación');
+        $payload['customer'] = [
+            ...$payload['customer'],
+            'address' => '5a Avenida 10-25 Zona 1, Guatemala, Guatemala',
+            'address_reference' => 'Frente al parque',
+            'municipality' => 'Guatemala',
+            'department' => 'Guatemala',
+            'phone' => '5555-0101',
+        ];
+
+        $this->actingAs($user)
+            ->post(route('credits.receipts.store'), $payload)
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $receipt = CreditReceipt::query()->sole();
+        $this->assertSame('5a Avenida 10-25 Zona 1, Guatemala, Guatemala', $receipt->customer_address);
+        $this->assertSame('Frente al parque', $receipt->customer_address_reference);
+        $this->assertSame('Guatemala', $receipt->customer_municipality);
+        $this->assertSame('Guatemala', $receipt->customer_department);
+        $this->assertSame('5555-0101', $receipt->customer_phone);
+
+        $this->actingAs($user)
+            ->get(route('credits.receipts.print', $receipt))
+            ->assertOk()
+            ->assertSee('Dirección:</strong> 5a Avenida 10-25 Zona 1, Guatemala, Guatemala', false)
+            ->assertDontSee('Guatemala, Guatemala, Guatemala, Guatemala', false)
+            ->assertSee('Referencia de dirección:</strong> Frente al parque', false)
+            ->assertSee('Teléfono:</strong> 5555-0101', false);
+
+        $business->tenantSetting->update(['receipt_format' => 'document']);
+
+        $this->actingAs($user)
+            ->get(route('credits.receipts.print', $receipt))
+            ->assertOk()
+            ->assertSee('Dirección:</strong> 5a Avenida 10-25 Zona 1, Guatemala, Guatemala', false)
+            ->assertSee('Referencia de dirección:</strong> Frente al parque', false)
+            ->assertSee('Teléfono:</strong> 5555-0101', false);
+    }
+
+    public function test_historical_credit_receipt_print_uses_customer_location_as_a_read_only_fallback(): void
+    {
+        [$business, $user] = $this->creditTenant();
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente histórico',
+            'doc_type' => 'NIT',
+            'doc_number' => '5489652',
+            'address' => '6a Calle 1-20',
+            'address_reference' => 'Casa azul',
+            'municipality' => 'Mixco',
+            'department' => 'Guatemala',
+            'phone' => '5555-0202',
+            'country' => 'GT',
+        ]);
+        $receipt = $this->existingCreditReceipt($business, 1);
+        $receipt->update([
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'customer_doc_number' => $customer->doc_number,
+            'customer_address' => null,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('credits.receipts.print', $receipt))
+            ->assertOk()
+            ->assertSee('Dirección:</strong> 6a Calle 1-20, Mixco, Guatemala', false)
+            ->assertSee('Referencia de dirección:</strong> Casa azul', false)
+            ->assertSee('Teléfono:</strong> 5555-0202', false);
+
+        $receipt->refresh();
+        $this->assertNull($receipt->customer_address);
+        $this->assertNull($receipt->customer_address_reference);
+        $this->assertNull($receipt->customer_municipality);
+        $this->assertNull($receipt->customer_department);
+        $this->assertNull($receipt->customer_phone);
+    }
+
     public function test_credit_reservation_reconciles_a_missing_counter_with_an_existing_receipt_number(): void
     {
         [$business, $user, $product] = $this->creditTenant();

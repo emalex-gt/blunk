@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <title>{{ $number }} - Recibo de crédito</title>
     @include('print.partials.ticket-styles')
+    <style>.customer-location { overflow-wrap: anywhere; }</style>
 </head>
 <body>
 <div class="toolbar no-print">
@@ -28,8 +29,14 @@
     <div class="line"></div>
     <div><strong>Cliente:</strong> {{ $receipt->customer_name }}</div>
     <div><strong>NIT:</strong> {{ $receipt->customer_doc_number }}</div>
-    @if($receipt->customer_address)
-        <div><strong>Dirección:</strong> {{ $receipt->customer_address }}</div>
+    @if(filled($customerLocation['display'] ?? null))
+        <div class="customer-location"><strong>Dirección:</strong> {{ $customerLocation['display'] }}</div>
+    @endif
+    @if(filled($delivery['address_reference'] ?? null))
+        <div class="customer-location"><strong>Referencia de dirección:</strong> {{ $delivery['address_reference'] }}</div>
+    @endif
+    @if(filled($delivery['phone'] ?? null))
+        <div><strong>Teléfono:</strong> {{ $delivery['phone'] }}</div>
     @endif
 
     <div class="line"></div>

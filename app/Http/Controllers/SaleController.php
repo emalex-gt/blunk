@@ -37,6 +37,7 @@ use App\Support\BusinessCounter;
 use App\Support\BusinessLogo;
 use App\Support\Credits;
 use App\Support\CustomerIdentity;
+use App\Support\CustomerPrintLocation;
 use App\Support\GuatemalaCustomerIdentityPolicy;
 use App\Support\DocumentCompanyHeader;
 use App\Support\DocumentCustomerDisplay;
@@ -1704,7 +1705,7 @@ class SaleController extends Controller
             'municipality' => trim((string) $sale->customer_municipality) ?: trim((string) $sale->customer?->municipality),
             'department' => trim((string) $sale->customer_department) ?: trim((string) $sale->customer?->department),
         ];
-        $customerLocation['display'] = $this->formatCustomerPrintLocation($customerLocation);
+        $customerLocation['display'] = CustomerPrintLocation::format($customerLocation);
 
         return [
             'attended_by' => $attendedBy,
@@ -1714,30 +1715,6 @@ class SaleController extends Controller
                 'phone' => trim((string) $sale->customer_phone),
             ],
         ];
-    }
-
-    /** @param array{address: string, municipality: string, department: string} $location */
-    private function formatCustomerPrintLocation(array $location): string
-    {
-        $address = $location['address'];
-        $administrativeLocation = implode(', ', array_filter([
-            $location['municipality'],
-            $location['department'],
-        ]));
-
-        if ($address === '' || $administrativeLocation === '') {
-            return implode(', ', array_filter([
-                $address,
-                $location['municipality'],
-                $location['department'],
-            ]));
-        }
-
-        if (str_ends_with(mb_strtolower($address), mb_strtolower($administrativeLocation))) {
-            return $address;
-        }
-
-        return implode(', ', [$address, $administrativeLocation]);
     }
 
     private function saleIdempotencyPayload(array $data, int $branchId, int $businessId, int $userId): array

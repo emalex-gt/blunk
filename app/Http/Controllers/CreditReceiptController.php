@@ -15,6 +15,7 @@ use App\Support\BusinessCounter;
 use App\Support\BusinessLogo;
 use App\Support\Credits;
 use App\Support\CustomerIdentity;
+use App\Support\CustomerPrintLocation;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\IdempotencyService;
 use App\Support\Inventory\StockPolicy;
@@ -106,6 +107,9 @@ class CreditReceiptController extends Controller
             'customer.doc_type' => ['required', 'string', 'max:50'],
             'customer.doc_number' => ['required', 'string', 'max:50'],
             'customer.address' => ['nullable', 'string', 'max:255'],
+            'customer.address_reference' => ['nullable', 'string', 'max:2000'],
+            'customer.municipality' => ['nullable', 'string', 'max:255'],
+            'customer.department' => ['nullable', 'string', 'max:255'],
             'customer.phone' => ['nullable', 'string', 'max:50'],
             'note' => ['nullable', 'string', 'max:2000'],
             'items' => ['required', 'array', 'min:1'],
@@ -149,6 +153,7 @@ class CreditReceiptController extends Controller
                 $receipt = DB::transaction(function () use ($request, $businessId, $data, $docType, $docNumber, $activeBranch) {
             $branch = $activeBranch;
             $customer = $this->resolveCustomer($data['customer']);
+            $customerDetails = $this->effectiveCustomerDetails($data['customer'], $customer);
             $shouldReserveStock = Credits::reserveStockOnCreditReservations($businessId);
             $subtotal = 0.0;
             $preparedLines = [];
@@ -187,7 +192,11 @@ class CreditReceiptController extends Controller
                 'customer_name' => $customer->name,
                 'customer_doc_type' => $docType,
                 'customer_doc_number' => $docNumber,
-                'customer_address' => $data['customer']['address'] ?? $customer->address,
+                'customer_address' => $customerDetails['address'],
+                'customer_address_reference' => $customerDetails['address_reference'],
+                'customer_municipality' => $customerDetails['municipality'],
+                'customer_department' => $customerDetails['department'],
+                'customer_phone' => $customerDetails['phone'],
                 'receipt_number' => BusinessCounter::nextAtLeast(
                     $businessId,
                     'credit_receipts',
@@ -259,6 +268,7 @@ class CreditReceiptController extends Controller
 
         $creditReceipt->load(['business.tenantSetting', 'branch', 'customer', 'lines.product']);
         $format = $creditReceipt->business->tenantSetting?->receipt_format === 'document' ? 'document' : 'ticket';
+        $printDetails = $this->creditReceiptPrintDetails($creditReceipt);
 
         return response()->view("credits.receipt-{$format}", [
             'receipt' => $creditReceipt,
@@ -266,6 +276,8 @@ class CreditReceiptController extends Controller
             'number' => Credits::formatNumber($creditReceipt),
             'previousPending' => $this->customerPendingBefore($creditReceipt),
             'newPending' => $this->customerPendingTotal($creditReceipt),
+            'customerLocation' => $printDetails['customer_location'],
+            'delivery' => $printDetails['delivery'],
         ]);
     }
 
@@ -450,6 +462,10 @@ class CreditReceiptController extends Controller
                     'customer_doc_type' => $to->doc_type,
                     'customer_doc_number' => $to->doc_number,
                     'customer_address' => $to->address,
+                    'customer_address_reference' => $to->address_reference,
+                    'customer_municipality' => $to->municipality,
+                    'customer_department' => $to->department,
+                    'customer_phone' => $to->phone,
                 ]);
 
             CreditCustomerTransfer::query()->create([
@@ -555,11 +571,9 @@ class CreditReceiptController extends Controller
                 'name' => $name,
                 'doc_type' => 'CF',
                 'doc_number' => 'CF',
-                'address' => $data['address'] ?? null,
-                'phone' => $data['phone'] ?? null,
                 'country' => 'GT',
                 'is_final_consumer' => true,
-            ];
+            ] + $this->effectiveCustomerDetails($data, $customer);
 
             if ($customer) {
                 $customer->update($payload);
@@ -589,13 +603,43 @@ class CreditReceiptController extends Controller
             'name' => $name,
             'doc_type' => 'NIT',
             'doc_number' => $docNumber,
-            'address' => $data['address'] ?? null,
-            'phone' => $data['phone'] ?? null,
             'country' => 'GT',
             'is_final_consumer' => false,
-        ];
+        ] + $this->effectiveCustomerDetails($data, null);
 
         return Customer::findOrCreateByNormalizedTaxId($businessId, $payload)->refresh();
+    }
+
+    /** @return array{address: ?string, address_reference: ?string, municipality: ?string, department: ?string, phone: ?string} */
+    private function effectiveCustomerDetails(array $data, ?Customer $customer): array
+    {
+        $details = [];
+
+        foreach (['address', 'address_reference', 'municipality', 'department', 'phone'] as $field) {
+            $value = trim((string) ($data[$field] ?? ''));
+            $details[$field] = $value !== '' ? $value : $customer?->{$field};
+        }
+
+        return $details;
+    }
+
+    /** @return array{customer_location: array{address: string, municipality: string, department: string, display: string}, delivery: array{address_reference: string, phone: string}} */
+    private function creditReceiptPrintDetails(CreditReceipt $receipt): array
+    {
+        $customerLocation = [
+            'address' => trim((string) $receipt->customer_address) ?: trim((string) $receipt->customer?->address),
+            'municipality' => trim((string) $receipt->customer_municipality) ?: trim((string) $receipt->customer?->municipality),
+            'department' => trim((string) $receipt->customer_department) ?: trim((string) $receipt->customer?->department),
+        ];
+        $customerLocation['display'] = CustomerPrintLocation::format($customerLocation);
+
+        return [
+            'customer_location' => $customerLocation,
+            'delivery' => [
+                'address_reference' => trim((string) $receipt->customer_address_reference) ?: trim((string) $receipt->customer?->address_reference),
+                'phone' => trim((string) $receipt->customer_phone) ?: trim((string) $receipt->customer?->phone),
+            ],
+        ];
     }
 
     private function customerPendingBefore(CreditReceipt $receipt): float
