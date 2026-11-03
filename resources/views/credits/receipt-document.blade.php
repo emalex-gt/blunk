@@ -62,7 +62,10 @@
             @foreach($receipt->lines as $line)
                 <tr>
                     <td class="right">{{ $line->quantity }}</td>
-                    <td>{{ $line->product_name }}</td>
+                    <td>
+                        <div>{{ $line->product_name }}</div>
+                        <div class="small muted">SKU: {{ $line->sku ?: '-' }}</div>
+                    </td>
                     <td class="right">{{ formatMoney($line->unit_price, $receipt->business->country) }}</td>
                     <td class="right">{{ formatMoney(0, $receipt->business->country) }}</td>
                     <td class="right">{{ formatMoney($line->line_total, $receipt->business->country) }}</td>

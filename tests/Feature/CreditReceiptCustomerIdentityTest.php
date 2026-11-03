@@ -166,6 +166,7 @@ class CreditReceiptCustomerIdentityTest extends TestCase
             ->assertOk()
             ->assertSee('Descuento')
             ->assertSee('0.00')
+            ->assertSee('SKU: '.$product->code)
             ->assertSee('Dirección:</strong> 5a Avenida 10-25 Zona 1, Guatemala, Guatemala', false)
             ->assertSee('Referencia de dirección:</strong> Frente al parque', false)
             ->assertSee('Teléfono:</strong> 5555-0101', false);
