@@ -138,14 +138,18 @@ class CashRegisterClosingOperations
             ->with('customer:id,name')->get()
             ->flatMap(function (CustomerCreditPayment $payment) {
                 $rows = [];
-                if ($payment->status === 'completed') {
+                if (in_array($payment->status, ['completed', 'cancelled'], true)) {
                     $rows[] = ['id' => 'credit-payment-'.$payment->id, 'kind' => 'credit_payment', 'label' => 'Abono de cliente', 'method' => $payment->payment_method,
                         'signed_amount' => (float) $payment->amount, 'amount' => (float) $payment->amount, 'occurred_at' => $payment->created_at,
                         'cash_register_session_id' => $payment->cash_register_session_id, 'reference' => 'Abono #'.$payment->payment_number, 'party' => $payment->customer?->name, 'attribution' => null];
-                } elseif ($payment->status === 'cancelled' && $payment->cancelled_at) {
+                }
+
+                if ($payment->status === 'cancelled' && $payment->cancelled_at) {
                     $rows[] = ['id' => 'credit-payment-cancellation-'.$payment->id, 'kind' => 'cancellation', 'label' => 'Anulación de abono', 'method' => $payment->payment_method,
                         'signed_amount' => -1 * (float) $payment->amount, 'amount' => (float) $payment->amount, 'occurred_at' => $payment->cancelled_at,
-                        'cash_register_session_id' => $payment->cash_register_session_id, 'reference' => 'Abono #'.$payment->payment_number, 'party' => $payment->customer?->name, 'attribution' => null];
+                        // The cancellation is a separate historical event. Its former
+                        // payment-session link must not force it into the original session.
+                        'cash_register_session_id' => null, 'reference' => 'Abono #'.$payment->payment_number, 'party' => $payment->customer?->name, 'attribution' => null];
                 }
                 return $rows;
             });

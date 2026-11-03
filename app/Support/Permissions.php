@@ -53,6 +53,7 @@ class Permissions
     public const CASH_REGISTER_EXPENSES_CANCEL = 'cash_register.expenses.cancel';
 
     public const REPORTS_SALES_VIEW = 'reports.sales.view';
+    public const REPORTS_SALES_SUMMARY_VIEW = 'reports.sales.summary.view';
     public const REPORTS_STOCK_VIEW = 'reports.stock.view';
     public const REPORTS_LOW_STOCK_VIEW = 'reports.low_stock.view';
     public const REPORTS_TOP_PRODUCTS_VIEW = 'reports.top_products.view';
@@ -202,6 +203,7 @@ class Permissions
             self::CASH_REGISTER_EXPENSES => ['name' => 'Registrar gastos de caja', 'group' => 'Caja'],
             self::CASH_REGISTER_EXPENSES_CANCEL => ['name' => 'Anular gastos de caja', 'group' => 'Caja'],
             self::REPORTS_SALES_VIEW => ['name' => 'Ver reporte de ventas', 'group' => 'Reportes'],
+            self::REPORTS_SALES_SUMMARY_VIEW => ['name' => 'Ver resumen y totales de ventas', 'group' => 'Reportes'],
             self::REPORTS_STOCK_VIEW => ['name' => 'Ver reporte de stock', 'group' => 'Reportes'],
             self::REPORTS_LOW_STOCK_VIEW => ['name' => 'Ver reporte de stock bajo', 'group' => 'Reportes'],
             self::REPORTS_TOP_PRODUCTS_VIEW => ['name' => 'Ver productos más vendidos', 'group' => 'Reportes'],
@@ -380,6 +382,7 @@ class Permissions
             ],
             'reports' => [
                 self::REPORTS_SALES_VIEW,
+                self::REPORTS_SALES_SUMMARY_VIEW,
                 self::REPORTS_STOCK_VIEW,
                 self::REPORTS_LOW_STOCK_VIEW,
                 self::REPORTS_TOP_PRODUCTS_VIEW,

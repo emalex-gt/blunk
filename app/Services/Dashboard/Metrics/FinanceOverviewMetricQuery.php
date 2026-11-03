@@ -18,8 +18,8 @@ final class FinanceOverviewMetricQuery implements DashboardMetricQuery
 {
     public function resolve(DashboardContext $context, DashboardPeriod $period): array
     {
-        $salesAllowed = $context->hasModule('reports') && $context->hasPermission(Permissions::REPORTS_SALES_VIEW);
-        $profitAllowed = $context->hasModule('reports') && $context->hasPermission(Permissions::REPORTS_PROFIT_VIEW);
+        $salesAllowed = $context->hasModule('reports') && $context->hasPermission(Permissions::REPORTS_SALES_SUMMARY_VIEW);
+        $profitAllowed = $salesAllowed && $context->hasPermission(Permissions::REPORTS_PROFIT_VIEW);
         $purchasesAllowed = $context->hasModule('purchases') && $context->hasPermission(Permissions::PURCHASES_VIEW);
         $inventoryAllowed = $context->hasModule('inventory') && $context->hasPermission(Permissions::REPORTS_WAREHOUSE_MONEY_VIEW);
         $receivablesAllowed = $context->hasModule('credits') && $context->hasPermission(Permissions::CREDITS_ACCOUNTS_VIEW) && $context->hasFeature('credit_sales');

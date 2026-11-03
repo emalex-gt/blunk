@@ -485,6 +485,49 @@ class TenantReportsTest extends TestCase
                 ->where('rows.data.0.total', 200));
     }
 
+    public function test_sales_report_exposes_rows_without_protected_summary_until_summary_permission_is_granted(): void
+    {
+        [$business, $user, $branch] = $this->tenant();
+        $user->roles()->detach();
+        Permissions::assignDirectPermissions($user, [Permissions::REPORTS_SALES_VIEW]);
+        $product = $this->product($business, $branch, stock: 2, salePrice: 150);
+        $this->sale($business, $branch, $user, $product, total: 150, method: 'card');
+
+        $this->actingAs($user)
+            ->get(route('reports.sales'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('rows.total', 1)
+                ->where('rows.data.0.total', 150)
+                ->where('summary', []));
+
+        Permissions::assignDirectPermissions($user, [
+            Permissions::REPORTS_SALES_VIEW,
+            Permissions::REPORTS_EXPORT,
+        ]);
+        $exportRequest = \Illuminate\Http\Request::create(route('reports.sales.export.excel'), 'GET');
+        $exportRequest->setUserResolver(fn () => $user);
+        $method = new \ReflectionMethod(\App\Http\Controllers\ReportController::class, 'reportExportPayload');
+        $payload = $method->invoke(app(\App\Http\Controllers\ReportController::class), $exportRequest, 'sales');
+
+        $this->assertCount(1, $payload['rows']);
+        $this->assertSame([], $payload['summary']);
+
+        Permissions::assignDirectPermissions($user, [
+            Permissions::REPORTS_SALES_VIEW,
+            Permissions::REPORTS_SALES_SUMMARY_VIEW,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('reports.sales'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('summary', 9)
+                ->where('summary.0.value', 1)
+                ->where('summary.1.value', 150));
+    }
+
     public function test_sales_report_is_branch_scoped_and_rejects_large_range(): void
     {
         [$business, $user, $main, $other] = $this->tenant();

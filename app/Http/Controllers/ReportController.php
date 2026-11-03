@@ -133,24 +133,39 @@ class ReportController extends Controller
             $query->when($number !== '', fn ($query) => $query->where('sales.business_number', (int) $number));
         }
 
-        $summaryBase = clone $query;
-        $totalSales = (int) (clone $summaryBase)->count();
-        $totalSold = (float) (clone $summaryBase)->sum('sales.total');
-        $invoiceCount = (int) (clone $summaryBase)->where('sales.document_type', 'invoice')->count();
-        $receiptCount = (int) (clone $summaryBase)->where('sales.document_type', 'receipt')->count();
-        $paymentTotals = DB::table('sale_payments')
-            ->where('sale_payments.business_id', $businessId)
-            ->where('sale_payments.status', 'captured')
-            ->whereIn('sale_payments.sale_id', (clone $summaryBase)->select('sales.id'))
-            ->when($paymentMethod !== 'all', fn ($query) => $query->where('sale_payments.method', $salePaymentMethod))
-            ->groupBy('sale_payments.method')
-            ->selectRaw('sale_payments.method, SUM(sale_payments.amount) as total')
-            ->pluck('total', 'method');
-        $refundedTotal = (float) DB::table('sale_refunds')
-            ->where('sale_refunds.business_id', $businessId)
-            ->where('sale_refunds.status', 'confirmed')
-            ->whereIn('sale_refunds.sale_id', (clone $summaryBase)->select('sales.id'))
-            ->sum('sale_refunds.amount');
+        $summary = [];
+        if (Permissions::userHas($request->user(), Permissions::REPORTS_SALES_SUMMARY_VIEW)) {
+            $summaryBase = clone $query;
+            $totalSales = (int) (clone $summaryBase)->count();
+            $totalSold = (float) (clone $summaryBase)->sum('sales.total');
+            $invoiceCount = (int) (clone $summaryBase)->where('sales.document_type', 'invoice')->count();
+            $receiptCount = (int) (clone $summaryBase)->where('sales.document_type', 'receipt')->count();
+            $paymentTotals = DB::table('sale_payments')
+                ->where('sale_payments.business_id', $businessId)
+                ->where('sale_payments.status', 'captured')
+                ->whereIn('sale_payments.sale_id', (clone $summaryBase)->select('sales.id'))
+                ->when($paymentMethod !== 'all', fn ($query) => $query->where('sale_payments.method', $salePaymentMethod))
+                ->groupBy('sale_payments.method')
+                ->selectRaw('sale_payments.method, SUM(sale_payments.amount) as total')
+                ->pluck('total', 'method');
+            $refundedTotal = (float) DB::table('sale_refunds')
+                ->where('sale_refunds.business_id', $businessId)
+                ->where('sale_refunds.status', 'confirmed')
+                ->whereIn('sale_refunds.sale_id', (clone $summaryBase)->select('sales.id'))
+                ->sum('sale_refunds.amount');
+
+            $summary = [
+                ['label' => 'Total ventas', 'value' => $totalSales],
+                ['label' => 'Total vendido', 'value' => $totalSold, 'money' => true],
+                ['label' => 'Total efectivo', 'value' => (float) ($paymentTotals['cash'] ?? 0), 'money' => true],
+                ['label' => 'Total tarjeta', 'value' => (float) ($paymentTotals['card'] ?? 0), 'money' => true],
+                ['label' => 'Total transferencia', 'value' => (float) (($paymentTotals['transfer'] ?? 0) + ($paymentTotals['bank_transfer'] ?? 0)), 'money' => true],
+                ['label' => 'Total otros', 'value' => (float) (($paymentTotals['check'] ?? 0) + ($paymentTotals['credit'] ?? 0) + ($paymentTotals['other'] ?? 0)), 'money' => true],
+                ['label' => 'Total reembolsado', 'value' => $refundedTotal, 'money' => true],
+                ['label' => 'Cantidad de facturas', 'value' => $invoiceCount],
+                ['label' => 'Cantidad de comprobantes', 'value' => $receiptCount],
+            ];
+        }
 
         $rows = $query
             ->latest('sales.created_at')
@@ -195,17 +210,7 @@ class ReportController extends Controller
                 'status' => $status,
                 'sale_number' => $saleNumber,
             ],
-            'summary' => [
-                ['label' => 'Total ventas', 'value' => $totalSales],
-                ['label' => 'Total vendido', 'value' => $totalSold, 'money' => true],
-                ['label' => 'Total efectivo', 'value' => (float) ($paymentTotals['cash'] ?? 0), 'money' => true],
-                ['label' => 'Total tarjeta', 'value' => (float) ($paymentTotals['card'] ?? 0), 'money' => true],
-                ['label' => 'Total transferencia', 'value' => (float) (($paymentTotals['transfer'] ?? 0) + ($paymentTotals['bank_transfer'] ?? 0)), 'money' => true],
-                ['label' => 'Total otros', 'value' => (float) (($paymentTotals['check'] ?? 0) + ($paymentTotals['credit'] ?? 0) + ($paymentTotals['other'] ?? 0)), 'money' => true],
-                ['label' => 'Total reembolsado', 'value' => $refundedTotal, 'money' => true],
-                ['label' => 'Cantidad de facturas', 'value' => $invoiceCount],
-                ['label' => 'Cantidad de comprobantes', 'value' => $receiptCount],
-            ],
+            'summary' => $summary,
             'sellers' => User::query()->where('business_id', $businessId)->orderBy('name')->get(['id', 'name']),
             'branch' => $scope->payload(),
         ]);

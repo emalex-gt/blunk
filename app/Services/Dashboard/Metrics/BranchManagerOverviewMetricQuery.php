@@ -15,7 +15,7 @@ final class BranchManagerOverviewMetricQuery implements DashboardMetricQuery
 {
     public function resolve(DashboardContext $context, DashboardPeriod $period): array
     {
-        $salesAllowed = $context->hasModule('pos') && ($context->hasPermission(Permissions::POS_VIEW) || $context->hasPermission(Permissions::REPORTS_SALES_VIEW));
+        $salesAllowed = $context->hasModule('pos') && $context->hasPermission(Permissions::REPORTS_SALES_SUMMARY_VIEW);
         $cashAllowed = $context->hasModule('cash_register') && $context->hasPermission(Permissions::CASH_REGISTER_VIEW);
         $inventoryAllowed = $context->hasModule('inventory') && $context->hasPermission(Permissions::INVENTORY_VIEW);
         $purchasesAllowed = $context->hasModule('purchases') && $context->hasPermission(Permissions::PURCHASES_VIEW);

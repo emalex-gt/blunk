@@ -13,6 +13,7 @@ use App\Models\Purchase;
 use App\Models\Sale;
 use App\Models\SalePayment;
 use App\Models\User;
+use App\Http\Controllers\CashRegisterController;
 use App\Support\CashRegister;
 use App\Support\CashRegisterClosingOperations;
 use App\Support\AccountsReceivable;
@@ -85,6 +86,88 @@ class CashRegisterClosingOperationsTest extends TestCase
 
         $this->assertSame($session->id, $payment->cash_register_session_id);
         $this->assertSame(0, CashMovement::query()->where('cash_register_session_id', $session->id)->count());
+    }
+
+    public function test_cancelled_credit_payment_keeps_its_original_and_cancellation_events_in_the_same_session(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        $customer = Customer::query()->create(['business_id' => $business->id, 'name' => 'Cliente', 'doc_type' => 'NIT', 'doc_number' => '789']);
+        $account = CustomerCreditAccount::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'customer_id' => $customer->id, 'current_balance' => 20]);
+        $payment = CustomerCreditPayment::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'customer_credit_account_id' => $account->id,
+            'payment_number' => 1,
+            'amount' => 20,
+            'payment_method' => 'cash',
+            'cash_register_session_id' => $session->id,
+            'status' => 'cancelled',
+            'cancelled_at' => now(),
+            'created_by' => $user->id,
+        ]);
+
+        $result = CashRegisterClosingOperations::forSession($session);
+        $details = collect($result['details'])->where('reference', 'Abono #'.$payment->payment_number);
+        $cash = collect($result['by_method'])->keyBy('method')['cash'];
+
+        $this->assertCount(2, $details);
+        $this->assertSame(20.0, $cash['credit_payments']);
+        $this->assertSame(-20.0, $cash['refunds_cancellations']);
+        $this->assertSame(0.0, $cash['net']);
+        $this->assertSame(0.0, CashRegister::expectedCash($session->id));
+    }
+
+    public function test_cancelled_credit_payment_is_attributed_to_the_session_of_each_event(): void
+    {
+        [$business, $branch, $user, $original] = $this->context();
+        $original->update(['status' => 'closed', 'opened_at' => now()->subHours(2), 'closed_at' => now()->subHour()]);
+        $cancellation = CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'opened_by' => $user->id,
+            'status' => 'open',
+            'opening_amount' => 0,
+            'expected_cash' => 0,
+            'opened_at' => now()->subMinutes(30),
+        ]);
+        $customer = Customer::query()->create(['business_id' => $business->id, 'name' => 'Cliente', 'doc_type' => 'NIT', 'doc_number' => '987']);
+        $account = CustomerCreditAccount::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'customer_id' => $customer->id, 'current_balance' => 20]);
+        CustomerCreditPayment::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'customer_credit_account_id' => $account->id,
+            'payment_number' => 2,
+            'amount' => 20,
+            'payment_method' => 'card',
+            'cash_register_session_id' => $original->id,
+            'status' => 'cancelled',
+            'created_at' => now()->subMinutes(90),
+            'updated_at' => now()->subMinutes(10),
+            'cancelled_at' => now()->subMinutes(10),
+            'created_by' => $user->id,
+        ]);
+
+        $originalCard = collect(CashRegisterClosingOperations::forSession($original->fresh())['by_method'])->keyBy('method')['card'];
+        $cancellationCard = collect(CashRegisterClosingOperations::forSession($cancellation)['by_method'])->keyBy('method')['card'];
+
+        $this->assertSame(20.0, $originalCard['credit_payments']);
+        $this->assertSame(20.0, $originalCard['net']);
+        $this->assertSame(-20.0, $cancellationCard['refunds_cancellations']);
+        $this->assertSame(-20.0, $cancellationCard['net']);
+    }
+
+    public function test_closing_list_payload_omits_expensive_payment_operations_but_detail_includes_them(): void
+    {
+        [, , , $session] = $this->context();
+        $method = new \ReflectionMethod(CashRegisterController::class, 'sessionPayload');
+
+        $listPayload = $method->invoke(new CashRegisterController, $session, 'America/Guatemala');
+        $detailPayload = $method->invoke(new CashRegisterController, $session, 'America/Guatemala', true);
+
+        $this->assertArrayNotHasKey('payment_operations', $listPayload);
+        $this->assertArrayHasKey('payment_operations', $detailPayload);
     }
 
     private function context(): array

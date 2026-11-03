@@ -228,7 +228,8 @@ class DashboardFoundationTest extends TestCase
         $user->update(['role' => 'custom_operations']);
 
         $warehouse = new DashboardContext($business, $user, $branch, false, [Permissions::INVENTORY_VIEW], ['inventory'], 'America/Guatemala');
-        $executive = new DashboardContext($business, $user, $branch, false, [Permissions::REPORTS_SALES_VIEW], ['pos', 'reports'], 'America/Guatemala');
+        $executive = new DashboardContext($business, $user, $branch, false, [Permissions::REPORTS_SALES_VIEW, Permissions::REPORTS_SALES_SUMMARY_VIEW], ['pos', 'reports'], 'America/Guatemala');
+        $salesReader = new DashboardContext($business, $user, $branch, false, [Permissions::REPORTS_SALES_VIEW], ['pos', 'reports'], 'America/Guatemala');
         $routes = new DashboardContext($business, $user, $branch, false, [
             Permissions::ROUTES_VIEW,
             Permissions::ROUTES_PRE_SALES_ADMIN_VIEW,
@@ -242,10 +243,47 @@ class DashboardFoundationTest extends TestCase
 
         $this->assertSame('warehouse', $resolver->resolve($warehouse));
         $this->assertSame('executive', $resolver->resolve($executive));
+        $this->assertSame('generic', $resolver->resolve($salesReader));
         $this->assertSame('route_supervisor', $resolver->resolve($routes));
         $this->assertSame('route_seller', $resolver->resolve($routeSeller));
         $this->assertSame('route_delivery', $resolver->resolve($routeDelivery));
         $this->assertSame('generic', $resolver->resolve($incompleteRouteRole));
+    }
+
+    public function test_ferrymas_legacy_cashier_seller_uses_warehouse_only_for_the_exact_tenant_and_role_assignment(): void
+    {
+        \Illuminate\Support\Facades\DB::table('roles')->insertOrIgnore([
+            'id' => 9,
+            'business_id' => null,
+            'key' => 'cajero-vendedor',
+            'name' => 'Cajero/Vendedor',
+            'is_system' => false,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        \Illuminate\Support\Facades\DB::table('roles')->where('id', 9)->update([
+            'key' => 'cajero-vendedor',
+            'name' => 'Cajero/Vendedor',
+            'is_system' => false,
+        ]);
+        $ferrymas = new Business;
+        $ferrymas->forceFill(['id' => 9, 'name' => 'Ferrymas', 'slug' => 'ferrymas', 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true])->save();
+        $other = new Business;
+        $other->forceFill(['id' => 10, 'name' => 'Otro', 'slug' => 'otro', 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true])->save();
+        $ferrymasBranch = Branch::query()->create(['business_id' => $ferrymas->id, 'name' => 'Principal', 'code' => 'FER', 'is_active' => true]);
+        $otherBranch = Branch::query()->create(['business_id' => $other->id, 'name' => 'Principal', 'code' => 'OTH', 'is_active' => true]);
+        $seller = User::factory()->create(['business_id' => $ferrymas->id, 'current_branch_id' => $ferrymasBranch->id, 'role' => 'cajero-vendedor', 'is_active' => true]);
+        $otherSeller = User::factory()->create(['business_id' => $other->id, 'current_branch_id' => $otherBranch->id, 'role' => 'cajero-vendedor', 'is_active' => true]);
+        $seller->roles()->attach(9);
+        $otherSeller->roles()->attach(9);
+
+        $permissions = [Permissions::INVENTORY_VIEW, Permissions::REPORTS_SALES_SUMMARY_VIEW];
+        $modules = ['inventory', 'pos', 'reports'];
+        $resolver = new DashboardProfileResolver();
+
+        $this->assertSame('warehouse', $resolver->resolve(new DashboardContext($ferrymas, $seller, $ferrymasBranch, false, $permissions, $modules, 'America/Guatemala')));
+        $this->assertSame('executive', $resolver->resolve(new DashboardContext($other, $otherSeller, $otherBranch, false, $permissions, $modules, 'America/Guatemala')));
     }
 
     public function test_standard_role_preferences_apply_only_after_their_capability_sets_validate(): void
@@ -373,6 +411,7 @@ class DashboardFoundationTest extends TestCase
 
         $context = new DashboardContext($business, $owner, $branch, true, [
             Permissions::POS_VIEW,
+            Permissions::REPORTS_SALES_SUMMARY_VIEW,
             Permissions::INVENTORY_VIEW,
             Permissions::CREDITS_ACCOUNTS_VIEW,
             Permissions::ROUTES_VIEW,

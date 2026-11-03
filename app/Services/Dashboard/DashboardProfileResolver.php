@@ -8,12 +8,19 @@ final class DashboardProfileResolver
 {
     public function resolve(DashboardContext $context): string
     {
+        // Temporary production compatibility for Ferrymas. Remove once those
+        // users have an explicit dashboard preference.
+        if ($this->isFerrymasLegacyCashierSeller($context)) {
+            return 'warehouse';
+        }
+
         $capabilities = [
             'executive' => $context->hasModule('pos')
                 && $context->hasModule('reports')
-                && $context->hasPermission(Permissions::REPORTS_SALES_VIEW),
+                && $context->hasPermission(Permissions::REPORTS_SALES_SUMMARY_VIEW),
             'branch_manager' => $context->hasModule('pos')
-                && $context->hasPermission(Permissions::POS_VIEW),
+                && $context->hasPermission(Permissions::POS_VIEW)
+                && $context->hasPermission(Permissions::REPORTS_SALES_SUMMARY_VIEW),
             'cashier' => $context->hasModule('pos')
                 && $context->hasPermission(Permissions::POS_VIEW),
             'route_seller' => $context->hasModule('routes')
@@ -29,7 +36,7 @@ final class DashboardProfileResolver
             'purchases' => $context->hasModule('purchases')
                 && $context->hasPermission(Permissions::PURCHASES_VIEW),
             'finance' => $context->hasModule('reports')
-                && $context->hasPermission(Permissions::REPORTS_SALES_VIEW),
+                && $context->hasPermission(Permissions::REPORTS_SALES_SUMMARY_VIEW),
         ];
 
         // Standard roles are presentation preferences only. In particular, this
@@ -67,5 +74,18 @@ final class DashboardProfileResolver
         }
 
         return 'generic';
+    }
+
+    private function isFerrymasLegacyCashierSeller(DashboardContext $context): bool
+    {
+        return (int) $context->business->id === 9
+            && (string) $context->user->role === 'cajero-vendedor'
+            && $context->hasModule('inventory')
+            && $context->hasPermission(Permissions::INVENTORY_VIEW)
+            && $context->user->roles()
+                ->whereKey(9)
+                ->where('key', 'cajero-vendedor')
+                ->whereNull('business_id')
+                ->exists();
     }
 }

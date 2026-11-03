@@ -347,7 +347,6 @@ class CashRegisterController extends Controller
     {
         $session->loadMissing(['openedBy:id,name', 'closedBy:id,name']);
         $summary = CashRegister::summary($session);
-        $paymentOperations = CashRegisterClosingOperations::forSession($session);
 
         $payload = [
             'id' => $session->id,
@@ -363,10 +362,10 @@ class CashRegisterController extends Controller
             'notes' => $session->notes,
             'closing_notes' => $session->closing_notes,
             'summary' => $summary,
-            'payment_operations' => $paymentOperations,
         ];
 
         if ($includeMovements) {
+            $payload['payment_operations'] = CashRegisterClosingOperations::forSession($session);
             $movements = CashRegister::movements($session);
             $expenseIds = $movements
                 ->where('reference_type', 'cash_expense')

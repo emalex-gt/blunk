@@ -16,7 +16,7 @@ final class ExecutiveOverviewMetricQuery implements DashboardMetricQuery
 {
     public function resolve(DashboardContext $context, DashboardPeriod $period): array
     {
-        $salesAllowed = $context->hasModule('pos') && ($context->hasPermission(Permissions::POS_VIEW) || $context->hasPermission(Permissions::REPORTS_SALES_VIEW));
+        $salesAllowed = $context->hasModule('pos') && $context->hasPermission(Permissions::REPORTS_SALES_SUMMARY_VIEW);
         $purchasesAllowed = $context->hasModule('purchases') && $context->hasPermission(Permissions::PURCHASES_VIEW);
         $inventoryValueAllowed = $context->hasModule('inventory') && $context->hasPermission(Permissions::REPORTS_WAREHOUSE_MONEY_VIEW);
         $canViewSales = $context->hasPermission(Permissions::SALES_VIEW);
@@ -26,7 +26,7 @@ final class ExecutiveOverviewMetricQuery implements DashboardMetricQuery
         $previousMonth = $salesAllowed ? $this->sales($context, $this->previousComparableMonth($context)) : null;
         $stock = $context->hasModule('inventory') && $context->hasPermission(Permissions::INVENTORY_VIEW) ? (new StockAlertsMetricQuery)->resolve($context, $period) : null;
         $receivable = $context->hasModule('credits') && $context->hasPermission(Permissions::CREDITS_ACCOUNTS_VIEW) && $context->hasFeature('credit_sales') ? (new AccountsReceivableMetricQuery)->resolve($context, $period) : null;
-        $margin = $context->hasModule('pos') && $context->hasPermission(Permissions::REPORTS_PROFIT_VIEW) ? (new EstimatedMarginMetricQuery)->resolve($context, $context->period(DashboardPeriod::TODAY)) : null;
+        $margin = $salesAllowed && $context->hasPermission(Permissions::REPORTS_PROFIT_VIEW) ? (new EstimatedMarginMetricQuery)->resolve($context, $context->period(DashboardPeriod::TODAY)) : null;
         $cash = $context->hasModule('cash_register') && $context->hasPermission(Permissions::CASH_REGISTER_VIEW) ? (new CashCurrentMetricQuery)->resolve($context, $period) : null;
         $routesAllowed = $context->hasModule('routes') && $context->hasPermission(Permissions::ROUTES_VIEW) && $context->hasPermission(Permissions::ROUTES_PRE_SALES_ADMIN_VIEW) && $context->hasPermission(Permissions::ROUTES_DELIVERY_RUNS_VIEW);
         $routes = $routesAllowed ? collect(['open_work_days', 'pending_visits', 'operational_pre_sales', 'pending_delivery_stops'])->mapWithKeys(fn (string $key) => [$key => (new RouteOperationsMetricQuery($key))->resolve($context, $period)['count']])->all() : null;
