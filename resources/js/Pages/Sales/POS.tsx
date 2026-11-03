@@ -593,7 +593,7 @@ function priceFromManualPercentage(item: CartItem, percent: number, policy: Manu
     const minimum = minimumManualPrice(item, policy);
 
     if (minimum === null) {
-        return { price: null, error: 'No puedes validar un precio manual con tu autorización actual.' };
+        return { price: roundMoney(basePrice * (1 - (percent / 100))), error: null };
     }
 
     if (minimum <= 0) {
@@ -621,7 +621,7 @@ function manualPriceError(item: CartItem, policy: ManualPricePolicyConfig) {
     const cost = productCost(item.product);
 
     if (cost === null) {
-        return 'No puedes validar un precio manual con tu autorización actual.';
+        return null;
     }
 
     if (cost <= 0) {

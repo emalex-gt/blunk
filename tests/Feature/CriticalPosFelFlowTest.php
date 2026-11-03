@@ -1473,7 +1473,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this
             ->actingAs($user)
             ->from(route('sales.create'))
-            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 60, itemOverrides: [
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 70, itemOverrides: [
                 'manual_price' => true,
                 'price_source' => 'manual',
                 'unit_price' => 70,

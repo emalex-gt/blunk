@@ -56,6 +56,18 @@ class PosProductCostVisibilityTest extends TestCase
         $this->assertCostVisibleFor(Permissions::PRODUCTS_CREATE);
     }
 
+    public function test_manual_price_permission_does_not_expose_cost_price_in_pos_search(): void
+    {
+        [$business, $user, $product] = $this->fixture([Permissions::POS_VIEW, Permissions::POS_MANUAL_PRICE]);
+
+        $payload = $this->as($user, $business)
+            ->get(route('sales.products.search', ['q' => $product->code]))
+            ->assertOk()
+            ->json('products.0');
+
+        $this->assertArrayNotHasKey('cost_price', $payload);
+    }
+
     public function test_products_update_permission_receives_cost_price_in_pos_search(): void
     {
         $this->assertCostVisibleFor(Permissions::PRODUCTS_UPDATE);
