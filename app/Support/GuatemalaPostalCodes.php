@@ -13,6 +13,18 @@ final class GuatemalaPostalCodes
     public const CORREOS_SOURCE = 'https://correos.gob.gt/CodigosPos/ListaCodigos/';
     public const CELASA_SOURCE = 'https://www.servicios-ws.celasa.com.gt/codigos-postales';
 
+    public static function forLocation(?string $department, ?string $municipality): ?string
+    {
+        $department = GuatemalaLocations::canonicalDepartment($department);
+        $municipality = trim((string) $municipality);
+
+        if (! $department || $municipality === '') {
+            return null;
+        }
+
+        return self::confirmed()[$department][$municipality] ?? null;
+    }
+
     /** @return array<string, array<string, string>> */
     public static function confirmed(): array
     {

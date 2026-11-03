@@ -12,6 +12,7 @@ use App\Support\BranchInventory;
 use App\Support\CustomerIdentity;
 use App\Support\FelPhraseRenderer;
 use App\Support\GuatemalaLocations;
+use App\Support\GuatemalaPostalCodes;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -51,18 +52,10 @@ class DigifactNucJsonBuilder
         $buyerAddress = trim((string) (
             $sale->customer_address
             ?: $customer?->address
-            ?: $felBranch->fel_address
-            ?: $settings->establishment_address
             ?: ''
         )) ?: 'Ciudad';
-        $buyerPostalCode = trim((string) (
-            $sale->customer_postal_code
-            ?: $customer?->postal_code
-            ?: $felBranch->fel_postal_code
-            ?: $settings->establishment_postal_code
-            ?: ''
-        )) ?: '01001';
         [$buyerDepartment, $buyerMunicipality] = $this->buyerLocation($sale, $customer, $felBranch);
+        $buyerPostalCode = GuatemalaPostalCodes::forLocation($buyerDepartment, $buyerMunicipality);
         $buyerCountry = trim((string) (
             $sale->customer_country
             ?: $customer?->country
@@ -310,11 +303,14 @@ class DigifactNucJsonBuilder
                 && $municipality !== ''
                 && GuatemalaLocations::isValidDepartment($department)
                 && GuatemalaLocations::isValidMunicipality($department, $municipality)) {
-                return [$department, $municipality];
+                return [(string) GuatemalaLocations::canonicalDepartment($department), $municipality];
             }
         }
 
-        return [(string) $felBranch->fel_department, (string) $felBranch->fel_municipality];
+        return [
+            (string) GuatemalaLocations::canonicalDepartment($felBranch->fel_department),
+            (string) $felBranch->fel_municipality,
+        ];
     }
 
     private function buildSellerAdditionlInfo(TenantFelSetting $settings): array

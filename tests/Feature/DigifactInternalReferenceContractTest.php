@@ -77,8 +77,9 @@ class DigifactInternalReferenceContractTest extends TestCase
 
         $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
 
-        $this->assertSame('Quiché', $payload['Buyer']['AddressInfo']['State']);
+        $this->assertSame('El Quiche', $payload['Buyer']['AddressInfo']['State']);
         $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
+        $this->assertSame('14006', $payload['Buyer']['AddressInfo']['City']);
         $this->assertNull($sale->fresh()->customer_department);
         $this->assertSame('Guatemala', $sale->fresh()->customer_municipality);
     }
@@ -93,8 +94,9 @@ class DigifactInternalReferenceContractTest extends TestCase
 
         $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
 
-        $this->assertSame('Quiché', $payload['Buyer']['AddressInfo']['State']);
+        $this->assertSame('El Quiche', $payload['Buyer']['AddressInfo']['State']);
         $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
+        $this->assertSame('14006', $payload['Buyer']['AddressInfo']['City']);
     }
 
     public function test_fel_buyer_location_uses_a_complete_persisted_customer_pair_without_mixing_a_partial_snapshot(): void
@@ -118,8 +120,9 @@ class DigifactInternalReferenceContractTest extends TestCase
 
         $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
 
-        $this->assertSame('Quiché', $payload['Buyer']['AddressInfo']['State']);
+        $this->assertSame('El Quiche', $payload['Buyer']['AddressInfo']['State']);
         $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
+        $this->assertSame('14006', $payload['Buyer']['AddressInfo']['City']);
     }
 
     public function test_fel_buyer_location_ignores_an_invalid_customer_pair_and_uses_the_issuing_branch_pair(): void
@@ -137,8 +140,9 @@ class DigifactInternalReferenceContractTest extends TestCase
 
         $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
 
-        $this->assertSame('Quiché', $payload['Buyer']['AddressInfo']['State']);
+        $this->assertSame('El Quiche', $payload['Buyer']['AddressInfo']['State']);
         $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
+        $this->assertSame('14006', $payload['Buyer']['AddressInfo']['City']);
     }
 
     public function test_fel_buyer_location_uses_the_historical_sale_branch_even_when_branches_are_currently_disabled(): void
@@ -166,8 +170,9 @@ class DigifactInternalReferenceContractTest extends TestCase
         $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
 
         $this->assertSame('2', $payload['Seller']['BranchInfo']['Code']);
-        $this->assertSame('Quiché', $payload['Buyer']['AddressInfo']['State']);
+        $this->assertSame('El Quiche', $payload['Buyer']['AddressInfo']['State']);
         $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
+        $this->assertSame('14006', $payload['Buyer']['AddressInfo']['City']);
     }
 
     public function test_fel_preserves_configured_fiscal_branch_location_without_applying_the_operational_catalog(): void
@@ -191,6 +196,43 @@ class DigifactInternalReferenceContractTest extends TestCase
         $this->assertSame('14006', $payload['Seller']['BranchInfo']['AddressInfo']['City']);
         $this->assertSame('El Quiche', $payload['Buyer']['AddressInfo']['State']);
         $this->assertSame('Chichicastenango', $payload['Buyer']['AddressInfo']['District']);
+        $this->assertSame('14006', $payload['Buyer']['AddressInfo']['City']);
+    }
+
+    public function test_fel_buyer_postal_code_comes_from_the_complete_mixco_location_pair(): void
+    {
+        [, $sale, $settings] = $this->saleFixture();
+        $sale->update([
+            'customer_department' => 'Guatemala',
+            'customer_municipality' => 'Mixco',
+            'customer_postal_code' => '01001',
+        ]);
+
+        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
+
+        $this->assertSame('01057', $payload['Buyer']['AddressInfo']['City']);
+        $this->assertSame('Mixco', $payload['Buyer']['AddressInfo']['District']);
+        $this->assertSame('Guatemala', $payload['Buyer']['AddressInfo']['State']);
+    }
+
+    public function test_fel_buyer_without_address_or_confirmed_postal_code_uses_city_without_emitter_fallback(): void
+    {
+        [, $sale, $settings] = $this->saleFixture();
+        $sale->update([
+            'customer_address' => null,
+            'customer_postal_code' => '01001',
+            'customer_department' => 'Guatemala',
+            'customer_municipality' => 'Guatemala',
+        ]);
+
+        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
+
+        $this->assertSame('Ciudad', $payload['Buyer']['AddressInfo']['Address']);
+        $this->assertNull($payload['Buyer']['AddressInfo']['City']);
+        $this->assertSame('Guatemala', $payload['Buyer']['AddressInfo']['District']);
+        $this->assertSame('Guatemala', $payload['Buyer']['AddressInfo']['State']);
+        $this->assertSame('Ciudad', $payload['Seller']['BranchInfo']['AddressInfo']['Address']);
+        $this->assertSame('01001', $payload['Seller']['BranchInfo']['AddressInfo']['City']);
     }
 
     public function test_offset_fiscal_issue_time_is_persisted_as_a_utc_derivative(): void
