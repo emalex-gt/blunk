@@ -1373,7 +1373,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringNotContainsString('margen', mb_strtolower(session('errors')->first('items')));
     }
 
-    public function test_manual_price_policy_cost_markup_enforces_minimum_and_generates_steps(): void
+    public function test_manual_price_policy_enforces_the_cost_floor_and_fixed_discount_steps(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register'], role: 'cashier', allowManualPrice: true);
         $settings = TenantSetting::query()->where('business_id', $business->id)->firstOrFail();
@@ -1398,7 +1398,7 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertSessionHasErrors(['items']);
 
         $this->assertDatabaseCount('sales', 0);
-        $this->assertSame([15.0, 20.0, 25.0, 30.0, 50.0], ManualPricePolicy::percentageSteps($settings->refresh()));
+        $this->assertSame([2.0, 5.0, 10.0, 15.0, 20.0, 25.0], ManualPricePolicy::percentageSteps($settings->refresh()));
 
         $this
             ->actingAs($user)
@@ -1413,7 +1413,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('115.00', (string) SaleItem::query()->firstOrFail()->unit_price);
     }
 
-    public function test_manual_price_policy_price_discount_enforces_max_discount(): void
+    public function test_manual_price_percentage_discount_is_capped_at_twenty_five_percent(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register'], role: 'cashier', allowManualPrice: true);
         $settings = TenantSetting::query()->where('business_id', $business->id)->firstOrFail();
@@ -1426,39 +1426,45 @@ class CriticalPosFelFlowTest extends TestCase
         $product->update(['cost_price' => 1]);
         $this->openCashRegister($business, $user);
 
-        $this
-            ->actingAs($user)
-            ->from(route('sales.create'))
-            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 89.99, itemOverrides: [
-                'manual_price' => true,
-                'price_source' => 'manual',
-                'unit_price' => 89.99,
-            ]))
-            ->assertSessionHasErrors(['items']);
+        $this->assertSame([2.0, 5.0, 10.0, 15.0, 20.0, 25.0], ManualPricePolicy::percentageSteps($settings->refresh()));
+        $this->assertSame(75.0, ManualPricePolicy::calculateFromPercentage($settings->refresh(), $product->refresh(), 25, 100));
 
-        $this->assertDatabaseCount('sales', 0);
-        $this->assertSame([2.0, 5.0, 10.0], ManualPricePolicy::percentageSteps($settings->refresh()));
+        try {
+            ManualPricePolicy::calculateFromPercentage($settings->refresh(), $product->refresh(), 25.01, 100);
+            $this->fail('A percentage discount above 25% must be rejected.');
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $this->assertSame('El descuento máximo permitido es 25%.', $exception->errors()['items'][0]);
+        }
 
         $this
             ->actingAs($user)
-            ->from(route('sales.create'))
-            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 90, itemOverrides: [
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 75, itemOverrides: [
                 'manual_price' => true,
                 'price_source' => 'manual',
-                'unit_price' => 90,
+                'unit_price' => 75,
             ]))
             ->assertSessionHasNoErrors();
 
-        $this->assertSame('90.00', (string) SaleItem::query()->firstOrFail()->unit_price);
+        $this
+            ->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 0.99, itemOverrides: [
+                'manual_price' => true,
+                'price_source' => 'manual',
+                'unit_price' => 0.99,
+            ]))
+            ->assertSessionHasErrors(['items']);
+
+        $this->assertSame('75.00', (string) SaleItem::query()->firstOrFail()->unit_price);
     }
 
-    public function test_manual_price_policy_none_hides_percentage_controls_but_allows_fixed_manual_price(): void
+    public function test_manual_price_percentage_controls_are_available_regardless_of_the_configured_mode(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register'], role: 'cashier', allowManualPrice: true);
         TenantSetting::query()->where('business_id', $business->id)->update([
             'manual_price_percentage_mode' => ManualPricePolicy::MODE_NONE,
-            'manual_price_min_markup_percent' => 99,
-            'manual_price_min_margin_percent' => 99,
+            'manual_price_min_markup_percent' => 15,
+            'manual_price_min_margin_percent' => 15,
         ]);
         Permissions::assignDirectPermissions($user, [Permissions::POS_MANUAL_PRICE]);
         $product = $this->product($business, stock: 10, salePrice: 100);
@@ -1467,7 +1473,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this
             ->actingAs($user)
             ->from(route('sales.create'))
-            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 70, itemOverrides: [
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 60, itemOverrides: [
                 'manual_price' => true,
                 'price_source' => 'manual',
                 'unit_price' => 70,
@@ -1475,15 +1481,16 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertSessionHasNoErrors();
 
         $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
-        $this->assertStringContainsString("manualPricePolicy.mode !== 'none'", $source);
+        $this->assertStringContainsString('const showPercentageControls = canUseManualPrice;', $source);
+        $this->assertStringContainsString('Máximo: 25 % de descuento', $source);
         $this->assertStringContainsString('priceFromManualPercentage', $source);
     }
 
-    public function test_manual_percentage_calculation_supports_custom_markup_and_discount(): void
+    public function test_manual_percentage_calculation_discounts_the_original_price_and_respects_cost(): void
     {
         [$business] = $this->tenant(modules: ['pos'], role: 'owner', allowManualPrice: true);
         $settings = TenantSetting::query()->where('business_id', $business->id)->firstOrFail();
-        $product = $this->product($business, stock: 10, salePrice: 100);
+        $product = $this->product($business, stock: 10, salePrice: 200);
         $product->update(['cost_price' => 100]);
 
         $settings->update([
@@ -1492,14 +1499,14 @@ class CriticalPosFelFlowTest extends TestCase
             'manual_price_min_margin_percent' => 15,
         ]);
 
-        $this->assertSame(120.0, ManualPricePolicy::calculateFromPercentage($settings->refresh(), $product->refresh(), 20));
+        $this->assertSame(160.0, ManualPricePolicy::calculateFromPercentage($settings->refresh(), $product->refresh(), 20));
 
         $settings->update([
             'manual_price_percentage_mode' => ManualPricePolicy::MODE_PRICE_DISCOUNT,
             'manual_price_max_discount_percent' => 10,
         ]);
 
-        $this->assertSame(90.0, ManualPricePolicy::calculateFromPercentage($settings->refresh(), $product->refresh(), 10, 100));
+        $this->assertSame(150.0, ManualPricePolicy::calculateFromPercentage($settings->refresh(), $product->refresh(), 25, 200));
     }
 
     public function test_role_permission_and_super_admin_bypass_permission_checks(): void

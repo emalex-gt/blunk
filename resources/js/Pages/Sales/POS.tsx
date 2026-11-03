@@ -563,98 +563,51 @@ function productCost(product: Product): number | null {
     return Number.isFinite(cost) ? cost : null;
 }
 
-function mainProductPrice(product: Product, defaultPriceTypeId: number | null | undefined) {
-    const price = priceFromList(product, defaultPriceTypeId ?? null, defaultPriceTypeId ?? null);
-    const value = Number(price.price ?? product.sale_price ?? 0);
-
-    return Number.isFinite(value) ? value : 0;
+function manualPercentageSteps() {
+    return [2, 5, 10, 15, 20, 25];
 }
 
-function manualPercentageSteps(policy: ManualPricePolicyConfig) {
-    if (policy.steps.length > 0) {
-        return policy.steps;
+function minimumManualPrice(item: CartItem, policy: ManualPricePolicyConfig) {
+    const cost = productCost(item.product);
+
+    if (cost === null) {
+        return null;
     }
 
-    if (policy.mode === 'price_discount') {
-        return [2, 5, 10, 15, 20, 25, 30, 50].filter((step) => step <= policy.maxDiscountPercent);
-    }
-
-    if (policy.mode === 'cost_markup') {
-        const min = policy.minMarkupPercent;
-
-        return Array.from(new Set([min, 5, 10, 15, 20, 25, 30, 50]))
-            .filter((step) => step >= min)
-            .sort((a, b) => a - b);
-    }
-
-    return [];
+    return cost > 0
+        ? roundMoney(cost * (1 + Math.max(0, policy.minMarkupPercent) / 100))
+        : 0;
 }
 
-function minimumManualPrice(item: CartItem, policy: ManualPricePolicyConfig, defaultPriceTypeId: number | null | undefined) {
-    if (policy.mode === 'price_discount') {
-        const basePrice = mainProductPrice(item.product, defaultPriceTypeId);
-
-        return basePrice > 0
-            ? roundMoney(basePrice * (1 - (Math.max(0, policy.maxDiscountPercent) / 100)))
-            : 0;
-    }
-
-    if (policy.mode === 'cost_markup') {
-        const cost = productCost(item.product);
-
-        if (cost === null) {
-            return null;
-        }
-
-        return cost > 0
-            ? roundMoney(cost * (1 + Math.max(0, policy.minMarkupPercent) / 100))
-            : 0;
-    }
-
-    return 0;
-}
-
-function priceFromManualPercentage(item: CartItem, percent: number, policy: ManualPricePolicyConfig, defaultPriceTypeId: number | null | undefined) {
-    if (!Number.isFinite(percent) || percent < 0) {
+function priceFromManualPercentage(item: CartItem, percent: number, policy: ManualPricePolicyConfig) {
+    if (!Number.isFinite(percent) || percent < 0 || percent > 25) {
         return { price: null, error: 'Ingresa un porcentaje válido.' };
     }
 
-    if (policy.mode === 'price_discount') {
-        if (percent > policy.maxDiscountPercent) {
-            return { price: null, error: `El descuento máximo permitido es ${policy.maxDiscountPercent}%.` };
-        }
+    const basePrice = Number(item.original_price);
 
-        const basePrice = mainProductPrice(item.product, defaultPriceTypeId);
-
-        if (basePrice <= 0) {
-            return { price: null, error: 'Este producto no tiene precio principal configurado.' };
-        }
-
-        return { price: roundMoney(basePrice * (1 - (percent / 100))), error: null };
+    if (!Number.isFinite(basePrice) || basePrice <= 0) {
+        return { price: null, error: 'Este producto no tiene precio principal configurado.' };
     }
 
-    if (policy.mode === 'cost_markup') {
-        if (percent < policy.minMarkupPercent) {
-            return { price: null, error: `El porcentaje mínimo sobre costo es ${policy.minMarkupPercent}%.` };
-        }
+    const minimum = minimumManualPrice(item, policy);
 
-        const cost = productCost(item.product);
-
-        if (cost === null) {
-            return { price: null, error: 'No puedes calcular un precio manual sobre costo con tu autorización actual.' };
-        }
-
-        if (cost <= 0) {
-            return { price: null, error: 'Este producto no tiene costo configurado.' };
-        }
-
-        return { price: roundMoney(cost * (1 + (percent / 100))), error: null };
+    if (minimum === null) {
+        return { price: null, error: 'No puedes validar un precio manual con tu autorización actual.' };
     }
 
-    return { price: null, error: 'Este precio no está permitido.' };
+    if (minimum <= 0) {
+        return { price: null, error: 'Este producto no tiene costo configurado.' };
+    }
+
+    const price = roundMoney(basePrice * (1 - (percent / 100)));
+
+    return price < minimum
+        ? { price: null, error: 'Este precio no está permitido.' }
+        : { price, error: null };
 }
 
-function manualPriceError(item: CartItem, policy: ManualPricePolicyConfig, defaultPriceTypeId: number | null | undefined) {
+function manualPriceError(item: CartItem, policy: ManualPricePolicyConfig) {
     if (!item.manual_price) {
         return null;
     }
@@ -665,26 +618,20 @@ function manualPriceError(item: CartItem, policy: ManualPricePolicyConfig, defau
         return 'Este precio no está permitido.';
     }
 
-    if (policy.mode === 'cost_markup') {
-        const cost = productCost(item.product);
+    const cost = productCost(item.product);
 
-        if (cost === null) {
-            return 'No puedes validar un precio manual sobre costo con tu autorización actual.';
-        }
-
-        if (cost <= 0) {
-            return 'Este producto no tiene costo configurado.';
-        }
+    if (cost === null) {
+        return 'No puedes validar un precio manual con tu autorización actual.';
     }
 
-    if (policy.mode === 'price_discount' && mainProductPrice(item.product, defaultPriceTypeId) <= 0) {
-        return 'Este producto no tiene precio principal configurado.';
+    if (cost <= 0) {
+        return 'Este producto no tiene costo configurado.';
     }
 
-    const minimum = minimumManualPrice(item, policy, defaultPriceTypeId);
+    const minimum = minimumManualPrice(item, policy);
 
     if (minimum !== null && minimum > 0 && price < minimum) {
-        return `El precio mínimo permitido es Q ${minimum.toFixed(2)}.`;
+        return 'Este precio no está permitido.';
     }
 
     return null;
@@ -1579,7 +1526,7 @@ export default function POS({
         }
 
         const error = cart
-            .map((item) => manualPriceError(item, manualPricePolicy, default_price_type_id))
+            .map((item) => manualPriceError(item, manualPricePolicy))
             .find(Boolean);
 
         if (!error) {
@@ -2405,7 +2352,7 @@ export default function POS({
                 return item;
             }
 
-            const result = priceFromManualPercentage(item, percent, manualPricePolicy, default_price_type_id);
+            const result = priceFromManualPercentage(item, percent, manualPricePolicy);
 
             if (result.error || result.price === null) {
                 const message = result.error || 'Este precio no está permitido.';
@@ -2426,7 +2373,7 @@ export default function POS({
     }
 
     function previewManualPercentage(item: CartItem, percent: number) {
-        const result = priceFromManualPercentage(item, percent, manualPricePolicy, default_price_type_id);
+        const result = priceFromManualPercentage(item, percent, manualPricePolicy);
 
         if (result.error || result.price === null) {
             const message = result.error || 'Este precio no está permitido.';
@@ -4267,9 +4214,9 @@ export default function POS({
                                                 {item.price_warning && (
                                                     <p className="text-[11px] font-semibold text-amber-600">{item.price_warning}</p>
                                                 )}
-                                                {item.manual_price && manualPriceError(item, manualPricePolicy, default_price_type_id) && (
+                                                {item.manual_price && manualPriceError(item, manualPricePolicy) && (
                                                     <p className="text-[11px] font-semibold text-red-600">
-                                                        {manualPriceError(item, manualPricePolicy, default_price_type_id)}
+                                                        {manualPriceError(item, manualPricePolicy)}
                                                     </p>
                                                 )}
                                                 {canUseManualPrice && !item.locked_credit_line && (
@@ -4434,10 +4381,9 @@ export default function POS({
                     manual_price: true,
                     price_source: 'manual' as const,
                 };
-                const activeManualPriceError = manualPriceError(draftItem, manualPricePolicy, default_price_type_id);
-                const percentageSteps = manualPercentageSteps(manualPricePolicy);
-                const showPercentageControls = manualPricePolicy.mode !== 'none'
-                    && !(manualPricePolicy.mode === 'cost_markup' && productCost(item.product) === null);
+                const activeManualPriceError = manualPriceError(draftItem, manualPricePolicy);
+                const percentageSteps = manualPercentageSteps();
+                const showPercentageControls = canUseManualPrice;
 
                 return (
                     <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/50 p-4 backdrop-blur-sm sm:items-center">
@@ -4460,12 +4406,10 @@ export default function POS({
                                 {showPercentageControls && (
                                     <div>
                                         <div className="mb-1 text-xs font-semibold uppercase text-slate-500">
-                                            {manualPricePolicy.mode === 'price_discount' ? '% descuento' : '% sobre costo'}
+                                            % descuento
                                         </div>
                                         <p className="mb-2 text-xs text-slate-500">
-                                            {manualPricePolicy.mode === 'price_discount'
-                                                ? `Máximo: ${manualPricePolicy.maxDiscountPercent}% de descuento`
-                                                : `Mínimo: ${manualPricePolicy.minMarkupPercent}% sobre costo`}
+                                            Máximo: 25 % de descuento
                                         </p>
                                         <div className="flex flex-wrap gap-2">
                                             {percentageSteps.map((percent) => (
@@ -4476,13 +4420,13 @@ export default function POS({
                                                     onClick={() => previewManualPercentage(item, percent)}
                                                     className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:border-orange-200 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50"
                                                 >
-                                                    {manualPricePolicy.mode === 'price_discount' ? '-' : '+'}{percent}%
+                                                    -{percent}%
                                                 </button>
                                             ))}
                                             <input
                                                 type="number"
                                                 min="0"
-                                                max={manualPricePolicy.mode === 'price_discount' ? manualPricePolicy.maxDiscountPercent : 500}
+                                                max="25"
                                                 step="0.01"
                                                 placeholder="Otro %"
                                                 disabled={processing}
