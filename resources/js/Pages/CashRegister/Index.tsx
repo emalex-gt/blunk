@@ -2,7 +2,7 @@ import Toast from '@/Components/Toast';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency } from '@/utils/currency';
-import { Head, Link, useForm, usePage } from '@inertiajs/react';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import { FormEvent, ReactNode, useMemo, useRef, useState } from 'react';
 
 type Movement = {
@@ -19,6 +19,35 @@ type Movement = {
     expense_cancelled_at?: string | null;
     expense_cancelled_by?: string | null;
     expense_cancellation_note?: string | null;
+};
+
+type PaymentOperation = {
+    id: string;
+    kind: string;
+    label: string;
+    method: string;
+    amount: number;
+    signed_amount: number;
+    occurred_at: string | null;
+    reference: string | null;
+    party: string | null;
+    attribution: 'direct' | 'reconstructed' | 'ambiguous' | null;
+    incident?: string;
+};
+
+type PaymentOperations = {
+    by_method: Array<{
+        method: string;
+        sales: number;
+        credit_payments: number;
+        purchases: number;
+        refunds_cancellations: number;
+        net: number;
+    }>;
+    details: PaymentOperation[];
+    detail_total: number;
+    has_more_details: boolean;
+    incidents: PaymentOperation[];
 };
 
 type CashSession = {
@@ -45,6 +74,7 @@ type CashSession = {
         expected_cash: number;
     };
     movements?: Movement[];
+    payment_operations?: PaymentOperations;
 };
 
 type ExpenseCategory = {
@@ -76,6 +106,7 @@ export default function Index({
     const [closeModalOpen, setCloseModalOpen] = useState(false);
     const [showMovements, setShowMovements] = useState(false);
     const [expenseToCancel, setExpenseToCancel] = useState<Movement | null>(null);
+    const [refreshingSession, setRefreshingSession] = useState(false);
 
     const openingForm = useForm({
         opening_amount: '0.00',
@@ -208,6 +239,20 @@ export default function Index({
         });
     }
 
+    function refreshSessionData() {
+        if (refreshingSession) {
+            return;
+        }
+
+        setRefreshingSession(true);
+        router.reload({
+            only: ['openSession'],
+            preserveState: true,
+            preserveScroll: true,
+            onFinish: () => setRefreshingSession(false),
+        });
+    }
+
     return (
         <AuthenticatedLayout header={<h2 className="text-xl font-semibold text-slate-950">Caja</h2>}>
             <Head title="Caja" />
@@ -232,6 +277,16 @@ export default function Index({
                                 >
                                     Cierres de caja
                                 </Link>
+                                {openSession && (
+                                    <button
+                                        type="button"
+                                        onClick={refreshSessionData}
+                                        disabled={refreshingSession}
+                                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                        {refreshingSession ? 'Actualizando…' : 'Actualizar datos'}
+                                    </button>
+                                )}
                                 {!openSession && canOpenCashRegister && (
                                     <button
                                         type="button"
@@ -313,6 +368,11 @@ export default function Index({
                                     </button>
                                 </div>
                             </section>
+
+                            <PaymentOperationsOverview
+                                paymentOperations={openSession.payment_operations}
+                                country={country}
+                            />
 
                             {showMovements && (
                                 <MovementsTable
@@ -432,6 +492,137 @@ function Summary({ label, value }: { label: string; value: string }) {
         <div>
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
             <div className="mt-2 whitespace-nowrap text-lg font-bold text-slate-950">{value}</div>
+        </div>
+    );
+}
+
+function PaymentOperationsOverview({ paymentOperations, country }: { paymentOperations?: PaymentOperations; country: string }) {
+    const operations = paymentOperations ?? {
+        by_method: [],
+        details: [],
+        detail_total: 0,
+        has_more_details: false,
+        incidents: [],
+    };
+
+    return (
+        <>
+            <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
+                <div className="border-b border-slate-100 p-5">
+                    <h3 className="text-lg font-semibold text-slate-950">Resumen por medio de pago</h3>
+                    <p className="mt-1 text-sm text-slate-500">Informativo: no modifica el arqueo de efectivo.</p>
+                </div>
+                <div className="overflow-x-auto">
+                    <table className="min-w-[760px] w-full text-sm">
+                        <thead>
+                            <tr className="bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                <th className="px-4 py-3">Medio</th>
+                                <th className="px-4 py-3 text-right">Ventas cobradas</th>
+                                <th className="px-4 py-3 text-right">Abonos</th>
+                                <th className="px-4 py-3 text-right">Compras pagadas</th>
+                                <th className="px-4 py-3 text-right">Devoluciones / anulaciones</th>
+                                <th className="px-4 py-3 text-right">Neto</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {operations.by_method.length === 0 ? (
+                                <tr>
+                                    <td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-500">No hay operaciones de pago atribuibles a esta sesión.</td>
+                                </tr>
+                            ) : operations.by_method.map((row) => (
+                                <tr key={row.method}>
+                                    <td className="px-4 py-3 font-semibold text-slate-800">{paymentMethodLabel(row.method)}</td>
+                                    <PaymentAmount value={row.sales} country={country} />
+                                    <PaymentAmount value={row.credit_payments} country={country} />
+                                    <PaymentAmount value={row.purchases} country={country} />
+                                    <PaymentAmount value={row.refunds_cancellations} country={country} />
+                                    <PaymentAmount value={row.net} country={country} strong />
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
+                <div className="border-b border-slate-100 p-5">
+                    <h3 className="text-lg font-semibold text-slate-950">Detalle de cobros y pagos</h3>
+                    <p className="mt-1 text-sm text-slate-500">Vínculo directo o reconstrucción segura por horario de la sesión.</p>
+                </div>
+                <div className="space-y-2 p-4 md:hidden">
+                    {operations.details.map((operation) => <PaymentOperationCard key={operation.id} operation={operation} country={country} />)}
+                </div>
+                <div className="hidden overflow-x-auto md:block">
+                    <table className="min-w-[860px] w-full text-sm">
+                        <thead>
+                            <tr className="bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                <th className="px-4 py-3">Fecha</th>
+                                <th className="px-4 py-3">Operación</th>
+                                <th className="px-4 py-3">Medio</th>
+                                <th className="px-4 py-3">Referencia</th>
+                                <th className="px-4 py-3">Cliente / proveedor</th>
+                                <th className="px-4 py-3">Origen</th>
+                                <th className="px-4 py-3 text-right">Monto</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {operations.details.map((operation) => <PaymentOperationRow key={operation.id} operation={operation} country={country} />)}
+                        </tbody>
+                    </table>
+                </div>
+                {operations.has_more_details && (
+                    <p className="border-t border-amber-100 bg-amber-50 px-5 py-3 text-sm text-amber-900">
+                        Se muestran los primeros 200 de {operations.detail_total} movimientos.
+                    </p>
+                )}
+                {operations.details.length === 0 && <p className="p-5 text-sm text-slate-500">No hay cobros, pagos, devoluciones ni anulaciones atribuibles a esta sesión.</p>}
+                {operations.incidents.length > 0 && (
+                    <div className="border-t border-red-100 bg-red-50 p-5">
+                        <h4 className="font-semibold text-red-900">Movimientos sin asignar con certeza</h4>
+                        {operations.incidents.map((operation) => <p key={operation.id} className="mt-2 text-sm text-red-800">{operation.reference}: {operation.incident}</p>)}
+                    </div>
+                )}
+            </section>
+        </>
+    );
+}
+
+function PaymentAmount({ value, country, strong = false }: { value: number; country: string; strong?: boolean }) {
+    return <td className={`whitespace-nowrap px-4 py-3 text-right ${strong ? 'font-bold' : ''} ${value < 0 ? 'text-red-600' : 'text-slate-800'}`}>{formatCurrency(value, country)}</td>;
+}
+
+function paymentMethodLabel(method: string) {
+    return ({ cash: 'Efectivo', card: 'Tarjeta', check: 'Cheque', transfer: 'Transferencia', other: 'Otros' } as Record<string, string>)[method] ?? method;
+}
+
+function attributionLabel(attribution: PaymentOperation['attribution']) {
+    return attribution === 'direct' ? 'Directo' : attribution === 'reconstructed' ? 'Reconstruido' : '-';
+}
+
+function PaymentOperationRow({ operation, country }: { operation: PaymentOperation; country: string }) {
+    return (
+        <tr className="hover:bg-orange-50/30">
+            <td className="px-4 py-3 text-slate-600">{operation.occurred_at ?? '-'}</td>
+            <td className="px-4 py-3 font-semibold text-slate-800">{operation.label}</td>
+            <td className="px-4 py-3">{paymentMethodLabel(operation.method)}</td>
+            <td className="px-4 py-3 text-slate-600">{operation.reference ?? '-'}</td>
+            <td className="px-4 py-3 text-slate-600">{operation.party ?? '-'}</td>
+            <td className="px-4 py-3 text-slate-600">{attributionLabel(operation.attribution)}</td>
+            <td className={`whitespace-nowrap px-4 py-3 text-right font-semibold ${operation.signed_amount < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{formatCurrency(operation.signed_amount, country)}</td>
+        </tr>
+    );
+}
+
+function PaymentOperationCard({ operation, country }: { operation: PaymentOperation; country: string }) {
+    return (
+        <div className="rounded-xl border border-slate-200 p-3 text-sm">
+            <div className="flex items-start justify-between gap-3">
+                <div className="font-semibold text-slate-900">{operation.label}</div>
+                <div className={operation.signed_amount < 0 ? 'font-bold text-red-600' : 'font-bold text-emerald-700'}>{formatCurrency(operation.signed_amount, country)}</div>
+            </div>
+            <div className="mt-1 text-slate-600">{paymentMethodLabel(operation.method)} · {operation.occurred_at ?? '-'}</div>
+            <div className="mt-1 break-words text-slate-500">{operation.reference ?? '-'}{operation.party ? ` · ${operation.party}` : ''}</div>
+            <div className="mt-1 text-xs text-slate-500">{attributionLabel(operation.attribution)}</div>
         </div>
     );
 }
