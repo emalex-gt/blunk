@@ -124,6 +124,40 @@ class CreditReceiptCustomerIdentityTest extends TestCase
         $this->assertSame(1, CreditReceipt::query()->where('business_id', $business->id)->count());
     }
 
+    public function test_credit_reservation_reconciles_a_missing_counter_with_an_existing_receipt_number(): void
+    {
+        [$business, $user, $product] = $this->creditTenant();
+        $this->existingCreditReceipt($business, 1);
+
+        $this->storeCreditReceipt($user, $product, 'CF', 'Cliente CF correlativo');
+
+        $this->assertSame([1, 2], CreditReceipt::query()->orderBy('receipt_number')->pluck('receipt_number')->all());
+    }
+
+    public function test_credit_reservation_reconciles_a_stale_counter_and_preserves_a_counter_ahead_of_existing_receipts(): void
+    {
+        [$business, $user, $product] = $this->creditTenant();
+        $this->existingCreditReceipt($business, 4);
+        DB::table('business_counters')->insert([
+            'business_id' => $business->id,
+            'counter_key' => 'credit_receipts',
+            'current_number' => 2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->storeCreditReceipt($user, $product, 'CF', 'Cliente CF contador atrasado');
+        $this->assertSame(5, CreditReceipt::query()->max('receipt_number'));
+
+        DB::table('business_counters')
+            ->where('business_id', $business->id)
+            ->where('counter_key', 'credit_receipts')
+            ->update(['current_number' => 9]);
+
+        $this->storeCreditReceipt($user, $product, 'CF', 'Cliente CF contador adelantado');
+        $this->assertSame(10, CreditReceipt::query()->max('receipt_number'));
+    }
+
     public function test_credit_reservation_reuses_normalized_real_nit_without_partial_unique_index(): void
     {
         [$business, $user, $product] = $this->creditTenant();
@@ -346,6 +380,33 @@ SQL);
                 'unit_price' => 10,
             ]],
         ];
+    }
+
+    private function existingCreditReceipt(Business $business, int $receiptNumber): CreditReceipt
+    {
+        $branch = BranchInventory::defaultBranch($business->id);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente correlativo',
+            'doc_type' => 'NIT',
+            'doc_number' => '9000000'.$receiptNumber,
+            'country' => 'GT',
+        ]);
+
+        return CreditReceipt::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'customer_doc_type' => 'NIT',
+            'customer_doc_number' => $customer->doc_number,
+            'receipt_number' => $receiptNumber,
+            'status' => 'pending',
+            'subtotal' => 10,
+            'discount_amount' => 0,
+            'total' => 10,
+            'pending_total' => 10,
+        ]);
     }
 
     private function duplicateGenericCustomers(Business $business): array

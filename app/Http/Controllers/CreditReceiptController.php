@@ -188,7 +188,13 @@ class CreditReceiptController extends Controller
                 'customer_doc_type' => $docType,
                 'customer_doc_number' => $docNumber,
                 'customer_address' => $data['customer']['address'] ?? $customer->address,
-                'receipt_number' => BusinessCounter::next($businessId, 'credit_receipts'),
+                'receipt_number' => BusinessCounter::nextAtLeast(
+                    $businessId,
+                    'credit_receipts',
+                    fn (): int => (int) CreditReceipt::query()
+                        ->where('business_id', $businessId)
+                        ->max('receipt_number'),
+                ),
                 'status' => 'pending',
                 'subtotal' => round($subtotal, 2),
                 'discount_amount' => 0,

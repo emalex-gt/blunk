@@ -11,13 +11,22 @@ class BusinessCounter
 {
     public static function next(Business|int $business, string $key): int
     {
+        return self::nextAtLeast($business, $key, static fn (): int => 0);
+    }
+
+    /**
+     * Advances a counter after reconciling it with a module-owned persisted maximum.
+     * The callback is invoked only after the counter row has been locked.
+     */
+    public static function nextAtLeast(Business|int $business, string $key, callable $minimum): int
+    {
         $businessId = $business instanceof Business ? (int) $business->id : (int) $business;
 
         if ($businessId <= 0 || trim($key) === '') {
             throw new RuntimeException('Invalid business counter input.');
         }
 
-        return DB::transaction(function () use ($businessId, $key) {
+        return DB::transaction(function () use ($businessId, $key, $minimum) {
             $counter = DB::table('business_counters')
                 ->where('business_id', $businessId)
                 ->where('counter_key', $key)
@@ -48,7 +57,7 @@ class BusinessCounter
                 throw new RuntimeException('Could not create business counter.');
             }
 
-            $next = ((int) $counter->current_number) + 1;
+            $next = max((int) $counter->current_number, (int) $minimum()) + 1;
 
             DB::table('business_counters')
                 ->where('id', $counter->id)
