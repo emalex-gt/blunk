@@ -269,6 +269,59 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('500.00', number_format($lines->sum(fn (SaleItem $line) => (float) $line->discount_amount), 2, '.', ''));
     }
 
+    public function test_fixed_line_discount_is_persisted_separately_without_changing_the_unit_price(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'discounts'], role: 'owner');
+        $product = $this->product($business, name: 'Line discount', stock: 10, salePrice: 42.15);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $product,
+            quantity: 7,
+            total: 295.00,
+            items: [[
+                'product' => $product,
+                'quantity' => 7,
+                'line_discount_amount' => 0.05,
+                'line_discount_reason' => 'Ajuste de centavos',
+            ]],
+        ))->assertSessionHasNoErrors();
+
+        $line = SaleItem::query()->sole();
+        $this->assertSame('42.15', (string) $line->unit_price);
+        $this->assertSame('295.05', (string) $line->total_before_discount);
+        $this->assertSame('0.05', (string) $line->line_discount_amount);
+        $this->assertSame('0.00', (string) $line->general_discount_amount);
+        $this->assertSame('0.05', (string) $line->discount_amount);
+        $this->assertSame('295.00', (string) $line->total_after_discount);
+        $this->assertSame('295.00', (string) $line->sale->total);
+    }
+
+    public function test_general_discount_is_distributed_over_line_subtotals_after_fixed_line_discounts(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'discounts'], role: 'owner');
+        $productA = $this->product($business, name: 'Discount A', stock: 10, salePrice: 100);
+        $productB = $this->product($business, name: 'Discount B', stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $productA,
+            quantity: 1,
+            total: 180,
+            items: [
+                ['product' => $productA, 'quantity' => 1, 'line_discount_amount' => 10, 'line_discount_reason' => 'Promoción'],
+                ['product' => $productB, 'quantity' => 1],
+            ],
+            discount: ['type' => 'fixed', 'value' => 10, 'reason' => 'Ajuste general'],
+        ))->assertSessionHasNoErrors();
+
+        $lines = SaleItem::query()->orderBy('id')->get();
+        $this->assertSame('4.74', (string) $lines[0]->general_discount_amount);
+        $this->assertSame('5.26', (string) $lines[1]->general_discount_amount);
+        $this->assertSame('20.00', number_format($lines->sum(fn (SaleItem $line) => (float) $line->discount_amount), 2, '.', ''));
+        $this->assertSame('180.00', (string) $lines->first()->sale->total);
+    }
+
     public function test_administration_cannot_disable_both_sale_document_types(): void
     {
         [$business] = $this->tenant(modules: ['pos']);
@@ -6130,10 +6183,11 @@ class CriticalPosFelFlowTest extends TestCase
             'items' => array_map(function (array $item) use ($itemOverrides) {
                 /** @var Product $product */
                 $product = $item['product'];
+                unset($item['product']);
 
                 return [
                     'product_id' => $product->id,
-                    'quantity' => $item['quantity'],
+                    ...$item,
                     ...$itemOverrides,
                 ];
             }, $items),

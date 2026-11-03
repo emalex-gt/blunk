@@ -161,6 +161,8 @@ type CartItem = {
     credit_receipt_number?: string | null;
     locked_credit_line?: boolean;
     quotation_item_id?: number | null;
+    line_discount_amount?: string;
+    line_discount_reason?: string;
 };
 
 type ManualPriceDraft = {
@@ -255,6 +257,8 @@ type PosDraft = {
         credit_receipt_number?: string | null;
         locked_credit_line?: boolean;
         quotation_item_id?: number | null;
+        line_discount_amount?: string;
+        line_discount_reason?: string;
     }[];
     customer: CustomerForm;
     note: string;
@@ -495,6 +499,24 @@ function cartSubtotal(items: CartItem[]) {
         (sum, item) => sum + Number(item.unit_price || item.product.sale_price) * quantityNumber(item.quantity),
         0,
     ));
+}
+
+function lineSubtotal(item: CartItem) {
+    return roundMoney(Number(item.unit_price || item.product.sale_price) * quantityNumber(item.quantity));
+}
+
+function lineDiscountAmount(item: CartItem) {
+    const amount = Number(item.line_discount_amount || 0);
+
+    return Number.isFinite(amount) && amount > 0 ? roundMoney(amount) : 0;
+}
+
+function cartLineDiscountTotal(items: CartItem[]) {
+    return roundMoney(items.reduce((sum, item) => sum + lineDiscountAmount(item), 0));
+}
+
+function cartSubtotalAfterLineDiscount(items: CartItem[]) {
+    return roundMoney(items.reduce((sum, item) => sum + Math.max(0, lineSubtotal(item) - lineDiscountAmount(item)), 0));
 }
 
 function priceFromList(product: Product, priceTypeId: number | null, defaultPriceTypeId: number | null) {
@@ -894,6 +916,9 @@ export default function POS({
     const [draftListLoading, setDraftListLoading] = useState(false);
     const [draftSaving, setDraftSaving] = useState(false);
     const [showDiscountModal, setShowDiscountModal] = useState(false);
+    const [lineDiscountProductId, setLineDiscountProductId] = useState<number | null>(null);
+    const [lineDiscountForm, setLineDiscountForm] = useState({ amount: '', reason: '' });
+    const [lineDiscountFormError, setLineDiscountFormError] = useState('');
     const [duplicateProductChoices, setDuplicateProductChoices] = useState<Product[]>([]);
     const [duplicateProductSearchTerm, setDuplicateProductSearchTerm] = useState('');
     const [duplicateProductSelectionMode, setDuplicateProductSelectionMode] = useState<'exact-enter' | 'normal'>('normal');
@@ -940,6 +965,8 @@ export default function POS({
             price_source?: 'price_list' | 'last_customer_price' | 'manual';
             manual_price?: boolean;
             credit_line_id?: number | null;
+            line_discount_amount?: number;
+            line_discount_reason?: string | null;
         }[];
         discount: { type: 'fixed' | 'percent'; value: number; reason: string } | null;
     }>({
@@ -1449,17 +1476,19 @@ export default function POS({
     );
 
     const subtotalBeforeDiscount = useMemo(() => cartSubtotal(cart), [cart]);
+    const lineDiscountTotal = useMemo(() => cartLineDiscountTotal(cart), [cart]);
+    const subtotalAfterLineDiscount = useMemo(() => cartSubtotalAfterLineDiscount(cart), [cart]);
     const activeDiscountError = useMemo(
-        () => discountError(discount, subtotalBeforeDiscount),
-        [discount, subtotalBeforeDiscount],
+        () => discountError(discount, subtotalAfterLineDiscount),
+        [discount, subtotalAfterLineDiscount],
     );
     const discountAmount = useMemo(
-        () => activeDiscountError ? 0 : calculateDiscountAmount(discount, subtotalBeforeDiscount),
-        [activeDiscountError, discount, subtotalBeforeDiscount],
+        () => activeDiscountError ? 0 : calculateDiscountAmount(discount, subtotalAfterLineDiscount),
+        [activeDiscountError, discount, subtotalAfterLineDiscount],
     );
     const total = useMemo(
-        () => roundMoney(Math.max(0, subtotalBeforeDiscount - discountAmount)),
-        [discountAmount, subtotalBeforeDiscount],
+        () => roundMoney(Math.max(0, subtotalAfterLineDiscount - discountAmount)),
+        [discountAmount, subtotalAfterLineDiscount],
     );
     const assistantPricingAlerts = useMemo(() => {
         if (!canViewAssistantCosts || cart.length === 0) {
@@ -1469,12 +1498,13 @@ export default function POS({
         return cart.flatMap((item) => {
             const quantity = quantityNumber(item.quantity);
             const unitPrice = Number(item.unit_price);
-            const lineSubtotal = unitPrice * quantity;
-            const allocatedDiscount = subtotalBeforeDiscount > 0
-                ? discountAmount * (lineSubtotal / subtotalBeforeDiscount)
+            const rawLineSubtotal = unitPrice * quantity;
+            const discountedLineSubtotal = Math.max(0, rawLineSubtotal - lineDiscountAmount(item));
+            const allocatedDiscount = subtotalAfterLineDiscount > 0
+                ? discountAmount * (discountedLineSubtotal / subtotalAfterLineDiscount)
                 : 0;
             const effectiveUnitPrice = quantity > 0
-                ? (lineSubtotal - allocatedDiscount) / quantity
+                ? (discountedLineSubtotal - allocatedDiscount) / quantity
                 : unitPrice;
             const priceType = price_types.find((type) => type.id === item.price_type_id);
             const label = item.manual_price
@@ -1490,7 +1520,7 @@ export default function POS({
                 label,
             }]);
         });
-    }, [canViewAssistantCosts, cart, discountAmount, price_types, subtotalBeforeDiscount]);
+    }, [canViewAssistantCosts, cart, discountAmount, price_types, subtotalAfterLineDiscount]);
 
     const paidTotal = useMemo(
         () =>
@@ -1586,6 +1616,26 @@ export default function POS({
         return false;
     }
 
+    function validateLineDiscounts() {
+        const invalid = cart.find((item) => {
+            const amount = lineDiscountAmount(item);
+
+            return amount > 0 && (item.locked_credit_line || amount >= lineSubtotal(item) || item.line_discount_reason?.trim() === '');
+        });
+
+        if (!invalid) {
+            return true;
+        }
+
+        const error = invalid.locked_credit_line
+            ? 'No se puede aplicar descuento de línea a un producto reservado a crédito.'
+            : 'Revisa el monto y motivo del descuento de línea.';
+        showError(error);
+        toast.error(error);
+
+        return false;
+    }
+
     function focusSearch() {
         requestAnimationFrame(() => {
             searchInputRef.current?.focus();
@@ -1614,6 +1664,8 @@ export default function POS({
                 max_quantity: item.max_quantity ?? null,
                 credit_receipt_number: item.credit_receipt_number ?? null,
                 locked_credit_line: item.locked_credit_line ?? false,
+                line_discount_amount: item.line_discount_amount ?? '',
+                line_discount_reason: item.line_discount_reason ?? '',
             })),
             customer: data.customer,
             note: data.note,
@@ -1679,6 +1731,8 @@ export default function POS({
                 credit_receipt_number: item.credit_receipt_number ?? null,
                 locked_credit_line: item.locked_credit_line ?? false,
                 quotation_item_id: item.quotation_item_id ?? null,
+                line_discount_amount: item.line_discount_amount ?? '',
+                line_discount_reason: item.line_discount_reason ?? '',
             });
 
             return items;
@@ -1868,6 +1922,50 @@ export default function POS({
         setShowDiscountModal(false);
         setDiscountFormError('');
         showMessage('Descuento aplicado.');
+    }
+
+    function openLineDiscountModal(productId: number) {
+        const item = cart.find((cartItem) => cartItem.product.id === productId);
+
+        if (!item || item.locked_credit_line) {
+            return;
+        }
+
+        setLineDiscountProductId(productId);
+        setLineDiscountForm({
+            amount: item.line_discount_amount ?? '',
+            reason: item.line_discount_reason ?? '',
+        });
+        setLineDiscountFormError('');
+    }
+
+    function applyLineDiscount() {
+        const item = cart.find((cartItem) => cartItem.product.id === lineDiscountProductId);
+        const amount = roundMoney(Number(lineDiscountForm.amount));
+
+        if (!item || !Number.isFinite(amount) || amount <= 0 || amount >= lineSubtotal(item) || lineDiscountForm.reason.trim() === '') {
+            setLineDiscountFormError('Ingresa un monto mayor que cero, menor que el subtotal y un motivo.');
+            return;
+        }
+
+        renewOperationKeyAfterFailedMutation();
+        setCart((items) => items.map((cartItem) => cartItem.product.id === item.product.id
+            ? {
+                ...cartItem,
+                line_discount_amount: amount.toFixed(2),
+                line_discount_reason: lineDiscountForm.reason.trim(),
+            }
+            : cartItem));
+        setLineDiscountProductId(null);
+        setLineDiscountForm({ amount: '', reason: '' });
+        setLineDiscountFormError('');
+    }
+
+    function clearLineDiscount(productId: number) {
+        renewOperationKeyAfterFailedMutation();
+        setCart((items) => items.map((item) => item.product.id === productId
+            ? { ...item, line_discount_amount: '', line_discount_reason: '' }
+            : item));
     }
 
     function clearAfterSuccessfulExactEnterAdd() {
@@ -2622,6 +2720,10 @@ export default function POS({
     }
 
     function saveQuotation() {
+        if (cart.some((item) => lineDiscountAmount(item) > 0)) {
+            setQuotationError('Las cotizaciones aún no admiten descuentos de línea. Elimínalos antes de guardar.');
+            return;
+        }
         if (cart.length === 0 || !quotationValidUntil || quotationSaving || !validateCartQuantities() || !validateCartPrices() || !validateDiscount()) return;
         setQuotationError('');
         setQuotationSaving(true);
@@ -2669,9 +2771,13 @@ export default function POS({
             return;
         }
 
+        if (!validateLineDiscounts()) {
+            return;
+        }
+
         if (effectiveCheckoutType === 'credit') {
-            if (discount) {
-                const message = 'El crédito no admite descuento general. Ajusta los precios antes de registrar el crédito.';
+            if (discount || lineDiscountTotal > 0) {
+                const message = 'El crédito no admite descuentos. Ajusta los precios antes de registrar el crédito.';
                 showError(message);
                 toast.error(message);
                 return;
@@ -2831,6 +2937,8 @@ export default function POS({
                 manual_price: item.manual_price,
                 quotation_item_id: item.quotation_item_id ?? null,
                 credit_line_id: item.credit_line_id ?? null,
+                line_discount_amount: lineDiscountAmount(item),
+                line_discount_reason: item.line_discount_reason?.trim() || null,
             })),
             discount: discount ? {
                 type: discount.type,
@@ -4182,11 +4290,31 @@ export default function POS({
                                                         Restablecer
                                                     </button>
                                                 )}
+                                                {canApplyDiscount && !item.locked_credit_line && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openLineDiscountModal(item.product.id)}
+                                                        className="self-start text-[11px] font-semibold text-orange-600 hover:text-orange-700"
+                                                    >
+                                                        {lineDiscountAmount(item) > 0 ? 'Editar descuento de línea' : 'Descuento de línea'}
+                                                    </button>
+                                                )}
+                                                {lineDiscountAmount(item) > 0 && (
+                                                    <div className="flex flex-wrap gap-x-2 text-[11px] font-semibold text-orange-700">
+                                                        <span>Descuento: -{formatCurrency(lineDiscountAmount(item), country)}</span>
+                                                        {!item.locked_credit_line && canApplyDiscount && (
+                                                            <button type="button" onClick={() => clearLineDiscount(item.product.id)} className="text-slate-500 hover:text-slate-700">Quitar</button>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
 
                                             <div className="flex w-full items-center justify-start gap-2 sm:w-auto sm:shrink-0 sm:justify-end sm:pt-1">
-                                                <div className="whitespace-nowrap text-right text-sm font-semibold text-slate-900">
-                                                    {formatCurrency(Number(item.unit_price) * quantityNumber(item.quantity), country)}
+                                                <div className="text-right text-sm font-semibold text-slate-900">
+                                                    {lineDiscountAmount(item) > 0 && (
+                                                        <div className="text-[11px] font-medium text-slate-500">{formatCurrency(lineSubtotal(item), country)} - {formatCurrency(lineDiscountAmount(item), country)}</div>
+                                                    )}
+                                                    <div className="whitespace-nowrap">{formatCurrency(lineSubtotal(item) - lineDiscountAmount(item), country)}</div>
                                                 </div>
 
                                                 <button
@@ -4765,10 +4893,11 @@ export default function POS({
                             </section>
 
                             <section className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-4">
-                                {discount && (
+                                {(discount || lineDiscountTotal > 0) && (
                                     <>
                                         <Summary label="Total antes" value={formatCurrency(subtotalBeforeDiscount, country)} />
-                                        <Summary label="Descuento" value={`-${formatCurrency(discountAmount, country)}`} />
+                                        {lineDiscountTotal > 0 && <Summary label="Descuento líneas" value={`-${formatCurrency(lineDiscountTotal, country)}`} />}
+                                        {discount && <Summary label="Descuento general" value={`-${formatCurrency(discountAmount, country)}`} />}
                                     </>
                                 )}
                                 <Summary label="Total venta" value={formatCurrency(total, country)} />
@@ -4986,6 +5115,30 @@ export default function POS({
                                     </button>
                                 );
                             })}
+                        </div>
+                    </section>
+                </div>
+            )}
+
+            {lineDiscountProductId !== null && (
+                <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+                    <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+                        <h2 className="text-lg font-semibold text-slate-950">Descuento de línea</h2>
+                        <p className="mt-1 text-sm text-slate-600">Se descuenta del subtotal de este producto sin cambiar su precio unitario.</p>
+                        <div className="mt-5 space-y-4">
+                            <label className="block">
+                                <span className="text-sm font-semibold text-slate-700">Monto fijo</span>
+                                <input type="number" min="0.01" step="0.01" value={lineDiscountForm.amount} onChange={(event) => setLineDiscountForm((current) => ({ ...current, amount: limitDecimalPlaces(event.target.value, 2) }))} className="mt-1 h-11 w-full rounded-xl border-slate-300 text-right text-sm font-semibold text-slate-900 focus:border-orange-400 focus:ring-4 focus:ring-orange-100" />
+                            </label>
+                            <label className="block">
+                                <span className="text-sm font-semibold text-slate-700">Motivo</span>
+                                <textarea value={lineDiscountForm.reason} onChange={(event) => setLineDiscountForm((current) => ({ ...current, reason: event.target.value }))} rows={3} className="mt-1 w-full rounded-xl border-slate-300 text-sm text-slate-900 focus:border-orange-400 focus:ring-4 focus:ring-orange-100" />
+                            </label>
+                            {lineDiscountFormError && <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{lineDiscountFormError}</div>}
+                        </div>
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button type="button" onClick={() => setLineDiscountProductId(null)} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Cancelar</button>
+                            <button type="button" onClick={applyLineDiscount} className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700">Aplicar descuento</button>
                         </div>
                     </section>
                 </div>

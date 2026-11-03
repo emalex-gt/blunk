@@ -23,6 +23,9 @@ class SaleItem extends Model
         'profit_amount',
         'total',
         'discount_amount',
+        'line_discount_amount',
+        'line_discount_reason',
+        'general_discount_amount',
         'total_before_discount',
         'total_after_discount',
     ];
@@ -37,6 +40,8 @@ class SaleItem extends Model
         'profit_amount' => 'decimal:2',
         'total' => 'decimal:2',
         'discount_amount' => 'decimal:2',
+        'line_discount_amount' => 'decimal:2',
+        'general_discount_amount' => 'decimal:2',
         'total_before_discount' => 'decimal:2',
         'total_after_discount' => 'decimal:2',
     ];

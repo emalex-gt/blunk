@@ -365,6 +365,8 @@ class SaleController extends Controller
             'items.*.manual_price' => ['nullable', 'boolean'],
             'items.*.quotation_item_id' => ['nullable', 'integer'],
             'items.*.credit_line_id' => ['nullable', 'integer', 'exists:credit_receipt_lines,id'],
+            'items.*.line_discount_amount' => ['nullable', 'numeric', 'decimal:0,2', 'gt:0'],
+            'items.*.line_discount_reason' => ['nullable', 'string', 'max:1000'],
             'discount' => ['nullable', 'array'],
             'discount.type' => ['required_with:discount', 'in:fixed,percent'],
             'discount.value' => ['required_with:discount', 'numeric', 'decimal:0,2', 'gt:0'],
@@ -454,6 +456,31 @@ class SaleController extends Controller
             throw ValidationException::withMessages([
                 'discount' => 'No se puede aplicar descuento general al facturar productos a crédito.',
             ]);
+        }
+
+        $hasLineDiscount = collect($data['items'])->contains(fn (array $item): bool => filled($item['line_discount_amount'] ?? null));
+
+        if (collect($data['items'])->contains(fn (array $item): bool => filled($item['credit_line_id'] ?? null)
+            && filled($item['line_discount_amount'] ?? null))) {
+            throw ValidationException::withMessages([
+                'items' => 'No se puede aplicar descuento de línea al facturar productos reservados a crédito.',
+            ]);
+        }
+
+        if ($hasLineDiscount) {
+            if (! module_enabled('discounts')) {
+                abort(403, 'Este modulo no esta habilitado para esta empresa.');
+            }
+
+            if (! Permissions::canApplyDiscounts($request->user())) {
+                abort(403, 'No tienes permiso para aplicar descuentos.');
+            }
+
+            if (filled($data['quotation_id'] ?? null)) {
+                throw ValidationException::withMessages([
+                    'items' => 'Las cotizaciones aún no admiten descuentos de línea.',
+                ]);
+            }
         }
 
         if (collect($data['items'])->contains(fn (array $item) => filled($item['credit_line_id'] ?? null))
@@ -600,6 +627,18 @@ class SaleController extends Controller
 
                 $unitPrice = $resolvedPrice['unit_price'];
                 $lineTotal = round($unitPrice * $quantity, 2);
+                $lineDiscount = $this->resolveLineDiscount($item, $lineTotal);
+
+                if ($resolvedPrice['manual_price'] && $lineDiscount['amount'] > 0) {
+                    $effectiveUnitPrice = round(($lineTotal - $lineDiscount['amount']) / $quantity, 2);
+                    ManualPricePolicy::validateUnitPrice(
+                        TenantSetting::query()->where('business_id', $businessId)->first(),
+                        $product,
+                        $effectiveUnitPrice,
+                        (float) $resolvedPrice['original_price'],
+                    );
+                }
+
                 $subtotalBeforeDiscount += $lineTotal;
                 $saleLines[] = [
                     'product' => $product,
@@ -610,14 +649,17 @@ class SaleController extends Controller
                     'price_source' => $resolvedPrice['price_source'],
                     'manual_price' => $resolvedPrice['manual_price'],
                     'line_total' => $lineTotal,
+                    'line_discount' => $lineDiscount,
+                    'line_total_after_line_discount' => round($lineTotal - $lineDiscount['amount'], 2),
                     'credit_line' => $creditLine,
                 ];
             }
 
-            $discount = $this->trustedQuotationDiscount($quotation, $data, round($subtotalBeforeDiscount, 2))
-                ?? $this->resolveSaleDiscount($request, $data['discount'] ?? null, round($subtotalBeforeDiscount, 2));
-            $lineDiscounts = $this->distributeDiscount($saleLines, $discount['amount'], round($subtotalBeforeDiscount, 2));
-            $total = round($subtotalBeforeDiscount - $discount['amount'], 2);
+            $subtotalAfterLineDiscount = round(collect($saleLines)->sum('line_total_after_line_discount'), 2);
+            $discount = $this->trustedQuotationDiscount($quotation, $data, $subtotalAfterLineDiscount)
+                ?? $this->resolveSaleDiscount($request, $data['discount'] ?? null, $subtotalAfterLineDiscount);
+            $generalLineDiscounts = $this->distributeDiscount($saleLines, $discount['amount'], $subtotalAfterLineDiscount);
+            $total = round($subtotalAfterLineDiscount - $discount['amount'], 2);
             $isCfInvoice = $this->isFinalConsumerSaleData($data['customer'] ?? null, $customer, $customerSnapshot);
             $shouldBlockCfLimit = $business->country === 'GT'
                 && ($data['document_type'] ?? null) === 'invoice'
@@ -672,7 +714,8 @@ class SaleController extends Controller
             foreach ($saleLines as $index => $line) {
                 /** @var Product $product */
                 $product = $line['product'];
-                $lineDiscount = $lineDiscounts[$index] ?? 0.0;
+                $generalLineDiscount = $generalLineDiscounts[$index] ?? 0.0;
+                $lineDiscount = round($line['line_discount']['amount'] + $generalLineDiscount, 2);
                 $lineTotalAfterDiscount = round($line['line_total'] - $lineDiscount, 2);
                 $unitCost = round((float) $product->cost_price, 4);
                 $totalCost = round($unitCost * (int) $line['quantity'], 2);
@@ -692,6 +735,9 @@ class SaleController extends Controller
                     'profit_amount' => round($lineTotalAfterDiscount - $totalCost, 2),
                     'total' => $lineTotalAfterDiscount,
                     'discount_amount' => $lineDiscount,
+                    'line_discount_amount' => $line['line_discount']['amount'],
+                    'line_discount_reason' => $line['line_discount']['reason'],
+                    'general_discount_amount' => $generalLineDiscount,
                     'total_before_discount' => $line['line_total'],
                     'total_after_discount' => $lineTotalAfterDiscount,
                 ];
@@ -1740,6 +1786,8 @@ class SaleController extends Controller
                     'manual_price' => (bool) ($item['manual_price'] ?? false),
                     'quotation_item_id' => $item['quotation_item_id'] ?? null,
                     'credit_line_id' => $item['credit_line_id'] ?? null,
+                    'line_discount_amount' => isset($item['line_discount_amount']) ? round((float) $item['line_discount_amount'], 2) : null,
+                    'line_discount_reason' => $item['line_discount_reason'] ?? null,
                 ])
                 ->sortBy(fn (array $item) => implode('|', [
                     $item['product_id'],
@@ -1748,6 +1796,8 @@ class SaleController extends Controller
                     $item['price_type_id'] ?? '',
                     $item['unit_price'] ?? '',
                     $item['quantity'],
+                    $item['line_discount_amount'] ?? '',
+                    $item['line_discount_reason'] ?? '',
                 ]))
                 ->values()
                 ->all(),
@@ -2044,6 +2094,31 @@ class SaleController extends Controller
         ];
     }
 
+    /** @return array{amount: float, reason: ?string} */
+    private function resolveLineDiscount(array $item, float $lineSubtotal): array
+    {
+        $amount = round((float) ($item['line_discount_amount'] ?? 0), 2);
+        $reason = trim((string) ($item['line_discount_reason'] ?? ''));
+
+        if ($amount <= 0 && $reason === '') {
+            return ['amount' => 0.0, 'reason' => null];
+        }
+
+        if ($amount <= 0 || $amount >= $lineSubtotal) {
+            throw ValidationException::withMessages([
+                'items' => 'El descuento de línea debe ser mayor que cero y menor que el subtotal de la línea.',
+            ]);
+        }
+
+        if ($reason === '') {
+            throw ValidationException::withMessages([
+                'items' => 'El motivo del descuento de línea es obligatorio.',
+            ]);
+        }
+
+        return ['amount' => $amount, 'reason' => $reason];
+    }
+
     private function distributeDiscount(array $saleLines, float $discountAmount, float $subtotal): array
     {
         if ($discountAmount <= 0 || $subtotal <= 0 || $saleLines === []) {
@@ -2055,7 +2130,7 @@ class SaleController extends Controller
         $lastIndex = count($saleLines) - 1;
 
         foreach ($saleLines as $index => $line) {
-            $lineSubtotal = round((float) $line['line_total'], 2);
+            $lineSubtotal = round((float) $line['line_total_after_line_discount'], 2);
 
             if ($index === $lastIndex) {
                 $lineDiscount = round($discountAmount - $allocated, 2);
