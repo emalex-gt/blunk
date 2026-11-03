@@ -172,6 +172,12 @@
                     <span>Subtotal</span>
                     <strong>{{ formatMoney($sale->subtotal_before_discount ?? $sale->total, $country) }}</strong>
                 </div>
+                @if ($lineDiscountTotal > 0)
+                    <div class="payment-row small muted">
+                        <span>Descuentos de línea</span>
+                        <strong>-{{ formatMoney($lineDiscountTotal, $country) }}</strong>
+                    </div>
+                @endif
                 @if ($generalDiscountTotal > 0)
                     <div class="payment-row small muted">
                         <span>Descuento general</span>

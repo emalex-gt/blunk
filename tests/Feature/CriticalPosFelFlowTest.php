@@ -375,7 +375,20 @@ class CriticalPosFelFlowTest extends TestCase
         $this->actingAs($user)
             ->get(route('sales.receipt', $lines->first()->sale))
             ->assertOk()
+            ->assertViewIs('sales.receipt-ticket')
             ->assertSee('Descuento de línea (incluido)')
+            ->assertSee('Descuentos de línea')
+            ->assertSee('Descuento general')
+            ->assertSee('180.00')
+            ->assertDontSee('170.00');
+
+        TenantSetting::query()->where('business_id', $business->id)->update(['receipt_format' => 'document']);
+
+        $this->actingAs($user)
+            ->get(route('sales.receipt', $lines->first()->sale))
+            ->assertOk()
+            ->assertViewIs('sales.receipt')
+            ->assertSee('Descuentos de línea')
             ->assertSee('Descuento general')
             ->assertSee('180.00')
             ->assertDontSee('170.00');
@@ -3430,7 +3443,10 @@ class CriticalPosFelFlowTest extends TestCase
             'customer_department' => 'Guatemala',
             'customer_address_reference' => 'Referencia FEL',
             'customer_phone' => '5555-0102',
-            'total' => 100,
+            'subtotal_before_discount' => 200,
+            'discount_amount' => 20,
+            'discount_reason' => 'Descuentos de prueba',
+            'total' => 180,
             'payment_method' => 'cash',
             'document_type' => 'invoice',
             'status' => 'completed',
@@ -3440,6 +3456,23 @@ class CriticalPosFelFlowTest extends TestCase
             'fel_number' => '376392958',
             'fel_certified_at' => now(),
             'created_by' => $user->id,
+        ]);
+
+        $product = $this->product($business, name: 'Descuento FEL', stock: 10, salePrice: 100);
+        SaleItem::create([
+            'business_id' => $business->id,
+            'sale_id' => $sale->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 2,
+            'unit_price' => 100,
+            'unit_cost' => 50,
+            'total_before_discount' => 200,
+            'line_discount_amount' => 10,
+            'general_discount_amount' => 10,
+            'discount_amount' => 20,
+            'total_after_discount' => 180,
+            'total' => 180,
         ]);
 
         $digifact = Mockery::mock(DigifactInvoiceService::class);
@@ -3458,6 +3491,10 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertDontSee('Departamento:')
             ->assertSee('Le atendió')
             ->assertSee('Imprimir Datos de Entrega')
+            ->assertSee('Descuentos de línea')
+            ->assertSee('Descuento general')
+            ->assertSee('180.00')
+            ->assertDontSee('160.00')
             ->assertSee('851D92FD-166F-4CFE-925C-ADC0ABB4260D')
             ->assertSee('QRService/api/QR', false);
 
@@ -3472,7 +3509,11 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertDontSee('Municipio:')
             ->assertDontSee('Departamento:')
             ->assertSee('Le atendió')
-            ->assertSee('Imprimir Datos de Entrega');
+            ->assertSee('Imprimir Datos de Entrega')
+            ->assertSee('Descuentos de línea')
+            ->assertSee('Descuento general')
+            ->assertSee('180.00')
+            ->assertDontSee('160.00');
     }
 
     public function test_pos_prewarm_refreshes_missing_fel_token_silently(): void

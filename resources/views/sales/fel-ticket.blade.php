@@ -136,6 +136,9 @@
     <div class="separator"></div>
     @if ($lineDiscountTotal > 0 || $generalDiscountTotal > 0)
         <div class="row"><span>Subtotal</span><strong>{{ formatMoney($subtotal, 'GT') }}</strong></div>
+        @if ($lineDiscountTotal > 0)
+            <div class="row"><span>Descuentos de línea</span><strong>-{{ formatMoney($lineDiscountTotal, 'GT') }}</strong></div>
+        @endif
         @if ($generalDiscountTotal > 0)
             <div class="row"><span>Descuento general</span><strong>-{{ formatMoney($generalDiscountTotal, 'GT') }}</strong></div>
         @endif
