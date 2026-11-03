@@ -152,6 +152,8 @@ class CreditReceiptCustomerIdentityTest extends TestCase
         $this->actingAs($user)
             ->get(route('credits.receipts.print', $receipt))
             ->assertOk()
+            ->assertSee('Descuento')
+            ->assertSee('0.00')
             ->assertSee('Dirección:</strong> 5a Avenida 10-25 Zona 1, Guatemala, Guatemala', false)
             ->assertDontSee('Guatemala, Guatemala, Guatemala, Guatemala', false)
             ->assertSee('Referencia de dirección:</strong> Frente al parque', false)
@@ -162,6 +164,8 @@ class CreditReceiptCustomerIdentityTest extends TestCase
         $this->actingAs($user)
             ->get(route('credits.receipts.print', $receipt))
             ->assertOk()
+            ->assertSee('Descuento')
+            ->assertSee('0.00')
             ->assertSee('Dirección:</strong> 5a Avenida 10-25 Zona 1, Guatemala, Guatemala', false)
             ->assertSee('Referencia de dirección:</strong> Frente al parque', false)
             ->assertSee('Teléfono:</strong> 5555-0101', false);

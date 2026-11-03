@@ -36,10 +36,6 @@
         'check' => 'Cheque',
         'mercadopago' => 'MercadoPago',
     ];
-    $lineDiscountTotal = $items->sum(fn ($item) => (float) ($item->line_discount_amount ?? 0));
-    $generalDiscountTotal = $items->sum(fn ($item) => (float) ($item->general_discount_amount ?? 0));
-    $hasDiscountBreakdown = $lineDiscountTotal > 0 || $generalDiscountTotal > 0;
-    $generalDiscountTotal = $hasDiscountBreakdown ? $generalDiscountTotal : (float) $discount;
     $paymentDetails = function ($payment) {
         $details = $payment->details ?? [];
 
@@ -109,9 +105,10 @@
     <table>
         <thead>
             <tr>
-                <th style="width: 12%;">Cant</th>
+                <th style="width: 10%;">Cant</th>
                 <th>Descripción</th>
                 <th class="money">Precio</th>
+                <th class="money">Desc.</th>
                 <th class="money">Total</th>
             </tr>
         </thead>
@@ -121,28 +118,14 @@
                 <td>{{ (int) $item->quantity }}</td>
                 <td class="break">{{ $item->product_name }}</td>
                 <td class="money">{{ number_format((float) $item->unit_price, 2) }}</td>
+                <td class="money">{{ number_format((float) ($item->discount_amount ?? 0), 2) }}</td>
                 <td class="money">{{ number_format((float) $item->total, 2) }}</td>
             </tr>
-            @if ((float) ($item->line_discount_amount ?? 0) > 0)
-                <tr class="muted">
-                    <td colspan="3">Descuento de línea (incluido)</td>
-                    <td class="money">-{{ formatMoney($item->line_discount_amount, 'GT') }}</td>
-                </tr>
-            @endif
         @endforeach
         </tbody>
     </table>
 
     <div class="separator"></div>
-    @if ($lineDiscountTotal > 0 || $generalDiscountTotal > 0)
-        <div class="row"><span>Subtotal</span><strong>{{ formatMoney($subtotal, 'GT') }}</strong></div>
-        @if ($lineDiscountTotal > 0)
-            <div class="row"><span>Descuentos de línea</span><strong>-{{ formatMoney($lineDiscountTotal, 'GT') }}</strong></div>
-        @endif
-        @if ($generalDiscountTotal > 0)
-            <div class="row"><span>Descuento general</span><strong>-{{ formatMoney($generalDiscountTotal, 'GT') }}</strong></div>
-        @endif
-    @endif
     <div class="row"><span>IVA</span><strong>{{ formatMoney($iva, 'GT') }}</strong></div>
     <div class="row total"><span>Total</span><span>{{ formatMoney($total, 'GT') }}</span></div>
 

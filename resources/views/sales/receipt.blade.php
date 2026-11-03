@@ -23,10 +23,6 @@
         'other' => 'Otro',
     ];
     $country = $business?->country ?: 'GT';
-    $lineDiscountTotal = $items->sum(fn ($item) => (float) ($item->line_discount_amount ?? 0));
-    $generalDiscountTotal = $items->sum(fn ($item) => (float) ($item->general_discount_amount ?? 0));
-    $hasDiscountBreakdown = $lineDiscountTotal > 0 || $generalDiscountTotal > 0;
-    $generalDiscountTotal = $hasDiscountBreakdown ? $generalDiscountTotal : (float) ($sale->discount_amount ?? 0);
     $paymentDetailRows = function ($payment) {
         $details = $payment->details ?? [];
 
@@ -117,29 +113,25 @@
     <table>
         <thead>
         <tr>
-            <th>Producto</th>
             <th class="right">Cantidad</th>
+            <th>Descripción</th>
             <th class="right">Precio unitario</th>
-            <th class="right">Subtotal</th>
+            <th class="right">Descuento</th>
+            <th class="right">Total</th>
         </tr>
         </thead>
         <tbody>
         @forelse ($items as $item)
             <tr>
-                <td>{{ $item->product_name }}</td>
                 <td class="right">{{ number_format((float) $item->quantity, 2, '.', ',') }}</td>
+                <td>{{ $item->product_name }}</td>
                 <td class="right">{{ formatMoney($item->unit_price, $country) }}</td>
+                <td class="right">{{ formatMoney($item->discount_amount ?? 0, $country) }}</td>
                 <td class="right"><strong>{{ formatMoney($item->total, $country) }}</strong></td>
             </tr>
-            @if ((float) ($item->line_discount_amount ?? 0) > 0)
-                <tr class="small muted">
-                    <td colspan="3">Descuento de línea (incluido)</td>
-                    <td class="right">-{{ formatMoney($item->line_discount_amount, $country) }}</td>
-                </tr>
-            @endif
         @empty
             <tr>
-                <td colspan="4">Sin artículos</td>
+                <td colspan="5">Sin artículos</td>
             </tr>
         @endforelse
         </tbody>
@@ -167,27 +159,6 @@
         </div>
 
         <div class="total-box">
-            @if ($lineDiscountTotal > 0 || $generalDiscountTotal > 0)
-                <div class="payment-row small muted">
-                    <span>Subtotal</span>
-                    <strong>{{ formatMoney($sale->subtotal_before_discount ?? $sale->total, $country) }}</strong>
-                </div>
-                @if ($lineDiscountTotal > 0)
-                    <div class="payment-row small muted">
-                        <span>Descuentos de línea</span>
-                        <strong>-{{ formatMoney($lineDiscountTotal, $country) }}</strong>
-                    </div>
-                @endif
-                @if ($generalDiscountTotal > 0)
-                    <div class="payment-row small muted">
-                        <span>Descuento general</span>
-                        <strong>-{{ formatMoney($generalDiscountTotal, $country) }}</strong>
-                    </div>
-                @endif
-                @if ($generalDiscountTotal > 0 && $sale->discount_reason)
-                    <div class="small muted" style="margin-top: 6px;">Motivo descuento: {{ $sale->discount_reason }}</div>
-                @endif
-            @endif
             <div class="small muted" style="margin-top: 8px;">Total</div>
             <div class="total">{{ formatMoney($sale->total, $country) }}</div>
         </div>

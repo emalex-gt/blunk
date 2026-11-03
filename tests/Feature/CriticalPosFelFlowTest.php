@@ -299,7 +299,8 @@ class CriticalPosFelFlowTest extends TestCase
         $this->actingAs($user)
             ->get(route('sales.receipt', $line->sale))
             ->assertOk()
-            ->assertSee('Descuento de línea (incluido)')
+            ->assertSee('Descuento:')
+            ->assertSee('0.05')
             ->assertSee('295.00')
             ->assertDontSee('294.95');
     }
@@ -376,9 +377,9 @@ class CriticalPosFelFlowTest extends TestCase
             ->get(route('sales.receipt', $lines->first()->sale))
             ->assertOk()
             ->assertViewIs('sales.receipt-ticket')
-            ->assertSee('Descuento de línea (incluido)')
-            ->assertSee('Descuentos de línea')
-            ->assertSee('Descuento general')
+            ->assertSee('Descuento:')
+            ->assertSee('14.74')
+            ->assertSee('5.26')
             ->assertSee('180.00')
             ->assertDontSee('170.00');
 
@@ -387,9 +388,10 @@ class CriticalPosFelFlowTest extends TestCase
         $this->actingAs($user)
             ->get(route('sales.receipt', $lines->first()->sale))
             ->assertOk()
-            ->assertViewIs('sales.receipt')
-            ->assertSee('Descuentos de línea')
-            ->assertSee('Descuento general')
+            ->assertViewIs('sales.receipt-document')
+            ->assertSee('Descuento')
+            ->assertSee('14.74')
+            ->assertSee('5.26')
             ->assertSee('180.00')
             ->assertDontSee('170.00');
     }
@@ -416,9 +418,8 @@ class CriticalPosFelFlowTest extends TestCase
         $this->actingAs($user)
             ->get(route('sales.receipt', $sale))
             ->assertOk()
-            ->assertSee('Descuento general')
+            ->assertSee('Descuento')
             ->assertSee('10.00')
-            ->assertDontSee('Descuento de línea (incluido)')
             ->assertSee('90.00');
     }
 
@@ -3491,8 +3492,8 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertDontSee('Departamento:')
             ->assertSee('Le atendió')
             ->assertSee('Imprimir Datos de Entrega')
-            ->assertSee('Descuentos de línea')
-            ->assertSee('Descuento general')
+            ->assertSee('Descuento')
+            ->assertSee('20.00')
             ->assertSee('180.00')
             ->assertDontSee('160.00')
             ->assertSee('851D92FD-166F-4CFE-925C-ADC0ABB4260D')
@@ -3510,8 +3511,8 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertDontSee('Departamento:')
             ->assertSee('Le atendió')
             ->assertSee('Imprimir Datos de Entrega')
-            ->assertSee('Descuentos de línea')
-            ->assertSee('Descuento general')
+            ->assertSee('Desc.')
+            ->assertSee('20.00')
             ->assertSee('180.00')
             ->assertDontSee('160.00');
     }

@@ -51,20 +51,20 @@
     <table>
         <thead>
             <tr>
-                <th>Producto</th>
-                <th>SKU</th>
                 <th class="right">Cantidad</th>
+                <th>Descripción</th>
                 <th class="right">Precio unitario</th>
+                <th class="right">Descuento</th>
                 <th class="right">Total</th>
             </tr>
         </thead>
         <tbody>
             @foreach($receipt->lines as $line)
                 <tr>
-                    <td>{{ $line->product_name }}</td>
-                    <td>{{ $line->sku ?: '-' }}</td>
                     <td class="right">{{ $line->quantity }}</td>
+                    <td>{{ $line->product_name }}</td>
                     <td class="right">{{ formatMoney($line->unit_price, $receipt->business->country) }}</td>
+                    <td class="right">{{ formatMoney(0, $receipt->business->country) }}</td>
                     <td class="right">{{ formatMoney($line->line_total, $receipt->business->country) }}</td>
                 </tr>
             @endforeach
