@@ -568,6 +568,14 @@ function manualPercentageSteps() {
 }
 
 function minimumManualPrice(item: CartItem, policy: ManualPricePolicyConfig) {
+    if (policy.mode === 'price_discount') {
+        const basePrice = Number(item.original_price);
+
+        return Number.isFinite(basePrice) && basePrice > 0
+            ? roundMoney(basePrice * (1 - (Math.max(0, policy.maxDiscountPercent) / 100)))
+            : 0;
+    }
+
     const cost = productCost(item.product);
 
     if (cost === null) {
@@ -580,8 +588,12 @@ function minimumManualPrice(item: CartItem, policy: ManualPricePolicyConfig) {
 }
 
 function priceFromManualPercentage(item: CartItem, percent: number, policy: ManualPricePolicyConfig) {
-    if (!Number.isFinite(percent) || percent < 0 || percent > 25) {
+    if (!Number.isFinite(percent) || percent < 0 || percent >= 100) {
         return { price: null, error: 'Ingresa un porcentaje válido.' };
+    }
+
+    if (policy.mode === 'price_discount' && percent > policy.maxDiscountPercent) {
+        return { price: null, error: `El descuento máximo permitido es ${policy.maxDiscountPercent}%.` };
     }
 
     const basePrice = Number(item.original_price);
@@ -596,13 +608,9 @@ function priceFromManualPercentage(item: CartItem, percent: number, policy: Manu
         return { price: roundMoney(basePrice * (1 - (percent / 100))), error: null };
     }
 
-    if (minimum <= 0) {
-        return { price: null, error: 'Este producto no tiene costo configurado.' };
-    }
-
     const price = roundMoney(basePrice * (1 - (percent / 100)));
 
-    return price < minimum
+    return minimum > 0 && price < minimum
         ? { price: null, error: 'Este precio no está permitido.' }
         : { price, error: null };
 }
@@ -620,12 +628,14 @@ function manualPriceError(item: CartItem, policy: ManualPricePolicyConfig) {
 
     const cost = productCost(item.product);
 
-    if (cost === null) {
-        return null;
-    }
+    if (policy.mode !== 'price_discount') {
+        if (cost === null) {
+            return null;
+        }
 
-    if (cost <= 0) {
-        return 'Este producto no tiene costo configurado.';
+        if (cost <= 0) {
+            return 'Este producto no tiene costo configurado.';
+        }
     }
 
     const minimum = minimumManualPrice(item, policy);
@@ -4384,6 +4394,14 @@ export default function POS({
                 const activeManualPriceError = manualPriceError(draftItem, manualPricePolicy);
                 const percentageSteps = manualPercentageSteps();
                 const showPercentageControls = canUseManualPrice;
+                const percentageMaximum = manualPricePolicy.mode === 'price_discount'
+                    ? Math.min(99.99, manualPricePolicy.maxDiscountPercent)
+                    : 99.99;
+                const percentageHint = manualPricePolicy.mode === 'cost_markup'
+                    ? 'Descuentos rápidos hasta 25 %. Otros sujetos al precio mínimo permitido'
+                    : manualPricePolicy.mode === 'price_discount'
+                        ? `Descuento máximo permitido: ${manualPricePolicy.maxDiscountPercent} %`
+                        : 'El descuento se validará según el precio permitido';
 
                 return (
                     <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/50 p-4 backdrop-blur-sm sm:items-center">
@@ -4409,7 +4427,7 @@ export default function POS({
                                             % descuento
                                         </div>
                                         <p className="mb-2 text-xs text-slate-500">
-                                            Máximo: 25 % de descuento
+                                            {percentageHint}
                                         </p>
                                         <div className="flex flex-wrap gap-2">
                                             {percentageSteps.map((percent) => (
@@ -4426,7 +4444,7 @@ export default function POS({
                                             <input
                                                 type="number"
                                                 min="0"
-                                                max="25"
+                                                max={percentageMaximum}
                                                 step="0.01"
                                                 placeholder="Otro %"
                                                 disabled={processing}

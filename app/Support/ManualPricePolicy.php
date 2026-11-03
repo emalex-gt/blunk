@@ -37,17 +37,19 @@ class ManualPricePolicy
 
     public static function maxDiscountPercent(?TenantSetting $settings): float
     {
-        return self::MAX_PERCENT_DISCOUNT;
+        return min(100.0, max(0.0, round((float) ($settings?->manual_price_max_discount_percent ?? 0), 2)));
     }
 
     public static function percentageSteps(?TenantSetting $settings): array
     {
-        return [2.0, 5.0, 10.0, 15.0, 20.0, 25.0];
+        return [2.0, 5.0, 10.0, 15.0, 20.0, self::MAX_PERCENT_DISCOUNT];
     }
 
     public static function calculateFromPercentage(?TenantSetting $settings, Product $product, float $percentage, ?float $mainPrice = null): float
     {
-        $percentage = max(0.0, $percentage);
+        if ($percentage < 0 || $percentage >= 100) {
+            throw ValidationException::withMessages(['items' => self::INVALID_PRICE_MESSAGE]);
+        }
 
         $basePrice = $mainPrice ?? (float) $product->sale_price;
 
@@ -55,8 +57,8 @@ class ManualPricePolicy
             throw ValidationException::withMessages(['items' => self::MISSING_PRICE_MESSAGE]);
         }
 
-        if ($percentage > self::MAX_PERCENT_DISCOUNT) {
-            throw ValidationException::withMessages(['items' => 'El descuento máximo permitido es '.self::formatPercent(self::MAX_PERCENT_DISCOUNT).'%.']);
+        if (self::mode($settings) === self::MODE_PRICE_DISCOUNT && $percentage > self::maxDiscountPercent($settings)) {
+            throw ValidationException::withMessages(['items' => 'El descuento máximo permitido es '.self::formatPercent(self::maxDiscountPercent($settings)).'%.']);
         }
 
         $price = round($basePrice * (1 - ($percentage / 100)), 2);
@@ -67,7 +69,10 @@ class ManualPricePolicy
 
     public static function minimumAllowedPrice(?TenantSetting $settings, Product $product, ?float $mainPrice = null): float
     {
-        return self::minimumCostMarkup($settings, $product);
+        return match (self::mode($settings)) {
+            self::MODE_PRICE_DISCOUNT => self::minimumPriceDiscount($settings, $product, $mainPrice),
+            default => self::minimumCostMarkup($settings, $product),
+        };
     }
 
     public static function validateUnitPrice(?TenantSetting $settings, Product $product, float $unitPrice, ?float $mainPrice = null): void
@@ -94,6 +99,17 @@ class ManualPricePolicy
         }
 
         return round($cost * (1 + (self::minMarkupPercent($settings) / 100)), 2);
+    }
+
+    private static function minimumPriceDiscount(?TenantSetting $settings, Product $product, ?float $mainPrice): float
+    {
+        $basePrice = $mainPrice ?? (float) $product->sale_price;
+
+        if ($basePrice <= 0) {
+            throw ValidationException::withMessages(['items' => self::MISSING_PRICE_MESSAGE]);
+        }
+
+        return round($basePrice * (1 - (self::maxDiscountPercent($settings) / 100)), 2);
     }
 
     private static function formatPercent(float $value): string
