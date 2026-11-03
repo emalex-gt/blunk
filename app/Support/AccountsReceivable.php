@@ -151,7 +151,7 @@ class AccountsReceivable
                     true,
                     $branchId,
                 )
-                : null;
+                : CashRegister::currentOpenSession((int) $customer->business_id, true, $branchId);
 
             $payment = CustomerCreditPayment::query()->create([
                 'business_id' => $customer->business_id,
@@ -191,7 +191,7 @@ class AccountsReceivable
 
             self::allocatePayment($payment, $amount);
 
-            if ($cashSession) {
+            if ($cashSession && $method === 'cash') {
                 CashRegister::recordMovement(
                     $cashSession,
                     'credit_payment_cash',

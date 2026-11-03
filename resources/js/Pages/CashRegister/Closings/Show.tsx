@@ -12,6 +12,28 @@ type Movement = {
     created_by: string | null;
 };
 
+type PaymentOperation = {
+    id: string;
+    kind: string;
+    label: string;
+    method: string;
+    amount: number;
+    signed_amount: number;
+    occurred_at: string | null;
+    reference: string | null;
+    party: string | null;
+    attribution: 'direct' | 'reconstructed' | 'ambiguous' | null;
+    incident?: string;
+};
+
+type PaymentOperations = {
+    by_method: Array<{ method: string; sales: number; credit_payments: number; purchases: number; refunds_cancellations: number; net: number }>;
+    details: PaymentOperation[];
+    detail_total: number;
+    has_more_details: boolean;
+    incidents: PaymentOperation[];
+};
+
 type Session = {
     id: number;
     status: string;
@@ -33,6 +55,7 @@ type Session = {
         expense_cancellations: number;
         cash_purchases: number;
     };
+    payment_operations: PaymentOperations;
     movements: Movement[];
 };
 
@@ -100,6 +123,35 @@ export default function Show({ session }: { session: Session }) {
 
                     <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
                         <div className="border-b border-slate-100 p-5">
+                            <h3 className="text-lg font-semibold text-slate-950">Resumen por medio de pago</h3>
+                            <p className="mt-1 text-sm text-slate-500">Informativo: no modifica el arqueo de efectivo.</p>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="min-w-[760px] w-full text-sm">
+                                <thead><tr className="bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                    <th className="px-4 py-3">Medio</th><th className="px-4 py-3 text-right">Ventas cobradas</th><th className="px-4 py-3 text-right">Abonos</th><th className="px-4 py-3 text-right">Compras pagadas</th><th className="px-4 py-3 text-right">Devoluciones / anulaciones</th><th className="px-4 py-3 text-right">Neto</th>
+                                </tr></thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {session.payment_operations.by_method.map((row) => <tr key={row.method}>
+                                        <td className="px-4 py-3 font-semibold text-slate-800">{paymentMethodLabel(row.method)}</td>
+                                        <Amount value={row.sales} country={country} /><Amount value={row.credit_payments} country={country} /><Amount value={row.purchases} country={country} /><Amount value={row.refunds_cancellations} country={country} /><Amount value={row.net} country={country} strong />
+                                    </tr>)}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
+                        <div className="border-b border-slate-100 p-5"><h3 className="text-lg font-semibold text-slate-950">Detalle de cobros y pagos</h3><p className="mt-1 text-sm text-slate-500">Vínculo directo o reconstrucción segura por horario de la sesión.</p></div>
+                        <div className="space-y-2 p-4 md:hidden">{session.payment_operations.details.map((operation) => <OperationCard key={operation.id} operation={operation} country={country} />)}</div>
+                        <div className="hidden overflow-x-auto md:block"><table className="min-w-full text-sm"><thead><tr className="bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500"><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Operación</th><th className="px-4 py-3">Medio</th><th className="px-4 py-3">Referencia</th><th className="px-4 py-3">Cliente / proveedor</th><th className="px-4 py-3">Origen</th><th className="px-4 py-3 text-right">Monto</th></tr></thead><tbody className="divide-y divide-slate-100">{session.payment_operations.details.map((operation) => <OperationRow key={operation.id} operation={operation} country={country} />)}</tbody></table></div>
+                        {session.payment_operations.has_more_details && <p className="border-t border-amber-100 bg-amber-50 px-5 py-3 text-sm text-amber-900">Se muestran los primeros 200 de {session.payment_operations.detail_total} movimientos.</p>}
+                        {session.payment_operations.details.length === 0 && <p className="p-5 text-sm text-slate-500">No hay cobros, pagos, devoluciones ni anulaciones atribuibles a esta sesión.</p>}
+                        {session.payment_operations.incidents.length > 0 && <div className="border-t border-red-100 bg-red-50 p-5"><h4 className="font-semibold text-red-900">Movimientos sin asignar con certeza</h4>{session.payment_operations.incidents.map((operation) => <p key={operation.id} className="mt-2 text-sm text-red-800">{operation.reference}: {operation.incident}</p>)}</div>}
+                    </section>
+
+                    <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
+                        <div className="border-b border-slate-100 p-5">
                             <h3 className="text-lg font-semibold text-slate-950">Movimientos</h3>
                         </div>
                         <div className="overflow-x-auto">
@@ -161,3 +213,9 @@ function Note({ title, value }: { title: string; value: string }) {
         </div>
     );
 }
+
+function Amount({ value, country, strong = false }: { value: number; country: string; strong?: boolean }) { return <td className={`whitespace-nowrap px-4 py-3 text-right ${strong ? 'font-bold' : ''} ${value < 0 ? 'text-red-600' : 'text-slate-800'}`}>{formatCurrency(value, country)}</td>; }
+function paymentMethodLabel(method: string) { return ({ cash: 'Efectivo', card: 'Tarjeta', check: 'Cheque', transfer: 'Transferencia', other: 'Otros' } as Record<string, string>)[method] ?? method; }
+function attributionLabel(attribution: PaymentOperation['attribution']) { return attribution === 'direct' ? 'Directo' : attribution === 'reconstructed' ? 'Reconstruido' : '-'; }
+function OperationRow({ operation, country }: { operation: PaymentOperation; country: string }) { return <tr className="hover:bg-orange-50/30"><td className="px-4 py-3 text-slate-600">{operation.occurred_at ?? '-'}</td><td className="px-4 py-3 font-semibold text-slate-800">{operation.label}</td><td className="px-4 py-3">{paymentMethodLabel(operation.method)}</td><td className="px-4 py-3 text-slate-600">{operation.reference ?? '-'}</td><td className="px-4 py-3 text-slate-600">{operation.party ?? '-'}</td><td className="px-4 py-3 text-slate-600">{attributionLabel(operation.attribution)}</td><td className={`whitespace-nowrap px-4 py-3 text-right font-semibold ${operation.signed_amount < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{formatCurrency(operation.signed_amount, country)}</td></tr>; }
+function OperationCard({ operation, country }: { operation: PaymentOperation; country: string }) { return <div className="rounded-xl border border-slate-200 p-3 text-sm"><div className="flex items-start justify-between gap-3"><div className="font-semibold text-slate-900">{operation.label}</div><div className={operation.signed_amount < 0 ? 'font-bold text-red-600' : 'font-bold text-emerald-700'}>{formatCurrency(operation.signed_amount, country)}</div></div><div className="mt-1 text-slate-600">{paymentMethodLabel(operation.method)} · {operation.occurred_at ?? '-'}</div><div className="mt-1 break-words text-slate-500">{operation.reference ?? '-'}{operation.party ? ` · ${operation.party}` : ''}</div><div className="mt-1 text-xs text-slate-500">{attributionLabel(operation.attribution)}</div></div>; }

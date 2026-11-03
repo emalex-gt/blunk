@@ -575,6 +575,7 @@ class FiscalDocumentIntentService
                 'amount' => round((float) $payment['amount'], 2),
                 'reference' => $payment['reference'] ?? null,
                 'details' => $payment['details'] ?? null,
+                'cash_register_session_id' => $intent->cash_register_session_id,
             ]);
         }
 

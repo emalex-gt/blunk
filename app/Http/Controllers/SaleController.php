@@ -746,6 +746,7 @@ class SaleController extends Controller
                     'amount' => round((float) $payment['amount'], 2),
                     'reference' => $this->paymentReference($payment['method'], $details, $payment['reference'] ?? null),
                     'details' => $details ?: null,
+                    'cash_register_session_id' => $openSession?->id,
                 ]);
             }
 

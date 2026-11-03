@@ -11,6 +11,7 @@ use App\Services\BranchAccessService;
 use App\Models\TenantSetting;
 use App\Support\BranchInventory;
 use App\Support\CashRegister;
+use App\Support\CashRegisterClosingOperations;
 use App\Support\IdempotencyService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\RedirectResponse;
@@ -337,6 +338,7 @@ class CashRegisterController extends Controller
             'session' => $session,
             'summary' => CashRegister::summary($session),
             'movements' => CashRegister::movements($session),
+            'paymentOperations' => CashRegisterClosingOperations::forSession($session),
             'timezone' => $timezone,
         ]);
     }
@@ -345,6 +347,7 @@ class CashRegisterController extends Controller
     {
         $session->loadMissing(['openedBy:id,name', 'closedBy:id,name']);
         $summary = CashRegister::summary($session);
+        $paymentOperations = CashRegisterClosingOperations::forSession($session);
 
         $payload = [
             'id' => $session->id,
@@ -360,6 +363,7 @@ class CashRegisterController extends Controller
             'notes' => $session->notes,
             'closing_notes' => $session->closing_notes,
             'summary' => $summary,
+            'payment_operations' => $paymentOperations,
         ];
 
         if ($includeMovements) {

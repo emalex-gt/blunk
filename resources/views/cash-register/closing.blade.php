@@ -117,8 +117,43 @@
         @endif
 
         <div class="line"></div>
+        <h2 style="font-size: {{ $receiptFormat === 'ticket' ? '13px' : '16px' }};">Resumen por medio de pago</h2>
+        @if ($receiptFormat === 'ticket')
+            @foreach ($paymentOperations['by_method'] as $method)
+                <div style="padding:5px 0; border-bottom:1px solid #e2e8f0;">
+                    <strong>{{ match($method['method']) { 'cash' => 'EFECTIVO', 'card' => 'TARJETA', 'check' => 'CHEQUE', 'transfer' => 'TRANSFERENCIA', default => 'OTROS' } }}</strong>
+                    <div>Ventas <span class="right" style="float:right">{{ formatMoney($method['sales'], $business?->country) }}</span></div><div>Abonos <span class="right" style="float:right">{{ formatMoney($method['credit_payments'], $business?->country) }}</span></div><div>Compras <span class="right negative" style="float:right">{{ formatMoney($method['purchases'], $business?->country) }}</span></div><div>Dev./anul. <span class="right negative" style="float:right">{{ formatMoney($method['refunds_cancellations'], $business?->country) }}</span></div><div><strong>Neto</strong><strong class="right {{ $method['net'] < 0 ? 'negative' : 'positive' }}" style="float:right">{{ formatMoney($method['net'], $business?->country) }}</strong></div><div style="clear:both"></div>
+                </div>
+            @endforeach
+        @else
+            <table>
+            <thead>
+                <tr><th>Medio</th><th class="right">Ventas</th><th class="right">Abonos</th><th class="right">Compras</th><th class="right">Dev./anul.</th><th class="right">Neto</th></tr>
+            </thead>
+            <tbody>
+                @foreach ($paymentOperations['by_method'] as $method)
+                    <tr>
+                        <td>{{ match($method['method']) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'check' => 'Cheque', 'transfer' => 'Transferencia', default => 'Otros' } }}</td>
+                        <td class="right">{{ formatMoney($method['sales'], $business?->country) }}</td>
+                        <td class="right">{{ formatMoney($method['credit_payments'], $business?->country) }}</td>
+                        <td class="right negative">{{ formatMoney($method['purchases'], $business?->country) }}</td>
+                        <td class="right negative">{{ formatMoney($method['refunds_cancellations'], $business?->country) }}</td>
+                        <td class="right {{ $method['net'] < 0 ? 'negative' : 'positive' }}">{{ formatMoney($method['net'], $business?->country) }}</td>
+                    </tr>
+                @endforeach
+            </tbody>
+            </table>
+        @endif
+        <p class="muted">Resumen informativo; el arqueo de efectivo se calcula exclusivamente con movimientos de caja.</p>
+
+        <div class="line"></div>
         <h2 style="font-size: {{ $receiptFormat === 'ticket' ? '13px' : '16px' }};">Resumen de movimientos</h2>
-        <table>
+        @if ($receiptFormat === 'ticket')
+            @foreach ($movements as $movement)
+                <div style="padding:5px 0; border-bottom:1px solid #e2e8f0;"><div style="display:flex; justify-content:space-between; gap:8px;"><strong>{{ match($movement->type) { 'opening' => 'Apertura', 'sale_cash' => 'Venta', 'sale_refund_cash' => 'Reembolso de venta', 'sale_cash_cancel' => 'Anulación', 'expense' => 'Gasto', 'expense_cancel' => 'Anulación de gasto', 'purchase_cash' => 'Compra', default => 'Movimiento' } }}</strong><strong class="{{ (float) $movement->amount < 0 ? 'negative' : 'positive' }}">{{ formatMoney($movement->amount, $business?->country) }}</strong></div>@if ($movement->description)<div class="muted" style="overflow-wrap:anywhere;">{{ $movement->description }}</div>@endif</div>
+            @endforeach
+        @else
+            <table>
             <thead>
                 <tr>
                     <th>Tipo</th>
@@ -146,7 +181,25 @@
                     </tr>
                 @endforeach
             </tbody>
-        </table>
+            </table>
+        @endif
+
+        <div class="line"></div>
+        <h2 style="font-size: {{ $receiptFormat === 'ticket' ? '13px' : '16px' }};">Detalle de cobros y pagos</h2>
+        @forelse ($paymentOperations['details'] as $operation)
+            <div style="padding: 5px 0; border-bottom: 1px solid #e2e8f0;">
+                <div style="display:flex; justify-content:space-between; gap:8px;"><strong>{{ $operation['label'] }}</strong><strong class="{{ $operation['signed_amount'] < 0 ? 'negative' : 'positive' }}">{{ formatMoney($operation['signed_amount'], $business?->country) }}</strong></div>
+                <div class="muted">{{ $operation['occurred_at']?->copy()->timezone($timezone)->format('d/m/Y H:i') }} · {{ match($operation['method']) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'check' => 'Cheque', 'transfer', 'bank_transfer' => 'Transferencia', default => 'Otro' } }} · {{ $operation['attribution'] === 'direct' ? 'Directo' : 'Reconstruido' }}</div>
+                @if ($operation['reference'] || $operation['party'])<div style="overflow-wrap:anywhere;">{{ $operation['reference'] }}{{ $operation['party'] ? ' · '.$operation['party'] : '' }}</div>@endif
+            </div>
+        @empty
+            <p class="muted">No hay operaciones atribuibles a esta sesión.</p>
+        @endforelse
+        @if ($paymentOperations['has_more_details'])<p class="muted">Se muestran los primeros 200 de {{ $paymentOperations['detail_total'] }} movimientos.</p>@endif
+        @if (count($paymentOperations['incidents']))
+            <div class="line"></div><p><strong>Movimientos sin asignar con certeza</strong></p>
+            @foreach ($paymentOperations['incidents'] as $operation)<p class="muted" style="overflow-wrap:anywhere;">{{ $operation['reference'] }}: {{ $operation['incident'] }}</p>@endforeach
+        @endif
     </main>
 
     <script>

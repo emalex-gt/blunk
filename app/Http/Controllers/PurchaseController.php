@@ -233,7 +233,7 @@ class PurchaseController extends Controller
                     true,
                     $branch->id,
                 )
-                : null;
+                : CashRegister::currentOpenSession($businessId, true, $branch->id);
             $supplier = $this->resolveSupplier(
                 $businessId,
                 $data['supplier_id'] ?? null,
@@ -316,7 +316,7 @@ class PurchaseController extends Controller
             $purchaseTotal = round($total, 5);
             $purchase->update(['total' => $purchaseTotal]);
 
-            if ($cashSession && $purchaseTotal > 0) {
+            if ($paidFromCash && $cashSession && $purchaseTotal > 0) {
                 $cashPurchaseAmount = round($purchaseTotal, 2);
                 CashRegister::recordMovement(
                     $cashSession,
