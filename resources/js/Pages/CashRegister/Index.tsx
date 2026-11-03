@@ -247,8 +247,6 @@ export default function Index({
         setRefreshingSession(true);
         router.reload({
             only: ['openSession'],
-            preserveState: true,
-            preserveScroll: true,
             onFinish: () => setRefreshingSession(false),
         });
     }
