@@ -11,6 +11,11 @@ use Illuminate\Validation\ValidationException;
  */
 class ProductQuantityPolicy
 {
+    public static function canonical(mixed $quantity): string
+    {
+        return self::absolute(new Product(['allow_decimal_quantity' => true]), $quantity);
+    }
+
     public static function positive(Product $product, mixed $quantity): string
     {
         return self::validate($product, $quantity, false);

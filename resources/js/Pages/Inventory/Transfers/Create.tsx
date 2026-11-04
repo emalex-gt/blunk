@@ -348,14 +348,15 @@ export default function Create({
     }
 
     function updateLine(index: number, field: keyof Line, value: string | number) {
-        if (field === 'quantity' && /[.,]/.test(String(value))) {
-            setMessage('La cantidad debe ser un número entero.');
-
+        const product = productsById.get(Number(items[index]?.product_id));
+        const normalized = String(value).replace(',', '.');
+        if (field === 'quantity' && (!product || !(product.allow_decimal_quantity ? /^\d*(?:\.\d{0,4})?$/ : /^\d*$/.test(normalized)))) {
+            setMessage(product?.allow_decimal_quantity ? 'La cantidad admite hasta cuatro decimales.' : 'La cantidad debe ser un número entero.');
             return;
         }
 
         setItems((current) => current.map((item, itemIndex) => (
-            itemIndex === index ? { ...item, [field]: String(value).replace(/\D/g, '') } : item
+            itemIndex === index ? { ...item, [field]: field === 'quantity' ? normalized : String(value) } : item
         )));
     }
 

@@ -93,20 +93,18 @@ function isMeaningfulPurchaseDraft(draft: PurchaseDraft) {
     );
 }
 
-function quantityError(value: string): string | null {
-    if (!/^[1-9]\d*$/.test(value.trim())) {
-        return 'La cantidad debe ser un número entero.';
+function quantityError(value: string, product: Product): string | null {
+    const normalized = value.trim().replace(',', '.');
+    if (!(product.allow_decimal_quantity ? /^\d+(?:\.\d{1,4})?$/ : /^[1-9]\d*$/).test(normalized) || Number(normalized) <= 0) {
+        return product.allow_decimal_quantity ? 'La cantidad debe ser mayor a 0 y tener hasta cuatro decimales.' : 'La cantidad debe ser un número entero.';
     }
 
     return null;
 }
 
-function sanitizeQuantityInput(value: string): string | null {
-    if (/[.,]/.test(value)) {
-        return null;
-    }
-
-    return value.replace(/\D/g, '');
+function sanitizeQuantityInput(value: string, product: Product): string | null {
+    const normalized = value.replace(',', '.');
+    return (product.allow_decimal_quantity ? /^\d*(?:\.\d{0,4})?$/ : /^\d*$/).test(normalized) ? normalized : null;
 }
 
 function loadProductViewMode(key: string): ProductViewMode {
@@ -325,7 +323,8 @@ export default function Create({
 
     function updateItem(productId: number, field: 'quantity' | 'unit_cost', value: string) {
         if (field === 'quantity') {
-            const sanitized = sanitizeQuantityInput(value);
+            const product = cart.find((item) => item.product.id === productId)?.product;
+            const sanitized = product ? sanitizeQuantityInput(value, product) : null;
 
             if (sanitized === null) {
                 setMessage('La cantidad debe ser un número entero.');
@@ -559,7 +558,7 @@ export default function Create({
             return false;
         }
 
-        const invalidQuantity = cart.find((item) => quantityError(item.quantity));
+        const invalidQuantity = cart.find((item) => quantityError(item.quantity, item.product));
 
         if (invalidQuantity) {
             setMessage('La cantidad debe ser un número entero.');
@@ -1266,7 +1265,7 @@ export default function Create({
                             <div className="space-y-3">
                                 {cart.map((item) => {
                                     const lineTotal = Number(item.quantity || 0) * Number(item.unit_cost || 0);
-                                    const quantityMessage = quantityError(item.quantity);
+                                    const quantityMessage = quantityError(item.quantity, item.product);
 
                                     return (
                                         <div

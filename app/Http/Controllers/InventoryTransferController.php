@@ -78,7 +78,7 @@ class InventoryTransferController extends Controller
             $transfer->status ?? 'completed',
             $line->product?->name ?? '-',
             $line->product?->code ?? $line->product?->barcode ?? '-',
-            (int) $line->quantity,
+            (string) $line->quantity,
             $transfer->createdBy?->name ?? '-',
         ]))->values()->all();
 
@@ -336,7 +336,7 @@ class InventoryTransferController extends Controller
             'items' => collect($data['items'] ?? [])
                 ->map(fn (array $item) => [
                     'product_id' => (int) ($item['product_id'] ?? 0),
-                    'quantity' => (int) ($item['quantity'] ?? 0),
+                    'quantity' => ProductQuantityPolicy::canonical($item['quantity'] ?? 0),
                 ])
                 ->sortBy(fn (array $item) => implode('|', [$item['product_id'], $item['quantity']]))
                 ->values()

@@ -450,7 +450,7 @@ class PurchaseController extends Controller
             'items' => collect($data['items'] ?? [])
                 ->map(fn (array $item) => [
                     'product_id' => (int) ($item['product_id'] ?? 0),
-                    'quantity' => (int) ($item['quantity'] ?? 0),
+                    'quantity' => ProductQuantityPolicy::canonical($item['quantity'] ?? 0),
                     'unit_cost' => round((float) ($item['unit_cost'] ?? 0), 5),
                 ])
                 ->sortBy(fn (array $item) => implode('|', [$item['product_id'], $item['quantity'], $item['unit_cost']]))
