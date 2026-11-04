@@ -20,7 +20,7 @@ class PurchaseItem extends Model
     ];
 
     protected $casts = [
-        'quantity' => 'decimal:2',
+        'quantity' => 'decimal:4',
         'unit_cost' => 'decimal:5',
         'previous_cost' => 'decimal:5',
         'new_average_cost' => 'decimal:5',

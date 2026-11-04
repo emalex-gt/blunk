@@ -16,6 +16,7 @@ use App\Support\Exports\TableExporter;
 use App\Support\IdempotencyService;
 use App\Support\OperationDrafts;
 use App\Support\Permissions;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\ProductSupplierCostHistory;
 use App\Support\Reports\ReportDateRange;
 use Illuminate\Http\RedirectResponse;
@@ -129,7 +130,7 @@ class PurchaseController extends Controller
         }
 
         $products = $this->purchaseProductQuery($businessId, $activeBranch->id, $search, $ids, $limit)
-            ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'cost_price', 'sale_price', 'stock', 'min_stock', 'location', 'image_url']);
+            ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'cost_price', 'sale_price', 'stock', 'min_stock', 'allow_decimal_quantity', 'location', 'image_url']);
 
         return response()->json([
             'products' => $this->purchaseProductPayload($products, $businessId, $activeBranch->id),
@@ -195,12 +196,10 @@ class PurchaseController extends Controller
             'note' => ['nullable', 'string', 'max:2000'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'exists:products,id'],
-            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
             'items.*.unit_cost' => ['required', 'numeric', 'decimal:0,5', 'min:0'],
         ], [
-            'items.*.quantity.required' => 'La cantidad debe ser un número entero.',
-            'items.*.quantity.integer' => 'La cantidad debe ser un número entero.',
-            'items.*.quantity.min' => 'La cantidad debe ser un número entero.',
+            'items.*.quantity.required' => 'La cantidad es obligatoria.',
         ]);
 
         $businessId = currentBusinessId();
@@ -272,7 +271,7 @@ class PurchaseController extends Controller
                 }
                 BranchInventory::ensureProductInBranch($product, $branch->id);
 
-                $incomingQty = (int) $item['quantity'];
+                $incomingQty = (float) ProductQuantityPolicy::positive($product, $item['quantity']);
                 $incomingCost = (float) $item['unit_cost'];
                 $currentStock = (float) $product->stock;
                 $currentCost = (float) $product->cost_price;

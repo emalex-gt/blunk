@@ -13,6 +13,7 @@ use App\Support\DocumentCompanyHeader;
 use App\Support\Exports\TableExporter;
 use App\Support\IdempotencyService;
 use App\Support\Inventory\StockPolicy;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\Reports\ReportDateRange;
@@ -130,7 +131,7 @@ class InventoryTransferController extends Controller
         }
 
         $products = $this->transferProductQuery($businessId, $sourceBranch->id, $search, $ids, $limit)
-            ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'stock', 'location']);
+            ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'stock', 'allow_decimal_quantity', 'location']);
 
         return response()->json([
             'products' => $this->transferProductPayload($products, $businessId, $sourceBranch->id),
@@ -149,7 +150,7 @@ class InventoryTransferController extends Controller
             'notes' => ['nullable', 'string', 'max:2000'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
-            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
         ]);
 
         $businessId = currentBusinessId();
@@ -197,7 +198,7 @@ class InventoryTransferController extends Controller
                     ]);
                 }
 
-                $quantity = (int) $line['quantity'];
+                $quantity = (float) ProductQuantityPolicy::positive($product, $line['quantity']);
                 StockPolicy::assertCanDecreaseStock($businessId, $from, $product, null, $quantity, 'transfer');
 
                 [$previousFrom, $newFrom] = BranchInventory::decrease($product, $from->id, $quantity);

@@ -7,6 +7,7 @@ use App\Models\StockMovement;
 use App\Support\BranchInventory;
 use App\Support\IdempotencyService;
 use App\Support\Inventory\StockPolicy;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\Permissions;
 use App\Support\StockAvailability;
 use Illuminate\Http\JsonResponse;
@@ -27,7 +28,7 @@ class StockController extends Controller
             ->where('business_id', $businessId)
             ->where('is_active', true)
             ->orderBy('name')
-            ->get(['id', 'name', 'code', 'barcode', 'stock', 'min_stock', 'location', 'image_url']);
+            ->get(['id', 'name', 'code', 'barcode', 'stock', 'min_stock', 'allow_decimal_quantity', 'location', 'image_url']);
         BranchInventory::applyBranchStockAndPrices($products, $businessId, $activeBranch->id);
         $this->applyReservedStock($products, $activeBranch->id);
 
@@ -90,7 +91,7 @@ class StockController extends Controller
 
         $products = $query
             ->limit($limit)
-            ->get(['id', 'business_id', 'category_id', 'brand_id', 'location_id', 'name', 'code', 'barcode', 'sale_price', 'stock', 'min_stock', 'location', 'image_url']);
+            ->get(['id', 'business_id', 'category_id', 'brand_id', 'location_id', 'name', 'code', 'barcode', 'sale_price', 'stock', 'min_stock', 'allow_decimal_quantity', 'location', 'image_url']);
 
         return response()->json([
             'products' => $this->stockProductPayload($products, $businessId, $branch->id),
@@ -103,13 +104,12 @@ class StockController extends Controller
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'product_id' => ['required', 'integer'],
             'type' => ['required', 'in:increase,decrease'],
-            'quantity' => ['required', 'integer', 'min:1'],
+            'quantity' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
             'note' => ['required', 'string', 'min:5', 'max:1000'],
         ], [
             'note.required' => 'La nota es obligatoria.',
             'note.min' => 'La nota debe tener al menos 5 caracteres.',
-            'quantity.integer' => 'La cantidad debe ser un número entero.',
-            'quantity.min' => 'La cantidad debe ser mayor a 0.',
+            'quantity.gt' => 'La cantidad debe ser mayor a 0.',
         ]);
 
         $businessId = currentBusinessId();
@@ -132,7 +132,7 @@ class StockController extends Controller
 
             BranchInventory::ensureProductInBranch($product, $branch->id);
 
-            $quantity = (float) $data['quantity'];
+            $quantity = (float) ProductQuantityPolicy::positive($product, $data['quantity']);
             $breakdown = StockAvailability::getBreakdownForProducts($businessId, $branch->id, [$product->id])->get($product->id, [
                 'physical_stock' => 0.0,
                 'reserved_total' => 0.0,
@@ -198,7 +198,7 @@ class StockController extends Controller
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'product_id' => ['required', 'exists:products,id'],
             'type' => ['required', 'in:add,remove'],
-            'quantity' => ['required', 'integer', 'min:1'],
+            'quantity' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
             'note' => ['nullable', 'string', 'max:1000'],
         ]);
 
@@ -219,9 +219,8 @@ class StockController extends Controller
                 ->lockForUpdate()
                 ->findOrFail($data['product_id']);
 
-            $quantity = $data['type'] === 'remove'
-                ? -1 * $data['quantity']
-                : $data['quantity'];
+            $quantity = (float) ProductQuantityPolicy::positive($product, $data['quantity']);
+            $quantity = $data['type'] === 'remove' ? -1 * $quantity : $quantity;
 
             if ($quantity < 0) {
                 StockPolicy::assertCanDecreaseStock($businessId, $branch, $product, null, abs($quantity), 'stock');
@@ -259,15 +258,9 @@ class StockController extends Controller
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'product_id' => ['required', 'exists:products,id'],
             'type' => ['required', 'in:entry,exit,adjustment'],
-            'quantity' => ['required', 'integer', 'min:0'],
+            'quantity' => ['required', 'numeric', 'decimal:0,4', 'min:0'],
             'note' => ['nullable', 'string', 'max:1000'],
         ]);
-
-        if (in_array($data['type'], ['entry', 'exit'], true) && $data['quantity'] < 1) {
-            throw ValidationException::withMessages([
-                'quantity' => 'La cantidad debe ser mayor a 0.',
-            ]);
-        }
 
         if (in_array($data['type'], ['exit', 'adjustment'], true) && blank($data['note'] ?? null)) {
             throw ValidationException::withMessages([
@@ -293,11 +286,15 @@ class StockController extends Controller
                 ->lockForUpdate()
                 ->findOrFail($data['product_id']);
 
+            $quantity = (float) ($data['type'] === 'adjustment'
+                ? ProductQuantityPolicy::absolute($product, $data['quantity'])
+                : ProductQuantityPolicy::positive($product, $data['quantity']));
+
             $previousStock = (float) (BranchInventory::stockMap($businessId, [$product->id], $branch->id)[$product->id] ?? 0);
             $newStock = match ($data['type']) {
-                'entry' => $previousStock + $data['quantity'],
-                'exit' => $previousStock - $data['quantity'],
-                'adjustment' => $data['quantity'],
+                'entry' => $previousStock + $quantity,
+                'exit' => $previousStock - $quantity,
+                'adjustment' => $quantity,
             };
 
             $movementQuantity = $newStock - $previousStock;

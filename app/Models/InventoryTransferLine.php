@@ -16,7 +16,7 @@ class InventoryTransferLine extends Model
     ];
 
     protected $casts = [
-        'quantity' => 'integer',
+        'quantity' => 'decimal:4',
     ];
 
     public function transfer(): BelongsTo

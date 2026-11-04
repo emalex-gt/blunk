@@ -25,6 +25,7 @@ type Product = {
     min_stock: number;
     location: string | null;
     image_url: string | null;
+    allow_decimal_quantity: boolean;
     supplier_costs: SupplierCost[];
 };
 
@@ -1306,7 +1307,7 @@ export default function Create({
                                                         <input
                                                             type="number"
                                                             min="1"
-                                                            step="1"
+                                                            step={item.product.allow_decimal_quantity ? "0.0001" : "1"}
                                                             inputMode="numeric"
                                                             pattern="[0-9]*"
                                                             value={item.quantity}

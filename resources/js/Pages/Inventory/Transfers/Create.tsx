@@ -8,7 +8,7 @@ import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from '
 import type { ReactNode } from 'react';
 
 type Branch = { id: number; name: string; code: string | null };
-type Product = { id: number; name: string; code: string | null; barcode: string | null; category_name?: string | null; brand_name?: string | null; stock: number; reserved_stock?: number; available_stock?: number; location?: string | null };
+type Product = { id: number; name: string; code: string | null; barcode: string | null; category_name?: string | null; brand_name?: string | null; stock: number; reserved_stock?: number; available_stock?: number; location?: string | null; allow_decimal_quantity: boolean };
 type Line = { product_id: number; quantity: string };
 type TransferDraft = {
     from_branch_id: number | null;
@@ -246,7 +246,7 @@ export default function Create({
             const product = productsById.get(Number(item.product_id));
             const quantity = Number(item.quantity);
 
-            return !Number.isInteger(quantity) || quantity < 1 || (!allow_negative_stock && quantity > productAvailable(product));
+            return !product || !Number.isFinite(quantity) || quantity <= 0 || (!product.allow_decimal_quantity && !Number.isInteger(quantity)) || (!allow_negative_stock && quantity > productAvailable(product));
         });
 
         if (invalid) {
@@ -536,10 +536,10 @@ export default function Create({
                                     <input
                                         className={inputClass}
                                         value={item.quantity}
-                                        min="1"
-                                        step="1"
-                                        inputMode="numeric"
-                                        pattern="[0-9]*"
+                                        min="0.0001"
+                                        step={product?.allow_decimal_quantity ? "0.0001" : "1"}
+                                        inputMode="decimal"
+                                        pattern="[0-9]+([.,][0-9]{0,4})?"
                                         onChange={(event) => updateLine(index, 'quantity', event.target.value)}
                                     />
                                     <button type="button" onClick={() => setItems(items.filter((_, itemIndex) => itemIndex !== index))} className="rounded-xl px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">

@@ -16,6 +16,7 @@ type Product = {
     min_stock: number;
     location: string | null;
     image_url: string | null;
+    allow_decimal_quantity: boolean;
 };
 
 type Mode = 'entry' | 'exit' | 'adjustment';
@@ -133,7 +134,8 @@ export default function StockQuick({
 
         const value = Number(quantity);
 
-        if (!Number.isInteger(value) || value < 0 || (mode !== 'adjustment' && value < 1)) {
+        const decimal = selectedProduct.allow_decimal_quantity;
+        if (!Number.isFinite(value) || value < 0 || (!decimal && !Number.isInteger(value)) || (mode !== 'adjustment' && value <= 0)) {
             showError('Ingresa una cantidad válida.');
             return;
         }
@@ -232,8 +234,8 @@ export default function StockQuick({
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                                 {filteredProducts.map((product) => {
                                     const isSelected = selectedProduct?.id === product.id;
-                                    const availableStock = Math.floor(product.available_stock ?? product.stock);
-                                    const reservedStock = Math.floor(product.reserved_stock ?? 0);
+                                    const availableStock = product.available_stock ?? product.stock;
+                                    const reservedStock = product.reserved_stock ?? 0;
                                     const outOfStock = availableStock <= 0;
                                     const lowStock =
                                         availableStock > 0 && availableStock <= product.min_stock;
