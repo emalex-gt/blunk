@@ -435,6 +435,7 @@ class Permissions
         }
 
         $permissionIds = [];
+        $summaryPermissionWasCreated = false;
         foreach (self::catalog() as $key => $meta) {
             $permissionPayload = [
                 'name' => $meta['name'],
@@ -451,6 +452,10 @@ class Permissions
                 $permissionPayload,
             );
             $permissionIds[$key] = $permission->id;
+
+            if ($key === self::REPORTS_SALES_SUMMARY_VIEW && $permission->wasRecentlyCreated) {
+                $summaryPermissionWasCreated = true;
+            }
         }
 
         foreach (self::defaultRolePermissions() as $key => $permissions) {
@@ -472,6 +477,11 @@ class Permissions
                 $role->permissions()->sync(array_values(array_filter(
                     array_map(fn (string $permission) => $permissionIds[$permission] ?? null, $permissions)
                 )));
+            } elseif ($summaryPermissionWasCreated && in_array($key, ['owner', 'admin', 'reports'], true)) {
+                // Backfill only the newly introduced permission for existing system roles.
+                $role->permissions()->syncWithoutDetaching([
+                    $permissionIds[self::REPORTS_SALES_SUMMARY_VIEW],
+                ]);
             }
         }
 
