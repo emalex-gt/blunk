@@ -48,4 +48,11 @@ class ProductQuantityPolicyTest extends TestCase
 
         $this->assertSame('0', ProductQuantityPolicy::absolute($product, '0.0000'));
     }
+
+    public function test_idempotency_representation_preserves_historical_integers_and_canonical_decimals(): void
+    {
+        $this->assertSame(1, ProductQuantityPolicy::canonicalForIdempotency('1.0000'));
+        $this->assertSame('1.25', ProductQuantityPolicy::canonicalForIdempotency('1.2500'));
+        $this->assertSame('1.75', ProductQuantityPolicy::canonicalForIdempotency('1.75'));
+    }
 }

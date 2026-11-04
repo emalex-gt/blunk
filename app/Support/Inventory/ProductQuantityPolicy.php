@@ -16,6 +16,13 @@ class ProductQuantityPolicy
         return self::absolute(new Product(['allow_decimal_quantity' => true]), $quantity);
     }
 
+    public static function canonicalForIdempotency(mixed $quantity): int|string
+    {
+        $canonical = self::canonical($quantity);
+
+        return str_contains($canonical, '.') ? $canonical : (int) $canonical;
+    }
+
     public static function positive(Product $product, mixed $quantity): string
     {
         return self::validate($product, $quantity, false);
