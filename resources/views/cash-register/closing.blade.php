@@ -90,10 +90,9 @@
         <table>
             <tbody>
                 <tr><td>Monto inicial</td><td class="right">{{ formatMoney($session->opening_amount, $business?->country) }}</td></tr>
-                <tr><td>Ventas en efectivo</td><td class="right positive">{{ formatMoney($summary['cash_sales'], $business?->country) }}</td></tr>
-                <tr><td>Anulaciones en efectivo</td><td class="right negative">-{{ formatMoney($summary['cash_sale_cancellations'], $business?->country) }}</td></tr>
-                <tr><td>Gastos</td><td class="right negative">-{{ formatMoney($summary['expenses'], $business?->country) }}</td></tr>
-                <tr><td>Anulaciones de gastos</td><td class="right positive">{{ formatMoney($summary['expense_cancellations'], $business?->country) }}</td></tr>
+                <tr><td>Ventas netas en efectivo</td><td class="right positive">{{ formatMoney($summary['cash_sales'] - $summary['cash_sale_cancellations'] - $summary['cash_refunds'], $business?->country) }}</td></tr>
+                <tr><td>Abonos netos en efectivo</td><td class="right">{{ formatMoney($summary['credit_payments'] - $summary['credit_payment_cancellations'], $business?->country) }}</td></tr>
+                <tr><td>Gastos netos</td><td class="right negative">-{{ formatMoney($summary['expenses'] - $summary['expense_cancellations'], $business?->country) }}</td></tr>
                 <tr><td>Compras pagadas de caja</td><td class="right negative">-{{ formatMoney($summary['cash_purchases'], $business?->country) }}</td></tr>
                 <tr><td class="total">Efectivo esperado</td><td class="right total">{{ formatMoney($session->expected_cash, $business?->country) }}</td></tr>
                 <tr><td class="total">Efectivo contado</td><td class="right total">{{ formatMoney($session->counted_cash, $business?->country) }}</td></tr>
@@ -122,13 +121,13 @@
             @foreach ($paymentOperations['by_method'] as $method)
                 <div style="padding:5px 0; border-bottom:1px solid #e2e8f0;">
                     <strong>{{ match($method['method']) { 'cash' => 'EFECTIVO', 'card' => 'TARJETA', 'check' => 'CHEQUE', 'transfer' => 'TRANSFERENCIA', default => 'OTROS' } }}</strong>
-                    <div>Ventas <span class="right" style="float:right">{{ formatMoney($method['sales'], $business?->country) }}</span></div><div>Abonos <span class="right" style="float:right">{{ formatMoney($method['credit_payments'], $business?->country) }}</span></div><div>Compras <span class="right negative" style="float:right">{{ formatMoney($method['purchases'], $business?->country) }}</span></div><div>Dev./anul. <span class="right negative" style="float:right">{{ formatMoney($method['refunds_cancellations'], $business?->country) }}</span></div><div><strong>Neto</strong><strong class="right {{ $method['net'] < 0 ? 'negative' : 'positive' }}" style="float:right">{{ formatMoney($method['net'], $business?->country) }}</strong></div><div style="clear:both"></div>
+                    <div>Ventas netas <span class="right" style="float:right">{{ formatMoney($method['sales'], $business?->country) }}</span></div><div>Abonos netos <span class="right" style="float:right">{{ formatMoney($method['credit_payments'], $business?->country) }}</span></div><div>Compras de caja <span class="right negative" style="float:right">{{ $method['method'] === 'cash' ? formatMoney($method['purchases'], $business?->country) : '—' }}</span></div><div>Compras fuera de caja <span class="right" style="float:right">{{ formatMoney($method['purchases_outside_cash'], $business?->country) }}</span></div><div>Gastos netos <span class="right negative" style="float:right">{{ $method['method'] === 'cash' ? formatMoney($method['expenses'], $business?->country) : '—' }}</span></div><div style="clear:both"></div>
                 </div>
             @endforeach
         @else
             <table>
             <thead>
-                <tr><th>Medio</th><th class="right">Ventas</th><th class="right">Abonos</th><th class="right">Compras</th><th class="right">Dev./anul.</th><th class="right">Neto</th></tr>
+                <tr><th>Medio</th><th class="right">Ventas netas</th><th class="right">Abonos netos</th><th class="right">Compras caja</th><th class="right">Compras fuera de caja</th><th class="right">Gastos netos</th></tr>
             </thead>
             <tbody>
                 @foreach ($paymentOperations['by_method'] as $method)
@@ -136,9 +135,10 @@
                         <td>{{ match($method['method']) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'check' => 'Cheque', 'transfer' => 'Transferencia', default => 'Otros' } }}</td>
                         <td class="right">{{ formatMoney($method['sales'], $business?->country) }}</td>
                         <td class="right">{{ formatMoney($method['credit_payments'], $business?->country) }}</td>
-                        <td class="right negative">{{ formatMoney($method['purchases'], $business?->country) }}</td>
-                        <td class="right negative">{{ formatMoney($method['refunds_cancellations'], $business?->country) }}</td>
-                        <td class="right {{ $method['net'] < 0 ? 'negative' : 'positive' }}">{{ formatMoney($method['net'], $business?->country) }}</td>
+                        <td class="right negative">{{ $method['method'] === 'cash' ? formatMoney($method['purchases'], $business?->country) : '—' }}</td>
+                        <td class="right">{{ formatMoney($method['purchases_outside_cash'], $business?->country) }}</td>
+                        <td class="right negative">{{ $method['method'] === 'cash' ? formatMoney($method['expenses'], $business?->country) : '—' }}</td>
+
                     </tr>
                 @endforeach
             </tbody>

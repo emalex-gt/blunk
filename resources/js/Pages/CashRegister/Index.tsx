@@ -41,13 +41,15 @@ type PaymentOperations = {
         sales: number;
         credit_payments: number;
         purchases: number;
-        refunds_cancellations: number;
+        purchases_outside_cash: number;
+        expenses: number;
         net: number;
     }>;
     details: PaymentOperation[];
     detail_total: number;
     has_more_details: boolean;
     incidents: PaymentOperation[];
+    filters: { method: string; operation: string };
 };
 
 type CashSession = {
@@ -66,6 +68,8 @@ type CashSession = {
     summary: {
         opening: number;
         cash_sales: number;
+        credit_payments: number;
+        credit_payment_cancellations: number;
         cash_refunds: number;
         cash_sale_cancellations: number;
         expenses: number;
@@ -104,7 +108,6 @@ export default function Index({
     const [expenseCategoryName, setExpenseCategoryName] = useState('');
     const [selectedExpenseCategory, setSelectedExpenseCategory] = useState<ExpenseCategory | null>(null);
     const [closeModalOpen, setCloseModalOpen] = useState(false);
-    const [showMovements, setShowMovements] = useState(false);
     const [expenseToCancel, setExpenseToCancel] = useState<Movement | null>(null);
     const [refreshingSession, setRefreshingSession] = useState(false);
 
@@ -239,6 +242,18 @@ export default function Index({
         });
     }
 
+    function updateFilters(method: string, operation: string) {
+        if (refreshingSession) return;
+        setRefreshingSession(true);
+        router.get(route('cash-register.index'), { payment_method: method, operation }, {
+            only: ['openSession'],
+            preserveState: true,
+            preserveScroll: true,
+            replace: true,
+            onFinish: () => setRefreshingSession(false),
+        });
+    }
+
     function refreshSessionData() {
         if (refreshingSession) {
             return;
@@ -326,13 +341,11 @@ export default function Index({
                             </section>
 
                             <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
-                                <div className="grid gap-4 md:grid-cols-6">
-                                    <Summary label="Ventas en efectivo" value={formatCurrency(openSession.summary.cash_sales, country)} />
-                                    <Summary label="Reembolsos en efectivo" value={formatCurrency(openSession.summary.cash_refunds, country)} />
-                                    <Summary label="Anulaciones en efectivo" value={formatCurrency(openSession.summary.cash_sale_cancellations, country)} />
-                                    <Summary label="Gastos" value={formatCurrency(openSession.summary.expenses, country)} />
-                                    <Summary label="Anulaciones de gastos" value={formatCurrency(openSession.summary.expense_cancellations, country)} />
-                                    <Summary label="Compras pagadas de caja" value={formatCurrency(openSession.summary.cash_purchases, country)} />
+                                <div className="grid gap-4 md:grid-cols-4">
+                                    <Summary label="Ventas netas en efectivo" value={formatCurrency(openSession.summary.cash_sales - openSession.summary.cash_refunds - openSession.summary.cash_sale_cancellations, country)} />
+                                    <Summary label="Abonos netos en efectivo" value={formatCurrency(openSession.summary.credit_payments - openSession.summary.credit_payment_cancellations, country)} />
+                                    <Summary label="Gastos netos de caja" value={formatCurrency(openSession.summary.expenses - openSession.summary.expense_cancellations, country)} />
+                                    <Summary label="Compras pagadas desde caja" value={formatCurrency(openSession.summary.cash_purchases, country)} />
                                 </div>
 
                                 <div className="mt-5 flex flex-wrap gap-2">
@@ -357,24 +370,18 @@ export default function Index({
                                             Cerrar caja
                                         </button>
                                     )}
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowMovements((current) => !current)}
-                                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-                                    >
-                                        Ver movimientos
-                                    </button>
                                 </div>
                             </section>
 
                             <PaymentOperationsOverview
                                 paymentOperations={openSession.payment_operations}
                                 country={country}
+                                onFiltersChange={updateFilters}
+                                refreshing={refreshingSession}
                             />
 
-                            {showMovements && (
-                                <MovementsTable
-                                    movements={openSession.movements ?? []}
+                            <MovementsTable
+                                    movements={(openSession.movements ?? []).filter((movement) => ['expense', 'expense_cancel'].includes(movement.type))}
                                     country={country}
                                     canCancelExpenses={canCancelExpenses}
                                     onCancelExpense={(movement) => {
@@ -383,7 +390,6 @@ export default function Index({
                                         setExpenseToCancel(movement);
                                     }}
                                 />
-                            )}
                         </>
                     )}
                 </div>
@@ -494,13 +500,19 @@ function Summary({ label, value }: { label: string; value: string }) {
     );
 }
 
-function PaymentOperationsOverview({ paymentOperations, country }: { paymentOperations?: PaymentOperations; country: string }) {
+function PaymentOperationsOverview({ paymentOperations, country, onFiltersChange, refreshing }: {
+    paymentOperations?: PaymentOperations;
+    country: string;
+    onFiltersChange: (method: string, operation: string) => void;
+    refreshing: boolean;
+}) {
     const operations = paymentOperations ?? {
         by_method: [],
         details: [],
         detail_total: 0,
         has_more_details: false,
         incidents: [],
+        filters: { method: 'all', operation: 'all' },
     };
 
     return (
@@ -515,11 +527,11 @@ function PaymentOperationsOverview({ paymentOperations, country }: { paymentOper
                         <thead>
                             <tr className="bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                                 <th className="px-4 py-3">Medio</th>
-                                <th className="px-4 py-3 text-right">Ventas cobradas</th>
-                                <th className="px-4 py-3 text-right">Abonos</th>
-                                <th className="px-4 py-3 text-right">Compras pagadas</th>
-                                <th className="px-4 py-3 text-right">Devoluciones / anulaciones</th>
-                                <th className="px-4 py-3 text-right">Neto</th>
+                                <th className="px-4 py-3 text-right">Ventas netas</th>
+                                <th className="px-4 py-3 text-right">Abonos netos</th>
+                                <th className="px-4 py-3 text-right">Compras desde caja</th>
+                                <th className="px-4 py-3 text-right">Compras fuera de caja</th>
+                                <th className="px-4 py-3 text-right">Gastos netos</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -532,9 +544,13 @@ function PaymentOperationsOverview({ paymentOperations, country }: { paymentOper
                                     <td className="px-4 py-3 font-semibold text-slate-800">{paymentMethodLabel(row.method)}</td>
                                     <PaymentAmount value={row.sales} country={country} />
                                     <PaymentAmount value={row.credit_payments} country={country} />
-                                    <PaymentAmount value={row.purchases} country={country} />
-                                    <PaymentAmount value={row.refunds_cancellations} country={country} />
-                                    <PaymentAmount value={row.net} country={country} strong />
+                                    {row.method === 'cash'
+                                        ? <PaymentAmount value={row.purchases} country={country} />
+                                        : <td className="px-4 py-3 text-right text-slate-400">—</td>}
+                                    <PaymentAmount value={row.purchases_outside_cash} country={country} />
+                                    {row.method === 'cash'
+                                        ? <PaymentAmount value={row.expenses} country={country} />
+                                        : <td className="px-4 py-3 text-right text-slate-400">—</td>}
                                 </tr>
                             ))}
                         </tbody>
@@ -545,7 +561,21 @@ function PaymentOperationsOverview({ paymentOperations, country }: { paymentOper
             <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
                 <div className="border-b border-slate-100 p-5">
                     <h3 className="text-lg font-semibold text-slate-950">Detalle de cobros y pagos</h3>
-                    <p className="mt-1 text-sm text-slate-500">Vínculo directo o reconstrucción segura por horario de la sesión.</p>
+                    <p className="mt-1 text-sm text-slate-500">Historial de entradas y salidas; las anulaciones se conservan. Las compras fuera de caja son informativas.</p>
+                    <div className="mt-4 flex flex-wrap items-end gap-3">
+                        <label className="text-sm font-medium text-slate-700">Medio de pago
+                            <select className="mt-1 block rounded-lg border border-slate-300 px-3 py-2" value={operations.filters.method} disabled={refreshing} onChange={(e) => onFiltersChange(e.target.value, operations.filters.operation)}>
+                                <option value="all">Todos</option><option value="cash">Efectivo</option><option value="card">Tarjeta</option><option value="check">Cheque</option><option value="transfer">Transferencia</option><option value="other">Otros</option>
+                            </select>
+                        </label>
+                        <label className="text-sm font-medium text-slate-700">Operación
+                            <select className="mt-1 block rounded-lg border border-slate-300 px-3 py-2" value={operations.filters.operation} disabled={refreshing} onChange={(e) => onFiltersChange(operations.filters.method, e.target.value)}>
+                                <option value="all">Todas</option><option value="sale">Ventas cobradas</option><option value="sale_cancellation">Anulaciones de ventas</option><option value="refund">Reembolsos</option><option value="credit_payment">Abonos</option><option value="credit_payment_cancellation">Anulaciones de abonos</option><option value="purchase">Compras pagadas</option><option value="expense">Gastos</option><option value="expense_cancel">Anulaciones de gastos</option>
+                            </select>
+                        </label>
+                        <button type="button" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50" disabled={refreshing || (operations.filters.method === 'all' && operations.filters.operation === 'all')} onClick={() => onFiltersChange('all', 'all')}>Limpiar filtros</button>
+                        <span className="text-sm text-slate-500">{operations.detail_total} operaciones coincidentes</span>
+                    </div>
                 </div>
                 <div className="space-y-2 p-4 md:hidden">
                     {operations.details.map((operation) => <PaymentOperationCard key={operation.id} operation={operation} country={country} />)}
@@ -573,7 +603,7 @@ function PaymentOperationsOverview({ paymentOperations, country }: { paymentOper
                         Se muestran los primeros 200 de {operations.detail_total} movimientos.
                     </p>
                 )}
-                {operations.details.length === 0 && <p className="p-5 text-sm text-slate-500">No hay cobros, pagos, devoluciones ni anulaciones atribuibles a esta sesión.</p>}
+                {operations.details.length === 0 && <p className="p-5 text-sm text-slate-500">No hay operaciones que coincidan con los filtros seleccionados.</p>}
                 {operations.incidents.length > 0 && (
                     <div className="border-t border-red-100 bg-red-50 p-5">
                         <h4 className="font-semibold text-red-900">Movimientos sin asignar con certeza</h4>
@@ -638,6 +668,10 @@ function MovementsTable({
 }) {
     return (
         <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
+            <div className="border-b border-slate-100 p-5">
+                <h3 className="text-lg font-semibold text-slate-950">Gastos de caja</h3>
+                <p className="mt-1 text-sm text-slate-500">Historial de gastos registrados y anulaciones de la sesión actual.</p>
+            </div>
             <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
                     <thead>

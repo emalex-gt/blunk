@@ -31,7 +31,10 @@ class CashRegisterController extends Controller
         $session = CashRegister::currentOpenSession($businessId);
 
         return Inertia::render('CashRegister/Index', [
-            'openSession' => $session ? $this->sessionPayload($session, $timezone, true) : null,
+            'openSession' => $session ? $this->sessionPayload($session, $timezone, true, [
+                'method' => (string) $request->query('payment_method', 'all'),
+                'operation' => (string) $request->query('operation', 'all'),
+            ]) : null,
             'expenseCategories' => CashExpenseCategory::query()
                 ->where('business_id', $businessId)
                 ->where('is_active', true)
@@ -343,7 +346,7 @@ class CashRegisterController extends Controller
         ]);
     }
 
-    private function sessionPayload(CashRegisterSession $session, string $timezone, bool $includeMovements = false): array
+    private function sessionPayload(CashRegisterSession $session, string $timezone, bool $includeMovements = false, ?array $paymentFilters = null): array
     {
         $session->loadMissing(['openedBy:id,name', 'closedBy:id,name']);
         $summary = CashRegister::summary($session);
@@ -365,7 +368,21 @@ class CashRegisterController extends Controller
         ];
 
         if ($includeMovements) {
-            $payload['payment_operations'] = CashRegisterClosingOperations::forSession($session);
+            $payload['payment_operations'] = CashRegisterClosingOperations::forSession(
+                $session,
+                (string) ($paymentFilters['method'] ?? 'all'),
+                (string) ($paymentFilters['operation'] ?? 'all'),
+            );
+            // Inertia envía fechas legibles del tenant; la impresión recibe los Carbon originales.
+            foreach (['details', 'incidents'] as $list) {
+                $payload['payment_operations'][$list] = array_map(
+                    fn (array $operation): array => [
+                        ...$operation,
+                        'occurred_at' => $this->formatDateTime($operation['occurred_at'] ?? null, $timezone),
+                    ],
+                    $payload['payment_operations'][$list],
+                );
+            }
             $movements = CashRegister::movements($session);
             $expenseIds = $movements
                 ->where('reference_type', 'cash_expense')

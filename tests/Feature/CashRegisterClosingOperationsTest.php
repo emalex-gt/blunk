@@ -44,7 +44,8 @@ class CashRegisterClosingOperationsTest extends TestCase
         $this->assertSame(40.0, $byMethod['cash']['sales']);
         $this->assertSame(60.0, $byMethod['card']['sales']);
         $this->assertSame(20.0, $byMethod['check']['credit_payments']);
-        $this->assertSame(-30.0, $byMethod['transfer']['purchases']);
+        $this->assertSame(0.0, $byMethod['transfer']['purchases']); // Compra externa: visible en historia, no en saldo de caja.
+        $this->assertSame(30.0, $byMethod['transfer']['purchases_outside_cash']);
         $this->assertSame(40.0, CashRegister::expectedCash($session->id));
         $this->assertCount(4, $result['details']);
     }
@@ -112,8 +113,7 @@ class CashRegisterClosingOperationsTest extends TestCase
         $cash = collect($result['by_method'])->keyBy('method')['cash'];
 
         $this->assertCount(2, $details);
-        $this->assertSame(20.0, $cash['credit_payments']);
-        $this->assertSame(-20.0, $cash['refunds_cancellations']);
+        $this->assertSame(0.0, $cash['credit_payments']); // Abono menos su anulación.
         $this->assertSame(0.0, $cash['net']);
         $this->assertSame(0.0, CashRegister::expectedCash($session->id));
     }
@@ -154,8 +154,86 @@ class CashRegisterClosingOperationsTest extends TestCase
 
         $this->assertSame(20.0, $originalCard['credit_payments']);
         $this->assertSame(20.0, $originalCard['net']);
-        $this->assertSame(-20.0, $cancellationCard['refunds_cancellations']);
+        $this->assertSame(-20.0, $cancellationCard['credit_payments']);
         $this->assertSame(-20.0, $cancellationCard['net']);
+    }
+
+    public function test_cash_expenses_and_cancellations_are_net_in_totals_but_individual_in_history(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        CashRegister::recordMovement($session, 'expense', -650, 'cash_expense', 11, 'Pago de luz', $user->id);
+        CashRegister::recordMovement($session, 'expense_cancel', 650, 'cash_expense', 11, 'Anulación del gasto', $user->id);
+        CashRegister::recordMovement($session, 'expense', -10, 'cash_expense', 12, 'Otro gasto', $user->id);
+
+        $summary = CashRegisterClosingOperations::forSession($session);
+        $cash = collect($summary['by_method'])->keyBy('method')['cash'];
+        $this->assertSame(-10.0, $cash['expenses']);
+        $this->assertSame(-10.0, $cash['net']);
+        $this->assertSame(-10.0, CashRegister::expectedCash($session->id));
+        $this->assertSame(3, $summary['detail_total']);
+
+        $filtered = CashRegisterClosingOperations::forSession($session, 'cash', 'expense');
+        $this->assertSame(2, $filtered['detail_total']);
+        $this->assertSame(-10.0, collect($filtered['by_method'])->keyBy('method')['cash']['expenses']);
+        $this->assertTrue(collect($filtered['details'])->every(fn ($item) => $item['kind'] === 'expense'));
+    }
+
+    public function test_sale_and_its_cancellation_net_to_zero_without_erasing_history(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        $sale = $this->sale($business, $branch, $user, 500);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $sale->id, 'method' => 'cash', 'amount' => 500, 'cash_register_session_id' => $session->id, 'status' => 'captured']);
+        $sale->update(['status' => 'cancelled', 'cancelled_at' => now()]);
+        CashRegister::recordMovement($session, 'sale_cash', 500, 'sale', $sale->id, 'Venta', $user->id);
+        CashRegister::recordMovement($session, 'sale_cash_cancel', -500, 'sale', $sale->id, 'Anulación venta', $user->id);
+
+        $result = CashRegisterClosingOperations::forSession($session);
+        $cash = collect($result['by_method'])->keyBy('method')['cash'];
+        $this->assertSame(0.0, $cash['sales']);
+        $this->assertSame(0.0, $cash['net']);
+        $this->assertSame(0.0, CashRegister::expectedCash($session->id));
+        $this->assertSame(2, $result['detail_total']);
+        $this->assertSame(1, CashRegisterClosingOperations::forSession($session, 'cash', 'sale_cancellation')['detail_total']);
+    }
+
+    public function test_cash_purchase_outside_register_does_not_reduce_net_but_purchase_from_register_does(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        Purchase::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'business_number' => 81, 'status' => 'completed', 'total' => 250, 'payment_method' => 'cash', 'paid_from_cash' => false, 'cash_register_session_id' => $session->id, 'created_by' => $user->id]);
+        Purchase::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'business_number' => 82, 'status' => 'completed', 'total' => 30, 'payment_method' => 'cash', 'paid_from_cash' => true, 'cash_register_session_id' => $session->id, 'created_by' => $user->id]);
+        CashRegister::recordMovement($session, 'purchase_cash', -30, 'purchase', 82, 'Compra desde caja', $user->id);
+
+        $result = CashRegisterClosingOperations::forSession($session);
+        $cash = collect($result['by_method'])->keyBy('method')['cash'];
+        $this->assertSame(-30.0, $cash['purchases']);
+        $this->assertSame(250.0, $cash['purchases_outside_cash']);
+        $this->assertSame(-30.0, $cash['net']);
+        $this->assertSame(-30.0, CashRegister::expectedCash($session->id));
+        $this->assertSame(2, CashRegisterClosingOperations::forSession($session, 'cash', 'purchase')['detail_total']);
+    }
+
+    public function test_backend_filters_after_aggregating_the_complete_history(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        for ($i = 0; $i < 205; $i++) {
+            CashRegister::recordMovement($session, 'expense', -1, 'cash_expense', $i + 1, 'Gasto', $user->id);
+        }
+        $sale = $this->sale($business, $branch, $user, 25);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $sale->id, 'method' => 'cash', 'amount' => 25, 'cash_register_session_id' => $session->id, 'status' => 'captured', 'collected_at' => now()->subSeconds(30)]);
+        $result = CashRegisterClosingOperations::forSession($session);
+        $this->assertSame(206, $result['detail_total']);
+        $this->assertCount(200, $result['details']);
+        $this->assertTrue($result['has_more_details']);
+        $this->assertSame(-205.0, collect($result['by_method'])->keyBy('method')['cash']['expenses']);
+
+        $onlySale = CashRegisterClosingOperations::forSession($session, 'cash', 'sale');
+        $this->assertSame(1, $onlySale['detail_total']);
+        $this->assertSame('sale', $onlySale['details'][0]['kind']);
+
+        $onlyCancelled = CashRegisterClosingOperations::forSession($session, 'cash', 'expense_cancel');
+        $this->assertSame(0, $onlyCancelled['detail_total']);
+        $this->assertSame(-205.0, collect($onlyCancelled['by_method'])->keyBy('method')['cash']['expenses']);
+        $this->assertFalse($onlyCancelled['has_more_details']);
     }
 
     public function test_closing_list_payload_omits_expensive_payment_operations_but_detail_includes_them(): void

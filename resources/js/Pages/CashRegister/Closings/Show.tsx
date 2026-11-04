@@ -27,7 +27,7 @@ type PaymentOperation = {
 };
 
 type PaymentOperations = {
-    by_method: Array<{ method: string; sales: number; credit_payments: number; purchases: number; refunds_cancellations: number; net: number }>;
+    by_method: Array<{ method: string; sales: number; credit_payments: number; purchases: number; purchases_outside_cash: number; expenses: number; net: number }>;
     details: PaymentOperation[];
     detail_total: number;
     has_more_details: boolean;
@@ -49,6 +49,8 @@ type Session = {
     closing_notes: string | null;
     summary: {
         cash_sales: number;
+        credit_payments: number;
+        credit_payment_cancellations: number;
         cash_refunds: number;
         cash_sale_cancellations: number;
         expenses: number;
@@ -106,11 +108,9 @@ export default function Show({ session }: { session: Session }) {
                             <Detail label="Cerrada por" value={session.closed_by ?? '-'} />
                         </div>
                         <div className="mt-5 grid gap-4 md:grid-cols-6">
-                            <Detail label="Ventas en efectivo" value={formatCurrency(session.summary.cash_sales, country)} />
-                            <Detail label="Reembolsos" value={formatCurrency(session.summary.cash_refunds, country)} />
-                            <Detail label="Anulaciones" value={formatCurrency(session.summary.cash_sale_cancellations, country)} />
-                            <Detail label="Gastos" value={formatCurrency(session.summary.expenses, country)} />
-                            <Detail label="Anulaciones de gastos" value={formatCurrency(session.summary.expense_cancellations, country)} />
+                            <Detail label="Ventas netas en efectivo" value={formatCurrency(session.summary.cash_sales - session.summary.cash_refunds - session.summary.cash_sale_cancellations, country)} />
+                            <Detail label="Abonos netos en efectivo" value={formatCurrency(session.summary.credit_payments - session.summary.credit_payment_cancellations, country)} />
+                            <Detail label="Gastos netos" value={formatCurrency(session.summary.expenses - session.summary.expense_cancellations, country)} />
                             <Detail label="Compras desde caja" value={formatCurrency(session.summary.cash_purchases, country)} />
                         </div>
                         {(session.notes || session.closing_notes) && (
@@ -129,12 +129,12 @@ export default function Show({ session }: { session: Session }) {
                         <div className="overflow-x-auto">
                             <table className="min-w-[760px] w-full text-sm">
                                 <thead><tr className="bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                    <th className="px-4 py-3">Medio</th><th className="px-4 py-3 text-right">Ventas cobradas</th><th className="px-4 py-3 text-right">Abonos</th><th className="px-4 py-3 text-right">Compras pagadas</th><th className="px-4 py-3 text-right">Devoluciones / anulaciones</th><th className="px-4 py-3 text-right">Neto</th>
+                                    <th className="px-4 py-3">Medio</th><th className="px-4 py-3 text-right">Ventas netas</th><th className="px-4 py-3 text-right">Abonos netos</th><th className="px-4 py-3 text-right">Compras desde caja</th><th className="px-4 py-3 text-right">Compras fuera de caja</th><th className="px-4 py-3 text-right">Gastos netos</th>
                                 </tr></thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {session.payment_operations.by_method.map((row) => <tr key={row.method}>
                                         <td className="px-4 py-3 font-semibold text-slate-800">{paymentMethodLabel(row.method)}</td>
-                                        <Amount value={row.sales} country={country} /><Amount value={row.credit_payments} country={country} /><Amount value={row.purchases} country={country} /><Amount value={row.refunds_cancellations} country={country} /><Amount value={row.net} country={country} strong />
+                                        <Amount value={row.sales} country={country} /><Amount value={row.credit_payments} country={country} />{row.method === 'cash' ? <Amount value={row.purchases} country={country} /> : <td className="px-4 py-3 text-right text-slate-400">—</td>}<Amount value={row.purchases_outside_cash} country={country} />{row.method === 'cash' ? <Amount value={row.expenses} country={country} /> : <td className="px-4 py-3 text-right text-slate-400">—</td>}
                                     </tr>)}
                                 </tbody>
                             </table>
