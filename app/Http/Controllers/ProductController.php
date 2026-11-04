@@ -68,6 +68,7 @@ class ProductController extends Controller
                 'sale_price',
                 'stock',
                 'min_stock',
+                'allow_decimal_quantity',
                 'location',
                 'is_active',
                 'image_url',
@@ -425,8 +426,10 @@ class ProductController extends Controller
             'barcode' => ['nullable', 'string', 'max:255'],
             'cost_price' => ['required', 'numeric', 'decimal:0,5', 'min:0'],
             'sale_price' => ['required', 'numeric', 'decimal:0,2', 'min:0'],
+            // Inventory persistence remains integer-only until its dedicated decimal-quantity phase.
             'stock' => ['required', 'integer', 'min:0'],
             'min_stock' => ['required', 'integer', 'min:0'],
+            'allow_decimal_quantity' => ['sometimes', 'boolean'],
             'location' => ['nullable', 'string', 'max:255'],
             'location_name' => ['nullable', 'string', 'max:255'],
             'is_active' => ['boolean'],
@@ -459,6 +462,7 @@ class ProductController extends Controller
             $data['location'] = $this->normalizeCatalogName($data['location']);
         }
         $data['brand_id'] = $data['brand_id'] ?? null;
+        $data['allow_decimal_quantity'] = (bool) ($data['allow_decimal_quantity'] ?? $product?->allow_decimal_quantity ?? false);
 
         if ($data['code'] === null && $data['barcode'] === null) {
             throw ValidationException::withMessages([

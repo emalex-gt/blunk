@@ -83,6 +83,23 @@ class ProductPermissionVisibilityTest extends TestCase
         $this->as($user, $business)->get(route('products.index'))->assertOk();
     }
 
+    public function test_product_decimal_quantity_setting_is_persisted_per_product(): void
+    {
+        [$business, $user, $product] = $this->fixture([Permissions::PRODUCTS_VIEW, Permissions::PRODUCTS_CREATE, Permissions::PRODUCTS_UPDATE]);
+
+        $this->as($user, $business)->post(route('products.store'), [...$this->payload(), 'name' => 'Producto decimal', 'allow_decimal_quantity' => true])
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('products', ['business_id' => $business->id, 'name' => 'Producto decimal', 'allow_decimal_quantity' => true]);
+
+        $this->as($user, $business)->put(route('products.update', $product), [...$this->payload(), 'name' => $product->name, 'allow_decimal_quantity' => true])
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $this->assertTrue($product->fresh()->allow_decimal_quantity);
+    }
+
     public function test_product_updates_are_tenant_scoped_and_super_admin_retains_access(): void
     {
         [$business, $user] = $this->fixture([Permissions::PRODUCTS_VIEW, Permissions::PRODUCTS_UPDATE]);
