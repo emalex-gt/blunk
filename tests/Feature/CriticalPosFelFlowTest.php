@@ -163,7 +163,9 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertOk()
             ->assertJsonPath('status', 'finalized')
             ->assertJsonPath('sale_id', $sale->id)
-            ->assertJsonPath('document_type', 'invoice');
+            ->assertJsonPath('document_type', 'invoice')
+            ->assertJsonPath('sale_url', route('sales.show', $sale))
+            ->assertJsonPath('document_url', null);
 
         $this->actingAs($user)
             ->withHeaders(['X-Inertia' => 'true', 'X-Inertia-Version' => 'outdated-assets'])
@@ -216,6 +218,52 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertJsonPath('status', 'fiscal_unknown')
             ->assertJsonPath('fiscal_intent_id', $intent->id)
             ->assertJsonMissingPath('sale_id');
+    }
+
+    public function test_pending_and_certified_fel_intents_remain_unresolved_for_pos_draft_recovery(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'fel_gt'], allowInvoices: true);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+
+        foreach ([FiscalDocumentIntent::PENDING, FiscalDocumentIntent::CERTIFIED] as $intentStatus) {
+            $intent = $this->unknownFiscalIntent($business, $user);
+            $intent->update(['status' => $intentStatus]);
+            $key = 'draft-'.$intentStatus.'-'.uniqid();
+
+            OperationIdempotencyKey::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'user_id' => $user->id,
+                'operation_type' => 'pos_sale',
+                'idempotency_key' => $key,
+                'request_hash' => hash('sha256', $key),
+                'status' => 'completed',
+                'result_type' => 'fiscal_document_intent',
+                'result_id' => $intent->id,
+                'completed_at' => now(),
+                'expires_at' => now()->addDay(),
+            ]);
+
+            $this->actingAs($user)
+                ->getJson(route('operation-drafts.pos-sale-status', [
+                    'idempotency_key' => $key,
+                    'branch_id' => $branch->id,
+                ]))
+                ->assertOk()
+                ->assertJsonPath('status', 'fiscal_'.$intentStatus)
+                ->assertJsonPath('fiscal_intent_id', $intent->id)
+                ->assertJsonMissingPath('sale_id');
+        }
+    }
+
+    public function test_pos_recovery_keeps_unresolved_fiscal_drafts_blocked_from_resubmission(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+
+        $this->assertStringContainsString("const fiscalDraftRecoveryBlocked = ['fiscal_unknown', 'fiscal_pending', 'fiscal_certified']", $source);
+        $this->assertStringContainsString('No se puede confirmar esta venta mientras la certificación FEL está en verificación.', $source);
+        $this->assertStringContainsString("draftRecoveryStatus?.status === 'verification_unavailable'", $source);
+        $this->assertStringContainsString('|| fiscalDraftRecoveryBlocked', $source);
     }
 
     public function test_pos_draft_recovery_status_does_not_expose_another_users_operation(): void

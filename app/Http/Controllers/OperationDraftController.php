@@ -11,6 +11,7 @@ use App\Services\BranchAccessService;
 use App\Models\OperationDraft;
 use App\Models\Supplier;
 use App\Support\OperationDrafts;
+use App\Support\Permissions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\URL;
@@ -76,12 +77,15 @@ class OperationDraftController extends Controller
             return response()->json(['status' => 'unresolved']);
         }
 
+        $canViewSale = Permissions::userHas($request->user(), Permissions::SALES_VIEW);
+        $canViewFelDocument = Permissions::userHas($request->user(), Permissions::FEL_DOCUMENTS_VIEW);
+
         return response()->json([
             'status' => 'finalized',
             'sale_id' => $sale->id,
             'document_type' => $sale->document_type,
-            'sale_url' => route('sales.show', $sale),
-            'document_url' => $sale->document_type === 'invoice'
+            'sale_url' => $canViewSale ? route('sales.show', $sale) : null,
+            'document_url' => $sale->document_type === 'invoice' && $canViewFelDocument
                 ? URL::temporarySignedRoute('sales.fel-document', now()->addMinutes(10), ['sale' => $sale->id])
                 : null,
         ]);

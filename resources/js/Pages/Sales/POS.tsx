@@ -874,12 +874,15 @@ export default function POS({
     const [cashReceived, setCashReceived] = useState('');
     const [restoreDraft, setRestoreDraft] = useState<PosDraft | null>(null);
     const [recoveredCompletedSale, setRecoveredCompletedSale] = useState<PosDraftRecoveryStatus | null>(null);
+    const [draftRecoveryStatus, setDraftRecoveryStatus] = useState<PosDraftRecoveryStatus | null>(null);
     const [idempotencyKey, setIdempotencyKey] = useState(makeOperationKey);
     const [failedSubmission, setFailedSubmission] = useState(false);
     const [draftReady, setDraftReady] = useState(false);
     const [showClearSaleModal, setShowClearSaleModal] = useState(false);
     const [activeOperationDraftId, setActiveOperationDraftId] = useState<number | null>(null);
     const [savedDraftsOpen, setSavedDraftsOpen] = useState(false);
+    const fiscalDraftRecoveryBlocked = ['fiscal_unknown', 'fiscal_pending', 'fiscal_certified'].includes(draftRecoveryStatus?.status ?? '');
+    const draftVerificationUnavailable = draftRecoveryStatus?.status === 'verification_unavailable';
     const [savedDrafts, setSavedDrafts] = useState<OperationDraftRecord<PosDraft>[]>([]);
     const [draftListLoading, setDraftListLoading] = useState(false);
     const [draftSaving, setDraftSaving] = useState(false);
@@ -1821,9 +1824,9 @@ export default function POS({
         focusSearch();
     }
 
-    async function completedSaleForDraft(draft: PosDraft): Promise<PosDraftRecoveryStatus | null> {
+    async function posSaleStatusForDraft(draft: PosDraft): Promise<PosDraftRecoveryStatus> {
         if (!draft.idempotency_key || !activeBranchId) {
-            return null;
+            return { status: 'not_found' };
         }
 
         const response = await fetch(route('operation-drafts.pos-sale-status', {
@@ -1838,9 +1841,7 @@ export default function POS({
             throw new Error('No se pudo verificar el estado del borrador.');
         }
 
-        const status = await response.json() as PosDraftRecoveryStatus;
-
-        return status.status === 'finalized' ? status : null;
+        return await response.json() as PosDraftRecoveryStatus;
     }
 
     function acceptProvisionalReceipt() {
@@ -2765,6 +2766,15 @@ export default function POS({
             return;
         }
 
+        if (fiscalDraftRecoveryBlocked || draftVerificationUnavailable) {
+            const message = draftVerificationUnavailable
+                ? 'No se pudo verificar el estado de este borrador. No confirmes una nueva venta hasta comprobar la operación anterior.'
+                : 'No se puede confirmar esta venta mientras la certificación FEL está en verificación.';
+            showError(message);
+            toast.warning(message, { persistent: true });
+            return;
+        }
+
         if (!validateCartQuantities()) {
             return;
         }
@@ -3066,6 +3076,7 @@ export default function POS({
 
         const isBranchChange = draftLoadInitializedRef.current;
         setRestoreDraft(null);
+        setDraftRecoveryStatus(null);
         setDraftReady(false);
         const draft = loadDraft<PosDraft>(draftKey);
         const finishDraftInitialization = () => {
@@ -3091,25 +3102,29 @@ export default function POS({
             let cancelled = false;
             const recoverAfterVerification = async () => {
                 try {
-                    const completedSale = await completedSaleForDraft(draft);
+                    const status = await posSaleStatusForDraft(draft);
 
                     if (cancelled) {
                         return;
                     }
 
-                    if (completedSale) {
+                    if (status.status === 'finalized') {
                         clearDraft(draftKey);
                         latestDraftRef.current = null;
                         clearSaleState();
-                        setRecoveredCompletedSale(completedSale);
+                        setRecoveredCompletedSale(status);
                         setDraftReady(true);
                         showMessage('La operación ya fue registrada. No se recuperó el carrito.');
                         toast.success('La operación ya fue registrada. No se recuperó el carrito.', { persistent: true });
                         finishDraftInitialization();
                         return;
                     }
+
+                    if (['fiscal_unknown', 'fiscal_pending', 'fiscal_certified'].includes(status.status)) {
+                        setDraftRecoveryStatus(status);
+                    }
                 } catch {
-                    // Preserve the local draft if its server state cannot be verified.
+                    setDraftRecoveryStatus({ status: 'verification_unavailable' });
                 }
 
                 if (cancelled) {
@@ -3482,6 +3497,13 @@ export default function POS({
                                             {recoveredCompletedSale.document_url ? 'Ver factura certificada' : 'Ver venta registrada'}
                                         </a>
                                     )}
+                                </div>
+                            )}
+                            {(fiscalDraftRecoveryBlocked || draftVerificationUnavailable) && (
+                                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="alert">
+                                    {draftVerificationUnavailable
+                                        ? 'No se pudo verificar el estado del trabajo pendiente. Se conserva el carrito, pero no confirmes una nueva venta hasta verificar la operación anterior.'
+                                        : 'La certificación FEL de este trabajo sigue en verificación. Se conserva el carrito, pero no se puede confirmar ni reenviar la factura.'}
                                 </div>
                             )}
                             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -5002,7 +5024,7 @@ export default function POS({
                             <button
                                 type="button"
                                 onClick={submitSale}
-                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && (!paymentIsBalanced || !cashReceivedIsValid)) || invoiceIdentityNeedsVerification || hasInvalidCartQuantities || noAvailableDocumentTypes}
+                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && (!paymentIsBalanced || !cashReceivedIsValid)) || invoiceIdentityNeedsVerification || hasInvalidCartQuantities || noAvailableDocumentTypes || fiscalDraftRecoveryBlocked || draftVerificationUnavailable}
                                 className="rounded-xl bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-orange-200 hover:from-orange-700 hover:via-orange-600 hover:to-amber-600 disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : ((processing || creditProcessing) ? 'Confirmando...' : (effectiveCheckoutType === 'credit' ? 'Confirmar crédito' : 'Confirmar venta'))}
