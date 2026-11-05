@@ -24,9 +24,11 @@ use App\Support\Credits;
 use App\Support\StockAvailability;
 use App\Support\Inventory\StockPolicy;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Durable, provider-neutral fiscal intent orchestration.
@@ -44,49 +46,65 @@ class FiscalDocumentIntentService
 
     public function createForDraftSale(Sale $sale, array $operationPayload, string $idempotencyKey, ?int $userId): FiscalDocumentIntent
     {
-        return DB::transaction(function () use ($sale, $operationPayload, $idempotencyKey, $userId) {
-            $sale->loadMissing(['business', 'branch', 'customer', 'items.product']);
-            $existing = FiscalDocumentIntent::query()
-                ->where('business_id', $sale->business_id)
-                ->where('idempotency_key', $idempotencyKey)
-                ->lockForUpdate()
-                ->first();
+        try {
+            return DB::transaction(function () use ($sale, $operationPayload, $idempotencyKey, $userId) {
+                $sale->loadMissing(['business', 'branch', 'customer', 'items.product']);
+                $existing = FiscalDocumentIntent::query()
+                    ->where('business_id', $sale->business_id)
+                    ->where('idempotency_key', $idempotencyKey)
+                    ->lockForUpdate()
+                    ->first();
 
-            if ($existing) {
-                return $existing;
+                if ($existing) {
+                    return $existing;
+                }
+
+                $internalReference = Str::uuid()->toString();
+                $snapshot = $this->snapshotSale($sale, $operationPayload);
+                $operationFingerprint = $this->operationFingerprint($snapshot);
+                $duplicate = $this->pendingDuplicate($sale->business_id, $userId, $operationFingerprint);
+                if ($duplicate) {
+                    $this->throwPendingDuplicate($duplicate);
+                }
+                $fiscalPayload = $this->invoiceService->buildIntentPayload($sale, $internalReference);
+                $cashSessionId = $operationPayload['cash_register_session_id'] ?? null;
+                $creditCustomerId = ! empty($snapshot['sale']['is_credit_sale']) ? ($snapshot['sale']['customer_id'] ?? null) : null;
+                $creditHold = $creditCustomerId ? (float) ($snapshot['sale']['total'] ?? 0) : 0;
+
+                $intent = FiscalDocumentIntent::query()->create([
+                    'business_id' => $sale->business_id,
+                    'branch_id' => $sale->branch_id,
+                    'cash_register_session_id' => $cashSessionId,
+                    'credit_customer_id' => $creditCustomerId,
+                    'credit_hold_amount' => $creditHold,
+                    'created_by' => $userId,
+                    'country' => $sale->business?->country ?: 'GT',
+                    'provider' => 'digifact',
+                    'environment' => (string) ($operationPayload['environment'] ?? 'test'),
+                    'document_type' => $sale->document_type,
+                    'operation_type' => 'sale',
+                    'internal_reference' => $internalReference,
+                    'idempotency_key' => $idempotencyKey,
+                    'operation_fingerprint' => $operationFingerprint,
+                    'status' => FiscalDocumentIntent::PENDING,
+                    'operation_payload' => $snapshot,
+                    'fiscal_payload' => $fiscalPayload,
+                    'next_reconciliation_at' => now()->addMinutes(5),
+                ]);
+
+                $this->reserveStock($intent);
+
+                return $intent;
+            });
+        } catch (\Illuminate\Database\QueryException $exception) {
+            $snapshot = $this->snapshotSale($sale, $operationPayload);
+            $duplicate = $this->pendingDuplicate($sale->business_id, $userId, $this->operationFingerprint($snapshot));
+            if ($duplicate) {
+                $this->throwPendingDuplicate($duplicate);
             }
 
-            $internalReference = Str::uuid()->toString();
-            $snapshot = $this->snapshotSale($sale, $operationPayload);
-            $fiscalPayload = $this->invoiceService->buildIntentPayload($sale, $internalReference);
-            $cashSessionId = $operationPayload['cash_register_session_id'] ?? null;
-            $creditCustomerId = ! empty($snapshot['sale']['is_credit_sale']) ? ($snapshot['sale']['customer_id'] ?? null) : null;
-            $creditHold = $creditCustomerId ? (float) ($snapshot['sale']['total'] ?? 0) : 0;
-
-            $intent = FiscalDocumentIntent::query()->create([
-                'business_id' => $sale->business_id,
-                'branch_id' => $sale->branch_id,
-                'cash_register_session_id' => $cashSessionId,
-                'credit_customer_id' => $creditCustomerId,
-                'credit_hold_amount' => $creditHold,
-                'created_by' => $userId,
-                'country' => $sale->business?->country ?: 'GT',
-                'provider' => 'digifact',
-                'environment' => (string) ($operationPayload['environment'] ?? 'test'),
-                'document_type' => $sale->document_type,
-                'operation_type' => 'sale',
-                'internal_reference' => $internalReference,
-                'idempotency_key' => $idempotencyKey,
-                'status' => FiscalDocumentIntent::PENDING,
-                'operation_payload' => $snapshot,
-                'fiscal_payload' => $fiscalPayload,
-                'next_reconciliation_at' => now()->addMinutes(5),
-            ]);
-
-            $this->reserveStock($intent);
-
-            return $intent;
-        });
+            throw $exception;
+        }
     }
 
     /**
@@ -460,6 +478,62 @@ class FiscalDocumentIntentService
             'credit_line_ids' => $operationPayload['credit_line_ids'] ?? [],
             'draft_id' => $operationPayload['draft_id'] ?? null,
         ];
+    }
+
+    private function operationFingerprint(array $snapshot): string
+    {
+        $payload = Arr::except($snapshot, ['cash_register_session_id', 'draft_id']);
+        $payload['sale'] = Arr::except($payload['sale'] ?? [], ['branch_id', 'business_number']);
+
+        return hash('sha256', json_encode($this->sortRecursively($payload), JSON_THROW_ON_ERROR));
+    }
+
+    private function sortRecursively(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        foreach ($value as $key => $item) {
+            $value[$key] = $this->sortRecursively($item);
+        }
+
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+
+        return $value;
+    }
+
+    private function pendingDuplicate(int $businessId, ?int $userId, string $fingerprint): ?FiscalDocumentIntent
+    {
+        return FiscalDocumentIntent::query()
+            ->where('business_id', $businessId)
+            ->where('operation_type', 'sale')
+            ->when($userId === null, fn ($query) => $query->whereNull('created_by'), fn ($query) => $query->where('created_by', $userId))
+            ->where(fn ($query) => $query
+                ->where('operation_fingerprint', $fingerprint)
+                ->orWhereNull('operation_fingerprint'))
+            ->whereIn('status', [FiscalDocumentIntent::PENDING, FiscalDocumentIntent::UNKNOWN, FiscalDocumentIntent::CERTIFIED, FiscalDocumentIntent::RETRYABLE])
+            ->lockForUpdate()
+            ->get()
+            ->first(function (FiscalDocumentIntent $intent) use ($fingerprint): bool {
+                $existingFingerprint = $intent->operation_fingerprint;
+
+                if (! $existingFingerprint && is_array($intent->operation_payload)) {
+                    $existingFingerprint = $this->operationFingerprint($intent->operation_payload);
+                }
+
+                return is_string($existingFingerprint) && hash_equals($existingFingerprint, $fingerprint);
+            });
+    }
+
+    private function throwPendingDuplicate(FiscalDocumentIntent $intent): never
+    {
+        throw ValidationException::withMessages([
+            'document_type' => 'Ya existe una operación FEL igual en verificación. No se puede emitir otra factura hasta contar con evidencia fiscal de su resolución.',
+            'fiscal_intent_id' => (string) $intent->id,
+        ]);
     }
 
     private function reserveStock(FiscalDocumentIntent $intent): void

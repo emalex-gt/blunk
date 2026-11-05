@@ -220,12 +220,99 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertJsonMissingPath('sale_id');
     }
 
+    public function test_unknown_fel_invoice_cannot_be_duplicated_with_a_new_idempotency_key_after_local_draft_loss(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'cash_register', 'fel_gt'], allowInvoices: true);
+        $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('buildIntentPayload')->once()->andReturn([
+            'Header' => ['IssuedDateTime' => now('America/Guatemala')->format('Y-m-d\\TH:i:sP')],
+        ]);
+        $digifact->shouldReceive('certifyIntent')->once()->andThrow(new FelException('Timeout de certificación simulado.'));
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+        $this->app->forgetInstance(FiscalDocumentIntentService::class);
+
+        $payload = $this->salePayload($product, quantity: 1, total: 100, documentType: 'invoice', customer: [
+            'name' => 'Consumidor Final',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+            'consumidor_final' => true,
+        ]);
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $payload)
+            ->assertRedirect(route('sales.create'));
+
+        // Pending intents created before this migration have no persisted fingerprint.
+        FiscalDocumentIntent::query()->sole()->update(['operation_fingerprint' => null]);
+
+        $replayedAsNewOperation = [...$payload, 'idempotency_key' => 'lost-local-draft-'.uniqid()];
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $replayedAsNewOperation)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasErrors(['document_type', 'fiscal_intent_id']);
+
+        $this->assertDatabaseCount('fiscal_document_intents', 1);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('sale_items', 0);
+        $this->assertDatabaseCount('sale_payments', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertDatabaseCount('customer_account_movements', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseCount('stock_reservations', 1);
+    }
+
+    public function test_every_unresolved_fel_status_blocks_the_same_invoice_with_a_new_key(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'cash_register', 'fel_gt'], allowInvoices: true);
+        $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('buildIntentPayload')->once()->andReturn([
+            'Header' => ['IssuedDateTime' => now('America/Guatemala')->format('Y-m-d\\TH:i:sP')],
+        ]);
+        $digifact->shouldReceive('certifyIntent')->once()->andThrow(new FelException('Timeout de certificación simulado.'));
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+        $this->app->forgetInstance(FiscalDocumentIntentService::class);
+
+        $payload = $this->salePayload($product, quantity: 1, total: 100, documentType: 'invoice', customer: [
+            'name' => 'Consumidor Final',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+            'consumidor_final' => true,
+        ]);
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $payload)
+            ->assertRedirect(route('sales.create'));
+
+        $intent = FiscalDocumentIntent::query()->sole();
+        foreach ([FiscalDocumentIntent::PENDING, FiscalDocumentIntent::CERTIFIED, FiscalDocumentIntent::RETRYABLE] as $status) {
+            $intent->update(['status' => $status]);
+
+            $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), [
+                ...$payload,
+                'idempotency_key' => $status.'-lost-draft-'.uniqid(),
+            ])
+                ->assertRedirect(route('sales.create'))
+                ->assertSessionHasErrors(['document_type', 'fiscal_intent_id']);
+        }
+
+        $this->assertDatabaseCount('fiscal_document_intents', 1);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('stock_reservations', 1);
+    }
+
     public function test_pending_and_certified_fel_intents_remain_unresolved_for_pos_draft_recovery(): void
     {
         [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'fel_gt'], allowInvoices: true);
         $branch = BranchInventory::defaultBranchForBusiness($business);
 
-        foreach ([FiscalDocumentIntent::PENDING, FiscalDocumentIntent::CERTIFIED] as $intentStatus) {
+        foreach ([FiscalDocumentIntent::PENDING, FiscalDocumentIntent::CERTIFIED, FiscalDocumentIntent::RETRYABLE] as $intentStatus) {
             $intent = $this->unknownFiscalIntent($business, $user);
             $intent->update(['status' => $intentStatus]);
             $key = 'draft-'.$intentStatus.'-'.uniqid();
@@ -256,11 +343,34 @@ class CriticalPosFelFlowTest extends TestCase
         }
     }
 
+    public function test_pos_can_detect_its_own_unresolved_fiscal_operation_after_local_draft_loss(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'fel_gt'], allowInvoices: true);
+        $this->unknownFiscalIntent($business, $user);
+
+        $this->actingAs($user)
+            ->getJson(route('operation-drafts.pending-pos-fiscal-operations'))
+            ->assertOk()
+            ->assertJsonPath('has_pending_fiscal_operation', true);
+
+        $otherUser = User::factory()->create([
+            'business_id' => $business->id,
+            'is_active' => true,
+            'all_branches_access' => true,
+        ]);
+        Permissions::assignRole($otherUser, 'cashier');
+
+        $this->actingAs($otherUser)
+            ->getJson(route('operation-drafts.pending-pos-fiscal-operations'))
+            ->assertOk()
+            ->assertJsonPath('has_pending_fiscal_operation', false);
+    }
+
     public function test_pos_recovery_keeps_unresolved_fiscal_drafts_blocked_from_resubmission(): void
     {
         $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
 
-        $this->assertStringContainsString("const fiscalDraftRecoveryBlocked = ['fiscal_unknown', 'fiscal_pending', 'fiscal_certified']", $source);
+        $this->assertStringContainsString("!['not_found', 'finalized', 'fiscal_rejected'].includes(draftRecoveryStatus.status)", $source);
         $this->assertStringContainsString('No se puede confirmar esta venta mientras la certificación FEL está en verificación.', $source);
         $this->assertStringContainsString("draftRecoveryStatus?.status === 'verification_unavailable'", $source);
         $this->assertStringContainsString('|| fiscalDraftRecoveryBlocked', $source);

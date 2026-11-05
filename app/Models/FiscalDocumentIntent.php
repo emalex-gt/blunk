@@ -17,7 +17,7 @@ class FiscalDocumentIntent extends Model
     protected $fillable = [
         'business_id', 'branch_id', 'finalized_sale_id', 'cash_register_session_id', 'credit_customer_id', 'credit_hold_amount', 'created_by', 'country', 'provider',
         'environment', 'document_type', 'operation_type', 'internal_reference',
-        'idempotency_key', 'status', 'operation_payload', 'fiscal_payload',
+        'idempotency_key', 'operation_fingerprint', 'status', 'operation_payload', 'fiscal_payload',
         'provider_response', 'negative_reconciliation_count', 'last_reconciliation_at',
         'next_reconciliation_at', 'last_reconciliation_result', 'last_reconciliation_error', 'last_finalization_error',
         'certified_at', 'finalized_at', 'provisional_accepted_at', 'provisional_accepted_by',
@@ -47,6 +47,6 @@ class FiscalDocumentIntent extends Model
 
     public function isUnresolved(): bool
     {
-        return in_array($this->status, [self::PENDING, self::UNKNOWN, self::CERTIFIED], true);
+        return in_array($this->status, [self::PENDING, self::UNKNOWN, self::CERTIFIED, self::RETRYABLE], true);
     }
 }
