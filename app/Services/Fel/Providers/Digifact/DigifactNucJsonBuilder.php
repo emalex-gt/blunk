@@ -307,10 +307,15 @@ class DigifactNucJsonBuilder
             }
         }
 
-        return [
-            (string) GuatemalaLocations::canonicalDepartment($felBranch->fel_department),
-            (string) $felBranch->fel_municipality,
-        ];
+        $branchDepartment = (string) GuatemalaLocations::canonicalDepartment($felBranch->fel_department);
+        $branchMunicipality = (string) $felBranch->fel_municipality;
+
+        if (GuatemalaLocations::isValidDepartment($branchDepartment)
+            && GuatemalaLocations::isValidMunicipality($branchDepartment, $branchMunicipality)) {
+            return [$branchDepartment, $branchMunicipality];
+        }
+
+        return ['Guatemala', 'Guatemala'];
     }
 
     private function buildSellerAdditionlInfo(TenantFelSetting $settings): array

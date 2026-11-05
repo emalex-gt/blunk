@@ -389,8 +389,8 @@ function normalizeCustomerValidationState(
         ...normalized,
         id: normalized.id ?? null,
         consumidor_final: consumidorFinal,
-        doc_type: docType,
-        doc_number: country === 'GT' && docType === 'CF' && docNumber.trim() === '' ? 'CF' : docNumber,
+        doc_type: country === 'GT' && consumidorFinal ? 'CF' : docType,
+        doc_number: country === 'GT' && consumidorFinal ? 'CF' : docNumber,
         tax_condition: String(normalized.tax_condition ?? ''),
         name: String(normalized.name ?? ''),
         commercial_name: String(normalized.commercial_name ?? ''),
@@ -487,7 +487,9 @@ function quantityNumber(value: number | string | null | undefined) {
 function fiscalCustomerPayload(customer: CustomerForm) {
     const { commercial_name: _commercialName, tax_lookup_verified_doc_number: _verifiedDocNumber, ...payload } = customer;
 
-    return payload;
+    return customer.country === 'GT' && customer.consumidor_final
+        ? { ...payload, doc_type: 'CF', doc_number: 'CF', consumidor_final: true }
+        : payload;
 }
 
 function roundMoney(value: number) {
@@ -907,7 +909,7 @@ export default function POS({
     const draftProductFetchKeyRef = useRef<string | null>(null);
     const recentProductFetchKeyRef = useRef<string | null>(null);
 
-    const { data, setData, post, processing, reset, transform, errors } = useForm<{
+    const { data, setData, post, processing, reset, transform, errors, clearErrors } = useForm<{
         note: string;
         branch_id: number | string | null;
         customer: CustomerForm;
@@ -1944,6 +1946,18 @@ export default function POS({
     function showError(value: string) {
         setErrorMessage(value);
         setMessage('');
+    }
+
+    function clearCustomerTypeErrors() {
+        clearErrors(
+            'customer.doc_type',
+            'customer.doc_number',
+            'customer.name',
+            'customer.department',
+            'customer.municipality',
+            'document_type',
+        );
+        setErrorMessage('');
     }
 
     function clearSearch() {
@@ -3469,6 +3483,7 @@ export default function POS({
                                                 onClick={() => {
                                                     renewOperationKeyAfterFailedMutation();
                                                     setData('customer', emptyCustomer('GT'));
+                                                    clearCustomerTypeErrors();
                                                     setNitLookupMessage('');
                                                     setCustomerEditing(true);
                                                 }}
@@ -3494,6 +3509,7 @@ export default function POS({
                                                         name_locked: false,
                                                         tax_lookup_verified_at: null,
                                                     });
+                                                    clearCustomerTypeErrors();
                                                     setNitLookupMessage('');
                                                     setCustomerEditing(true);
                                                 }}
@@ -3519,6 +3535,7 @@ export default function POS({
                                                         name_locked: false,
                                                         tax_lookup_verified_at: null,
                                                     });
+                                                    clearCustomerTypeErrors();
                                                     setNitLookupMessage('');
                                                     setCustomerEditing(true);
                                                 }}

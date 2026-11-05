@@ -2562,18 +2562,20 @@ class SaleController extends Controller
         $commercialName = trim((string) ($customerData['commercial_name'] ?? ''));
         $department = trim((string) ($customerData['department'] ?? ''));
         $municipality = trim((string) ($customerData['municipality'] ?? ''));
+        $hasValidGuatemalaLocation = $department !== ''
+            && $municipality !== ''
+            && \App\Support\GuatemalaLocations::isValidDepartment($department)
+            && \App\Support\GuatemalaLocations::isValidMunicipality($department, $municipality);
         $preserveFelCustomerLocation = $allowMissingGuatemalaLocation
             && $customerCountry === 'GT'
-            && ($department === '' || $municipality === '');
+            && ! $hasValidGuatemalaLocation;
         $selectedCustomer = filled($customerData['id'] ?? null)
             ? Customer::query()
                 ->where('business_id', $businessId)
                 ->find($customerData['id'])
             : null;
 
-        if (! ($allowMissingGuatemalaLocation
-            && $customerCountry === 'GT'
-            && ($department === '' || $municipality === ''))) {
+        if (! ($allowMissingGuatemalaLocation && $customerCountry === 'GT')) {
             $this->validateCustomerLocation($customerCountry, $department, $municipality);
         }
 

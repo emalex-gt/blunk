@@ -2192,6 +2192,9 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringContainsString('id: customer.id,', $source);
         $this->assertStringContainsString('address_reference: customer.address_reference ?? \'\'', $source);
         $this->assertStringContainsString("doc_type: customer.doc_type ?? (country === 'AR' ? 'DNI' : 'NIT')", $source);
+        $this->assertStringContainsString("doc_type: country === 'GT' && consumidorFinal ? 'CF' : docType", $source);
+        $this->assertStringContainsString("? { ...payload, doc_type: 'CF', doc_number: 'CF', consumidor_final: true }", $source);
+        $this->assertStringContainsString('clearCustomerTypeErrors();', $source);
     }
 
     public function test_pos_recent_products_are_scoped_and_rehydrated_without_stale_payloads(): void
@@ -4140,6 +4143,57 @@ class CriticalPosFelFlowTest extends TestCase
 
         $this->assertSame('CF', $cfBuyer['TaxID']);
         $this->assertArrayNotHasKey('TaxIDType', $cfBuyer);
+    }
+
+    public function test_fel_buyer_location_uses_a_valid_branch_pair_when_customer_location_is_invalid(): void
+    {
+        [$business] = $this->tenant(country: 'GT', modules: ['fel_gt'], allowInvoices: true);
+        $settings = $this->felSettings($business);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $branch->update([
+            'fel_department' => 'El Quiche',
+            'fel_municipality' => 'Chichicastenango',
+            'fel_postal_code' => '14006',
+        ]);
+        $sale = $this->invoiceSale($business, $branch);
+        $sale->update([
+            'customer_address' => null,
+            'customer_department' => 'Departamento inválido',
+            'customer_municipality' => 'Municipio inválido',
+        ]);
+
+        $buyer = app(DigifactNucJsonBuilder::class)
+            ->buildInvoicePayload($sale->refresh(), $settings->refresh())['Buyer']['AddressInfo'];
+
+        $this->assertSame('Ciudad', $buyer['Address']);
+        $this->assertSame('14006', $buyer['City']);
+        $this->assertSame('Chichicastenango', $buyer['District']);
+        $this->assertSame('El Quiche', $buyer['State']);
+    }
+
+    public function test_fel_buyer_location_uses_guatemala_fallback_without_inventing_a_postal_code(): void
+    {
+        [$business] = $this->tenant(country: 'GT', modules: ['fel_gt'], allowInvoices: true);
+        $settings = $this->felSettings($business);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $branch->update([
+            'fel_department' => 'Departamento fiscal no válido',
+            'fel_municipality' => 'Municipio fiscal no válido',
+        ]);
+        $sale = $this->invoiceSale($business, $branch);
+        $sale->update([
+            'customer_department' => null,
+            'customer_municipality' => null,
+        ]);
+
+        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->refresh(), $settings->refresh());
+        $buyer = $payload['Buyer']['AddressInfo'];
+
+        $this->assertNull($buyer['City']);
+        $this->assertSame('Guatemala', $buyer['District']);
+        $this->assertSame('Guatemala', $buyer['State']);
+        $this->assertSame('Departamento fiscal no válido', $payload['Seller']['BranchInfo']['AddressInfo']['State']);
+        $this->assertSame('Municipio fiscal no válido', $payload['Seller']['BranchInfo']['AddressInfo']['District']);
     }
 
     public function test_fel_certification_is_blocked_when_branch_establishment_data_is_missing(): void
