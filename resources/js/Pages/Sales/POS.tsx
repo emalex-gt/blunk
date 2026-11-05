@@ -905,7 +905,8 @@ export default function POS({
     const [showClearSaleModal, setShowClearSaleModal] = useState(false);
     const [activeOperationDraftId, setActiveOperationDraftId] = useState<number | null>(null);
     const [savedDraftsOpen, setSavedDraftsOpen] = useState(false);
-    const fiscalDraftRecoveryBlocked = ['fiscal_unknown', 'fiscal_pending', 'fiscal_certified'].includes(draftRecoveryStatus?.status ?? '');
+    const fiscalDraftRecoveryBlocked = draftRecoveryStatus !== null
+        && !['not_found', 'finalized', 'fiscal_rejected'].includes(draftRecoveryStatus.status);
     const draftVerificationUnavailable = draftRecoveryStatus?.status === 'verification_unavailable';
     const [savedDrafts, setSavedDrafts] = useState<OperationDraftRecord<PosDraft>[]>([]);
     const [draftListLoading, setDraftListLoading] = useState(false);
@@ -2827,7 +2828,7 @@ export default function POS({
         if (fiscalDraftRecoveryBlocked || draftVerificationUnavailable) {
             const message = draftVerificationUnavailable
                 ? 'No se pudo verificar el estado de este borrador. No confirmes una nueva venta hasta comprobar la operación anterior.'
-                : 'No se puede confirmar esta venta mientras la certificación FEL está en verificación.';
+                : 'No se puede confirmar esta venta mientras la operación anterior requiere verificación.';
             showError(message);
             toast.warning(message, { persistent: true });
             return;
@@ -3178,7 +3179,7 @@ export default function POS({
                         return;
                     }
 
-                    if (['fiscal_unknown', 'fiscal_pending', 'fiscal_certified'].includes(status.status)) {
+                    if (!['not_found', 'fiscal_rejected'].includes(status.status)) {
                         setDraftRecoveryStatus(status);
                     }
                 } catch {
@@ -3561,7 +3562,7 @@ export default function POS({
                                 <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="alert">
                                     {draftVerificationUnavailable
                                         ? 'No se pudo verificar el estado del trabajo pendiente. Se conserva el carrito, pero no confirmes una nueva venta hasta verificar la operación anterior.'
-                                        : 'La certificación FEL de este trabajo sigue en verificación. Se conserva el carrito, pero no se puede confirmar ni reenviar la factura.'}
+                                        : 'Este trabajo requiere verificación. Se conserva el carrito, pero no se puede confirmar ni reenviar la factura.'}
                                 </div>
                             )}
                             <div className="flex flex-wrap items-center justify-between gap-3">
