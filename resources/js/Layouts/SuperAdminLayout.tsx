@@ -62,8 +62,8 @@ export default function SuperAdminLayout({ title, actions, children }: Props) {
             <Head title={title} />
 
             <header className="sticky top-0 z-50 border-b border-slate-800 bg-slate-950/95 shadow-lg shadow-slate-950/10 backdrop-blur-xl">
-                <div className="mx-auto flex h-16 max-w-[1800px] items-center justify-between gap-4 px-5 sm:px-6">
-                    <div className="flex min-w-0 items-center gap-8">
+                <div className="mx-auto flex max-w-[1800px] flex-wrap items-center justify-between gap-3 px-5 py-3 sm:flex-nowrap sm:px-6">
+                    <div className="flex min-w-0 items-center gap-4 sm:gap-8">
                         <Link href={route('super-admin.dashboard')} className="flex items-center gap-3">
                             <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-600 to-amber-500 text-sm font-bold text-white shadow-lg shadow-orange-200">
                                 SA
@@ -76,13 +76,13 @@ export default function SuperAdminLayout({ title, actions, children }: Props) {
                             </div>
                         </Link>
 
-                        <nav className="hidden gap-2 md:flex">
+                        <nav className="order-3 flex w-full gap-2 overflow-x-auto pb-1 sm:order-none sm:w-auto sm:flex-1 sm:pb-0">
                             {navigation.map((item) => (
                                 <Link
                                     key={item.label}
                                     href={item.href}
                                     className={[
-                                        'rounded-xl px-4 py-2 text-sm transition-all duration-200',
+                                        'shrink-0 rounded-xl px-4 py-2 text-sm transition-all duration-200',
                                         item.active
                                             ? 'bg-orange-500/15 font-semibold text-orange-300 shadow-sm ring-1 ring-orange-500/20'
                                             : 'font-medium text-slate-300 hover:bg-slate-800 hover:text-white',

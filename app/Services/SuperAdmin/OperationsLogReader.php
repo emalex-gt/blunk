@@ -4,6 +4,7 @@ namespace App\Services\SuperAdmin;
 
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Arr;
+use Illuminate\Validation\ValidationException;
 
 final class OperationsLogReader
 {
@@ -43,7 +44,7 @@ final class OperationsLogReader
             'fel_unknown' => 0,
             'finalization_failures' => 0,
         ];
-        $partial = false;
+        $limitReason = null;
         $examinedLines = 0;
         $examinedBytes = 0;
 
@@ -53,7 +54,7 @@ final class OperationsLogReader
                 continue;
             }
 
-            foreach ($this->linesFromEnd($path, $examinedBytes, $examinedLines, $partial) as $line) {
+            foreach ($this->linesFromEnd($path, $examinedBytes, $examinedLines, $limitReason) as $line) {
                 $event = $this->parse($line);
                 if ($event === null) {
                     continue;
@@ -69,7 +70,6 @@ final class OperationsLogReader
                 $events[] = $event;
 
                 if (count($events) >= $required) {
-                    $partial = true;
                     break 2;
                 }
             }
@@ -79,7 +79,8 @@ final class OperationsLogReader
             'events' => array_slice($events, $offset, self::PAGE_SIZE),
             'has_more' => count($events) > $offset + self::PAGE_SIZE,
             'summary' => $summary,
-            'partial' => $partial,
+            'partial' => $limitReason !== null,
+            'partial_reason' => $limitReason,
             'files_available' => $this->filesAvailable($filters['date_from'], $filters['date_to']),
             'logging_enabled' => (bool) config('logging.operations.enabled', false),
             'read_error' => $this->readError,
@@ -98,12 +99,19 @@ final class OperationsLogReader
 
     public function normalizeFilters(array $input): array
     {
-        $today = now()->startOfDay();
-        $from = CarbonImmutable::parse($input['date_from'] ?? $today->copy()->subDays(6)->toDateString())->startOfDay();
-        $to = CarbonImmutable::parse($input['date_to'] ?? $today->toDateString())->endOfDay();
+        $timezone = (string) config('app.timezone', 'UTC');
+        $today = CarbonImmutable::now($timezone)->startOfDay();
 
-        if ($to->lessThan($from) || $from->lessThan($today->copy()->subDays(self::MAX_DAYS - 1))) {
-            abort(422, 'El intervalo de diagnóstico debe estar dentro de los últimos '.self::MAX_DAYS.' días.');
+        try {
+            $from = $this->dateAtStart($input['date_from'] ?? $today->subDays(6)->toDateString(), $timezone);
+            $to = $this->dateAtStart($input['date_to'] ?? $today->toDateString(), $timezone);
+        } catch (\Throwable) {
+            throw ValidationException::withMessages(['date_from' => 'El intervalo de fechas no es válido.']);
+        }
+
+        $firstAllowed = $today->subDays(self::MAX_DAYS - 1);
+        if ($from->lessThan($firstAllowed) || $to->greaterThan($today) || $from->greaterThan($to) || $from->diffInDays($to) >= self::MAX_DAYS) {
+            throw ValidationException::withMessages(['date_from' => 'El intervalo debe estar dentro de los últimos '.self::MAX_DAYS.' días y no puede incluir fechas futuras.']);
         }
 
         return [
@@ -150,7 +158,7 @@ final class OperationsLogReader
         return null;
     }
 
-    private function linesFromEnd(string $path, int &$examinedBytes, int &$examinedLines, bool &$partial): \Generator
+    private function linesFromEnd(string $path, int &$examinedBytes, int &$examinedLines, ?string &$limitReason): \Generator
     {
         $handle = fopen($path, 'rb');
         if ($handle === false) {
@@ -165,7 +173,7 @@ final class OperationsLogReader
 
             while ($position > 0) {
                 if ($examinedBytes >= self::MAX_BYTES || $examinedLines >= self::MAX_LINES) {
-                    $partial = true;
+                    $limitReason = $examinedBytes >= self::MAX_BYTES ? 'bytes_limit' : 'lines_limit';
                     return;
                 }
 
@@ -185,7 +193,7 @@ final class OperationsLogReader
                     $examinedLines++;
                     yield trim($line);
                     if ($examinedLines >= self::MAX_LINES) {
-                        $partial = true;
+                        $limitReason = 'lines_limit';
                         return;
                     }
                 }
@@ -290,5 +298,10 @@ final class OperationsLogReader
         $value = filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
 
         return $value === false ? null : $value;
+    }
+
+    private function dateAtStart(string $value, string $timezone): CarbonImmutable
+    {
+        return CarbonImmutable::createFromFormat('!Y-m-d', $value, $timezone)->startOfDay();
     }
 }

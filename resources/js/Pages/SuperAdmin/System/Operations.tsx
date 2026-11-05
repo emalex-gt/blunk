@@ -1,6 +1,6 @@
 import SuperAdminLayout from '@/Layouts/SuperAdminLayout';
 import { Link, router } from '@inertiajs/react';
-import { FormEvent, ReactNode, useMemo, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
 
 type Filters = {
     date_from: string;
@@ -31,6 +31,7 @@ type Result = {
     files_available: boolean;
     logging_enabled: boolean;
     read_error: boolean;
+    partial_reason: 'bytes_limit' | 'lines_limit' | null;
     summary: Record<string, number>;
 };
 
@@ -90,8 +91,17 @@ export default function Operations({ filters, result, event_names, businesses, m
             .reverse();
     }, [result.events, selected]);
 
+    useEffect(() => {
+        setForm(filters);
+        setSelected((current) => current && result.events.includes(current) ? current : null);
+    }, [filters, result.events]);
+
     function query(next: Partial<Filters> = {}) {
         router.get(route('super-admin.system.operations.index'), { ...form, ...next, page: next.page ?? 1 }, { preserveState: true, preserveScroll: true });
+    }
+
+    function changePage(page: number) {
+        router.get(route('super-admin.system.operations.index'), { ...filters, page }, { preserveState: true, preserveScroll: true });
     }
 
     function submit(event: FormEvent) {
@@ -107,8 +117,28 @@ export default function Operations({ filters, result, event_names, businesses, m
     }
 
     function openTimeline(item: Event) {
-        if (item.context.intent_id) query({ intent_id: Number(item.context.intent_id), sale_id: null });
-        else if (item.context.sale_id) query({ sale_id: Number(item.context.sale_id), intent_id: null });
+        const operationFilter = item.context.intent_id
+            ? { intent_id: Number(item.context.intent_id), sale_id: null }
+            : item.context.sale_id
+                ? { sale_id: Number(item.context.sale_id), intent_id: null }
+                : null;
+
+        if (!operationFilter) return;
+
+        setSelected(null);
+        router.get(route('super-admin.system.operations.index'), {
+            date_from: filters.date_from,
+            date_to: filters.date_to,
+            business_id: null,
+            category: 'all',
+            result: 'all',
+            event: '',
+            quotation_id: null,
+            user_id: null,
+            reason_code: '',
+            page: 1,
+            ...operationFilter,
+        }, { preserveScroll: true });
     }
 
     return <SuperAdminLayout title="Diagnóstico de operaciones">
@@ -117,12 +147,14 @@ export default function Operations({ filters, result, event_names, businesses, m
                 <h1 className="text-2xl font-bold tracking-tight text-slate-950">Diagnóstico de operaciones</h1>
                 <p className="mt-1 text-sm text-slate-600">Eventos operativos de POS, cotizaciones, identidad fiscal y FEL. El archivo no determina el estado fiscal actual.</p>
             </div>
-            <button type="button" onClick={() => query({ page: filters.page })} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Actualizar datos</button>
+            <button type="button" onClick={() => router.reload({ only: ['result'] })} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Actualizar datos</button>
         </div>
 
         {!result.logging_enabled && <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><strong>Logging desactivado.</strong> Se muestran únicamente registros históricos que aún existan.</div>}
         {result.read_error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">No se pudo leer uno o más archivos del intervalo. No se exponen rutas ni detalles internos.</div>}
-        {result.partial && <div className="mb-5 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">La consulta alcanzó el límite seguro de lectura. Los indicadores corresponden a la muestra analizada, no a un total global.</div>}
+        {result.partial && <div className="mb-5 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">{result.partial_reason === 'bytes_limit' ? 'La consulta alcanzó el límite de bytes seguros.' : 'La consulta alcanzó el límite de líneas seguras.'} Los indicadores corresponden a la muestra analizada, no a un total global.</div>}
+        {(filters.intent_id || filters.sale_id) && <div className="mb-5 rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900">Cronología disponible para {filters.intent_id ? `la intención FEL #${filters.intent_id}` : `la venta #${filters.sale_id}`}. Solo se muestran eventos con ese identificador; no se infieren asociaciones por hora.</div>}
+        {(filters.intent_id || filters.sale_id) && result.has_more && !result.partial && <div className="mb-5 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">Hay más eventos de esta operación en páginas siguientes. La paginación no implica que se haya alcanzado un límite de lectura.</div>}
 
         <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             {[
@@ -149,7 +181,7 @@ export default function Operations({ filters, result, event_names, businesses, m
         </form>
 
         {!result.files_available ? <Empty title="No existen archivos para el intervalo consultado" text="El canal puede estar desactivado, no haber escrito eventos o ya haberse aplicado la retención." /> : result.events.length === 0 ? <Empty title="No hay eventos con estos filtros" text="No se encontraron registros legibles dentro de la ventana de lectura." /> : <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Fecha y hora</th><th className="px-4 py-3">Empresa</th><th className="px-4 py-3">Evento</th><th className="px-4 py-3">Referencia</th><th className="px-4 py-3">Resultado</th></tr></thead><tbody className="divide-y divide-slate-100">{result.events.map((item, index) => <tr key={`${item.timestamp}-${item.event}-${index}`} onClick={() => setSelected(item)} className="cursor-pointer hover:bg-orange-50"><td className="whitespace-nowrap px-4 py-3 text-slate-600">{localTime(item.timestamp)}</td><td className="px-4 py-3 font-medium text-slate-800">{businessNames.get(Number(item.context.business_id)) ?? `Empresa #${item.context.business_id ?? '-'}`}</td><td className="px-4 py-3"><div className="font-medium text-slate-900">{eventLabels[item.event] ?? item.event}</div><div className="font-mono text-xs text-slate-500">{item.event}</div></td><td className="px-4 py-3 text-slate-700">{reference(item)}</td><td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-xs font-semibold ${resultClass(item.result)}`}>{resultLabels[item.result]}</span></td></tr>)}</tbody></table></div><div className="flex items-center justify-between border-t border-slate-200 p-3"><button disabled={filters.page <= 1} onClick={() => query({ page: filters.page - 1 })} className="rounded-lg border px-3 py-1.5 text-sm disabled:opacity-40">Anterior</button><span className="text-xs text-slate-500">Página {filters.page}</span><button disabled={!result.has_more} onClick={() => query({ page: filters.page + 1 })} className="rounded-lg border px-3 py-1.5 text-sm disabled:opacity-40">Siguiente</button></div></section>
+            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Fecha y hora</th><th className="px-4 py-3">Empresa</th><th className="px-4 py-3">Evento</th><th className="px-4 py-3">Referencia</th><th className="px-4 py-3">Resultado</th></tr></thead><tbody className="divide-y divide-slate-100">{result.events.map((item, index) => <tr key={`${item.timestamp}-${item.event}-${index}`} onClick={() => setSelected(item)} className="cursor-pointer hover:bg-orange-50"><td className="whitespace-nowrap px-4 py-3 text-slate-600">{localTime(item.timestamp)}</td><td className="px-4 py-3 font-medium text-slate-800">{businessNames.get(Number(item.context.business_id)) ?? `Empresa #${item.context.business_id ?? '-'}`}</td><td className="px-4 py-3"><div className="font-medium text-slate-900">{eventLabels[item.event] ?? item.event}</div><div className="font-mono text-xs text-slate-500">{item.event}</div></td><td className="px-4 py-3 text-slate-700">{reference(item)}</td><td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-xs font-semibold ${resultClass(item.result)}`}>{resultLabels[item.result]}</span></td></tr>)}</tbody></table></div><div className="flex items-center justify-between border-t border-slate-200 p-3"><button disabled={filters.page <= 1} onClick={() => changePage(filters.page - 1)} className="rounded-lg border px-3 py-1.5 text-sm disabled:opacity-40">Anterior</button><span className="text-xs text-slate-500">Página {filters.page}</span><button disabled={!result.has_more} onClick={() => changePage(filters.page + 1)} className="rounded-lg border px-3 py-1.5 text-sm disabled:opacity-40">Siguiente</button></div></section>
             <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-lg font-bold text-slate-950">Detalle de evento</h2>{selected ? <div className="mt-4 space-y-3 text-sm"><Detail label="Fecha" value={localTime(selected.timestamp)} /><Detail label="Código" value={selected.event} /><Detail label="Empresa" value={businessNames.get(Number(selected.context.business_id)) ?? `#${selected.context.business_id ?? '-'}`} /><Detail label="Sucursal" value={selected.context.branch_id ? `#${selected.context.branch_id}` : '-'} /><Detail label="Usuario" value={selected.context.user_id ? `#${selected.context.user_id}` : '-'} /><Detail label="Estado" value={String(selected.context.status ?? selected.context.outcome ?? '-')} /><Detail label="Razón" value={String(selected.context.reason_code ?? '-')} /><Detail label="Duración" value={selected.context.duration_ms ? `${selected.context.duration_ms} ms` : '-'} /><div className="border-t pt-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Contexto técnico seguro</p><pre className="mt-2 overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">{JSON.stringify(selected.context, null, 2)}</pre></div>{(selected.context.intent_id || selected.context.sale_id) && <><div className="flex flex-wrap gap-2"><button type="button" onClick={() => openTimeline(selected)} className="rounded-lg border border-orange-200 px-3 py-2 text-xs font-semibold text-orange-700 hover:bg-orange-50">Ver cronología</button>{selected.context.intent_id && <Link href={route('super-admin.fel-incidents.index')} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Abrir Incidencias FEL</Link>}</div>{timeline.length > 0 && <div className="border-t pt-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Cronología disponible</p><ol className="mt-2 space-y-2 border-l border-slate-200 pl-3">{timeline.map((item, index) => <li key={`${item.timestamp}-${index}`} className="text-xs text-slate-600"><span className="font-semibold text-slate-800">{eventLabels[item.event] ?? item.event}</span><br />{localTime(item.timestamp)}</li>)}</ol></div>}</>}</div> : <p className="mt-4 text-sm text-slate-500">Selecciona un evento para ver únicamente su contexto seguro.</p>}</aside>
         </div>}
     </SuperAdminLayout>;
