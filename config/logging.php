@@ -52,6 +52,14 @@ return [
 
     'channels' => [
 
+        'blunk_operations' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/blunk-operations.log'),
+            'level' => env('BLUNK_OPERATIONS_LOG_LEVEL', 'info'),
+            'days' => env('BLUNK_OPERATIONS_LOG_DAYS', 14),
+            'replace_placeholders' => true,
+        ],
+
         'stack' => [
             'driver' => 'stack',
             'channels' => explode(',', (string) env('LOG_STACK', 'single')),
@@ -127,6 +135,12 @@ return [
             'path' => storage_path('logs/laravel.log'),
         ],
 
+    ],
+
+    'operations' => [
+        'enabled' => env('BLUNK_OPERATIONS_LOG_ENABLED', false),
+        'businesses' => env('BLUNK_OPERATIONS_LOG_BUSINESSES', ''),
+        'channel' => 'blunk_operations',
     ],
 
 ];

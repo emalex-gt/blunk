@@ -11,6 +11,7 @@ use App\Support\GuatemalaCustomerIdentityPolicy;
 use App\Support\GuatemalaCuiCustomerResolver;
 use App\Support\GuatemalaLocations;
 use App\Support\GuatemalaNitCustomerResolver;
+use App\Support\OperationsLog;
 use App\Support\TextEncoding;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -411,6 +412,13 @@ class CustomerController extends Controller
                 $verifiedAt = $customer->tax_lookup_verified_at?->toIso8601String();
             }
 
+            OperationsLog::event('pos.identity_lookup.verified', $business->id, [
+                'user_id' => $request->user()?->id,
+                'customer_id' => $customer->id,
+                'operation_type' => 'identity_lookup',
+                'outcome' => 'verified',
+            ]);
+
             return response()->json([
                 'doc_type' => $docType,
                 'doc_number' => $docNumber,
@@ -425,8 +433,22 @@ class CustomerController extends Controller
                 ?? $exception->errors()['customer.doc_number'][0]
                 ?? 'No se pudo validar la identidad fiscal.';
 
+            OperationsLog::event('pos.identity_lookup.rejected', $business->id, [
+                'user_id' => $request->user()?->id,
+                'operation_type' => 'identity_lookup',
+                'outcome' => 'rejected',
+                'reason_code' => 'identity_validation',
+            ]);
+
             return $this->identityLookupValidationError($message);
         } catch (FelIdentityLookupException $exception) {
+            OperationsLog::event('pos.identity_lookup.rejected', $business->id, [
+                'user_id' => $request->user()?->id,
+                'operation_type' => 'identity_lookup',
+                'outcome' => 'rejected',
+                'reason_code' => $exception->reason(),
+            ]);
+
             return response()->json([
                 'message' => $exception->getMessage(),
                 'reason_code' => $exception->reason(),
@@ -434,6 +456,13 @@ class CustomerController extends Controller
             ], 422);
         } catch (Throwable $exception) {
             report($exception);
+
+            OperationsLog::event('pos.identity_lookup.failed', $business->id, [
+                'user_id' => $request->user()?->id,
+                'operation_type' => 'identity_lookup',
+                'outcome' => 'unavailable',
+                'reason_code' => 'lookup_unavailable',
+            ]);
 
             return response()->json([
                 'message' => 'No se pudo consultar la identidad fiscal. Inténtalo nuevamente.',
@@ -464,6 +493,11 @@ class CustomerController extends Controller
             'is_final_consumer' => (bool) $customer->is_final_consumer,
             'name_locked' => (bool) $customer->name_locked,
             'tax_lookup_verified_at' => $customer->tax_lookup_verified_at?->toIso8601String(),
+            'tax_lookup_verified_doc_number' => $customer->name_locked
+                && $customer->tax_lookup_verified_at
+                && in_array(CustomerIdentity::normalizeGuatemalaDocType($customer->doc_type), [CustomerIdentity::NIT, CustomerIdentity::CUI], true)
+                ? CustomerIdentity::normalizeDocument($customer->doc_type, $customer->doc_number)
+                : null,
             'encoding_issue_fields' => $this->encodingIssueFields($customer),
             'has_encoding_issue' => $this->encodingIssueFields($customer) !== [],
             'fiscal_status' => $this->fiscalStatus($customer),

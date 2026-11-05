@@ -23,6 +23,7 @@ use App\Support\CashRegister;
 use App\Support\Credits;
 use App\Support\StockAvailability;
 use App\Support\Inventory\StockPolicy;
+use App\Support\OperationsLog;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -84,6 +85,17 @@ class FiscalDocumentIntentService
             ]);
 
             $this->reserveStock($intent);
+
+            OperationsLog::event('fel.intent.created', $intent->business_id, [
+                'branch_id' => $intent->branch_id,
+                'user_id' => $intent->created_by,
+                'intent_id' => $intent->id,
+                'document_type' => $intent->document_type,
+                'operation_type' => $intent->operation_type,
+                'status' => $intent->status,
+                'provider' => $intent->provider,
+                'environment' => $intent->environment,
+            ]);
 
             return $intent;
         });
@@ -196,6 +208,16 @@ class FiscalDocumentIntentService
                 return $intent;
             }
 
+            OperationsLog::event('fel.certification.started', $intent->business_id, [
+                'branch_id' => $intent->branch_id,
+                'intent_id' => $intent->id,
+                'document_type' => $intent->document_type,
+                'operation_type' => $intent->operation_type,
+                'status' => $intent->status,
+                'provider' => $intent->provider,
+                'environment' => $intent->environment,
+            ]);
+
             try {
                 $certification = $this->invoiceService->certifyIntent($intent);
             } catch (FelException $exception) {
@@ -209,6 +231,16 @@ class FiscalDocumentIntentService
                 'provider_response' => $certification['response_payload'],
                 'certified_at' => $certification['identifiers']['certification_date'] ?? now(),
                 'last_reconciliation_error' => null,
+            ]);
+
+            OperationsLog::event('fel.certification.certified', $intent->business_id, [
+                'branch_id' => $intent->branch_id,
+                'intent_id' => $intent->id,
+                'document_type' => $intent->document_type,
+                'operation_type' => $intent->operation_type,
+                'status' => FiscalDocumentIntent::CERTIFIED,
+                'provider' => $intent->provider,
+                'environment' => $intent->environment,
             ]);
 
             return $this->finalizeSafely($intent->refresh());
@@ -336,6 +368,15 @@ class FiscalDocumentIntentService
             $this->attachCertificationToSale($intent, $sale);
             $intent->update(['status' => FiscalDocumentIntent::FINALIZED, 'finalized_at' => now(), 'last_finalization_error' => null]);
 
+            OperationsLog::event('fel.finalization.completed', $intent->business_id, [
+                'branch_id' => $intent->branch_id,
+                'intent_id' => $intent->id,
+                'sale_id' => $sale->id,
+                'document_type' => $intent->document_type,
+                'operation_type' => $intent->operation_type,
+                'status' => FiscalDocumentIntent::FINALIZED,
+            ]);
+
             return $intent->refresh();
         });
     }
@@ -396,6 +437,15 @@ class FiscalDocumentIntentService
         } catch (\Throwable $exception) {
             FiscalDocumentIntent::query()->whereKey($intent->id)->update([
                 'last_finalization_error' => $exception->getMessage(),
+            ]);
+
+            OperationsLog::event('fel.finalization.failed', $intent->business_id, [
+                'branch_id' => $intent->branch_id,
+                'intent_id' => $intent->id,
+                'document_type' => $intent->document_type,
+                'operation_type' => $intent->operation_type,
+                'status' => $intent->status,
+                'reason_code' => 'local_finalization_error',
             ]);
 
             return $intent->refresh();
@@ -751,6 +801,16 @@ class FiscalDocumentIntentService
                 'last_reconciliation_error' => $exception->getMessage(),
             ]);
             $this->releaseStockReservations($intent);
+
+            OperationsLog::event('fel.certification.rejected', $intent->business_id, [
+                'branch_id' => $intent->branch_id,
+                'intent_id' => $intent->id,
+                'document_type' => $intent->document_type,
+                'operation_type' => $intent->operation_type,
+                'status' => FiscalDocumentIntent::REJECTED,
+                'reason_code' => 'provider_rejected',
+                'provider' => $intent->provider,
+            ]);
             return $intent->refresh();
         }
 
@@ -767,6 +827,16 @@ class FiscalDocumentIntentService
                 'last_reconciliation_error' => $error,
                 'last_reconciliation_result' => ['outcome' => $reason, 'at' => now()->toIso8601String()],
                 'provider_response' => $snapshot ?: $intent->provider_response,
+            ]);
+
+            OperationsLog::event('fel.certification.unknown', $intent->business_id, [
+                'branch_id' => $intent->branch_id,
+                'intent_id' => $intent->id,
+                'document_type' => $intent->document_type,
+                'operation_type' => $intent->operation_type,
+                'status' => FiscalDocumentIntent::UNKNOWN,
+                'reason_code' => $reason,
+                'provider' => $intent->provider,
             ]);
 
             return $intent->refresh();
@@ -812,6 +882,16 @@ class FiscalDocumentIntentService
                 'next_reconciliation_at' => $next,
                 'last_reconciliation_result' => ['outcome' => 'not_found', 'response' => $result],
                 'last_reconciliation_error' => null,
+            ]);
+
+            OperationsLog::event('fel.reconciliation.not_found', $intent->business_id, [
+                'branch_id' => $intent->branch_id,
+                'intent_id' => $intent->id,
+                'document_type' => $intent->document_type,
+                'operation_type' => $intent->operation_type,
+                'status' => $count >= 3 ? FiscalDocumentIntent::RETRYABLE : FiscalDocumentIntent::UNKNOWN,
+                'attempt' => $count,
+                'reason_code' => 'provider_not_found',
             ]);
 
             return $intent->refresh();

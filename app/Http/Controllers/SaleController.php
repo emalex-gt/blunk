@@ -45,6 +45,7 @@ use App\Support\FelPhraseRenderer;
 use App\Support\Inventory\StockPolicy;
 use App\Support\ManualPricePolicy;
 use App\Support\OperationDrafts;
+use App\Support\OperationsLog;
 use App\Support\Permissions;
 use App\Support\PriceLists;
 use App\Support\StockAvailability;
@@ -395,6 +396,15 @@ class SaleController extends Controller
         $availableDocumentTypes = $this->availableDocumentTypes($business, $tenantSettings, $felSettings, $felModuleEnabled);
         $activeBranch = BranchInventory::activeBranch($business->id);
         $isCreditSale = ($data['payment_condition'] ?? 'paid') === 'credit';
+
+        OperationsLog::event('pos.sale.received', $business->id, [
+            'branch_id' => $activeBranch->id,
+            'user_id' => $request->user()?->id,
+            'document_type' => $data['document_type'] ?? 'receipt',
+            'operation_type' => $isCreditSale ? 'credit_sale' : 'paid_sale',
+            'has_draft' => filled($data['draft_id'] ?? null),
+            'quotation_id' => $data['quotation_id'] ?? null,
+        ]);
 
         if (filled($data['quotation_id'] ?? null)) {
             $this->assertQuotationCanBeUsed($request, $business, $activeBranch, (int) $data['quotation_id'], (bool) ($data['quotation_expired_confirmed'] ?? false));
@@ -940,6 +950,13 @@ class SaleController extends Controller
                 $this->createFelReconciliationRequest($pendingFelReconciliation);
             }
 
+            OperationsLog::event('pos.sale.rejected', $business->id, [
+                'branch_id' => $activeBranch->id,
+                'user_id' => $request->user()?->id,
+                'document_type' => $data['document_type'] ?? 'receipt',
+                'reason_code' => $this->saleValidationReasonCode($exception),
+            ]);
+
             throw $exception;
         } catch (FelException $exception) {
             throw ValidationException::withMessages([
@@ -957,6 +974,17 @@ class SaleController extends Controller
             'document_type' => $data['document_type'],
             'idempotency_replayed' => $idempotencyResult->replayed,
             'sale_transaction_ms' => $saleTransactionMs,
+        ]);
+
+        OperationsLog::event('pos.sale.operation_completed', $business->id, [
+            'branch_id' => $activeBranch->id,
+            'user_id' => $request->user()?->id,
+            'sale_id' => $idempotencyResult->resultType === 'sale' ? $saleId : null,
+            'intent_id' => $idempotencyResult->resultType === 'fiscal_document_intent' ? $saleId : null,
+            'document_type' => $data['document_type'] ?? 'receipt',
+            'operation_type' => $idempotencyResult->resultType,
+            'replayed' => $idempotencyResult->replayed,
+            'duration_ms' => $saleTransactionMs,
         ]);
 
         if ($idempotencyResult->resultType === 'fiscal_document_intent') {
@@ -1838,6 +1866,14 @@ class SaleController extends Controller
             $request->boolean('confirm_expired'),
         )->load('items');
 
+        OperationsLog::event('pos.quotation.loaded', $business->id, [
+            'branch_id' => $activeBranch->id,
+            'user_id' => $request->user()?->id,
+            'quotation_id' => $quotation->id,
+            'customer_id' => $quotation->customer_id,
+            'operation_type' => 'quotation_conversion',
+        ]);
+
         return [
             'id' => $quotation->id,
             'number' => $quotation->visible_number,
@@ -1883,6 +1919,14 @@ class SaleController extends Controller
         if ($quotation->status !== Quotation::OPEN) {
             throw ValidationException::withMessages(['edit_quotation_id' => 'Sólo se puede editar una cotización abierta.']);
         }
+
+        OperationsLog::event('pos.quotation.loaded', $business->id, [
+            'branch_id' => $activeBranch->id,
+            'user_id' => $request->user()?->id,
+            'quotation_id' => $quotation->id,
+            'customer_id' => $quotation->customer_id,
+            'operation_type' => 'quotation_edit',
+        ]);
 
         return [
             'id' => $quotation->id,
@@ -1976,6 +2020,20 @@ class SaleController extends Controller
             && $this->normalizeDocument($customer->doc_number) !== ''
             && (bool) $customer->name_locked
             && $customer->tax_lookup_verified_at !== null;
+    }
+
+    private function saleValidationReasonCode(ValidationException $exception): string
+    {
+        $fields = array_keys($exception->errors());
+
+        return match (true) {
+            in_array('document_type', $fields, true) => 'document_validation',
+            in_array('customer.doc_number', $fields, true) => 'customer_identity_validation',
+            in_array('payments', $fields, true) => 'payment_validation',
+            in_array('items', $fields, true) => 'line_validation',
+            in_array('quotation_id', $fields, true) => 'quotation_validation',
+            default => 'validation_failed',
+        };
     }
 
     private function assertQuotationCanBeUsed(Request $request, Business $business, Branch $activeBranch, int $quotationId, bool $expiredConfirmed): Quotation
