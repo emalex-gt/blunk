@@ -41,6 +41,11 @@ export default function SuperAdminLayout({ title, actions, children }: Props) {
             active: route().current('super-admin.system.maintenance-announcements.*'),
         },
         {
+            label: 'Diagnóstico de operaciones',
+            href: route('super-admin.system.operations.index'),
+            active: route().current('super-admin.system.operations.*'),
+        },
+        {
             label: 'Seguridad',
             href: route('super-admin.security.roles'),
             active: route().current('super-admin.security.*'),

@@ -40,6 +40,7 @@ use App\Http\Controllers\SuperAdmin\DashboardController as SuperAdminDashboardCo
 use App\Http\Controllers\SuperAdmin\DeployController as SuperAdminDeployController;
 use App\Http\Controllers\SuperAdmin\FelIncidentController as SuperAdminFelIncidentController;
 use App\Http\Controllers\SuperAdmin\MaintenanceAnnouncementController as SuperAdminMaintenanceAnnouncementController;
+use App\Http\Controllers\SuperAdmin\OperationsDiagnosticsController as SuperAdminOperationsDiagnosticsController;
 use App\Http\Controllers\SuperAdmin\ProductImportController as SuperAdminProductImportController;
 use App\Http\Controllers\SuperAdmin\ProductCostRecalculationController as SuperAdminProductCostRecalculationController;
 use App\Http\Controllers\SuperAdmin\SecurityController as SuperAdminSecurityController;
@@ -93,6 +94,7 @@ Route::middleware(['auth', 'super.admin'])
         Route::post('/system/maintenance-announcements', [SuperAdminMaintenanceAnnouncementController::class, 'store'])->name('system.maintenance-announcements.store');
         Route::put('/system/maintenance-announcements/{maintenanceAnnouncement}', [SuperAdminMaintenanceAnnouncementController::class, 'update'])->name('system.maintenance-announcements.update');
         Route::delete('/system/maintenance-announcements/{maintenanceAnnouncement}', [SuperAdminMaintenanceAnnouncementController::class, 'destroy'])->name('system.maintenance-announcements.destroy');
+        Route::get('/system/operations', [SuperAdminOperationsDiagnosticsController::class, 'index'])->name('system.operations.index');
         Route::get('/fel-incidents', [SuperAdminFelIncidentController::class, 'index'])->name('fel-incidents.index');
         Route::post('/fel-incidents/intents/{intent}/reconcile', [SuperAdminFelIncidentController::class, 'reconcileIntent'])->name('fel-incidents.intents.reconcile');
         Route::post('/fel-incidents/intents/{intent}/retry', [SuperAdminFelIncidentController::class, 'retryIntent'])->name('fel-incidents.intents.retry');
