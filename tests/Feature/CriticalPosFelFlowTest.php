@@ -23,6 +23,7 @@ use App\Models\FelReconciliationRequest;
 use App\Models\FiscalDocumentIntent;
 use App\Models\PriceType;
 use App\Models\Product;
+use App\Models\OperationIdempotencyKey;
 use App\Models\ProductBranchStock;
 use App\Models\ProductPrice;
 use App\Models\Purchase;
@@ -127,6 +128,130 @@ class CriticalPosFelFlowTest extends TestCase
         $response->assertRedirect(route('sales.create'));
         $response->assertSessionHasErrors(['items.0.quantity']);
         $this->assertDatabaseCount('sales', 0);
+    }
+
+    public function test_finalized_fel_sale_can_be_verified_before_a_local_pos_draft_is_restored(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'cash_register', 'fel_gt'], allowInvoices: true);
+        $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $this->mockResilientIntentCertification('UUID-DRAFT-RECOVERY');
+
+        $payload = $this->salePayload($product, quantity: 1, total: 100, documentType: 'invoice', customer: [
+            'name' => 'Consumidor Final',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+            'consumidor_final' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $payload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->where('business_id', $business->id)->sole();
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+
+        $this->actingAs($user)
+            ->getJson(route('operation-drafts.pos-sale-status', [
+                'idempotency_key' => $payload['idempotency_key'],
+                'branch_id' => $branch->id,
+            ]))
+            ->assertOk()
+            ->assertJsonPath('status', 'finalized')
+            ->assertJsonPath('sale_id', $sale->id)
+            ->assertJsonPath('document_type', 'invoice');
+
+        $this->actingAs($user)
+            ->withHeaders(['X-Inertia' => 'true', 'X-Inertia-Version' => 'outdated-assets'])
+            ->get(route('sales.create'))
+            ->assertStatus(409)
+            ->assertHeader('X-Inertia-Location');
+
+        $this->flushHeaders();
+
+        $this->actingAs($user)
+            ->getJson(route('operation-drafts.pos-sale-status', [
+                'idempotency_key' => $payload['idempotency_key'],
+                'branch_id' => $branch->id,
+            ]))
+            ->assertOk()
+            ->assertJsonPath('status', 'finalized')
+            ->assertJsonPath('sale_id', $sale->id);
+
+        $this->assertDatabaseCount('sales', 1);
+        $this->assertDatabaseCount('fiscal_document_intents', 1);
+    }
+
+    public function test_unresolved_fel_intent_is_not_reported_as_a_completed_pos_sale(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'fel_gt'], allowInvoices: true);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $intent = $this->unknownFiscalIntent($business, $user);
+        $key = 'draft-unknown-'.uniqid();
+
+        OperationIdempotencyKey::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'user_id' => $user->id,
+            'operation_type' => 'pos_sale',
+            'idempotency_key' => $key,
+            'request_hash' => hash('sha256', $key),
+            'status' => 'completed',
+            'result_type' => 'fiscal_document_intent',
+            'result_id' => $intent->id,
+            'completed_at' => now(),
+            'expires_at' => now()->addDay(),
+        ]);
+
+        $this->actingAs($user)
+            ->getJson(route('operation-drafts.pos-sale-status', [
+                'idempotency_key' => $key,
+                'branch_id' => $branch->id,
+            ]))
+            ->assertOk()
+            ->assertJsonPath('status', 'fiscal_unknown')
+            ->assertJsonPath('fiscal_intent_id', $intent->id)
+            ->assertJsonMissingPath('sale_id');
+    }
+
+    public function test_pos_draft_recovery_status_does_not_expose_another_users_operation(): void
+    {
+        [$business, $owner] = $this->tenant(modules: ['pos']);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $otherUser = User::factory()->create([
+            'business_id' => $business->id,
+            'is_active' => true,
+            'all_branches_access' => true,
+        ]);
+        Permissions::assignRole($otherUser, 'cashier');
+        $key = 'draft-private-'.uniqid();
+
+        OperationIdempotencyKey::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'user_id' => $owner->id,
+            'operation_type' => 'pos_sale',
+            'idempotency_key' => $key,
+            'request_hash' => hash('sha256', $key),
+            'status' => 'completed',
+            'result_type' => 'sale',
+            'result_id' => 999999,
+            'completed_at' => now(),
+            'expires_at' => now()->addDay(),
+        ]);
+
+        $this->actingAs($otherUser)
+            ->getJson(route('operation-drafts.pos-sale-status', [
+                'idempotency_key' => $key,
+                'branch_id' => $branch->id,
+            ]))
+            ->assertOk()
+            ->assertJsonPath('status', 'not_found')
+            ->assertJsonMissingPath('sale_id');
     }
 
     public function test_cf_invoice_at_or_above_2500_is_blocked_before_digifact_certification(): void

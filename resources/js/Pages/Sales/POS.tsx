@@ -68,6 +68,14 @@ type PosProductSearchPayload = {
     message?: string;
 };
 
+type PosDraftRecoveryStatus = {
+    status: string;
+    sale_id?: number;
+    document_type?: string;
+    sale_url?: string;
+    document_url?: string;
+};
+
 type ProductViewMode = 'grid' | 'list';
 
 type PriceType = {
@@ -865,6 +873,7 @@ export default function POS({
     ]);
     const [cashReceived, setCashReceived] = useState('');
     const [restoreDraft, setRestoreDraft] = useState<PosDraft | null>(null);
+    const [recoveredCompletedSale, setRecoveredCompletedSale] = useState<PosDraftRecoveryStatus | null>(null);
     const [idempotencyKey, setIdempotencyKey] = useState(makeOperationKey);
     const [failedSubmission, setFailedSubmission] = useState(false);
     const [draftReady, setDraftReady] = useState(false);
@@ -1810,6 +1819,28 @@ export default function POS({
         clearDraft(draftKey);
         latestDraftRef.current = null;
         focusSearch();
+    }
+
+    async function completedSaleForDraft(draft: PosDraft): Promise<PosDraftRecoveryStatus | null> {
+        if (!draft.idempotency_key || !activeBranchId) {
+            return null;
+        }
+
+        const response = await fetch(route('operation-drafts.pos-sale-status', {
+            idempotency_key: draft.idempotency_key,
+            branch_id: activeBranchId,
+        }), {
+            headers: { Accept: 'application/json' },
+            credentials: 'same-origin',
+        });
+
+        if (!response.ok) {
+            throw new Error('No se pudo verificar el estado del borrador.');
+        }
+
+        const status = await response.json() as PosDraftRecoveryStatus;
+
+        return status.status === 'finalized' ? status : null;
     }
 
     function acceptProvisionalReceipt() {
@@ -3057,30 +3088,67 @@ export default function POS({
         };
 
         if (draft && isMeaningfulPosDraft(draft)) {
-            const productMap = productsByIdRef.current;
-            const missingProductIds = (draft.cart ?? [])
-                .map((item) => Number(item.product_id))
-                .filter((id) => id > 0 && !productMap.has(id));
-            const missingKey = missingProductIds.sort().join(',');
+            let cancelled = false;
+            const recoverAfterVerification = async () => {
+                try {
+                    const completedSale = await completedSaleForDraft(draft);
 
-            if (missingProductIds.length > 0 && draftProductFetchKeyRef.current !== `${draftKey}:${missingKey}`) {
-                draftProductFetchKeyRef.current = `${draftKey}:${missingKey}`;
-                void fetchPosProducts({ ids: missingProductIds, limit: 50 })
-                    .then((payload) => {
-                        const hydratedMap = new Map(productsByIdRef.current);
-                        [
-                            ...(payload.products ?? []),
-                            ...(payload.exact_barcode_matches ?? []),
-                            ...(payload.exact_code_matches ?? []),
-                        ].forEach((product) => hydratedMap.set(product.id, product));
-                        restoreDraftWithProducts(hydratedMap);
-                    })
-                    .catch(() => restoreDraftWithProducts(productsByIdRef.current));
-                return;
-            }
+                    if (cancelled) {
+                        return;
+                    }
 
-            restoreDraftWithProducts(productMap);
-            return;
+                    if (completedSale) {
+                        clearDraft(draftKey);
+                        latestDraftRef.current = null;
+                        clearSaleState();
+                        setRecoveredCompletedSale(completedSale);
+                        setDraftReady(true);
+                        showMessage('La operación ya fue registrada. No se recuperó el carrito.');
+                        toast.success('La operación ya fue registrada. No se recuperó el carrito.', { persistent: true });
+                        finishDraftInitialization();
+                        return;
+                    }
+                } catch {
+                    // Preserve the local draft if its server state cannot be verified.
+                }
+
+                if (cancelled) {
+                    return;
+                }
+
+                const productMap = productsByIdRef.current;
+                const missingProductIds = (draft.cart ?? [])
+                    .map((item) => Number(item.product_id))
+                    .filter((id) => id > 0 && !productMap.has(id));
+                const missingKey = missingProductIds.sort().join(',');
+
+                if (missingProductIds.length > 0 && draftProductFetchKeyRef.current !== `${draftKey}:${missingKey}`) {
+                    draftProductFetchKeyRef.current = `${draftKey}:${missingKey}`;
+                    void fetchPosProducts({ ids: missingProductIds, limit: 50 })
+                        .then((payload) => {
+                            if (cancelled) return;
+                            const hydratedMap = new Map(productsByIdRef.current);
+                            [
+                                ...(payload.products ?? []),
+                                ...(payload.exact_barcode_matches ?? []),
+                                ...(payload.exact_code_matches ?? []),
+                            ].forEach((product) => hydratedMap.set(product.id, product));
+                            restoreDraftWithProducts(hydratedMap);
+                        })
+                        .catch(() => {
+                            if (!cancelled) restoreDraftWithProducts(productsByIdRef.current);
+                        });
+                    return;
+                }
+
+                restoreDraftWithProducts(productMap);
+            };
+
+            void recoverAfterVerification();
+
+            return () => {
+                cancelled = true;
+            };
         } else {
             clearSaleState();
             setDraftReady(true);
@@ -3092,7 +3160,7 @@ export default function POS({
 
         draftLoadInitializedRef.current = true;
         focusSearch();
-    }, [draftKey, fetchPosProducts, quotation_edit_source]);
+    }, [activeBranchId, draftKey, fetchPosProducts, quotation_edit_source]);
 
     useEffect(() => {
         if (quotation_edit_source || !draftReady || restoreDraft) {
@@ -3399,6 +3467,21 @@ export default function POS({
                             {quotation_edit_source && (
                                 <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-semibold text-orange-800">
                                     Editando cotización {quotation_edit_source.number}. Los cambios actualizarán esta misma cotización.
+                                </div>
+                            )}
+                            {recoveredCompletedSale && (
+                                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900" role="status">
+                                    <span className="font-semibold">La operación anterior ya fue registrada. El carrito no se recuperó para evitar una duplicación.</span>
+                                    {(recoveredCompletedSale.document_url ?? recoveredCompletedSale.sale_url) && (
+                                        <a
+                                            href={recoveredCompletedSale.document_url ?? recoveredCompletedSale.sale_url}
+                                            target={recoveredCompletedSale.document_url ? '_blank' : undefined}
+                                            rel={recoveredCompletedSale.document_url ? 'noreferrer' : undefined}
+                                            className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
+                                        >
+                                            {recoveredCompletedSale.document_url ? 'Ver factura certificada' : 'Ver venta registrada'}
+                                        </a>
+                                    )}
                                 </div>
                             )}
                             <div className="flex flex-wrap items-center justify-between gap-3">

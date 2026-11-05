@@ -4,15 +4,89 @@ namespace App\Http\Controllers;
 
 use App\Models\Branch;
 use App\Models\Customer;
+use App\Models\FiscalDocumentIntent;
+use App\Models\OperationIdempotencyKey;
+use App\Models\Sale;
+use App\Services\BranchAccessService;
 use App\Models\OperationDraft;
 use App\Models\Supplier;
 use App\Support\OperationDrafts;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Validation\Rule;
 
 class OperationDraftController extends Controller
 {
+    public function posSaleStatus(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'idempotency_key' => ['required', 'string', 'max:255'],
+            'branch_id' => ['required', 'integer'],
+        ]);
+
+        $businessId = (int) currentBusinessId();
+        $branch = Branch::query()
+            ->where('business_id', $businessId)
+            ->findOrFail($data['branch_id']);
+
+        app(BranchAccessService::class)->assertCanAccessBranch($request->user(), $branch, $businessId);
+
+        $record = OperationIdempotencyKey::query()
+            ->where('business_id', $businessId)
+            ->where('branch_id', $branch->id)
+            ->where('user_id', $request->user()->id)
+            ->where('operation_type', 'pos_sale')
+            ->where('idempotency_key', $data['idempotency_key'])
+            ->first();
+
+        if (! $record) {
+            return response()->json(['status' => 'not_found']);
+        }
+
+        $sale = null;
+
+        if ($record->result_type === 'fiscal_document_intent' && $record->result_id) {
+            $intent = FiscalDocumentIntent::query()
+                ->where('business_id', $businessId)
+                ->where('branch_id', $branch->id)
+                ->where('created_by', $request->user()->id)
+                ->find($record->result_id);
+
+            if (! $intent || $intent->status !== FiscalDocumentIntent::FINALIZED || ! $intent->finalized_sale_id) {
+                return response()->json([
+                    'status' => 'fiscal_'.$intent?->status,
+                    'fiscal_intent_id' => $intent?->id,
+                ]);
+            }
+
+            $sale = $intent->finalizedSale()->first();
+        }
+
+        $saleId = $record->result_type === 'fiscal_document_intent'
+            ? $sale?->id
+            : $record->result_id;
+
+        $sale ??= $saleId ? Sale::query()
+            ->where('business_id', $businessId)
+            ->where('branch_id', $branch->id)
+            ->find($saleId) : null;
+
+        if (! $sale || $record->status !== 'completed') {
+            return response()->json(['status' => 'unresolved']);
+        }
+
+        return response()->json([
+            'status' => 'finalized',
+            'sale_id' => $sale->id,
+            'document_type' => $sale->document_type,
+            'sale_url' => route('sales.show', $sale),
+            'document_url' => $sale->document_type === 'invoice'
+                ? URL::temporarySignedRoute('sales.fel-document', now()->addMinutes(10), ['sale' => $sale->id])
+                : null,
+        ]);
+    }
+
     public function index(Request $request): JsonResponse
     {
         $data = $request->validate([
