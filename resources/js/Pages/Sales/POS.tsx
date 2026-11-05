@@ -114,6 +114,7 @@ type Customer = {
     is_final_consumer?: boolean;
     name_locked?: boolean;
     tax_lookup_verified_at?: string | null;
+    tax_lookup_verified_doc_number?: string | null;
     credit_account?: {
         credit_limit: string | number | null;
         current_balance: string | number;
@@ -379,9 +380,22 @@ function normalizedFiscalNit(value: string | null | undefined) {
     return sanitizeNit(String(value ?? '')).toUpperCase();
 }
 
+function hasCurrentVerifiedGuatemalaIdentity(customer: Partial<CustomerForm>): boolean {
+    const docType = String(customer.doc_type ?? '').toUpperCase();
+    const currentDocument = normalizedFiscalNit(customer.doc_number);
+    const verifiedDocument = normalizedFiscalNit(customer.tax_lookup_verified_doc_number);
+
+    return ['NIT', 'CUI'].includes(docType)
+        && Boolean(customer.name_locked)
+        && Boolean(customer.tax_lookup_verified_at)
+        && currentDocument !== ''
+        && currentDocument === verifiedDocument;
+}
+
 function normalizeCustomerValidationState(
     customer: Partial<CustomerForm> | null | undefined,
     country: string,
+    allowServerVerification = false,
 ): CustomerForm {
     const normalized = {
         ...emptyCustomer(country),
@@ -393,7 +407,7 @@ function normalizeCustomerValidationState(
         || docType === 'CF'
         || docType === 'Consumidor Final';
 
-    return {
+    const normalizedCustomer = {
         ...normalized,
         id: normalized.id ?? null,
         consumidor_final: consumidorFinal,
@@ -410,8 +424,18 @@ function normalizeCustomerValidationState(
         country: String(normalized.country ?? country),
         name_locked: Boolean(normalized.name_locked),
         tax_lookup_verified_at: normalized.tax_lookup_verified_at ?? null,
-        tax_lookup_verified_doc_number: normalized.tax_lookup_verified_doc_number
-            ?? (normalized.tax_lookup_verified_at ? normalizedFiscalNit(docNumber) : null),
+        tax_lookup_verified_doc_number: normalized.tax_lookup_verified_doc_number ?? null,
+    };
+
+    const mayUseVerification = allowServerVerification
+        && country === 'GT'
+        && hasCurrentVerifiedGuatemalaIdentity(normalizedCustomer);
+
+    return {
+        ...normalizedCustomer,
+        name_locked: mayUseVerification && normalizedCustomer.name_locked,
+        tax_lookup_verified_at: mayUseVerification ? normalizedCustomer.tax_lookup_verified_at : null,
+        tax_lookup_verified_doc_number: mayUseVerification ? normalizedCustomer.tax_lookup_verified_doc_number : null,
     };
 }
 
@@ -915,6 +939,7 @@ export default function POS({
     const creditInvoiceLoadedRef = useRef(false);
     const quotationLoadedRef = useRef(false);
     const quotationEditLoadedRef = useRef(false);
+    const identityLookupRequestRef = useRef(0);
     const draftLoadInitializedRef = useRef(false);
     const latestDraftRef = useRef<PosDraft | null>(null);
     const productSearchRequestRef = useRef(0);
@@ -1254,6 +1279,13 @@ export default function POS({
             return;
         }
 
+        if (cartRef.current.length > 0 || isMeaningfulCustomer(data.customer)) {
+            quotationLoadedRef.current = true;
+            showError('No se reemplazó el trabajo que ya empezaste con la cotización.');
+
+            return;
+        }
+
         const quotationItems = quotation_source.items.reduce<CartItem[]>((items, line) => {
             const product = productsById.get(line.product_id);
             if (!product) {
@@ -1285,10 +1317,7 @@ export default function POS({
             ...quotation_source.customer,
             id: quotation_source.customer.id ?? null,
             consumidor_final: quotation_source.customer.doc_type === 'CF',
-            name_locked: false,
-            tax_lookup_verified_at: null,
-            tax_lookup_verified_doc_number: null,
-        }, country);
+        }, country, true);
 
         quotationLoadedRef.current = true;
         setCart(quotationItems);
@@ -1299,10 +1328,17 @@ export default function POS({
         setErrorMessage('');
         setMessage(`Carrito cargado desde ${quotation_source.number}. Revisa la venta antes de confirmar.`);
         toast.info(`Carrito cargado desde ${quotation_source.number}.`);
-    }, [country, defaultCustomer, productsById, quotation_source, setData, toast]);
+    }, [country, data.customer, defaultCustomer, productsById, quotation_source, setData, toast]);
 
     useEffect(() => {
         if (!quotation_edit_source || quotationEditLoadedRef.current || productsById.size === 0) {
+            return;
+        }
+
+        if (cartRef.current.length > 0 || isMeaningfulCustomer(data.customer)) {
+            quotationEditLoadedRef.current = true;
+            showError('No se reemplazó el trabajo que ya empezaste al editar la cotización.');
+
             return;
         }
 
@@ -1337,10 +1373,7 @@ export default function POS({
             ...quotation_edit_source.customer,
             id: quotation_edit_source.customer.id ?? null,
             consumidor_final: quotation_edit_source.customer.doc_type === 'CF',
-            name_locked: false,
-            tax_lookup_verified_at: null,
-            tax_lookup_verified_doc_number: null,
-        }, country);
+        }, country, true);
 
         quotationEditLoadedRef.current = true;
         setCart(quotationItems);
@@ -1352,7 +1385,7 @@ export default function POS({
         setQuotationNote(quotation_edit_source.note ?? '');
         setErrorMessage('');
         setMessage(`Editando cotización ${quotation_edit_source.number}.`);
-    }, [country, defaultCustomer, productsById, quotation_edit_source, setData]);
+    }, [country, data.customer, defaultCustomer, productsById, quotation_edit_source, setData]);
 
     const customerSearchTerm = useMemo(() => {
         if (country === 'GT' && data.customer.consumidor_final && data.customer.doc_type === 'CF') {
@@ -2038,6 +2071,9 @@ export default function POS({
 
     function setCustomerField<K extends keyof CustomerForm>(field: K, value: CustomerForm[K]) {
         renewOperationKeyAfterFailedMutation();
+        if (field === 'doc_type' || field === 'doc_number' || field === 'consumidor_final') {
+            identityLookupRequestRef.current += 1;
+        }
         setData('customer', {
             ...data.customer,
             [field]: value,
@@ -2055,23 +2091,28 @@ export default function POS({
 
     function setCustomerDocument(value: string) {
         renewOperationKeyAfterFailedMutation();
+        identityLookupRequestRef.current += 1;
         const docType = data.customer.doc_type === 'CUI' ? 'CUI' : 'NIT';
         const cleanValue = country === 'GT' ? sanitizeGuatemalaIdentity(docType, value) : value.replace(/[\s-]/g, '');
         const normalizedValue = normalizedFiscalNit(cleanValue);
         const verifiedValue = normalizedFiscalNit(data.customer.tax_lookup_verified_doc_number);
-        const keepValidation = Boolean(data.customer.tax_lookup_verified_at) && normalizedValue !== '' && normalizedValue === verifiedValue;
+        const keepValidation = hasCurrentVerifiedGuatemalaIdentity(data.customer)
+            && normalizedValue !== ''
+            && normalizedValue === verifiedValue;
 
         setData('customer', {
             ...data.customer,
             doc_number: cleanValue,
+            name_locked: keepValidation ? data.customer.name_locked : false,
             tax_lookup_verified_at: keepValidation ? data.customer.tax_lookup_verified_at : null,
-            tax_lookup_verified_doc_number: data.customer.tax_lookup_verified_doc_number,
+            tax_lookup_verified_doc_number: keepValidation ? data.customer.tax_lookup_verified_doc_number : null,
         });
     }
 
     function selectCustomer(customer: Customer) {
         renewOperationKeyAfterFailedMutation();
-        setData('customer', {
+        identityLookupRequestRef.current += 1;
+        setData('customer', normalizeCustomerValidationState({
             id: customer.id,
             consumidor_final: customer.doc_type === 'CF' || customer.doc_type === 'Consumidor Final',
             doc_type: customer.doc_type ?? (country === 'AR' ? 'DNI' : 'NIT'),
@@ -2089,8 +2130,8 @@ export default function POS({
             country: customer.country ?? country,
             name_locked: Boolean(customer.name_locked),
             tax_lookup_verified_at: customer.tax_lookup_verified_at ?? null,
-            tax_lookup_verified_doc_number: customer.tax_lookup_verified_at ? normalizedFiscalNit(customer.doc_number) : null,
-        });
+            tax_lookup_verified_doc_number: customer.tax_lookup_verified_doc_number ?? null,
+        }, country, true));
         setCustomerSearchResults([]);
         setNitLookupMessage('');
         setCustomerEditing(false);
@@ -2127,7 +2168,12 @@ export default function POS({
             return;
         }
 
-        setCustomerField('doc_number', docNumber);
+        const requestId = identityLookupRequestRef.current + 1;
+        identityLookupRequestRef.current = requestId;
+        setData('customer', {
+            ...data.customer,
+            doc_number: docNumber,
+        });
         setNitLookupLoading(true);
         setNitLookupMessage('');
 
@@ -2140,7 +2186,11 @@ export default function POS({
                 throw new Error(message);
             }
 
-            setData('customer', {
+            if (identityLookupRequestRef.current !== requestId) {
+                return;
+            }
+
+            const resolvedCustomer = normalizeCustomerValidationState({
                 ...data.customer,
                 consumidor_final: false,
                 doc_type: result.doc_type ?? docType,
@@ -2156,16 +2206,24 @@ export default function POS({
                 country: 'GT',
                 name_locked: Boolean(result.customer?.name_locked ?? result.name),
                 tax_lookup_verified_at: result.customer?.tax_lookup_verified_at ?? result.tax_lookup_verified_at ?? null,
-                tax_lookup_verified_doc_number: result.customer?.tax_lookup_verified_at || result.tax_lookup_verified_at ? normalizedFiscalNit(result.doc_number ?? docNumber) : null,
-            });
+                tax_lookup_verified_doc_number: result.customer?.tax_lookup_verified_at || result.tax_lookup_verified_at
+                    ? normalizedFiscalNit(result.doc_number ?? docNumber)
+                    : null,
+            }, country, true);
+            setData('customer', resolvedCustomer);
             setNitLookupMessage(result.name ? 'Nombre obtenido automáticamente' : `No se encontró nombre para el ${docType}.`);
             setCustomerEditing(false);
         } catch (error) {
+            if (identityLookupRequestRef.current !== requestId) {
+                return;
+            }
             const message = error instanceof Error ? error.message : `No se pudo consultar el ${docType}.`;
             setNitLookupMessage(message);
             showError(message);
         } finally {
-            setNitLookupLoading(false);
+            if (identityLookupRequestRef.current === requestId) {
+                setNitLookupLoading(false);
+            }
         }
     }
 
@@ -3409,7 +3467,7 @@ export default function POS({
         country === 'GT' &&
         !data.customer.consumidor_final &&
         ['NIT', 'CUI'].includes(data.customer.doc_type) &&
-        !data.customer.tax_lookup_verified_at;
+        !hasCurrentVerifiedGuatemalaIdentity(data.customer);
     const invoiceIdentityVerificationMessage = (() => {
         if (!invoiceIdentityNeedsVerification) {
             return '';
@@ -3587,6 +3645,7 @@ export default function POS({
                                                 type="button"
                                                 onClick={() => {
                                                     renewOperationKeyAfterFailedMutation();
+                                                    identityLookupRequestRef.current += 1;
                                                     setData('customer', emptyCustomer('GT'));
                                                     clearCustomerTypeErrors();
                                                     setNitLookupMessage('');
@@ -3605,6 +3664,7 @@ export default function POS({
                                                 type="button"
                                                 onClick={() => {
                                                     renewOperationKeyAfterFailedMutation();
+                                                    identityLookupRequestRef.current += 1;
                                                     setData('customer', {
                                                         ...emptyCustomer('GT'),
                                                         consumidor_final: false,
@@ -3631,6 +3691,7 @@ export default function POS({
                                                 type="button"
                                                 onClick={() => {
                                                     renewOperationKeyAfterFailedMutation();
+                                                    identityLookupRequestRef.current += 1;
                                                     setData('customer', {
                                                         ...emptyCustomer('GT'),
                                                         consumidor_final: false,

@@ -141,7 +141,16 @@ class SaleController extends Controller
                 ->with('creditAccount:id,customer_id,credit_limit,current_balance,is_blocked')
                 ->latest()
                 ->limit(50)
-                ->get(['id', 'name', 'commercial_name', 'doc_type', 'doc_number', 'tax_condition', 'address', 'address_reference', 'department', 'municipality', 'phone', 'country', 'is_final_consumer', 'name_locked', 'tax_lookup_verified_at']),
+                ->get(['id', 'name', 'commercial_name', 'doc_type', 'doc_number', 'tax_condition', 'address', 'address_reference', 'department', 'municipality', 'phone', 'country', 'is_final_consumer', 'name_locked', 'tax_lookup_verified_at'])
+                ->map(function (Customer $customer): array {
+                    $payload = $customer->toArray();
+                    $payload['tax_lookup_verified_doc_number'] = $this->customerHasCurrentVerifiedFiscalIdentity($customer)
+                        ? $this->normalizeDocument($customer->doc_number)
+                        : null;
+
+                    return $payload;
+                })
+                ->values(),
         ]);
     }
 
@@ -1836,20 +1845,7 @@ class SaleController extends Controller
             'expired' => $quotation->isExpired(tenantTimezone($business)),
             'expired_confirmed' => $request->boolean('confirm_expired'),
             'note' => $quotation->note,
-            'customer' => [
-                'id' => $quotation->customer_id,
-                'name' => $quotation->customer_name,
-                'commercial_name' => $quotation->customer_commercial_name,
-                'doc_type' => $quotation->customer_doc_type,
-                'doc_number' => $quotation->customer_doc_number,
-                'address' => $quotation->customer_address,
-                'address_reference' => $quotation->customer_address_reference,
-                'postal_code' => $quotation->customer_postal_code,
-                'department' => $quotation->customer_department,
-                'municipality' => $quotation->customer_municipality,
-                'country' => $quotation->customer_country,
-                'phone' => $quotation->customer_phone,
-            ],
+            'customer' => $this->quotationCustomerPayload($quotation),
             'items' => $quotation->items->map(fn ($item) => [
                 'quotation_item_id' => $item->id,
                 'product_id' => $item->product_id,
@@ -1894,20 +1890,7 @@ class SaleController extends Controller
             'branch_id' => $quotation->branch_id,
             'valid_until' => $quotation->valid_until?->toDateString(),
             'note' => $quotation->note,
-            'customer' => [
-                'id' => $quotation->customer_id,
-                'name' => $quotation->customer_name,
-                'commercial_name' => $quotation->customer_commercial_name,
-                'doc_type' => $quotation->customer_doc_type,
-                'doc_number' => $quotation->customer_doc_number,
-                'address' => $quotation->customer_address,
-                'address_reference' => $quotation->customer_address_reference,
-                'postal_code' => $quotation->customer_postal_code,
-                'department' => $quotation->customer_department,
-                'municipality' => $quotation->customer_municipality,
-                'country' => $quotation->customer_country,
-                'phone' => $quotation->customer_phone,
-            ],
+            'customer' => $this->quotationCustomerPayload($quotation),
             'items' => $quotation->items->map(fn ($item) => [
                 'quotation_item_id' => $item->id,
                 'product_id' => $item->product_id,
@@ -1924,6 +1907,75 @@ class SaleController extends Controller
                 'reason' => $quotation->discount_reason,
             ] : null,
         ];
+    }
+
+    /**
+     * A quotation snapshot is commercial evidence, not fiscal-validation evidence.
+     * Only the current customer record may restore the locked fiscal identity in POS.
+     */
+    private function quotationCustomerPayload(Quotation $quotation): array
+    {
+        $payload = [
+            'id' => $quotation->customer_id,
+            'name' => $quotation->customer_name,
+            'commercial_name' => $quotation->customer_commercial_name,
+            'doc_type' => $quotation->customer_doc_type,
+            'doc_number' => $quotation->customer_doc_number,
+            'address' => $quotation->customer_address,
+            'address_reference' => $quotation->customer_address_reference,
+            'postal_code' => $quotation->customer_postal_code,
+            'department' => $quotation->customer_department,
+            'municipality' => $quotation->customer_municipality,
+            'country' => $quotation->customer_country,
+            'phone' => $quotation->customer_phone,
+            'name_locked' => false,
+            'tax_lookup_verified_at' => null,
+            'tax_lookup_verified_doc_number' => null,
+        ];
+
+        if (! $quotation->customer_id) {
+            return $payload;
+        }
+
+        $customer = Customer::query()
+            ->where('business_id', $quotation->business_id)
+            ->find($quotation->customer_id);
+
+        if (! $customer || ! $this->quotationMatchesCurrentFiscalIdentity($quotation, $customer)) {
+            return $payload;
+        }
+
+        $payload['name_locked'] = true;
+        $payload['tax_lookup_verified_at'] = $customer->tax_lookup_verified_at?->toIso8601String();
+        $payload['tax_lookup_verified_doc_number'] = $this->normalizeDocument($customer->doc_number);
+
+        return $payload;
+    }
+
+    private function quotationMatchesCurrentFiscalIdentity(Quotation $quotation, Customer $customer): bool
+    {
+        $quotationType = CustomerIdentity::normalizeGuatemalaDocType($quotation->customer_doc_type);
+        $customerType = CustomerIdentity::normalizeGuatemalaDocType($customer->doc_type);
+
+        if (! in_array($quotationType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)
+            || $quotationType !== $customerType
+            || ! $this->customerHasCurrentVerifiedFiscalIdentity($customer)
+            || $this->normalizeDocument($quotation->customer_doc_number) !== $this->normalizeDocument($customer->doc_number)
+            || trim((string) $quotation->customer_name) !== trim((string) $customer->name)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function customerHasCurrentVerifiedFiscalIdentity(Customer $customer): bool
+    {
+        $docType = CustomerIdentity::normalizeGuatemalaDocType($customer->doc_type);
+
+        return in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true)
+            && $this->normalizeDocument($customer->doc_number) !== ''
+            && (bool) $customer->name_locked
+            && $customer->tax_lookup_verified_at !== null;
     }
 
     private function assertQuotationCanBeUsed(Request $request, Business $business, Branch $activeBranch, int $quotationId, bool $expiredConfirmed): Quotation
