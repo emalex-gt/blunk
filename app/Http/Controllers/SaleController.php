@@ -932,6 +932,10 @@ class SaleController extends Controller
             }
 
             throw $exception;
+        } catch (FelException $exception) {
+            throw ValidationException::withMessages([
+                'document_type' => $exception->getMessage() ?: 'No se pudo preparar la factura FEL.',
+            ]);
         }
 
         $saleId = $idempotencyResult->resultId;

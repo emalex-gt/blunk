@@ -4171,29 +4171,217 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('El Quiche', $buyer['State']);
     }
 
-    public function test_fel_buyer_location_uses_guatemala_fallback_without_inventing_a_postal_code(): void
+    public function test_fel_invoice_rejects_an_unknown_buyer_postal_code_before_certification(): void
     {
-        [$business] = $this->tenant(country: 'GT', modules: ['fel_gt'], allowInvoices: true);
-        $settings = $this->felSettings($business);
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'cash_register', 'fel_gt'],
+            allowInvoices: true,
+        );
+        $this->felSettings($business);
         $branch = BranchInventory::defaultBranchForBusiness($business);
         $branch->update([
             'fel_department' => 'Departamento fiscal no válido',
             'fel_municipality' => 'Municipio fiscal no válido',
         ]);
-        $sale = $this->invoiceSale($business, $branch);
-        $sale->update([
-            'customer_department' => null,
-            'customer_municipality' => null,
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $certificationCalls = 0;
+        $this->mockRealIntentPayload(function () use (&$certificationCalls): array {
+            $certificationCalls++;
+
+            return [
+                'request_payload' => [],
+                'response_payload' => ['RESPONSE' => [['UUID' => 'UUID-INVALID-POSTAL', 'Serie' => 'A', 'Numero' => '1']]],
+                'identifiers' => ['uuid' => 'UUID-INVALID-POSTAL', 'series' => 'A', 'number' => '1', 'certification_date' => now()],
+                'issued_at' => now(),
+            ];
+        });
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                documentType: 'invoice',
+                customer: [
+                    'name' => 'Consumidor Final sin ubicación verificable',
+                    'doc_type' => 'CF',
+                    'doc_number' => 'CF',
+                    'country' => 'GT',
+                    'consumidor_final' => true,
+                ],
+            ))
+            ->assertSessionHasErrors([
+                'document_type' => 'No se pudo determinar un código postal de Guatemala para el receptor. Configura un departamento y municipio con código postal confirmado en el cliente o la sucursal FEL.',
+            ]);
+
+        $this->assertDatabaseCount('fiscal_document_intents', 0);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertSame(0, $certificationCalls);
+    }
+
+    public function test_post_invoice_preserves_custom_cf_and_uses_its_el_quiche_location(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'cash_register', 'fel_gt'],
+            allowInvoices: true,
+        );
+        $this->felSettings($business);
+        BranchInventory::defaultBranchForBusiness($business)->update([
+            'fel_department' => 'Guatemala',
+            'fel_municipality' => 'Mixco',
+            'fel_postal_code' => '01057',
         ]);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente CF personalizado',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+            'is_final_consumer' => true,
+            'address' => '5a avenida 10-25',
+            'department' => 'El Quiche',
+            'municipality' => 'Chichicastenango',
+        ]);
+        $this->mockRealIntentPayload($this->successfulIntentCertification('UUID-CF-CUSTOM'));
+        $payload = $this->salePayload(
+            $product,
+            quantity: 1,
+            total: 100,
+            documentType: 'invoice',
+            customer: [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
+                'country' => 'GT',
+                'consumidor_final' => true,
+                'address' => $customer->address,
+                'department' => 'El Quiche',
+                'municipality' => 'Chichicastenango',
+            ],
+        );
 
-        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->refresh(), $settings->refresh());
-        $buyer = $payload['Buyer']['AddressInfo'];
+        $this->actingAs($user)
+            ->post(route('sales.store'), $payload)
+            ->assertSessionHasNoErrors();
 
-        $this->assertNull($buyer['City']);
-        $this->assertSame('Guatemala', $buyer['District']);
-        $this->assertSame('Guatemala', $buyer['State']);
-        $this->assertSame('Departamento fiscal no válido', $payload['Seller']['BranchInfo']['AddressInfo']['State']);
-        $this->assertSame('Municipio fiscal no válido', $payload['Seller']['BranchInfo']['AddressInfo']['District']);
+        $intent = FiscalDocumentIntent::query()->where('business_id', $business->id)->sole();
+        $buyer = $intent->fiscal_payload['Buyer'];
+
+        $this->assertSame('CF', $buyer['TaxID']);
+        $this->assertSame('14006', $buyer['AddressInfo']['City']);
+        $this->assertSame('El Quiche', $buyer['AddressInfo']['State']);
+        $this->assertSame('Chichicastenango', $buyer['AddressInfo']['District']);
+        $this->assertSame('El Quiche', $customer->fresh()->department);
+        $this->assertSame('Chichicastenango', $customer->fresh()->municipality);
+        $this->assertSame(1, Sale::query()->where('business_id', $business->id)->count());
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $payload)
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(1, FiscalDocumentIntent::query()->where('business_id', $business->id)->count());
+        $this->assertSame(1, Sale::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_custom_cf_invoice_at_or_above_2500_is_blocked_before_creating_an_intent(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'cash_register', 'fel_gt'],
+            allowInvoices: true,
+        );
+        $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 2500);
+        $this->openCashRegister($business, $user);
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('buildIntentPayload')->never();
+        $digifact->shouldReceive('certifyIntent')->never();
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 2500,
+                documentType: 'invoice',
+                customer: [
+                    'name' => 'Cliente CF personalizado',
+                    'doc_type' => 'CF',
+                    'doc_number' => 'CF',
+                    'country' => 'GT',
+                    'consumidor_final' => true,
+                    'address' => '5a avenida 10-25',
+                ],
+            ))
+            ->assertSessionHasErrors('document_type');
+
+        $this->assertDatabaseCount('fiscal_document_intents', 0);
+        $this->assertDatabaseCount('sales', 0);
+    }
+
+    public function test_post_invoice_uses_valid_fel_branch_location_when_verified_nit_location_is_invalid(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'cash_register', 'fel_gt'],
+            allowInvoices: true,
+        );
+        $this->felSettings($business);
+        BranchInventory::defaultBranchForBusiness($business)->update([
+            'fel_department' => 'El Quiche',
+            'fel_municipality' => 'Chichicastenango',
+            'fel_postal_code' => '14006',
+        ]);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente NIT validado',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+            'country' => 'GT',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
+            'department' => 'Departamento inválido',
+            'municipality' => 'Municipio inválido',
+        ]);
+        $this->verifiedNitLookup($business, $customer->name);
+        $this->mockRealIntentPayload($this->successfulIntentCertification('UUID-NIT-BRANCH-FALLBACK'));
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                documentType: 'invoice',
+                customer: [
+                    'id' => $customer->id,
+                    'name' => $customer->name,
+                    'doc_type' => 'NIT',
+                    'doc_number' => '57289085',
+                    'country' => 'GT',
+                    'department' => 'Departamento inválido',
+                    'municipality' => 'Municipio inválido',
+                ],
+            ))
+            ->assertSessionHasNoErrors();
+
+        $intent = FiscalDocumentIntent::query()->where('business_id', $business->id)->sole();
+        $buyer = $intent->fiscal_payload['Buyer']['AddressInfo'];
+
+        $this->assertSame('14006', $buyer['City']);
+        $this->assertSame('El Quiche', $buyer['State']);
+        $this->assertSame('Chichicastenango', $buyer['District']);
+        $this->assertSame('Departamento inválido', $customer->fresh()->department);
+        $this->assertSame('Municipio inválido', $customer->fresh()->municipality);
     }
 
     public function test_fel_certification_is_blocked_when_branch_establishment_data_is_missing(): void
@@ -6537,5 +6725,31 @@ class CriticalPosFelFlowTest extends TestCase
             'certification_date' => now(),
         ]);
         $this->app->instance(DigifactInvoiceService::class, $digifact);
+    }
+
+    private function mockRealIntentPayload(callable $certifyIntent): void
+    {
+        $digifact = Mockery::mock(DigifactInvoiceService::class, [app(DigifactNucJsonBuilder::class)])->makePartial();
+        $digifact->shouldReceive('certifyIntent')->andReturnUsing($certifyIntent);
+        $digifact->shouldReceive('extractCertificationIdentifiers')->andReturnUsing(
+            fn (array $response): array => [
+                'uuid' => data_get($response, 'RESPONSE.0.UUID'),
+                'series' => data_get($response, 'RESPONSE.0.Serie'),
+                'number' => data_get($response, 'RESPONSE.0.Numero'),
+                'certification_date' => now(),
+            ],
+        );
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+        $this->app->forgetInstance(FiscalDocumentIntentService::class);
+    }
+
+    private function successfulIntentCertification(string $uuid): callable
+    {
+        return fn (): array => [
+            'request_payload' => [],
+            'response_payload' => ['RESPONSE' => [['UUID' => $uuid, 'Serie' => 'A', 'Numero' => '1']]],
+            'identifiers' => ['uuid' => $uuid, 'series' => 'A', 'number' => '1', 'certification_date' => now()],
+            'issued_at' => now(),
+        ];
     }
 }

@@ -56,6 +56,11 @@ class DigifactNucJsonBuilder
         )) ?: 'Ciudad';
         [$buyerDepartment, $buyerMunicipality] = $this->buyerLocation($sale, $customer, $felBranch);
         $buyerPostalCode = GuatemalaPostalCodes::forLocation($buyerDepartment, $buyerMunicipality);
+
+        if ($buyerPostalCode === null) {
+            throw new FelException('No se pudo determinar un código postal de Guatemala para el receptor. Configura un departamento y municipio con código postal confirmado en el cliente o la sucursal FEL.');
+        }
+
         $buyerCountry = trim((string) (
             $sale->customer_country
             ?: $customer?->country
