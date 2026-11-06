@@ -75,6 +75,10 @@ final class OperationsLogReader
             }
         }
 
+        $category = (string) ($input['category'] ?? 'all');
+        $result = (string) ($input['result'] ?? 'all');
+        $event = (string) ($input['event'] ?? '');
+
         return [
             'events' => array_slice($events, $offset, self::PAGE_SIZE),
             'has_more' => count($events) > $offset + self::PAGE_SIZE,
@@ -118,9 +122,9 @@ final class OperationsLogReader
             'date_from' => $from->toDateString(),
             'date_to' => $to->toDateString(),
             'business_id' => $this->nullablePositiveInt($input['business_id'] ?? null),
-            'category' => in_array($input['category'] ?? 'all', ['all', 'pos', 'quotations', 'identity', 'fel'], true) ? $input['category'] : 'all',
-            'result' => in_array($input['result'] ?? 'all', ['all', 'success', 'warning', 'error'], true) ? $input['result'] : 'all',
-            'event' => in_array($input['event'] ?? '', self::EVENTS, true) ? $input['event'] : '',
+            'category' => in_array($category, ['all', 'pos', 'quotations', 'identity', 'fel'], true) ? $category : 'all',
+            'result' => in_array($result, ['all', 'success', 'warning', 'error'], true) ? $result : 'all',
+            'event' => in_array($event, self::EVENTS, true) ? $event : '',
             'quotation_id' => $this->nullablePositiveInt($input['quotation_id'] ?? null),
             'sale_id' => $this->nullablePositiveInt($input['sale_id'] ?? null),
             'intent_id' => $this->nullablePositiveInt($input['intent_id'] ?? null),
