@@ -338,7 +338,8 @@ export default function Authenticated({
                     </div>
                 </div>
 
-                {showingNavigationDropdown && <div className="fixed inset-0 z-[60] bg-slate-950/60 xl:hidden" onMouseDown={() => setShowingNavigationDropdown(false)}>
+                {showingNavigationDropdown && (
+                    <div className="fixed inset-0 z-[60] bg-slate-950/60 xl:hidden" onMouseDown={() => setShowingNavigationDropdown(false)}>
                     <div className="h-full w-[min(22rem,88vw)] overflow-y-auto bg-slate-950 pb-4" onMouseDown={(event) => event.stopPropagation()}>
                     <div className="flex items-center justify-between px-4 py-3 text-white"><strong>Menú</strong><button type="button" onClick={() => setShowingNavigationDropdown(false)} className="min-h-11 min-w-11 rounded-lg" aria-label="Cerrar menú">×</button></div>
                     <div className="space-y-1 pb-3 pt-2">
@@ -417,7 +418,9 @@ export default function Authenticated({
                             </ResponsiveNavLink>
                         </div>
                     </div>
-                    </div></div></div>}
+                    </div>
+                    </div>
+                )}
             </nav>
             <MaintenanceAnnouncementBanner announcement={maintenanceAnnouncement} />
 
