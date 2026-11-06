@@ -1022,8 +1022,7 @@ class SaleController extends Controller
             if ($intent->status === FiscalDocumentIntent::UNKNOWN) {
                 return redirect()->route('sales.create')
                     ->with('warning', 'La certificación FEL está en verificación. Puedes entregar el comprobante provisional no fiscal.')
-                    ->with('fiscal_intent_id', $intent->id)
-                    ->with('provisional_receipt_url', route('fiscal-intents.provisional-receipt', $intent));
+                    ->with('fiscal_intent_id', $intent->id);
             }
 
             if ($intent->status === FiscalDocumentIntent::REJECTED) {

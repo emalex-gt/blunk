@@ -34,6 +34,12 @@
     $total = data_get($sale, 'total', 0);
     $discount = data_get($sale, 'discount_amount', 0);
     $internalNumber = data_get($sale, 'business_number') ?: $intent->internal_reference;
+    $fiscalStatus = match ($intent->status) {
+        \App\Models\FiscalDocumentIntent::FINALIZED => 'Factura FEL certificada posteriormente',
+        \App\Models\FiscalDocumentIntent::CERTIFIED => 'Factura FEL certificada; finalización local pendiente',
+        \App\Models\FiscalDocumentIntent::REJECTED => 'Certificación FEL rechazada; requiere revisión fiscal',
+        default => 'Certificación FEL en verificación',
+    };
 @endphp
     <div class="toolbar no-print">
         <button type="button" onclick="window.close()">Cerrar</button>
@@ -53,6 +59,7 @@
         <div class="line"></div>
         <h2 class="temporary-title">RECIBO TEMPORAL</h2>
         <p class="provisional-disclaimer">No es factura ni documento tributario</p>
+        <p class="provisional-disclaimer"><strong>Estado FEL:</strong> {{ $fiscalStatus }}</p>
 
         <section>
             <div class="row"><span>No. interno:</span><strong class="internal-reference">{{ $internalNumber }}</strong></div>

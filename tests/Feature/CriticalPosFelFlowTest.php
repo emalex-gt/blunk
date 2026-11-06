@@ -217,6 +217,8 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertOk()
             ->assertJsonPath('status', 'fiscal_unknown')
             ->assertJsonPath('fiscal_intent_id', $intent->id)
+            ->assertJsonPath('can_accept_provisional', true)
+            ->assertJsonPath('provisional_accepted', false)
             ->assertJsonMissingPath('sale_id');
     }
 
@@ -5337,7 +5339,7 @@ class CriticalPosFelFlowTest extends TestCase
             );
     }
 
-    public function test_provisional_receipt_is_tenant_scoped_non_fiscal_and_only_available_while_unresolved(): void
+    public function test_provisional_receipt_requires_commercial_acceptance_and_remains_reprintable_with_current_fiscal_status(): void
     {
         [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt', 'pos', 'cash_register'], allowInvoices: true);
         $product = $this->product($business, stock: 10, salePrice: 100);
@@ -5390,6 +5392,10 @@ class CriticalPosFelFlowTest extends TestCase
             'status' => 'active',
             'created_by' => $user->id,
         ]);
+
+        $this->actingAs($user)
+            ->get(route('fiscal-intents.provisional-receipt', $intent))
+            ->assertNotFound();
 
         $this->actingAs($user)
             ->post(route('fiscal-intents.provisional-receipt.accept', $intent))
@@ -5459,7 +5465,8 @@ class CriticalPosFelFlowTest extends TestCase
 
         $this->actingAs($user)
             ->get(route('fiscal-intents.provisional-receipt', $intent))
-            ->assertNotFound();
+            ->assertOk()
+            ->assertSee('Factura FEL certificada posteriormente');
 
         [$otherBusiness, $otherUser] = $this->tenant(country: 'GT', modules: ['fel_gt', 'pos'], allowInvoices: true);
         $this->actingAs($otherUser)

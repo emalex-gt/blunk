@@ -71,10 +71,20 @@ class OperationDraftController extends Controller
                 ->where('created_by', $request->user()->id)
                 ->find($record->result_id);
 
-            if (! $intent || $intent->status !== FiscalDocumentIntent::FINALIZED || ! $intent->finalized_sale_id) {
+            if (! $intent) {
+                return response()->json(['status' => 'unresolved']);
+            }
+
+            if ($intent->status !== FiscalDocumentIntent::FINALIZED || ! $intent->finalized_sale_id) {
                 return response()->json([
-                    'status' => 'fiscal_'.$intent?->status,
-                    'fiscal_intent_id' => $intent?->id,
+                    'status' => 'fiscal_'.$intent->status,
+                    'fiscal_intent_id' => $intent->id,
+                    'can_accept_provisional' => $intent->status === FiscalDocumentIntent::UNKNOWN
+                        && $intent->operation_type === 'sale'
+                        && ! $intent->provisional_accepted_at
+                        && ! $intent->finalized_sale_id
+                        && Permissions::userHas($request->user(), Permissions::POS_SELL),
+                    'provisional_accepted' => (bool) $intent->provisional_accepted_at,
                 ]);
             }
 

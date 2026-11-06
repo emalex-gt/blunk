@@ -35,10 +35,13 @@ class FiscalDocumentIntentController extends Controller
     {
         abort_unless((int) $intent->business_id === (int) currentBusinessId(), 403);
         abort_unless($intent->branch_id && app(BranchAccessService::class)->canAccessBranch($request->user(), (int) $intent->branch_id, currentBusinessId()), 403);
-        abort_unless(in_array($intent->status, [
-            FiscalDocumentIntent::PENDING,
-            FiscalDocumentIntent::UNKNOWN,
-        ], true), 404);
+        $sale = $intent->finalizedSale()->first();
+        abort_unless(
+            $intent->provisional_accepted_at
+            && $sale
+            && $sale->status === 'completed',
+            404,
+        );
 
         return response()->view('fiscal-intents.provisional-receipt', [
             'intent' => $intent->load('business.tenantFelSetting', 'branch'),

@@ -70,6 +70,10 @@ type PosProductSearchPayload = {
 
 type PosDraftRecoveryStatus = {
     status: string;
+    fiscal_intent_id?: number;
+    can_accept_provisional?: boolean;
+    provisional_accepted?: boolean;
+    provisional_receipt_url?: string | null;
     sale_id?: number;
     document_type?: string;
     sale_url?: string;
@@ -901,8 +905,12 @@ export default function POS({
     const [cart, setCart] = useState<CartItem[]>([]);
     const [message, setMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
-    const [provisionalIntent, setProvisionalIntent] = useState<{ id: number; receiptUrl: string } | null>(null);
+    const [provisionalIntent, setProvisionalIntent] = useState<{ id: number; receiptUrl?: string | null } | null>(null);
     const [acceptingProvisionalReceipt, setAcceptingProvisionalReceipt] = useState(false);
+    const [felSlowNotice, setFelSlowNotice] = useState(false);
+    const [checkingFelStatus, setCheckingFelStatus] = useState(false);
+    const [felStatusMessage, setFelStatusMessage] = useState('');
+    const [felSubmissionBranchId, setFelSubmissionBranchId] = useState<number | null>(null);
     const [recentProductIds, setRecentProductIds] = useState<number[]>([]);
     const [productViewMode, setProductViewMode] = useState<ProductViewMode>(() => loadProductViewMode(productViewModeKey));
     const [hasHeldSale, setHasHeldSale] = useState(false);
@@ -1925,14 +1933,14 @@ export default function POS({
         focusSearch();
     }
 
-    async function posSaleStatusForDraft(draft: PosDraft): Promise<PosDraftRecoveryStatus> {
-        if (!draft.idempotency_key || !activeBranchId) {
+    async function posSaleStatusForKey(operationKey: string, branchId = activeBranchId): Promise<PosDraftRecoveryStatus> {
+        if (!operationKey || !branchId) {
             return { status: 'not_found' };
         }
 
         const response = await fetch(route('operation-drafts.pos-sale-status', {
-            idempotency_key: draft.idempotency_key,
-            branch_id: activeBranchId,
+            idempotency_key: operationKey,
+            branch_id: branchId,
         }), {
             headers: { Accept: 'application/json' },
             credentials: 'same-origin',
@@ -1945,6 +1953,57 @@ export default function POS({
         return await response.json() as PosDraftRecoveryStatus;
     }
 
+    async function posSaleStatusForDraft(draft: PosDraft): Promise<PosDraftRecoveryStatus> {
+        return posSaleStatusForKey(draft.idempotency_key ?? '');
+    }
+
+    function applyFiscalStatus(status: PosDraftRecoveryStatus) {
+        setDraftRecoveryStatus(status);
+
+        if (status.status === 'finalized') {
+            setRecoveredCompletedSale(status);
+            setFelStatusMessage('La venta ya fue registrada. No la reenvíes.');
+            return;
+        }
+
+        if (status.status === 'fiscal_unknown') {
+            setFelStatusMessage(status.can_accept_provisional
+                ? 'La certificación sigue en verificación. Puedes decidir registrar la operación comercial con una constancia provisional no fiscal.'
+                : 'La certificación sigue en verificación. No reenvíes la factura.');
+            if (status.can_accept_provisional && status.fiscal_intent_id) {
+                setProvisionalIntent({
+                    id: status.fiscal_intent_id,
+                    receiptUrl: status.provisional_receipt_url,
+                });
+            }
+            return;
+        }
+
+        const messages: Record<string, string> = {
+            fiscal_pending: 'Digifact todavía está procesando la certificación. No reenvíes la factura.',
+            fiscal_certified: 'La factura fue certificada y está pendiente de finalización local. No reenvíes la operación.',
+            fiscal_retryable: 'La certificación requiere revisión administrativa antes de cualquier reintento.',
+            fiscal_rejected: 'Digifact rechazó la factura. El carrito se conserva para corregir los datos.',
+            unresolved: 'No se pudo confirmar el resultado fiscal. Conserva el carrito y no reenvíes la factura.',
+            not_found: 'No se encontró una intención fiscal registrada para esta operación.',
+        };
+        const message = messages[status.status] ?? 'No se pudo determinar el estado fiscal de la operación.';
+        setFelStatusMessage(message);
+    }
+
+    async function consultFelStatus(operationKey = idempotencyKey, branchId = felSubmissionBranchId ?? activeBranchId) {
+        if (checkingFelStatus) return;
+
+        setCheckingFelStatus(true);
+        try {
+            applyFiscalStatus(await posSaleStatusForKey(operationKey, branchId));
+        } catch {
+            setFelStatusMessage('No se pudo verificar el estado en este momento. Conserva el carrito y no reenvíes la factura.');
+        } finally {
+            setCheckingFelStatus(false);
+        }
+    }
+
     function acceptProvisionalReceipt() {
         if (!provisionalIntent || acceptingProvisionalReceipt) {
             return;
@@ -1955,7 +2014,10 @@ export default function POS({
             preserveScroll: true,
             onSuccess: (page) => {
                 const flash = page.props.flash as { provisional_receipt_url?: string | null } | undefined;
-                window.open(flash?.provisional_receipt_url ?? provisionalIntent.receiptUrl, '_blank');
+                const receiptUrl = flash?.provisional_receipt_url ?? provisionalIntent.receiptUrl;
+                if (receiptUrl) {
+                    window.open(receiptUrl, '_blank');
+                }
                 setProvisionalIntent(null);
                 clearPosDraftAndState();
                 showMessage('Constancia provisional de operación generada. La certificación FEL sigue en verificación.');
@@ -3056,7 +3118,10 @@ export default function POS({
             ? payments
             : [payments[0] ?? paymentLine(mainPaymentMethod, total.toFixed(2))];
 
+        const submittedBranchId = activeBranchId;
+
         if (effectiveDocumentType === 'invoice') {
+            setFelSubmissionBranchId(submittedBranchId);
             showMessage('Certificando factura FEL...');
         }
 
@@ -3120,13 +3185,11 @@ export default function POS({
 
                     latestSubmitSucceededRef.current = false;
                     setFailedSubmission(true);
-                    setProvisionalIntent(
-                        flash?.fiscal_intent_id && flash.provisional_receipt_url
-                            ? { id: flash.fiscal_intent_id, receiptUrl: flash.provisional_receipt_url }
-                            : null,
-                    );
                     showError(fiscalMessage);
                     toast.warning(fiscalMessage, { persistent: true });
+                    if (flash?.fiscal_intent_id) {
+                        void consultFelStatus(idempotencyKey, submittedBranchId);
+                    }
 
                     return;
                 }
@@ -3577,6 +3640,17 @@ export default function POS({
         return `El ${documentLabel} debe validarse antes de emitir factura FEL.`;
     })();
     const isFelProcessing = processing && effectiveDocumentType === 'invoice';
+    useEffect(() => {
+        if (!isFelProcessing) {
+            setFelSlowNotice(false);
+            return;
+        }
+
+        const timer = window.setTimeout(() => setFelSlowNotice(true), 30_000);
+
+        return () => window.clearTimeout(timer);
+    }, [isFelProcessing, idempotencyKey]);
+
     const checkoutHasErrors =
         customerModalErrors.length > 0 ||
         paymentModalErrors.length > 0 ||
@@ -4830,7 +4904,17 @@ export default function POS({
                         <div className="mt-4 text-lg font-semibold text-slate-950">
                             {openingFelPrint ? 'Factura certificada. Abriendo impresión...' : 'Certificando factura FEL...'}
                         </div>
-                        {!openingFelPrint && <div className="mt-2 text-sm text-slate-600">No cierres esta ventana.</div>}
+                        {!openingFelPrint && <div className="mt-2 text-sm text-slate-600">No reenvíes la factura mientras se confirma su estado.</div>}
+                        {isFelProcessing && felSlowNotice && (
+                            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-left text-sm text-amber-900">
+                                <div className="font-semibold">La certificación está tardando más de lo esperado.</div>
+                                <p className="mt-1">Puedes consultar el estado sin repetir la operación.</p>
+                                {felStatusMessage && <p className="mt-2">{felStatusMessage}</p>}
+                                <button type="button" onClick={() => void consultFelStatus()} disabled={checkingFelStatus} className="mt-3 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-60">
+                                    {checkingFelStatus ? 'Consultando estado...' : 'Consultar estado'}
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -4860,7 +4944,16 @@ export default function POS({
                             {isFelProcessing && (
                                 <div className="rounded-xl border border-orange-100 bg-orange-50 px-4 py-3 text-sm text-orange-800">
                                     <div className="font-semibold">Certificando factura FEL...</div>
-                                    <div className="mt-1">No cierres esta ventana.</div>
+                                    <div className="mt-1">No reenvíes la factura mientras se confirma su estado.</div>
+                                    {felSlowNotice && (
+                                        <div className="mt-3">
+                                            <p>La certificación está tardando más de lo esperado.</p>
+                                            {felStatusMessage && <p className="mt-1">{felStatusMessage}</p>}
+                                            <button type="button" onClick={() => void consultFelStatus()} disabled={checkingFelStatus} className="mt-2 rounded-lg border border-orange-300 bg-white px-3 py-2 text-sm font-semibold text-orange-800 hover:bg-orange-100 disabled:opacity-60">
+                                                {checkingFelStatus ? 'Consultando estado...' : 'Consultar estado'}
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 

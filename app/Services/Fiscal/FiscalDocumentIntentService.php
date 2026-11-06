@@ -6,6 +6,7 @@ use App\Models\Business;
 use App\Models\CreditReceiptLine;
 use App\Models\CreditReceiptLineInvoice;
 use App\Models\ElectronicDocument;
+use App\Models\FelIncident;
 use App\Models\FiscalDocumentIntent;
 use App\Models\Product;
 use App\Models\Quotation;
@@ -1042,6 +1043,26 @@ class FiscalDocumentIntentService
                 'last_reconciliation_error' => $exception->getMessage(),
             ]);
             $this->releaseStockReservations($intent);
+
+            // A commercial sale may legitimately have been accepted with a
+            // provisional receipt while the provider response was still
+            // unknown.  Preserve that commercial evidence and expose the
+            // explicit late rejection for controlled fiscal review; never
+            // auto-reverse or retry it from this path.
+            if ($intent->provisional_accepted_at && $intent->finalized_sale_id) {
+                FelIncident::query()->firstOrCreate([
+                    'business_id' => $intent->business_id,
+                    'sale_id' => $intent->finalized_sale_id,
+                    'internal_reference' => $intent->internal_reference,
+                    'type' => 'provisional_certification_rejected',
+                ], [
+                    'severity' => 'critical',
+                    'status' => 'open',
+                    'message' => 'Digifact rechazó una certificación después de aceptar una constancia provisional; requiere revisión fiscal.',
+                    'metadata' => ['intent_id' => $intent->id, 'reason_code' => 'provider_rejected_after_provisional'],
+                    'created_by' => $intent->provisional_accepted_by,
+                ]);
+            }
 
             OperationsLog::event('fel.certification.rejected', $intent->business_id, [
                 'branch_id' => $intent->branch_id,
