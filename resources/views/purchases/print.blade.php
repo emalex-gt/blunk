@@ -17,6 +17,7 @@
 @php
     $company ??= \App\Support\DocumentCompanyHeader::make($business, $purchase->branch, $tenantSetting);
     $subtotal = $purchase->items->sum(fn ($item) => (float) $item->total);
+    $transportCost = (float) ($purchase->transport_cost ?? 0);
     $paymentMethodLabel = match ($purchase->payment_method) {
         'cash' => 'Efectivo',
         'card' => 'Tarjeta',
@@ -115,7 +116,8 @@
     <section class="document-summary">
         <div></div>
         <table>
-            <tr><td>Subtotal</td><td class="right">{{ formatMoney($subtotal, $business->country, 5) }}</td></tr>
+            <tr><td>Subtotal productos</td><td class="right">{{ formatMoney($subtotal, $business->country, 5) }}</td></tr>
+            <tr><td>Transporte</td><td class="right">{{ formatMoney($transportCost, $business->country, 2) }}</td></tr>
             <tr><td><strong>Total</strong></td><td class="right total">{{ formatMoney($purchase->total, $business->country, 5) }}</td></tr>
         </table>
     </section>

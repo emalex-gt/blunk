@@ -17,6 +17,7 @@ class Purchase extends Model
         'supplier_invoice_number',
         'status',
         'total',
+        'transport_cost',
         'note',
         'payment_method',
         'paid_from_cash',
@@ -26,6 +27,7 @@ class Purchase extends Model
 
     protected $casts = [
         'total' => 'decimal:5',
+        'transport_cost' => 'decimal:2',
         'paid_from_cash' => 'boolean',
         'business_number' => 'integer',
     ];

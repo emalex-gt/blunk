@@ -131,13 +131,15 @@ class ListFilterExportsTest extends TestCase
             'new_average_cost' => 15,
             'total' => 30,
         ]);
+        $purchase->update(['transport_cost' => 5, 'total' => 35]);
 
         $this->actingAs($user)
             ->get(route('purchases.show', $purchase))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Purchases/Show')
-                ->where('purchase.supplier_invoice_number', 'FAC-PDF-1'));
+                ->where('purchase.supplier_invoice_number', 'FAC-PDF-1')
+                ->where('purchase.transport_cost', '5.00'));
 
         $html = view('purchases.print', [
             'purchase' => $purchase->load(['business.tenantSetting', 'supplier', 'branch', 'createdBy', 'items.product']),
@@ -148,6 +150,8 @@ class ListFilterExportsTest extends TestCase
         ])->render();
 
         $this->assertStringContainsString('FAC-PDF-1', $html);
+        $this->assertStringContainsString('Subtotal productos', $html);
+        $this->assertStringContainsString('Transporte', $html);
         $this->assertStringContainsString('Comprobante de compra', $html);
         $this->assertStringContainsString('Tenant export', $html);
         $this->assertStringContainsString('Avenida PDF 1, Huehuetenango, Huehuetenango', $html);

@@ -37,6 +37,7 @@ class PurchasePrecisionTest extends TestCase
         $this->assertSame('0.33333', $item->unit_cost);
         $this->assertSame('0.99999', $item->total);
         $this->assertSame('0.99999', $purchase->total);
+        $this->assertSame('0.00', $purchase->transport_cost);
         $this->assertSame('0.00000', $item->previous_cost);
         $this->assertSame('0.33333', $item->new_average_cost);
         $this->assertSame('0.33333', $product->fresh()->cost_price);
@@ -86,6 +87,80 @@ class PurchasePrecisionTest extends TestCase
 
         $this->assertSame('0.99999', Purchase::query()->sole()->total);
         $this->assertSame('-1.00', CashMovement::query()->sole()->amount);
+    }
+
+    public function test_transport_is_added_to_purchase_total_without_changing_stock_or_unit_cost_average(): void
+    {
+        [, $user, $product] = $this->context(stock: 0, cost: '0.00000');
+        $payload = $this->payload($product, '10.00000', 245);
+        $payload['transport_cost'] = '150.00';
+
+        $this->actingAs($user)->post(route('purchases.store'), $payload)->assertRedirect(route('purchases.index'));
+
+        $purchase = Purchase::query()->with('items')->sole();
+        $this->assertSame('2450.00000', $purchase->items->sole()->total);
+        $this->assertSame('150.00', $purchase->transport_cost);
+        $this->assertSame('2600.00000', $purchase->total);
+        $this->assertSame('10.00000', $product->fresh()->cost_price);
+        $this->assertSame(245.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+    }
+
+    public function test_cash_purchase_includes_transport_once_at_the_cash_boundary(): void
+    {
+        [$business, $user, $product] = $this->context();
+        $branch = BranchInventory::defaultBranch($business->id);
+        CashRegisterSession::query()->create([
+            'business_id' => $business->id, 'branch_id' => $branch->id, 'opened_by' => $user->id,
+            'status' => 'open', 'opening_amount' => 0, 'opened_at' => now(),
+        ]);
+        $payload = $this->payload($product, '10.00000', 245);
+        $payload['payment_method'] = 'cash';
+        $payload['paid_from_cash'] = true;
+        $payload['transport_cost'] = '150.00';
+
+        $this->actingAs($user)->post(route('purchases.store'), $payload)->assertRedirect(route('purchases.index'));
+
+        $this->assertSame('2600.00000', Purchase::query()->sole()->total);
+        $this->assertSame('-2600.00', CashMovement::query()->sole()->amount);
+    }
+
+    public function test_purchase_rejects_negative_or_more_than_two_decimal_transport_cost(): void
+    {
+        [, $user, $product] = $this->context();
+        $negative = $this->payload($product, '10.00000');
+        $negative['transport_cost'] = '-0.01';
+        $this->actingAs($user)->post(route('purchases.store'), $negative)->assertSessionHasErrors('transport_cost');
+
+        $precision = $this->payload($product, '10.00000');
+        $precision['transport_cost'] = '0.001';
+        $this->actingAs($user)->post(route('purchases.store'), $precision)->assertSessionHasErrors('transport_cost');
+
+        $this->assertDatabaseCount('purchases', 0);
+    }
+
+    public function test_transport_participates_in_purchase_idempotency_without_duplicate_cash_charge(): void
+    {
+        [$business, $user, $product] = $this->context();
+        $branch = BranchInventory::defaultBranch($business->id);
+        CashRegisterSession::query()->create([
+            'business_id' => $business->id, 'branch_id' => $branch->id, 'opened_by' => $user->id,
+            'status' => 'open', 'opening_amount' => 0, 'opened_at' => now(),
+        ]);
+        $payload = $this->payload($product, '10.00000', 1);
+        $payload['idempotency_key'] = 'purchase-transport-idempotency';
+        $payload['payment_method'] = 'cash';
+        $payload['paid_from_cash'] = true;
+        $payload['transport_cost'] = '5.00';
+
+        $this->actingAs($user)->post(route('purchases.store'), $payload)->assertRedirect(route('purchases.index'));
+        $this->actingAs($user)->post(route('purchases.store'), $payload)->assertRedirect(route('purchases.index'));
+        $this->assertDatabaseCount('purchases', 1);
+        $this->assertDatabaseCount('cash_movements', 1);
+
+        $payload['transport_cost'] = '6.00';
+        $this->actingAs($user)->post(route('purchases.store'), $payload)->assertStatus(409);
+        $this->assertDatabaseCount('purchases', 1);
+        $this->assertDatabaseCount('cash_movements', 1);
     }
 
     /** @return array{Business, User, Product} */

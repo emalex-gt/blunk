@@ -56,6 +56,7 @@ class PurchaseController extends Controller
         $range = ReportDateRange::monthToDate($request, $business);
         $query = $this->purchaseListQuery($request, $range)
             ->with(['supplier:id,name', 'createdBy:id,name', 'branch:id,name'])
+            ->withSum('items as products_subtotal', 'total')
             ->latest();
         $count = (clone $query)->count();
 
@@ -65,6 +66,9 @@ class PurchaseController extends Controller
             ]);
         }
 
+        $exportTotal = (float) (clone $query)->sum('total');
+        $exportTransport = (float) (clone $query)->sum('transport_cost');
+
         $rows = $query->limit(5000)->get()->map(fn (Purchase $purchase) => [
             $purchase->created_at?->timezone(tenantTimezone($business))->format('Y-m-d H:i'),
             format_purchase_number($purchase),
@@ -73,6 +77,8 @@ class PurchaseController extends Controller
             $this->paymentMethodLabel($purchase->payment_method),
             $purchase->paid_from_cash ? 'Sí' : 'No',
             $purchase->status ?? 'completed',
+            (float) ($purchase->products_subtotal ?? 0),
+            (float) $purchase->transport_cost,
             (float) $purchase->total,
             $purchase->createdBy?->name ?? '-',
             $purchase->branch?->name ?? '-',
@@ -84,11 +90,13 @@ class PurchaseController extends Controller
             'branchName' => BranchInventory::activeBranch($businessId)->name,
             'generatedAt' => now(tenantTimezone($business))->format('Y-m-d H:i'),
             'filters' => TableExporter::filters($this->purchaseFilters($request, $range)),
-            'columns' => ['Fecha', 'No. compra', 'Factura proveedor', 'Proveedor', 'Forma de pago', 'Pagado desde caja', 'Estado', 'Total', 'Usuario', 'Sucursal'],
+            'columns' => ['Fecha', 'No. compra', 'Factura proveedor', 'Proveedor', 'Forma de pago', 'Pagado desde caja', 'Estado', 'Subtotal productos', 'Transporte', 'Total', 'Usuario', 'Sucursal'],
             'rows' => $rows,
             'summary' => [
                 ['label' => 'Total compras', 'value' => $count],
-                ['label' => 'Total', 'value' => (float) (clone $query)->sum('total')],
+                ['label' => 'Subtotal productos', 'value' => $exportTotal - $exportTransport],
+                ['label' => 'Transporte', 'value' => $exportTransport],
+                ['label' => 'Total', 'value' => $exportTotal],
             ],
         ], $format, 'compras');
     }
@@ -187,6 +195,7 @@ class PurchaseController extends Controller
             'supplier.phone' => ['nullable', 'string', 'max:50'],
             'supplier.contact_person' => ['nullable', 'string', 'max:255'],
             'supplier_invoice_number' => ['nullable', 'string', 'max:100'],
+            'transport_cost' => ['nullable', 'numeric', 'decimal:0,2', 'min:0'],
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'payment_method' => ['required', 'string', 'in:cash,card,bank_transfer,check,credit,other'],
             'paid_from_cash' => ['nullable', 'boolean'],
@@ -249,6 +258,7 @@ class PurchaseController extends Controller
                 'supplier_invoice_number' => $supplierInvoiceNumber !== '' ? $supplierInvoiceNumber : null,
                 'status' => 'completed',
                 'total' => 0,
+                'transport_cost' => $data['transport_cost'] ?? 0,
                 'note' => $data['note'] ?? null,
                 'payment_method' => $paymentMethod,
                 'paid_from_cash' => $paidFromCash,
@@ -313,7 +323,7 @@ class PurchaseController extends Controller
                 ]);
             }
 
-            $purchaseTotal = round($total, 5);
+            $purchaseTotal = round($total + (float) ($data['transport_cost'] ?? 0), 5);
             $purchase->update(['total' => $purchaseTotal]);
 
             if ($paidFromCash && $cashSession && $purchaseTotal > 0) {
@@ -447,6 +457,7 @@ class PurchaseController extends Controller
             'supplier_invoice_number' => $data['supplier_invoice_number'] ?? null,
             'payment_method' => $data['payment_method'] ?? null,
             'paid_from_cash' => (bool) ($data['paid_from_cash'] ?? false),
+            'transport_cost' => round((float) ($data['transport_cost'] ?? 0), 2),
             'note' => $data['note'] ?? null,
             'items' => collect($data['items'] ?? [])
                 ->map(fn (array $item) => [

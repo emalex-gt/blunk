@@ -19,6 +19,7 @@ type Purchase = {
     supplier_invoice_number: string | null;
     created_at: string;
     total: string;
+    transport_cost: string;
     note: string | null;
     payment_method: string | null;
     paid_from_cash: boolean;
@@ -33,6 +34,7 @@ export default function Show({ purchase }: { purchase: Purchase }) {
     const business = usePage().props.business as { country?: string | null } | null;
     const country = business?.country ?? 'GT';
     const purchaseNumber = `C-${purchase.business_number ?? purchase.id}`;
+    const productsSubtotal = Number(purchase.total) - Number(purchase.transport_cost ?? 0);
 
     return (
         <AuthenticatedLayout
@@ -70,7 +72,9 @@ export default function Show({ purchase }: { purchase: Purchase }) {
                             <Summary label="Sucursal" value={purchase.branch?.name ?? '-'} />
                             <Summary label="Forma de pago" value={paymentMethodLabel(purchase.payment_method)} />
                             <Summary label="Usuario" value={purchase.created_by?.name ?? '-'} />
-                            <Summary label="Total" value={formatCurrency(purchase.total, country, 5)} />
+                            <Summary label="Subtotal productos" value={formatCurrency(productsSubtotal, country, 5)} />
+                            <Summary label="Transporte" value={formatCurrency(purchase.transport_cost ?? 0, country, 2)} />
+                            <Summary label="Total compra" value={formatCurrency(purchase.total, country, 5)} />
                         </div>
                         {purchase.paid_from_cash && (
                             <div className="mt-5 rounded-2xl border border-orange-100 bg-orange-50 p-4 text-sm font-semibold text-orange-700">

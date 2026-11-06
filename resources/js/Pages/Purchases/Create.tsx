@@ -75,6 +75,7 @@ type PurchaseDraft = {
     supplier_name: string;
     selected_supplier_id: number | null;
     supplier_invoice_number: string;
+    transport_cost?: string;
     note: string;
     payment_method: string;
     paid_from_cash: boolean;
@@ -87,6 +88,7 @@ function isMeaningfulPurchaseDraft(draft: PurchaseDraft) {
         (draft.supplier_name ?? '').trim() !== '' ||
         (draft.supplier_invoice_number ?? '').trim() !== '' ||
         (draft.note ?? '').trim() !== '' ||
+        !['', '0', '0.0', '0.00'].includes((draft.transport_cost ?? '0.00').trim()) ||
         Boolean(draft.paid_from_cash) ||
         (draft.payment_method ?? 'cash') !== 'cash'
     );
@@ -148,6 +150,7 @@ export default function Create({
     const [supplierName, setSupplierName] = useState('');
     const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
     const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState('');
+    const [transportCost, setTransportCost] = useState('0.00');
     const [note, setNote] = useState('');
     const [branchId, setBranchId] = useState<number | null>(active_branch?.id ?? null);
     const [paymentMethod, setPaymentMethod] = useState('cash');
@@ -222,7 +225,7 @@ export default function Create({
         && (!branches_enabled || branches.length === 0 || branchId !== null);
     const purchaseDetailsCompact = !purchaseDetailsExpanded && canCompactPurchaseDetails;
 
-    const total = useMemo(
+    const subtotalProducts = useMemo(
         () =>
             cart.reduce(
                 (sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_cost || 0),
@@ -230,6 +233,18 @@ export default function Create({
             ),
         [cart],
     );
+    const transportAmount = Number(transportCost.replace(',', '.')) || 0;
+    const total = subtotalProducts + transportAmount;
+
+    function transportCostError(value: string): string | null {
+        const normalized = value.trim().replace(',', '.');
+
+        if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {
+            return 'El costo de transporte debe ser un importe no negativo con máximo dos decimales.';
+        }
+
+        return null;
+    }
 
     function addProduct(product: Product) {
         setLoadedProducts((current) => {
@@ -360,6 +375,7 @@ export default function Create({
             supplier_name: supplierName,
             selected_supplier_id: selectedSupplier?.id ?? null,
             supplier_invoice_number: supplierInvoiceNumber,
+            transport_cost: transportCost,
             note,
             payment_method: paymentMethod,
             paid_from_cash: paidFromCash,
@@ -395,6 +411,7 @@ export default function Create({
         setCart(restoredItems);
         setSupplierName(draft.supplier_name ?? '');
         setSupplierInvoiceNumber(draft.supplier_invoice_number ?? '');
+        setTransportCost(draft.transport_cost ?? '0.00');
         if (draft.selected_supplier_id) {
             const supplier = suppliers.find((supplier) => supplier.id === draft.selected_supplier_id)
                 ?? supplierResults.find((supplier) => supplier.id === draft.selected_supplier_id)
@@ -440,6 +457,7 @@ export default function Create({
         setSupplierName('');
         setSelectedSupplier(null);
         setSupplierInvoiceNumber('');
+        setTransportCost('0.00');
         setNote('');
         setPaymentMethod('cash');
         setPaidFromCash(false);
@@ -574,6 +592,13 @@ export default function Create({
             return false;
         }
 
+        const transportError = transportCostError(transportCost);
+        if (transportError) {
+            setMessage(transportError);
+            toast.error(transportError);
+            return false;
+        }
+
         return true;
     }
 
@@ -629,6 +654,7 @@ export default function Create({
             supplier_name: newSupplier?.name || cleanSupplierName || null,
             supplier: newSupplier,
             supplier_invoice_number: supplierInvoiceNumber.trim() || null,
+            transport_cost: Number(transportCost.replace(',', '.')),
             payment_method: paymentMethod,
             paid_from_cash: paymentMethod === 'cash' && paidFromCash,
             branch_id: branchId,
@@ -735,6 +761,7 @@ export default function Create({
         restoreDraft,
         selectedSupplier,
         supplierInvoiceNumber,
+        transportCost,
         supplierName,
     ]);
 
@@ -865,6 +892,7 @@ export default function Create({
                                                 )}
                                                 <span>Desde caja: <span className="font-semibold">{paymentMethod === 'cash' && paidFromCash ? 'Sí' : 'No'}</span></span>
                                                 <span>Factura proveedor: <span className="font-semibold">{supplierInvoiceNumber.trim() || 'Sin referencia'}</span></span>
+                                                <span>Transporte: <span className="font-semibold">{formatCurrency(transportAmount, country, 2)}</span></span>
                                             </div>
                                             {note.trim() && (
                                                 <div className="mt-1 line-clamp-1 text-xs text-slate-500">
@@ -942,6 +970,19 @@ export default function Create({
                                             <p className="mt-1 text-xs text-slate-500">
                                                 Referencia fiscal o comercial emitida por el proveedor.
                                             </p>
+                                        </div>
+
+                                        <div>
+                                            <label className="text-sm font-medium text-slate-700">Costo de transporte</label>
+                                            <input
+                                                type="text"
+                                                inputMode="decimal"
+                                                value={transportCost}
+                                                onChange={(event) => setTransportCost(event.target.value)}
+                                                placeholder="0.00"
+                                                className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+                                            />
+                                            <p className="mt-1 text-xs text-slate-500">Cargo adicional del proveedor; no afecta existencias ni costos unitarios.</p>
                                         </div>
 
                                         <div>
@@ -1357,11 +1398,13 @@ export default function Create({
                         </div>
 
                         <footer className="border-t border-slate-200 bg-slate-50/70 p-4">
-                            <div className="flex items-end justify-between">
-                                <span className="text-sm font-semibold uppercase text-slate-500">Total</span>
-                                <span className="whitespace-nowrap text-4xl font-bold text-slate-950">
-                                    {formatCurrency(total, country, 5)}
-                                </span>
+                            <div className="space-y-2 text-sm">
+                                <div className="flex items-center justify-between text-slate-600"><span>Subtotal productos</span><span>{formatCurrency(subtotalProducts, country, 5)}</span></div>
+                                <div className="flex items-center justify-between text-slate-600"><span>Transporte</span><span>{formatCurrency(transportAmount, country, 2)}</span></div>
+                                <div className="flex items-end justify-between border-t border-slate-200 pt-2">
+                                    <span className="text-sm font-semibold uppercase text-slate-500">Total compra</span>
+                                    <span className="whitespace-nowrap text-4xl font-bold text-slate-950">{formatCurrency(total, country, 5)}</span>
+                                </div>
                             </div>
                             <button
                                 type="button"
@@ -1407,6 +1450,11 @@ export default function Create({
                         <p className="mt-2 text-sm text-slate-600">
                             Confirma que proveedor, productos, cantidades, costos y totales fueron revisados antes de guardar.
                         </p>
+                        <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+                            <div className="flex justify-between gap-4"><span>Subtotal productos</span><strong>{formatCurrency(subtotalProducts, country, 5)}</strong></div>
+                            <div className="mt-1 flex justify-between gap-4"><span>Transporte</span><strong>{formatCurrency(transportAmount, country, 2)}</strong></div>
+                            <div className="mt-2 flex justify-between gap-4 border-t border-slate-200 pt-2"><span>Total compra</span><strong>{formatCurrency(total, country, 5)}</strong></div>
+                        </div>
                         <div className="mt-5 flex justify-end gap-2">
                             <button
                                 type="button"
