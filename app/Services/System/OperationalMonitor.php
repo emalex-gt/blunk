@@ -6,6 +6,7 @@ use App\Models\FelIncident;
 use App\Models\FiscalDocumentIntent;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 class OperationalMonitor
@@ -22,7 +23,11 @@ class OperationalMonitor
             }
         }
         $fingerprints = array_column($active, 'fingerprint');
-        $this->incidents->recoverAbsent($fingerprints);
+        try {
+            $this->incidents->recoverAbsent($fingerprints);
+        } catch (\Throwable $exception) {
+            Log::warning('operational_monitor.recovery_failed', ['reason' => 'incident_store_unavailable']);
+        }
         return ['enabled' => true, 'active' => $active];
     }
 
@@ -84,7 +89,13 @@ class OperationalMonitor
 
     private function report(string $fingerprint, string $type, string $severity, string $message, array $metadata = [], ?int $businessId = null): array
     {
-        $this->incidents->observe($fingerprint, $type, $severity, $message, $metadata, $businessId);
+        try {
+            $this->incidents->observe($fingerprint, $type, $severity, $message, $metadata, $businessId);
+        } catch (\Throwable $exception) {
+            // A database outage cannot be persisted locally. Keep the monitor
+            // best-effort and avoid letting a scheduled diagnostic fail noisy.
+            Log::warning('operational_monitor.incident_unavailable', ['type' => $type, 'severity' => $severity]);
+        }
         return compact('fingerprint', 'type', 'severity');
     }
 }
