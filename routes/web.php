@@ -159,6 +159,9 @@ Route::middleware('auth')->group(function () {
 
     Route::middleware('tenant.active')->group(function () {
         Route::get('/operation-drafts', [OperationDraftController::class, 'index'])->name('operation-drafts.index');
+        Route::get('/operation-drafts/pending-pos-fiscal-operations', [OperationDraftController::class, 'pendingPosFiscalOperations'])
+            ->middleware(['module:pos', 'permission:pos.view'])
+            ->name('operation-drafts.pending-pos-fiscal-operations');
         Route::get('/operation-drafts/pos-sale-status', [OperationDraftController::class, 'posSaleStatus'])
             ->middleware(['module:pos', 'permission:pos.view'])
             ->name('operation-drafts.pos-sale-status');

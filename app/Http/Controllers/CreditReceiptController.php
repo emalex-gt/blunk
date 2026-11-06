@@ -266,7 +266,7 @@ class CreditReceiptController extends Controller
         $this->authorizeReceipt($creditReceipt);
         abort_unless(Permissions::userHas(request()->user(), Permissions::CREDITS_PRINT) || request()->hasValidSignature(), 403);
 
-        $creditReceipt->load(['business.tenantSetting', 'branch', 'customer', 'lines.product']);
+        $creditReceipt->load(['business.tenantSetting', 'branch', 'customer', 'createdBy:id,name', 'lines.product']);
         $format = $creditReceipt->business->tenantSetting?->receipt_format === 'document' ? 'document' : 'ticket';
         $printDetails = $this->creditReceiptPrintDetails($creditReceipt);
 

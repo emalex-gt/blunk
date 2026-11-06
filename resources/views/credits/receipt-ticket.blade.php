@@ -29,6 +29,7 @@
     <div class="line"></div>
     <div><strong>Cliente:</strong> {{ $receipt->customer_name }}</div>
     <div><strong>NIT:</strong> {{ $receipt->customer_doc_number }}</div>
+    <div><strong>Le atendió:</strong> {{ $receipt->createdBy?->name ?? 'No disponible' }}</div>
     @if(filled($customerLocation['display'] ?? null))
         <div class="customer-location"><strong>Dirección:</strong> {{ $customerLocation['display'] }}</div>
     @endif

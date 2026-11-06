@@ -465,6 +465,9 @@ class SaleController extends Controller
         }
 
         if (($data['document_type'] ?? null) === 'invoice') {
+            // Resolve an unverified migrated NIT before validation and before the
+            // commercial transaction begins. The browser's timestamp is never trusted.
+            $data['customer'] = $this->prepareInvoiceFiscalIdentity($business, $data['customer'] ?? null);
             $this->validateInvoiceConfiguration($business, $data['customer'] ?? null, $felSettings, $felModuleEnabled);
         }
 
@@ -3032,6 +3035,74 @@ class SaleController extends Controller
         }
 
         return $available;
+    }
+
+    /**
+     * Validates a legacy NIT through the authoritative resolver before the sale
+     * transaction starts. Only fiscal identity fields are refreshed; commercial
+     * names, location and reservation snapshots remain untouched.
+     */
+    private function prepareInvoiceFiscalIdentity(Business $business, ?array $customerData): array
+    {
+        $customerData ??= [];
+        if ($business->country !== 'GT') {
+            return $customerData;
+        }
+
+        $docType = CustomerIdentity::normalizeGuatemalaDocType($customerData['doc_type'] ?? null);
+        $docNumber = CustomerIdentity::normalizeDocument($docType ?? '', $customerData['doc_number'] ?? null) ?? '';
+        $isFinalConsumer = (bool) ($customerData['consumidor_final'] ?? false) || $docType === CustomerIdentity::CF || $docNumber === CustomerIdentity::CF;
+
+        if ($isFinalConsumer) {
+            // Canonicalize only a genuine CF identity. Contradictory NIT/CF input
+            // remains for validateInvoiceConfiguration() to reject explicitly.
+            if ($docType === CustomerIdentity::CF || $docNumber === CustomerIdentity::CF) {
+                $customerData['consumidor_final'] = true;
+                $customerData['doc_type'] = CustomerIdentity::CF;
+                $customerData['doc_number'] = CustomerIdentity::CF;
+            }
+
+            return $customerData;
+        }
+
+        if ($docType !== CustomerIdentity::NIT || $docNumber === '') {
+            return $customerData;
+        }
+
+        $existing = filled($customerData['id'] ?? null)
+            ? Customer::query()->where('business_id', $business->id)->find($customerData['id'])
+            : Customer::query()
+                ->where('business_id', $business->id)
+                ->where('normalized_tax_id', $docNumber)
+                ->first();
+
+        $identity = app(GuatemalaCustomerIdentityPolicy::class)->resolve(
+            $business,
+            CustomerIdentity::NIT,
+            $docNumber,
+            $existing,
+        );
+
+        if ($existing) {
+            $existing->forceFill([
+                'doc_type' => $identity['doc_type'],
+                'doc_number' => $identity['doc_number'],
+                'name' => $identity['name'],
+                'name_locked' => true,
+                'tax_lookup_payload' => $identity['tax_lookup_payload'],
+                'tax_lookup_verified_at' => $identity['tax_lookup_verified_at'],
+            ])->save();
+        }
+
+        $customerData['id'] = $existing?->id ?? ($customerData['id'] ?? null);
+        $customerData['consumidor_final'] = false;
+        $customerData['doc_type'] = $identity['doc_type'];
+        $customerData['doc_number'] = $identity['doc_number'];
+        $customerData['name'] = $identity['name'];
+        $customerData['name_locked'] = true;
+        $customerData['tax_lookup_verified_at'] = $identity['tax_lookup_verified_at']?->toIso8601String();
+
+        return $customerData;
     }
 
     private function validateInvoiceConfiguration(

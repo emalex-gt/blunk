@@ -19,6 +19,23 @@ use Illuminate\Validation\Rule;
 
 class OperationDraftController extends Controller
 {
+    public function pendingPosFiscalOperations(Request $request): JsonResponse
+    {
+        $hasPendingOperation = FiscalDocumentIntent::query()
+            ->where('business_id', currentBusinessId())
+            ->where('created_by', $request->user()->id)
+            ->where('operation_type', 'sale')
+            ->whereIn('status', [
+                FiscalDocumentIntent::PENDING,
+                FiscalDocumentIntent::UNKNOWN,
+                FiscalDocumentIntent::CERTIFIED,
+                FiscalDocumentIntent::RETRYABLE,
+            ])
+            ->exists();
+
+        return response()->json(['has_pending_fiscal_operation' => $hasPendingOperation]);
+    }
+
     public function posSaleStatus(Request $request): JsonResponse
     {
         $data = $request->validate([

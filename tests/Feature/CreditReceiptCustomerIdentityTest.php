@@ -32,6 +32,7 @@ class CreditReceiptCustomerIdentityTest extends TestCase
     {
         parent::setUp();
 
+        $this->withoutVite();
         Permissions::syncDefaults();
     }
 
@@ -166,6 +167,45 @@ class CreditReceiptCustomerIdentityTest extends TestCase
             ->assertSee('Dirección:</strong> 5a Avenida 10-25 Zona 1, Guatemala, Guatemala', false)
             ->assertSee('Referencia de dirección:</strong> Frente al parque', false)
             ->assertSee('Teléfono:</strong> 5555-0101', false);
+    }
+
+    public function test_credit_receipt_prints_the_original_attendant_in_ticket_and_document_on_reprint(): void
+    {
+        [$business, $creator, $product] = $this->creditTenant();
+        $this->storeCreditReceipt($creator, $product, 'CF', 'Cliente atendido');
+
+        $receipt = CreditReceipt::query()->sole();
+        $reprintUser = User::factory()->create([
+            'business_id' => $business->id,
+            'name' => 'Usuario de reimpresión',
+            'is_active' => true,
+        ]);
+        Permissions::assignRole($reprintUser, 'owner');
+
+        $this->actingAs($reprintUser)
+            ->get(route('credits.receipts.print', $receipt))
+            ->assertOk()
+            ->assertSee('Le atendió:</strong> '.$creator->name, false)
+            ->assertDontSee('Le atendió:</strong> Usuario de reimpresión', false);
+
+        $business->tenantSetting->update(['receipt_format' => 'document']);
+
+        $this->actingAs($reprintUser)
+            ->get(route('credits.receipts.print', $receipt))
+            ->assertOk()
+            ->assertSee('Le atendió:</strong> '.$creator->name, false)
+            ->assertDontSee('Le atendió:</strong> Usuario de reimpresión', false);
+    }
+
+    public function test_historical_credit_receipt_without_creator_prints_attendant_as_unavailable(): void
+    {
+        [$business, $user] = $this->creditTenant();
+        $receipt = $this->existingCreditReceipt($business, 1);
+
+        $this->actingAs($user)
+            ->get(route('credits.receipts.print', $receipt))
+            ->assertOk()
+            ->assertSee('Le atendió:</strong> No disponible', false);
     }
 
     public function test_historical_credit_receipt_print_uses_customer_location_as_a_read_only_fallback(): void
