@@ -2472,16 +2472,17 @@ export default function POS({
                 return items;
             }
 
-            if (quantityError(sanitizedQuantity)) {
-                showError(integerQuantityMessage);
-                return items;
-            }
-
             const nextItems = items.map((item) => (
                 cartLineId(item) === lineId
-                    ? { ...item, quantity: String(Number(sanitizedQuantity)) }
+                    ? { ...item, quantity: sanitizedQuantity === '' ? '' : String(Number(sanitizedQuantity)) }
                     : item
             ));
+
+            // Empty and zero are valid transient editor states. They remain
+            // invalid for checkout, quotation and any server-bound payload.
+            if (quantityError(sanitizedQuantity)) {
+                return nextItems;
+            }
             const reservationMaximum = Number(target.max_quantity ?? 0);
 
             if (target.credit_line_id && reservationMaximum > 0 && Number(sanitizedQuantity) > reservationMaximum) {
