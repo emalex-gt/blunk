@@ -2221,18 +2221,41 @@ export default function POS({
 
     function setCustomerDocument(value: string) {
         renewOperationKeyAfterFailedMutation();
-        identityLookupRequestRef.current += 1;
         const docType = data.customer.doc_type === 'CUI' ? 'CUI' : 'NIT';
         const cleanValue = country === 'GT' ? sanitizeGuatemalaIdentity(docType, value) : value.replace(/[\s-]/g, '');
+
+        if (country !== 'GT') {
+            identityLookupRequestRef.current += 1;
+            setData('customer', {
+                ...data.customer,
+                doc_number: cleanValue,
+                name_locked: false,
+                tax_lookup_verified_at: null,
+                tax_lookup_verified_doc_number: null,
+            });
+            setNitLookupMessage('');
+
+            return;
+        }
+
         const normalizedValue = normalizedFiscalNit(cleanValue);
+        const currentValue = normalizedFiscalNit(sanitizeGuatemalaIdentity(docType, data.customer.doc_number));
         const verifiedValue = normalizedFiscalNit(data.customer.tax_lookup_verified_doc_number);
-        const keepValidation = hasCurrentVerifiedGuatemalaIdentity(data.customer)
+        const documentChanged = normalizedValue !== currentValue;
+        const keepValidation = !documentChanged
+            && hasCurrentVerifiedGuatemalaIdentity(data.customer)
             && normalizedValue !== ''
             && normalizedValue === verifiedValue;
+
+        if (documentChanged) {
+            identityLookupRequestRef.current += 1;
+            setNitLookupMessage('');
+        }
 
         setData('customer', {
             ...data.customer,
             doc_number: cleanValue,
+            name: documentChanged ? '' : data.customer.name,
             name_locked: keepValidation ? data.customer.name_locked : false,
             tax_lookup_verified_at: keepValidation ? data.customer.tax_lookup_verified_at : null,
             tax_lookup_verified_doc_number: keepValidation ? data.customer.tax_lookup_verified_doc_number : null,
@@ -3969,7 +3992,6 @@ export default function POS({
                                                             value={data.customer.doc_number}
                                                             onChange={(event) => {
                                                                 setCustomerDocument(event.target.value);
-                                                                setNitLookupMessage('');
                                                             }}
                                                             onKeyDown={handleCustomerKeyDown}
                                                             placeholder={guatemalaDocumentLabel}
