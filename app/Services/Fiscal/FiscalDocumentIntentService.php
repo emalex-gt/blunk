@@ -568,7 +568,7 @@ class FiscalDocumentIntentService
         $business = Business::query()->findOrFail($sale->business_id);
         $creditLineIds = $payload['credit_line_ids'] ?? [];
 
-        foreach ($sale->items as $saleItem) {
+        foreach ($sale->items()->orderBy('id')->get()->values() as $itemIndex => $saleItem) {
             $product = Product::query()->where('business_id', $sale->business_id)->whereKey($saleItem->product_id)->lockForUpdate()->firstOrFail();
             $available = StockAvailability::availableStock($product, null, $sale->branch_id);
             $available += (float) StockReservation::query()
@@ -578,10 +578,21 @@ class FiscalDocumentIntentService
                 ->where('product_id', $product->id)
                 ->where('status', 'active')
                 ->sum('quantity');
-            $creditLineId = $creditLineIds[$saleItem->product_id] ?? null;
+            $creditLineId = $creditLineIds[$itemIndex] ?? null;
             $creditLine = filled($creditLineId)
-                ? CreditReceiptLine::query()->lockForUpdate()->find($creditLineId)
+                ? CreditReceiptLine::query()
+                    ->with('receipt:id,customer_id')
+                    ->where('business_id', $sale->business_id)
+                    ->where('branch_id', $sale->branch_id)
+                    ->where('product_id', $saleItem->product_id)
+                    ->whereIn('status', ['pending', 'partially_invoiced'])
+                    ->lockForUpdate()
+                    ->find($creditLineId)
                 : null;
+
+            if (filled($creditLineId) && (! $creditLine || (int) $creditLine->receipt?->customer_id !== (int) $sale->customer_id || (int) $saleItem->quantity > (int) $creditLine->qty_pending)) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['items' => 'La línea de crédito seleccionada ya no está disponible para finalizar la venta.']);
+            }
 
             if ($creditLine && Credits::reserveStockOnCreditReservations($sale->business_id) && (int) $creditLine->qty_reserved > 0) {
                 $available += min((int) $saleItem->quantity, (int) $creditLine->qty_reserved);

@@ -371,7 +371,8 @@ class SaleController extends Controller
             'items.*.quantity' => ['required', 'integer', 'min:1'],
             'items.*.price_type_id' => ['nullable', 'integer', 'exists:price_types,id'],
             'items.*.unit_price' => ['nullable', 'numeric', 'decimal:0,2', 'gt:0'],
-            'items.*.price_source' => ['nullable', 'in:price_list,last_customer_price,manual'],
+            // credit_reservation is a server-verified historical price, never a client supplied manual price.
+            'items.*.price_source' => ['nullable', 'in:price_list,last_customer_price,manual,credit_reservation'],
             'items.*.manual_price' => ['nullable', 'boolean'],
             'items.*.quotation_item_id' => ['nullable', 'integer'],
             'items.*.credit_line_id' => ['nullable', 'integer', 'exists:credit_receipt_lines,id'],
@@ -471,22 +472,9 @@ class SaleController extends Controller
             && $felModuleEnabled
             && $data['document_type'] === 'invoice';
 
-        if (! empty($data['discount']) && collect($data['items'])->contains(fn (array $item) => filled($item['credit_line_id'] ?? null))) {
-            throw ValidationException::withMessages([
-                'discount' => 'No se puede aplicar descuento general al facturar productos a crédito.',
-            ]);
-        }
-
         $hasLineDiscount = collect($data['items'])->contains(
             fn (array $item): bool => (float) ($item['line_discount_amount'] ?? 0) > 0,
         );
-
-        if (collect($data['items'])->contains(fn (array $item): bool => filled($item['credit_line_id'] ?? null)
-            && (float) ($item['line_discount_amount'] ?? 0) > 0)) {
-            throw ValidationException::withMessages([
-                'items' => 'No se puede aplicar descuento de línea al facturar productos reservados a crédito.',
-            ]);
-        }
 
         if ($hasLineDiscount) {
             if (! module_enabled('discounts')) {
@@ -603,6 +591,7 @@ class SaleController extends Controller
 
                 if (isset($item['credit_line_id'])) {
                     $creditLine = CreditReceiptLine::query()
+                        ->with('receipt:id,customer_id')
                         ->where('business_id', $businessId)
                         ->where('branch_id', $branch->id)
                         ->where('product_id', $product->id)
@@ -610,7 +599,7 @@ class SaleController extends Controller
                         ->lockForUpdate()
                         ->find($item['credit_line_id']);
 
-                    if (! $creditLine || $quantity > (int) $creditLine->qty_pending) {
+                    if (! $creditLine || ! $customer || (int) $creditLine->receipt?->customer_id !== (int) $customer->id || $quantity > (int) $creditLine->qty_pending) {
                         throw ValidationException::withMessages([
                             'items' => 'La línea de crédito seleccionada ya no está disponible.',
                         ]);
@@ -634,17 +623,7 @@ class SaleController extends Controller
                     : null;
                 $resolvedPrice = $trustedQuotationLine
                     ? $this->quotedLinePrice($trustedQuotationLine)
-                    : $this->resolveLinePrice($request, $product, $item, $customer, $branch->id);
-
-                if ($creditLine) {
-                    $resolvedPrice = [
-                        'unit_price' => round((float) $creditLine->unit_price, 2),
-                        'original_price' => round((float) $creditLine->unit_price, 2),
-                        'price_type_id' => null,
-                        'price_source' => PriceLists::SOURCE_PRICE_LIST,
-                        'manual_price' => false,
-                    ];
-                }
+                    : $this->resolveLinePrice($request, $product, $item, $customer, $branch->id, $creditLine);
 
                 $unitPrice = $resolvedPrice['unit_price'];
                 $lineTotal = round($unitPrice * $quantity, 2);
@@ -915,8 +894,11 @@ class SaleController extends Controller
                         'cash_register_session_id' => $openSession?->id,
                         'draft_id' => $data['draft_id'] ?? null,
                         'environment' => $felSettings?->environment ?? 'test',
+                        // The finalizer consumes this list in persisted sale-item order.  A product can
+                        // legitimately occur more than once, including from distinct reservations.
                         'credit_line_ids' => collect($data['items'] ?? [])
-                            ->mapWithKeys(fn (array $item) => [(int) $item['product_id'] => $item['credit_line_id'] ?? null])
+                            ->map(fn (array $item) => filled($item['credit_line_id'] ?? null) ? (int) $item['credit_line_id'] : null)
+                            ->values()
                             ->all(),
                     ],
                     $data['idempotency_key'],
@@ -2267,7 +2249,7 @@ class SaleController extends Controller
         return $discounts;
     }
 
-    private function resolveLinePrice(Request $request, Product $product, array $item, ?Customer $customer, int $branchId): array
+    private function resolveLinePrice(Request $request, Product $product, array $item, ?Customer $customer, int $branchId, ?CreditReceiptLine $creditLine = null): array
     {
         $businessId = (int) $product->business_id;
         $settings = TenantSetting::query()->where('business_id', $businessId)->first();
@@ -2277,6 +2259,27 @@ class SaleController extends Controller
         $defaultPrice = PriceLists::priceForProduct($product, $priceTypeId ? (int) $priceTypeId : null, $branchId);
         $unitPrice = (float) $defaultPrice['price'];
         $originalPrice = $unitPrice;
+
+        // A price loaded from a persisted reservation is an historical commercial
+        // condition.  It is trusted only after the credit line itself has been locked
+        // and scoped above; it does not turn into a new manual-price action.
+        if ($priceSource === 'credit_reservation') {
+            if (! $creditLine) {
+                throw ValidationException::withMessages([
+                    'items' => 'El precio heredado de la reserva ya no está disponible.',
+                ]);
+            }
+
+            $historicalPrice = round((float) $creditLine->unit_price, 2);
+
+            return [
+                'unit_price' => $historicalPrice,
+                'original_price' => $historicalPrice,
+                'price_type_id' => null,
+                'price_source' => 'credit_reservation',
+                'manual_price' => false,
+            ];
+        }
 
         if ($manualPrice) {
             if (! (bool) ($settings?->allow_manual_price ?? false)) {
@@ -2564,9 +2567,11 @@ class SaleController extends Controller
             return null;
         }
 
+        $activeBranchId = BranchInventory::activeBranch($businessId)->id;
         $lines = CreditReceiptLine::query()
             ->with(['receipt.customer', 'product'])
             ->where('business_id', $businessId)
+            ->where('branch_id', $activeBranchId)
             ->whereIn('id', $lineIds)
             ->where('qty_pending', '>', 0)
             ->orderBy('id')
@@ -2579,6 +2584,11 @@ class SaleController extends Controller
         $receipt = $lines->first()->receipt;
         $customer = $receipt->customer;
 
+        if (! $customer || $lines->contains(fn (CreditReceiptLine $line) => (int) $line->receipt?->customer_id !== (int) $customer->id)) {
+            // Never prefill a POS invoice with reservation lines from more than one customer.
+            return null;
+        }
+
         return [
             'source' => 'credit',
             'customer' => [
@@ -2589,6 +2599,9 @@ class SaleController extends Controller
                 'tax_condition' => $customer?->tax_condition ?? '',
                 'name' => $receipt->customer_name,
                 'address' => $receipt->customer_address ?: ($customer?->address ?? ''),
+                'address_reference' => $receipt->customer_address_reference ?: ($customer?->address_reference ?? ''),
+                'department' => $receipt->customer_department ?: ($customer?->department ?? ''),
+                'municipality' => $receipt->customer_municipality ?: ($customer?->municipality ?? ''),
                 'phone' => $customer?->phone ?? '',
                 'country' => $customer?->country ?? 'GT',
                 'name_locked' => true,
