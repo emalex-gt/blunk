@@ -2998,7 +2998,7 @@ export default function POS({
             return;
         }
 
-        if (invoiceIdentityNeedsVerification) {
+        if (invoiceIdentityBlocksCheckout) {
             showError(invoiceIdentityVerificationMessage);
             toast.error(invoiceIdentityVerificationMessage);
             return;
@@ -3500,9 +3500,18 @@ export default function POS({
         !data.customer.consumidor_final &&
         ['NIT', 'CUI'].includes(data.customer.doc_type) &&
         !hasCurrentVerifiedGuatemalaIdentity(data.customer);
+    const invoiceNitAutoVerificationPending =
+        invoiceIdentityNeedsVerification &&
+        data.customer.doc_type === 'NIT' &&
+        /^[A-Za-z0-9]+$/.test(normalizedFiscalNit(data.customer.doc_number));
+    const invoiceIdentityBlocksCheckout = invoiceIdentityNeedsVerification && !invoiceNitAutoVerificationPending;
     const invoiceIdentityVerificationMessage = (() => {
         if (!invoiceIdentityNeedsVerification) {
             return '';
+        }
+
+        if (invoiceNitAutoVerificationPending) {
+            return 'Se verificar\u00e1 autom\u00e1ticamente el NIT al confirmar la venta.';
         }
 
         const documentLabel = data.customer.doc_type === 'CUI' ? 'CUI' : 'NIT';
@@ -3523,7 +3532,7 @@ export default function POS({
     const checkoutHasErrors =
         customerModalErrors.length > 0 ||
         paymentModalErrors.length > 0 ||
-        Boolean(documentError || cashRegisterError || errors.items || invoiceIdentityNeedsVerification);
+        Boolean(documentError || cashRegisterError || errors.items || invoiceIdentityBlocksCheckout);
     const customerFormExpanded = customerEditing || hasCustomerFieldErrors || nitLookupLoading;
     const customerTypeLabel = country === 'GT'
         ? (data.customer.consumidor_final ? 'Consumidor Final' : (data.customer.doc_type || 'NIT'))
@@ -5152,7 +5161,7 @@ export default function POS({
                             <button
                                 type="button"
                                 onClick={submitSale}
-                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && (!paymentIsBalanced || !cashReceivedIsValid)) || invoiceIdentityNeedsVerification || hasInvalidCartQuantities || noAvailableDocumentTypes || fiscalDraftRecoveryBlocked || draftVerificationUnavailable}
+                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && (!paymentIsBalanced || !cashReceivedIsValid)) || invoiceIdentityBlocksCheckout || hasInvalidCartQuantities || noAvailableDocumentTypes || fiscalDraftRecoveryBlocked || draftVerificationUnavailable}
                                 className="rounded-xl bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-orange-200 hover:from-orange-700 hover:via-orange-600 hover:to-amber-600 disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : ((processing || creditProcessing) ? 'Confirmando...' : (effectiveCheckoutType === 'credit' ? 'Confirmar crédito' : 'Confirmar venta'))}

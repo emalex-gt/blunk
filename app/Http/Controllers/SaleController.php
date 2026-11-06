@@ -2617,23 +2617,26 @@ class SaleController extends Controller
             return null;
         }
 
+        $hasCurrentVerifiedFiscalIdentity = $this->customerHasCurrentVerifiedFiscalIdentity($customer);
+
         return [
             'source' => 'credit',
             'customer' => [
                 'id' => $customer?->id,
                 'consumidor_final' => false,
-                'doc_type' => $receipt->customer_doc_type ?: 'NIT',
-                'doc_number' => $receipt->customer_doc_number,
+                'doc_type' => $hasCurrentVerifiedFiscalIdentity ? $customer->doc_type : ($receipt->customer_doc_type ?: 'NIT'),
+                'doc_number' => $hasCurrentVerifiedFiscalIdentity ? $customer->doc_number : $receipt->customer_doc_number,
                 'tax_condition' => $customer?->tax_condition ?? '',
-                'name' => $receipt->customer_name,
+                'name' => $hasCurrentVerifiedFiscalIdentity ? $customer->name : $receipt->customer_name,
                 'address' => $receipt->customer_address ?: ($customer?->address ?? ''),
                 'address_reference' => $receipt->customer_address_reference ?: ($customer?->address_reference ?? ''),
                 'department' => $receipt->customer_department ?: ($customer?->department ?? ''),
                 'municipality' => $receipt->customer_municipality ?: ($customer?->municipality ?? ''),
                 'phone' => $customer?->phone ?? '',
                 'country' => $customer?->country ?? 'GT',
-                'name_locked' => true,
-                'tax_lookup_verified_at' => $customer?->tax_lookup_verified_at?->toIso8601String(),
+                'name_locked' => $hasCurrentVerifiedFiscalIdentity,
+                'tax_lookup_verified_at' => $hasCurrentVerifiedFiscalIdentity ? $customer->tax_lookup_verified_at?->toIso8601String() : null,
+                'tax_lookup_verified_doc_number' => $hasCurrentVerifiedFiscalIdentity ? $this->normalizeDocument($customer->doc_number) : null,
             ],
             'lines' => $lines->map(fn (CreditReceiptLine $line) => [
                 'credit_line_id' => $line->id,
