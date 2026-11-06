@@ -3082,12 +3082,25 @@ class SaleController extends Controller
             return $customerData;
         }
 
-        $existing = filled($customerData['id'] ?? null)
+        $hasSelectedCustomer = filled($customerData['id'] ?? null);
+        $existing = $hasSelectedCustomer
             ? Customer::query()->where('business_id', $business->id)->find($customerData['id'])
             : Customer::query()
                 ->where('business_id', $business->id)
                 ->where('normalized_tax_id', $docNumber)
                 ->first();
+
+        if ($hasSelectedCustomer && $existing?->tax_lookup_verified_at) {
+            $persistedDocType = CustomerIdentity::normalizeGuatemalaDocType($existing->doc_type)
+                ?? CustomerIdentity::NIT;
+            $persistedDocNumber = CustomerIdentity::normalizeDocument($persistedDocType, $existing->doc_number) ?? '';
+
+            if ($persistedDocNumber !== '' && ($persistedDocType !== CustomerIdentity::NIT || $persistedDocNumber !== $docNumber)) {
+                throw ValidationException::withMessages([
+                    'customer.doc_number' => 'El NIT fue modificado después de la validación. Valídalo nuevamente.',
+                ]);
+            }
+        }
 
         $identity = app(GuatemalaCustomerIdentityPolicy::class)->resolve(
             $business,
