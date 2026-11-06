@@ -118,6 +118,10 @@ final class OperationsLogReader
             throw ValidationException::withMessages(['date_from' => 'El intervalo debe estar dentro de los últimos '.self::MAX_DAYS.' días y no puede incluir fechas futuras.']);
         }
 
+        $category = (string) ($input['category'] ?? 'all');
+        $result = (string) ($input['result'] ?? 'all');
+        $event = (string) ($input['event'] ?? '');
+
         return [
             'date_from' => $from->toDateString(),
             'date_to' => $to->toDateString(),
