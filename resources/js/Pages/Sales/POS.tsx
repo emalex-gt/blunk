@@ -2359,7 +2359,7 @@ export default function POS({
         const items = cartRef.current;
         const productItems = items.filter((item) => item.product.id === product.id);
         const normalLine = productItems.find((item) => !item.credit_line_id);
-        const existing = normalLine ?? (productItems.length === 1 ? productItems[0] : null);
+        const existing = normalLine ?? null;
         const nextItems = existing
             ? items.map((item) => (
                 cartLineId(item) === cartLineId(existing)
@@ -2420,6 +2420,13 @@ export default function POS({
                     ? { ...item, quantity: String(Number(sanitizedQuantity)) }
                     : item
             ));
+            const reservationMaximum = Number(target.max_quantity ?? 0);
+
+            if (target.credit_line_id && reservationMaximum > 0 && Number(sanitizedQuantity) > reservationMaximum) {
+                showError(`Esta línea tiene un máximo de ${reservationMaximum} unidades pendientes en la reserva. Para vender unidades adicionales, busca y agrega el producto desde el POS.`);
+                return items;
+            }
+
             const availableStock = Math.floor(target.product.available_stock ?? target.product.stock);
 
             if (!allow_negative_stock && unreservedQuantityForProduct(nextItems, target.product.id) > availableStock) {
