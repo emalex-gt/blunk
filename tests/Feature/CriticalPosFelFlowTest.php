@@ -48,6 +48,7 @@ use App\Services\Fiscal\FiscalDocumentIntentService;
 use App\Support\BranchInventory;
 use App\Support\Credits;
 use App\Support\FelPhraseRenderer;
+use App\Support\GuatemalaPostalCodes;
 use App\Support\ManualPricePolicy;
 use App\Support\Permissions;
 use App\Support\StockAvailability;
@@ -6479,6 +6480,16 @@ class CriticalPosFelFlowTest extends TestCase
             allowInvoices: true,
         );
         $settings = $this->felSettings($business);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $branch->update([
+            'fel_department' => 'Huehuetenango',
+            'fel_municipality' => 'Huehuetenango',
+            'fel_postal_code' => '13001',
+        ]);
+        $this->assertSame('13001', GuatemalaPostalCodes::forLocation(
+            $branch->fel_department,
+            $branch->fel_municipality,
+        ));
         $product = $this->product($business, stock: 10, salePrice: 100);
         $this->openCashRegister($business, $user);
 
