@@ -24,6 +24,7 @@ use App\Support\Products\MainPriceAuditor;
 use App\Support\SalesDuplicateAuditor;
 use App\Support\SystemIntegrityAuditor;
 use App\Support\TextEncoding;
+use App\Services\System\OperationalMonitor;
 use App\Services\System\PostgresPreDeployBackupService;
 use App\Services\Fiscal\FiscalDocumentIntentService;
 use Illuminate\Support\Facades\Schedule;
@@ -103,6 +104,14 @@ Artisan::command('routes:release-expired-draft-reservations {--limit=100}', func
 })->purpose('Release only expired draft route pre-sale stock reservations');
 
 Schedule::command('routes:release-expired-draft-reservations')->everyMinute()->withoutOverlapping();
+
+Artisan::command('system:monitor', function (OperationalMonitor $monitor) {
+    $result = $monitor->run();
+    $this->info('Monitor operativo: '.($result['enabled'] ? count($result['active']).' incidencias activas detectadas.' : 'desactivado.'));
+    return self::SUCCESS;
+})->purpose('Run lightweight read-only operational infrastructure checks');
+
+Schedule::command('system:monitor')->everyFiveMinutes()->withoutOverlapping();
 
 Artisan::command('app:diagnose-storage', function () {
     $tmpPath = storage_path('app/tmp');
