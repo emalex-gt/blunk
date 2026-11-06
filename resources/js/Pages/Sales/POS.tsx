@@ -3968,16 +3968,7 @@ export default function POS({
                                                         <input
                                                             value={data.customer.doc_number}
                                                             onChange={(event) => {
-                                                                renewOperationKeyAfterFailedMutation();
-                                                                const docNumber = sanitizeGuatemalaIdentity(data.customer.doc_type, event.target.value);
-                                                                setData('customer', {
-                                                                    ...data.customer,
-                                                                    doc_number: docNumber,
-                                                                    name: '',
-                                                                    name_locked: false,
-                                                                    tax_lookup_verified_at: null,
-                                                                    tax_lookup_verified_doc_number: data.customer.tax_lookup_verified_doc_number,
-                                                                });
+                                                                setCustomerDocument(event.target.value);
                                                                 setNitLookupMessage('');
                                                             }}
                                                             onKeyDown={handleCustomerKeyDown}
