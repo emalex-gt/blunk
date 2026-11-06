@@ -600,6 +600,7 @@ class SaleController extends Controller
                 $availableByProduct[$productId] ??= StockAvailability::availableStock($product, null, $branch->id);
                 $productNames[$productId] = $product->name;
 
+                $creditQuantity = 0;
                 if (isset($item['credit_line_id'])) {
                     $creditLine = CreditReceiptLine::query()
                         ->with('receipt:id,customer_id')
@@ -610,14 +611,15 @@ class SaleController extends Controller
                         ->lockForUpdate()
                         ->find($item['credit_line_id']);
 
-                    if (! $creditLine || ! $customer || (int) $creditLine->receipt?->customer_id !== (int) $customer->id || $quantity > (int) $creditLine->qty_pending) {
+                    if (! $creditLine || ! $customer || (int) $creditLine->receipt?->customer_id !== (int) $customer->id) {
                         throw ValidationException::withMessages([
                             'items' => 'La línea de crédito seleccionada ya no está disponible.',
                         ]);
                     }
 
                     $creditLineId = (int) $creditLine->id;
-                    $requestedByCreditLine[$creditLineId] = ($requestedByCreditLine[$creditLineId] ?? 0) + $quantity;
+                    $creditQuantity = min($quantity, (int) $creditLine->qty_pending);
+                    $requestedByCreditLine[$creditLineId] = ($requestedByCreditLine[$creditLineId] ?? 0) + $creditQuantity;
 
                     if ($requestedByCreditLine[$creditLineId] > (int) $creditLine->qty_pending) {
                         throw ValidationException::withMessages([
@@ -627,7 +629,7 @@ class SaleController extends Controller
 
                     if (Credits::reserveStockOnCreditReservations($businessId) && (int) $creditLine->qty_reserved > 0) {
                         $reservedCreditByProduct[$productId] = ($reservedCreditByProduct[$productId] ?? 0)
-                            + min($quantity, (int) $creditLine->qty_reserved);
+                            + min($creditQuantity, (int) $creditLine->qty_reserved);
                     }
                 }
 
@@ -665,6 +667,7 @@ class SaleController extends Controller
                     'line_discount' => $lineDiscount,
                     'line_total_after_line_discount' => round($lineTotal - $lineDiscount['amount'], 2),
                     'credit_line' => $creditLine,
+                    'credit_quantity' => $creditQuantity,
                 ];
             }
 
@@ -792,7 +795,8 @@ class SaleController extends Controller
                 if ($line['credit_line']) {
                     /** @var CreditReceiptLine $creditLine */
                     $creditLine = $line['credit_line'];
-                    $creditLine->increment('qty_invoiced', (int) $line['quantity']);
+                    $creditQuantity = (int) $line['credit_quantity'];
+                    $creditLine->increment('qty_invoiced', $creditQuantity);
                     $creditLine = Credits::refreshLine($creditLine->refresh());
                     Credits::refreshReceipt($creditLine->receipt);
 
@@ -801,8 +805,8 @@ class SaleController extends Controller
                         'credit_receipt_line_id' => $creditLine->id,
                         'sale_id' => $sale->id,
                         'sale_line_id' => $saleItem->id,
-                        'quantity' => (int) $line['quantity'],
-                        'amount' => $lineTotalAfterDiscount,
+                        'quantity' => $creditQuantity,
+                        'amount' => round($lineTotalAfterDiscount * ($creditQuantity / (int) $line['quantity']), 2),
                     ]);
                 }
                 }
@@ -920,11 +924,17 @@ class SaleController extends Controller
                         'draft_id' => $data['draft_id'] ?? null,
                         'environment' => $felSettings?->environment ?? 'test',
                         // Versioned, positional associations preserve duplicate products from
-                        // distinct reservations through the asynchronous FEL finalization.
+                        // distinct reservations and the portion actually applied to each one.
                         'credit_line_associations' => [
-                            'version' => 2,
-                            'by_item_index' => collect($data['items'] ?? [])
-                                ->map(fn (array $item) => filled($item['credit_line_id'] ?? null) ? (int) $item['credit_line_id'] : null)
+                            'version' => 3,
+                            'by_item_index' => collect($saleLines)
+                                ->map(fn (array $line) => $line['credit_line'] ? [
+                                    'credit_line_id' => (int) $line['credit_line']->id,
+                                    'quantity' => (int) $line['credit_quantity'],
+                                    'stock_reserved_quantity' => Credits::reserveStockOnCreditReservations($businessId)
+                                        ? min((int) $line['credit_quantity'], (int) $line['credit_line']->qty_reserved)
+                                        : 0,
+                                ] : null)
                                 ->values()
                                 ->all(),
                         ],
@@ -2643,6 +2653,7 @@ class SaleController extends Controller
                 'product_id' => $line->product_id,
                 'quantity' => $line->qty_pending,
                 'max_quantity' => $line->qty_pending,
+                'reserved_quantity' => min((int) $line->qty_pending, (int) $line->qty_reserved),
                 'unit_price' => (float) $line->unit_price,
                 'receipt_number' => Credits::formatNumber($line->receipt),
             ])->values(),

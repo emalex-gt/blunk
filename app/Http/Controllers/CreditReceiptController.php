@@ -157,6 +157,8 @@ class CreditReceiptController extends Controller
             $shouldReserveStock = Credits::reserveStockOnCreditReservations($businessId);
             $subtotal = 0.0;
             $preparedLines = [];
+            $requestedByProduct = [];
+            $availableByProduct = [];
 
             foreach ($data['items'] as $item) {
                 $product = Product::query()
@@ -171,18 +173,24 @@ class CreditReceiptController extends Controller
 
                 BranchInventory::ensureProductInBranch($product, $branch->id);
                 $quantity = (int) $item['quantity'];
-                $available = StockAvailability::availableStock($product, null, $branch->id);
-
-                if ($shouldReserveStock && ! StockPolicy::allowsNegativeStockForBusinessId($businessId) && $available < $quantity) {
-                    throw ValidationException::withMessages([
-                        'items' => 'No hay suficiente stock disponible.',
-                    ]);
-                }
+                $productId = (int) $product->id;
+                $requestedByProduct[$productId] = ($requestedByProduct[$productId] ?? 0) + $quantity;
+                $availableByProduct[$productId] ??= StockAvailability::availableStock($product, null, $branch->id);
 
                 $unitPrice = round((float) ($item['unit_price'] ?? $product->sale_price), 2);
                 $lineTotal = round($unitPrice * $quantity, 2);
                 $subtotal += $lineTotal;
                 $preparedLines[] = compact('product', 'quantity', 'unitPrice', 'lineTotal');
+            }
+
+            if ($shouldReserveStock && ! StockPolicy::allowsNegativeStockForBusinessId($businessId)) {
+                foreach ($requestedByProduct as $productId => $requestedQuantity) {
+                    if (($availableByProduct[$productId] ?? 0) < $requestedQuantity) {
+                        throw ValidationException::withMessages([
+                            'items' => 'No hay suficiente stock disponible.',
+                        ]);
+                    }
+                }
             }
 
             $receipt = CreditReceipt::query()->create([

@@ -525,8 +525,8 @@ class FiscalDocumentIntentService
                 ->all())->values()->all(),
             'payments' => $operationPayload['payments'] ?? [],
             'cash_register_session_id' => $operationPayload['cash_register_session_id'] ?? null,
-            // v2 is positional and unambiguous. credit_line_ids remains only for
-            // payloads created before this format existed.
+            // v3 records the consumed reservation quantity by item. credit_line_ids
+            // remains only for payloads created before positional associations.
             'credit_line_associations' => $operationPayload['credit_line_associations'] ?? null,
             'credit_line_ids' => $operationPayload['credit_line_ids'] ?? [],
             'draft_id' => $operationPayload['draft_id'] ?? null,
@@ -591,10 +591,41 @@ class FiscalDocumentIntentService
 
     private function reserveStock(FiscalDocumentIntent $intent): void
     {
-        foreach (($intent->operation_payload['items'] ?? []) as $item) {
+        $items = $intent->operation_payload['items'] ?? [];
+        $association = $intent->operation_payload['credit_line_associations'] ?? null;
+        $v3Associations = is_array($association) && ($association['version'] ?? null) === 3
+            ? ($association['by_item_index'] ?? null)
+            : null;
+
+        foreach ($items as $index => $item) {
             $productId = (int) ($item['product_id'] ?? 0);
             $quantity = (float) ($item['quantity'] ?? 0);
             if (! $productId || $quantity <= 0) {
+                continue;
+            }
+
+            $alreadyReservedByCredit = 0.0;
+            if (Credits::reserveStockOnCreditReservations($intent->business_id) && is_array($v3Associations)) {
+                $entry = $v3Associations[$index] ?? null;
+                if ($entry !== null) {
+                    if (! is_array($entry)
+                        || ! is_numeric($entry['credit_line_id'] ?? null)
+                        || (int) $entry['credit_line_id'] <= 0
+                        || ! is_numeric($entry['quantity'] ?? null)
+                        || (float) $entry['quantity'] < 0
+                        || (float) $entry['quantity'] > $quantity
+                        || ! is_numeric($entry['stock_reserved_quantity'] ?? null)
+                        || (float) $entry['stock_reserved_quantity'] < 0
+                        || (float) $entry['stock_reserved_quantity'] > (float) $entry['quantity']) {
+                        throw new \RuntimeException('La intención fiscal contiene una asociación de reserva inválida para apartar inventario.');
+                    }
+
+                    $alreadyReservedByCredit = (float) $entry['stock_reserved_quantity'];
+                }
+            }
+
+            $quantityToReserve = $quantity - $alreadyReservedByCredit;
+            if ($quantityToReserve <= 0) {
                 continue;
             }
 
@@ -606,7 +637,7 @@ class FiscalDocumentIntentService
                 'source_type' => 'fiscal_document_intent',
                 'source_id' => $intent->id,
                 'source_item_id' => null,
-                'quantity' => $quantity,
+                'quantity' => $quantityToReserve,
                 'status' => 'active',
                 'created_by' => $intent->created_by,
             ]);
@@ -615,15 +646,43 @@ class FiscalDocumentIntentService
 
     /**
      * Resolves the reservation association format frozen with a fiscal intent.
-     * Version 2 is positional; the legacy format was keyed by product id and is
-     * accepted only where that key cannot describe more than one sale item.
+     * Version 3 records the exact reserved quantity consumed by each sale item.
+     * Version 2 is positional and legacy payloads were keyed by product id.
      *
-     * @return array<int, ?int>
+     * @return array<int, array{credit_line_id: ?int, quantity: int}>
      */
     private function creditLineAssociationsForItems(array $payload, $saleItems): array
     {
         $items = $saleItems->values();
         $association = $payload['credit_line_associations'] ?? null;
+
+        if (is_array($association) && ($association['version'] ?? null) === 3) {
+            $byItemIndex = $association['by_item_index'] ?? null;
+            if (! is_array($byItemIndex) || count($byItemIndex) !== $items->count()) {
+                throw new \RuntimeException('La intención fiscal no contiene asociaciones completas de reservas para finalizarla de forma segura.');
+            }
+
+            return $items->keys()->map(function (int $index) use ($byItemIndex, $items): array {
+                $entry = $byItemIndex[$index] ?? null;
+                if ($entry === null) {
+                    return ['credit_line_id' => null, 'quantity' => 0];
+                }
+
+                if (! is_array($entry)
+                    || ! is_numeric($entry['credit_line_id'] ?? null)
+                    || (int) $entry['credit_line_id'] <= 0
+                    || ! is_numeric($entry['quantity'] ?? null)
+                    || (int) $entry['quantity'] < 0
+                    || (int) $entry['quantity'] > (int) $items[$index]->quantity) {
+                    throw new \RuntimeException('La intención fiscal contiene una asociación de reserva inválida.');
+                }
+
+                return [
+                    'credit_line_id' => (int) $entry['credit_line_id'],
+                    'quantity' => (int) $entry['quantity'],
+                ];
+            })->all();
+        }
 
         if (is_array($association) && ($association['version'] ?? null) === 2) {
             $byItemIndex = $association['by_item_index'] ?? null;
@@ -631,32 +690,35 @@ class FiscalDocumentIntentService
                 throw new \RuntimeException('La intención fiscal no contiene asociaciones completas de reservas para finalizarla de forma segura.');
             }
 
-            return $items->keys()->map(function (int $index) use ($byItemIndex): ?int {
+            return $items->keys()->map(function (int $index) use ($byItemIndex, $items): array {
                 if (! array_key_exists($index, $byItemIndex) || blank($byItemIndex[$index])) {
-                    return null;
+                    return ['credit_line_id' => null, 'quantity' => 0];
                 }
 
                 if (! is_numeric($byItemIndex[$index]) || (int) $byItemIndex[$index] <= 0) {
                     throw new \RuntimeException('La intención fiscal contiene una asociación de reserva inválida.');
                 }
 
-                return (int) $byItemIndex[$index];
+                return [
+                    'credit_line_id' => (int) $byItemIndex[$index],
+                    'quantity' => (int) $items[$index]->quantity,
+                ];
             })->all();
         }
 
         $legacy = $payload['credit_line_ids'] ?? [];
         if (! is_array($legacy) || $legacy === []) {
-            return array_fill(0, $items->count(), null);
+            return array_fill(0, $items->count(), ['credit_line_id' => null, 'quantity' => 0]);
         }
 
         $itemCountsByProduct = $items->countBy(fn (SaleItem $item) => (int) $item->product_id);
 
-        return $items->map(function (SaleItem $item) use ($legacy, $itemCountsByProduct): ?int {
+        return $items->map(function (SaleItem $item) use ($legacy, $itemCountsByProduct): array {
             $productId = (int) $item->product_id;
             $legacyId = $legacy[$productId] ?? $legacy[(string) $productId] ?? null;
 
             if (blank($legacyId)) {
-                return null;
+                return ['credit_line_id' => null, 'quantity' => 0];
             }
 
             if (($itemCountsByProduct[$productId] ?? 0) !== 1) {
@@ -667,7 +729,7 @@ class FiscalDocumentIntentService
                 throw new \RuntimeException('La intención fiscal histórica contiene una asociación de reserva inválida.');
             }
 
-            return (int) $legacyId;
+            return ['credit_line_id' => (int) $legacyId, 'quantity' => (int) $item->quantity];
         })->values()->all();
     }
 
@@ -702,7 +764,7 @@ class FiscalDocumentIntentService
         }
         $business = Business::query()->findOrFail($sale->business_id);
         $saleItems = $sale->items()->orderBy('id')->get()->values();
-        $creditLineIds = $this->creditLineAssociationsForItems($payload, $saleItems);
+        $creditLineAssociations = $this->creditLineAssociationsForItems($payload, $saleItems);
         $products = [];
         $creditLines = [];
         $requestedByProduct = [];
@@ -726,8 +788,10 @@ class FiscalDocumentIntentService
                     ->where('status', 'active')
                     ->sum('quantity');
 
-            $creditLineId = $creditLineIds[$itemIndex] ?? null;
-            if (! filled($creditLineId)) {
+            $creditAssociation = $creditLineAssociations[$itemIndex] ?? ['credit_line_id' => null, 'quantity' => 0];
+            $creditLineId = $creditAssociation['credit_line_id'];
+            $creditQuantity = (int) $creditAssociation['quantity'];
+            if (! filled($creditLineId) || $creditQuantity === 0) {
                 continue;
             }
 
@@ -740,15 +804,15 @@ class FiscalDocumentIntentService
                 ->lockForUpdate()
                 ->find($creditLineId);
 
-            $requestedByCreditLine[$creditLineId] = ($requestedByCreditLine[$creditLineId] ?? 0) + (int) $saleItem->quantity;
+            $requestedByCreditLine[$creditLineId] = ($requestedByCreditLine[$creditLineId] ?? 0) + $creditQuantity;
             if (! $creditLine || (int) $creditLine->receipt?->customer_id !== (int) $sale->customer_id || $requestedByCreditLine[$creditLineId] > (int) $creditLine->qty_pending) {
                 throw \Illuminate\Validation\ValidationException::withMessages(['items' => 'La cantidad acumulada de la reserva ya no está disponible para finalizar la venta.']);
             }
 
-            $creditLines[$itemIndex] = $creditLine;
+            $creditLines[$itemIndex] = ['line' => $creditLine, 'quantity' => $creditQuantity];
             if (Credits::reserveStockOnCreditReservations($sale->business_id) && (int) $creditLine->qty_reserved > 0) {
                 $reservedCreditByProduct[$productId] = ($reservedCreditByProduct[$productId] ?? 0)
-                    + min((int) $saleItem->quantity, (int) $creditLine->qty_reserved);
+                    + min($creditQuantity, (int) $creditLine->qty_reserved);
             }
         }
 
@@ -762,7 +826,7 @@ class FiscalDocumentIntentService
 
         foreach ($saleItems as $itemIndex => $saleItem) {
             $product = $products[$itemIndex];
-            $creditLine = $creditLines[$itemIndex] ?? null;
+            $creditAssociation = $creditLines[$itemIndex] ?? null;
 
             [$previousStock, $newStock] = BranchInventory::decrease($product, $sale->branch_id, $saleItem->quantity);
             \App\Models\StockMovement::query()->create([
@@ -777,8 +841,11 @@ class FiscalDocumentIntentService
                 'created_by' => $sale->created_by,
             ]);
 
-            if ($creditLine) {
-                $creditLine->increment('qty_invoiced', (int) $saleItem->quantity);
+            if ($creditAssociation) {
+                /** @var CreditReceiptLine $creditLine */
+                $creditLine = $creditAssociation['line'];
+                $creditQuantity = (int) $creditAssociation['quantity'];
+                $creditLine->increment('qty_invoiced', $creditQuantity);
                 $creditLine = Credits::refreshLine($creditLine->refresh());
                 Credits::refreshReceipt($creditLine->receipt);
                 CreditReceiptLineInvoice::query()->create([
@@ -786,8 +853,8 @@ class FiscalDocumentIntentService
                     'credit_receipt_line_id' => $creditLine->id,
                     'sale_id' => $sale->id,
                     'sale_line_id' => $saleItem->id,
-                    'quantity' => (int) $saleItem->quantity,
-                    'amount' => $saleItem->total,
+                    'quantity' => $creditQuantity,
+                    'amount' => round((float) $saleItem->total * ($creditQuantity / (int) $saleItem->quantity), 2),
                 ]);
             }
         }

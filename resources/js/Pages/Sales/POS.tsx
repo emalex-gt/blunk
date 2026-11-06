@@ -168,6 +168,7 @@ type CartItem = {
     price_warning: string | null;
     credit_line_id?: number | null;
     max_quantity?: number | null;
+    credit_reserved_quantity?: number | null;
     credit_receipt_number?: string | null;
     locked_credit_line?: boolean;
     quotation_item_id?: number | null;
@@ -191,6 +192,7 @@ type CreditInvoicePayload = {
         product_id: number;
         quantity: number;
         max_quantity: number;
+        reserved_quantity: number;
         unit_price: number;
         receipt_number: string;
     }[];
@@ -265,6 +267,7 @@ type PosDraft = {
         manual_price?: boolean;
         credit_line_id?: number | null;
         max_quantity?: number | null;
+        credit_reserved_quantity?: number | null;
         credit_receipt_number?: string | null;
         locked_credit_line?: boolean;
         quotation_item_id?: number | null;
@@ -285,7 +288,22 @@ type PosDraft = {
 };
 
 const cartLineId = (item: Pick<CartItem, 'cart_line_id' | 'product'>) => item.cart_line_id || `product-${item.product.id}`;
-const newCartLineId = (productId: number, creditLineId?: number | null) => creditLineId ? `credit-${creditLineId}` : `product-${productId}`;
+const newCartLineId = (productId: number, creditLineId?: number | null) => creditLineId
+    ? `credit-${creditLineId}`
+    : `product-${productId}-${makeOperationKey()}`;
+
+function uniqueCartLineId(productId: number, creditLineId: number | null | undefined, usedIds: Set<string>) {
+    const preferred = newCartLineId(productId, creditLineId);
+
+    if (!usedIds.has(preferred)) {
+        usedIds.add(preferred);
+        return preferred;
+    }
+
+    const unique = `${preferred}-${makeOperationKey()}`;
+    usedIds.add(unique);
+    return unique;
+}
 
 const unsafeRecentProductsKey = 'pos_recent_products';
 
@@ -519,6 +537,16 @@ function quantityError(value: number | string | null | undefined) {
 
 function quantityNumber(value: number | string | null | undefined) {
     return quantityError(value) ? 0 : Number(normalizeQuantity(value));
+}
+
+function reservedCreditQuantity(item: Pick<CartItem, 'credit_reserved_quantity'>) {
+    return Math.max(0, Number(item.credit_reserved_quantity ?? 0));
+}
+
+function unreservedQuantityForProduct(items: CartItem[], productId: number) {
+    return items
+        .filter((item) => item.product.id === productId)
+        .reduce((total, item) => total + Math.max(0, quantityNumber(item.quantity) - reservedCreditQuantity(item)), 0);
 }
 
 function fiscalCustomerPayload(customer: CustomerForm) {
@@ -1267,6 +1295,7 @@ export default function POS({
             return;
         }
 
+        const usedCartLineIds = new Set<string>();
         const creditItems = credit_invoice.lines
             .map((line) => {
                 const product = productsById.get(line.product_id);
@@ -1276,7 +1305,7 @@ export default function POS({
                 }
 
                 return {
-                    cart_line_id: newCartLineId(product.id, line.credit_line_id),
+                    cart_line_id: uniqueCartLineId(product.id, line.credit_line_id, usedCartLineIds),
                     product,
                     quantity: String(line.quantity),
                     unit_price: String(line.unit_price),
@@ -1287,6 +1316,7 @@ export default function POS({
                     price_warning: null,
                     credit_line_id: line.credit_line_id,
                     max_quantity: line.max_quantity,
+                    credit_reserved_quantity: line.reserved_quantity,
                     credit_receipt_number: line.receipt_number,
                     locked_credit_line: false,
                 };
@@ -1693,6 +1723,7 @@ export default function POS({
                 quotation_item_id: item.quotation_item_id ?? null,
                 credit_line_id: item.credit_line_id ?? null,
                 max_quantity: item.max_quantity ?? null,
+                credit_reserved_quantity: item.credit_reserved_quantity ?? null,
                 credit_receipt_number: item.credit_receipt_number ?? null,
                 // Legacy drafts marked reservation lines as locked. A reservation is
                 // now only a traceable source line, not a commercial price lock.
@@ -1726,6 +1757,7 @@ export default function POS({
             };
         }
 
+        const usedCartLineIds = new Set<string>();
         const cart = (draft.cart ?? []).reduce<CartItem[]>((items, item) => {
             const product = productMap.get(item.product_id);
 
@@ -1750,9 +1782,13 @@ export default function POS({
             const price = priceFromList(product, item.price_type_id ?? default_price_type_id, default_price_type_id);
             const manualPrice = Boolean(item.manual_price);
             const inheritedCreditPrice = item.price_source === 'credit_reservation';
+            const restoredCartLineId = item.cart_line_id && !usedCartLineIds.has(item.cart_line_id)
+                ? item.cart_line_id
+                : uniqueCartLineId(product.id, item.credit_line_id ?? null, usedCartLineIds);
+            usedCartLineIds.add(restoredCartLineId);
 
             items.push({
-                cart_line_id: item.cart_line_id ?? newCartLineId(product.id, item.credit_line_id ?? null),
+                cart_line_id: restoredCartLineId,
                 product,
                 quantity: String(quantity),
                 unit_price: (manualPrice || inheritedCreditPrice) ? (item.unit_price ?? price.price) : price.price,
@@ -1763,6 +1799,7 @@ export default function POS({
                 price_warning: price.warning,
                 credit_line_id: item.credit_line_id ?? null,
                 max_quantity: item.max_quantity ?? null,
+                credit_reserved_quantity: item.credit_reserved_quantity ?? null,
                 credit_receipt_number: item.credit_receipt_number ?? null,
                 locked_credit_line: false,
                 quotation_item_id: item.quotation_item_id ?? null,
@@ -2273,6 +2310,7 @@ export default function POS({
             price_warning: price.warning,
             credit_line_id: null,
             max_quantity: null,
+            credit_reserved_quantity: null,
             credit_receipt_number: null,
             locked_credit_line: false,
         };
@@ -2319,21 +2357,23 @@ export default function POS({
         }
 
         const items = cartRef.current;
-        const existing = items.find((item) => item.product.id === product.id && !item.credit_line_id);
-        const existingQuantity = existing ? quantityNumber(existing.quantity) : 0;
-        if (!allow_negative_stock && existing && existingQuantity >= availableStock) {
+        const productItems = items.filter((item) => item.product.id === product.id);
+        const normalLine = productItems.find((item) => !item.credit_line_id);
+        const existing = normalLine ?? (productItems.length === 1 ? productItems[0] : null);
+        const nextItems = existing
+            ? items.map((item) => (
+                cartLineId(item) === cartLineId(existing)
+                    ? { ...item, quantity: String(quantityNumber(item.quantity) + 1) }
+                    : item
+            ))
+            : [buildCartItem(product), ...items];
+
+        if (!allow_negative_stock && unreservedQuantityForProduct(nextItems, product.id) > availableStock) {
             showError(
                 `${product.name}: ${t('pos.stock_insufficient')} ${availableStock}.`,
             );
             return false;
         }
-
-        const nextItems = existing
-            ? [
-                { ...existing, quantity: String(quantityNumber(existing.quantity) + 1) },
-                ...items.filter((item) => cartLineId(item) !== cartLineId(existing)),
-            ]
-            : [buildCartItem(product), ...items];
 
         renewOperationKeyAfterFailedMutation();
         cartRef.current = nextItems;
@@ -2363,34 +2403,35 @@ export default function POS({
         }
 
         renewOperationKeyAfterFailedMutation();
-        setCart((items) =>
-            items.map((item) => {
-                if (cartLineId(item) !== lineId) {
-                    return item;
-                }
+        setCart((items) => {
+            const target = items.find((item) => cartLineId(item) === lineId);
 
-                if (quantityError(sanitizedQuantity)) {
-                    showError(integerQuantityMessage);
-                    return { ...item, quantity: sanitizedQuantity };
-                }
+            if (!target) {
+                return items;
+            }
 
-                const nextQuantity = Number(sanitizedQuantity);
+            if (quantityError(sanitizedQuantity)) {
+                showError(integerQuantityMessage);
+                return items;
+            }
 
-                const availableStock = Math.floor(item.max_quantity ?? item.product.available_stock ?? item.product.stock);
+            const nextItems = items.map((item) => (
+                cartLineId(item) === lineId
+                    ? { ...item, quantity: String(Number(sanitizedQuantity)) }
+                    : item
+            ));
+            const availableStock = Math.floor(target.product.available_stock ?? target.product.stock);
 
-                if (!allow_negative_stock && nextQuantity > availableStock) {
-                    showError(
-                        `${item.product.name}: ${t('pos.stock_insufficient')} ${availableStock}.`,
-                    );
+            if (!allow_negative_stock && unreservedQuantityForProduct(nextItems, target.product.id) > availableStock) {
+                showError(
+                    `${target.product.name}: ${t('pos.stock_insufficient')} ${availableStock}.`,
+                );
+                return items;
+            }
 
-                    return { ...item, quantity: String(Math.max(1, availableStock)) };
-                }
-
-                setErrorMessage('');
-
-                return { ...item, quantity: String(nextQuantity) };
-            }),
-        );
+            setErrorMessage('');
+            return nextItems;
+        });
     }
 
     function changeLinePriceType(lineId: string, priceTypeId: number) {
@@ -4410,7 +4451,7 @@ export default function POS({
                                                     <input
                                                         type="text"
                                                         min="1"
-                                                        max={Math.floor(item.max_quantity ?? item.product.available_stock ?? item.product.stock)}
+                                                        max={Math.floor((item.product.available_stock ?? item.product.stock) + reservedCreditQuantity(item))}
                                                         step="1"
                                                         inputMode="numeric"
                                                         pattern="[0-9]*"
