@@ -1199,15 +1199,27 @@ export default function POS({
             return;
         }
 
-        const missingIds = credit_invoice.lines
+        const missingIds = [...new Set(credit_invoice.lines
             .map((line) => line.product_id)
-            .filter((id) => !productsById.has(id));
+            .filter((id) => !productsById.has(id)))];
 
         if (missingIds.length === 0) {
             return;
         }
 
-        void fetchPosProducts({ ids: missingIds, limit: 50 }).catch(() => undefined);
+        void fetchPosProducts({ ids: missingIds.slice(0, 50), limit: 50 })
+            .then((payload) => {
+                const returnedIds = new Set([
+                    ...(payload.products ?? []),
+                    ...(payload.exact_barcode_matches ?? []),
+                    ...(payload.exact_code_matches ?? []),
+                ].map((product) => product.id));
+
+                if (missingIds.slice(0, 50).some((id) => !returnedIds.has(id))) {
+                    showError('No se pudieron cargar todos los productos seleccionados de la reserva. No se cargó ninguna línea al POS.');
+                }
+            })
+            .catch(() => showError('No se pudieron cargar todos los productos seleccionados de la reserva. No se cargó ninguna línea al POS.'));
     }, [credit_invoice, fetchPosProducts, productsById]);
 
     useEffect(() => {
@@ -1239,7 +1251,18 @@ export default function POS({
     }, [fetchPosProducts, productsById, quotation_edit_source]);
 
     useEffect(() => {
-        if (!credit_invoice || creditInvoiceLoadedRef.current || productsById.size === 0) {
+        if (!credit_invoice || creditInvoiceLoadedRef.current) {
+            return;
+        }
+
+        if (cartRef.current.length > 0 || isMeaningfulCustomer(data.customer)) {
+            creditInvoiceLoadedRef.current = true;
+            showError('No se cargó la reserva porque ya existe un trabajo en edición en el POS.');
+            return;
+        }
+
+        const missingProducts = credit_invoice.lines.filter((line) => !productsById.has(line.product_id));
+        if (missingProducts.length > 0) {
             return;
         }
 
@@ -1269,7 +1292,8 @@ export default function POS({
             })
             .filter(Boolean) as CartItem[];
 
-        if (creditItems.length === 0) {
+        if (creditItems.length !== credit_invoice.lines.length) {
+            showError('No se pudieron cargar todos los productos seleccionados de la reserva. No se cargó ninguna línea al POS.');
             return;
         }
 

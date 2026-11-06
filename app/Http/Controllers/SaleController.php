@@ -570,6 +570,11 @@ class SaleController extends Controller
             $subtotalBeforeDiscount = 0;
             $saleLines = [];
             $usedQuotationItemIds = [];
+            $requestedByProduct = [];
+            $availableByProduct = [];
+            $reservedCreditByProduct = [];
+            $requestedByCreditLine = [];
+            $productNames = [];
 
             foreach ($data['items'] as $item) {
                 $quantity = (int) $item['quantity'];
@@ -587,7 +592,10 @@ class SaleController extends Controller
                 }
 
                 BranchInventory::ensureProductInBranch($product, $branch->id);
-                $availableStock = StockAvailability::availableStock($product, null, $branch->id);
+                $productId = (int) $product->id;
+                $requestedByProduct[$productId] = ($requestedByProduct[$productId] ?? 0) + $quantity;
+                $availableByProduct[$productId] ??= StockAvailability::availableStock($product, null, $branch->id);
+                $productNames[$productId] = $product->name;
 
                 if (isset($item['credit_line_id'])) {
                     $creditLine = CreditReceiptLine::query()
@@ -605,17 +613,19 @@ class SaleController extends Controller
                         ]);
                     }
 
-                    if (Credits::reserveStockOnCreditReservations($businessId) && (int) $creditLine->qty_reserved > 0) {
-                        $availableStock += min($quantity, (int) $creditLine->qty_reserved);
-                    }
-                }
+                    $creditLineId = (int) $creditLine->id;
+                    $requestedByCreditLine[$creditLineId] = ($requestedByCreditLine[$creditLineId] ?? 0) + $quantity;
 
-                if (! StockPolicy::allowsNegativeStock($business) && $availableStock < $quantity) {
-                    throw ValidationException::withMessages([
-                        'items' => $creditLine
-                            ? 'No hay suficiente stock disponible para generar la venta.'
-                            : 'No hay suficiente stock disponible.',
-                    ]);
+                    if ($requestedByCreditLine[$creditLineId] > (int) $creditLine->qty_pending) {
+                        throw ValidationException::withMessages([
+                            'items' => 'La cantidad acumulada supera lo pendiente en la reserva seleccionada.',
+                        ]);
+                    }
+
+                    if (Credits::reserveStockOnCreditReservations($businessId) && (int) $creditLine->qty_reserved > 0) {
+                        $reservedCreditByProduct[$productId] = ($reservedCreditByProduct[$productId] ?? 0)
+                            + min($quantity, (int) $creditLine->qty_reserved);
+                    }
                 }
 
                 $trustedQuotationLine = $quotation
@@ -653,6 +663,18 @@ class SaleController extends Controller
                     'line_total_after_line_discount' => round($lineTotal - $lineDiscount['amount'], 2),
                     'credit_line' => $creditLine,
                 ];
+            }
+
+            if (! StockPolicy::allowsNegativeStock($business)) {
+                foreach ($requestedByProduct as $productId => $requestedQuantity) {
+                    $availableQuantity = ($availableByProduct[$productId] ?? 0) + ($reservedCreditByProduct[$productId] ?? 0);
+
+                    if ($availableQuantity < $requestedQuantity) {
+                        throw ValidationException::withMessages([
+                            'items' => ($productNames[$productId] ?? 'Producto').': no hay suficiente stock disponible para generar la venta.',
+                        ]);
+                    }
+                }
             }
 
             $subtotalAfterLineDiscount = round(collect($saleLines)->sum('line_total_after_line_discount'), 2);
@@ -894,12 +916,15 @@ class SaleController extends Controller
                         'cash_register_session_id' => $openSession?->id,
                         'draft_id' => $data['draft_id'] ?? null,
                         'environment' => $felSettings?->environment ?? 'test',
-                        // The finalizer consumes this list in persisted sale-item order.  A product can
-                        // legitimately occur more than once, including from distinct reservations.
-                        'credit_line_ids' => collect($data['items'] ?? [])
-                            ->map(fn (array $item) => filled($item['credit_line_id'] ?? null) ? (int) $item['credit_line_id'] : null)
-                            ->values()
-                            ->all(),
+                        // Versioned, positional associations preserve duplicate products from
+                        // distinct reservations through the asynchronous FEL finalization.
+                        'credit_line_associations' => [
+                            'version' => 2,
+                            'by_item_index' => collect($data['items'] ?? [])
+                                ->map(fn (array $item) => filled($item['credit_line_id'] ?? null) ? (int) $item['credit_line_id'] : null)
+                                ->values()
+                                ->all(),
+                        ],
                     ],
                     $data['idempotency_key'],
                     $request->user()->id,

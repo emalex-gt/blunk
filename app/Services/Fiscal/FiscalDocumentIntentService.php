@@ -507,6 +507,9 @@ class FiscalDocumentIntentService
                 ->all())->values()->all(),
             'payments' => $operationPayload['payments'] ?? [],
             'cash_register_session_id' => $operationPayload['cash_register_session_id'] ?? null,
+            // v2 is positional and unambiguous. credit_line_ids remains only for
+            // payloads created before this format existed.
+            'credit_line_associations' => $operationPayload['credit_line_associations'] ?? null,
             'credit_line_ids' => $operationPayload['credit_line_ids'] ?? [],
             'draft_id' => $operationPayload['draft_id'] ?? null,
         ];
@@ -534,6 +537,64 @@ class FiscalDocumentIntentService
                 'created_by' => $intent->created_by,
             ]);
         }
+    }
+
+    /**
+     * Resolves the reservation association format frozen with a fiscal intent.
+     * Version 2 is positional; the legacy format was keyed by product id and is
+     * accepted only where that key cannot describe more than one sale item.
+     *
+     * @return array<int, ?int>
+     */
+    private function creditLineAssociationsForItems(array $payload, $saleItems): array
+    {
+        $items = $saleItems->values();
+        $association = $payload['credit_line_associations'] ?? null;
+
+        if (is_array($association) && ($association['version'] ?? null) === 2) {
+            $byItemIndex = $association['by_item_index'] ?? null;
+            if (! is_array($byItemIndex) || count($byItemIndex) !== $items->count()) {
+                throw new \RuntimeException('La intención fiscal no contiene asociaciones completas de reservas para finalizarla de forma segura.');
+            }
+
+            return $items->keys()->map(function (int $index) use ($byItemIndex): ?int {
+                if (! array_key_exists($index, $byItemIndex) || blank($byItemIndex[$index])) {
+                    return null;
+                }
+
+                if (! is_numeric($byItemIndex[$index]) || (int) $byItemIndex[$index] <= 0) {
+                    throw new \RuntimeException('La intención fiscal contiene una asociación de reserva inválida.');
+                }
+
+                return (int) $byItemIndex[$index];
+            })->all();
+        }
+
+        $legacy = $payload['credit_line_ids'] ?? [];
+        if (! is_array($legacy) || $legacy === []) {
+            return array_fill(0, $items->count(), null);
+        }
+
+        $itemCountsByProduct = $items->countBy(fn (SaleItem $item) => (int) $item->product_id);
+
+        return $items->map(function (SaleItem $item) use ($legacy, $itemCountsByProduct): ?int {
+            $productId = (int) $item->product_id;
+            $legacyId = $legacy[$productId] ?? $legacy[(string) $productId] ?? null;
+
+            if (blank($legacyId)) {
+                return null;
+            }
+
+            if (($itemCountsByProduct[$productId] ?? 0) !== 1) {
+                throw new \RuntimeException('La intención fiscal histórica tiene asociaciones de reserva ambiguas y requiere revisión antes de finalizar.');
+            }
+
+            if (! is_numeric($legacyId) || (int) $legacyId <= 0) {
+                throw new \RuntimeException('La intención fiscal histórica contiene una asociación de reserva inválida.');
+            }
+
+            return (int) $legacyId;
+        })->values()->all();
     }
 
     private function consumeStockReservations(FiscalDocumentIntent $intent): void
@@ -566,40 +627,68 @@ class FiscalDocumentIntentService
             throw new \RuntimeException('La caja reservada ya no está disponible para finalizar la venta.');
         }
         $business = Business::query()->findOrFail($sale->business_id);
-        $creditLineIds = $payload['credit_line_ids'] ?? [];
+        $saleItems = $sale->items()->orderBy('id')->get()->values();
+        $creditLineIds = $this->creditLineAssociationsForItems($payload, $saleItems);
+        $products = [];
+        $creditLines = [];
+        $requestedByProduct = [];
+        $availableByProduct = [];
+        $reservedCreditByProduct = [];
+        $requestedByCreditLine = [];
 
-        foreach ($sale->items()->orderBy('id')->get()->values() as $itemIndex => $saleItem) {
+        // Acquire every relevant lock and validate aggregate quantities before any
+        // stock, reservation, payment or receipt mutation is written.
+        foreach ($saleItems as $itemIndex => $saleItem) {
             $product = Product::query()->where('business_id', $sale->business_id)->whereKey($saleItem->product_id)->lockForUpdate()->firstOrFail();
-            $available = StockAvailability::availableStock($product, null, $sale->branch_id);
-            $available += (float) StockReservation::query()
-                ->where('business_id', $intent->business_id)
-                ->where('source_type', 'fiscal_document_intent')
-                ->where('source_id', $intent->id)
-                ->where('product_id', $product->id)
-                ->where('status', 'active')
-                ->sum('quantity');
+            $products[$itemIndex] = $product;
+            $productId = (int) $product->id;
+            $requestedByProduct[$productId] = ($requestedByProduct[$productId] ?? 0) + (int) $saleItem->quantity;
+            $availableByProduct[$productId] ??= StockAvailability::availableStock($product, null, $sale->branch_id)
+                + (float) StockReservation::query()
+                    ->where('business_id', $intent->business_id)
+                    ->where('source_type', 'fiscal_document_intent')
+                    ->where('source_id', $intent->id)
+                    ->where('product_id', $productId)
+                    ->where('status', 'active')
+                    ->sum('quantity');
+
             $creditLineId = $creditLineIds[$itemIndex] ?? null;
-            $creditLine = filled($creditLineId)
-                ? CreditReceiptLine::query()
-                    ->with('receipt:id,customer_id')
-                    ->where('business_id', $sale->business_id)
-                    ->where('branch_id', $sale->branch_id)
-                    ->where('product_id', $saleItem->product_id)
-                    ->whereIn('status', ['pending', 'partially_invoiced'])
-                    ->lockForUpdate()
-                    ->find($creditLineId)
-                : null;
-
-            if (filled($creditLineId) && (! $creditLine || (int) $creditLine->receipt?->customer_id !== (int) $sale->customer_id || (int) $saleItem->quantity > (int) $creditLine->qty_pending)) {
-                throw \Illuminate\Validation\ValidationException::withMessages(['items' => 'La línea de crédito seleccionada ya no está disponible para finalizar la venta.']);
+            if (! filled($creditLineId)) {
+                continue;
             }
 
-            if ($creditLine && Credits::reserveStockOnCreditReservations($sale->business_id) && (int) $creditLine->qty_reserved > 0) {
-                $available += min((int) $saleItem->quantity, (int) $creditLine->qty_reserved);
+            $creditLine = CreditReceiptLine::query()
+                ->with('receipt:id,customer_id')
+                ->where('business_id', $sale->business_id)
+                ->where('branch_id', $sale->branch_id)
+                ->where('product_id', $saleItem->product_id)
+                ->whereIn('status', ['pending', 'partially_invoiced'])
+                ->lockForUpdate()
+                ->find($creditLineId);
+
+            $requestedByCreditLine[$creditLineId] = ($requestedByCreditLine[$creditLineId] ?? 0) + (int) $saleItem->quantity;
+            if (! $creditLine || (int) $creditLine->receipt?->customer_id !== (int) $sale->customer_id || $requestedByCreditLine[$creditLineId] > (int) $creditLine->qty_pending) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['items' => 'La cantidad acumulada de la reserva ya no está disponible para finalizar la venta.']);
             }
-            if (! StockPolicy::allowsNegativeStock($business) && $available < (int) $saleItem->quantity) {
-                throw \Illuminate\Validation\ValidationException::withMessages(['items' => 'No hay suficiente stock disponible para finalizar la venta.']);
+
+            $creditLines[$itemIndex] = $creditLine;
+            if (Credits::reserveStockOnCreditReservations($sale->business_id) && (int) $creditLine->qty_reserved > 0) {
+                $reservedCreditByProduct[$productId] = ($reservedCreditByProduct[$productId] ?? 0)
+                    + min((int) $saleItem->quantity, (int) $creditLine->qty_reserved);
             }
+        }
+
+        if (! StockPolicy::allowsNegativeStock($business)) {
+            foreach ($requestedByProduct as $productId => $requestedQuantity) {
+                if (($availableByProduct[$productId] ?? 0) + ($reservedCreditByProduct[$productId] ?? 0) < $requestedQuantity) {
+                    throw \Illuminate\Validation\ValidationException::withMessages(['items' => 'No hay suficiente stock disponible para finalizar la venta.']);
+                }
+            }
+        }
+
+        foreach ($saleItems as $itemIndex => $saleItem) {
+            $product = $products[$itemIndex];
+            $creditLine = $creditLines[$itemIndex] ?? null;
 
             [$previousStock, $newStock] = BranchInventory::decrease($product, $sale->branch_id, $saleItem->quantity);
             \App\Models\StockMovement::query()->create([
