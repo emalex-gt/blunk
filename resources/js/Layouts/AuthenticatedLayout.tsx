@@ -63,6 +63,7 @@ export default function Authenticated({
     const maintenanceAnnouncement = (usePage().props.maintenance_announcement as MaintenanceAnnouncement | null) ?? null;
     const [showingNavigationDropdown, setShowingNavigationDropdown] = useState(false);
     const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
+    const [mobileGroups, setMobileGroups] = useState<Record<string, boolean>>({ management: false, reports: false, settings: false });
     // Disabled while session expiry recovery is handled by valid Inertia redirects.
     const sessionExpired = false;
     const sessionExpiredInPos = false;
@@ -141,6 +142,13 @@ export default function Authenticated({
 
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
+
+    useEffect(() => {
+        const close = (event: KeyboardEvent) => event.key === 'Escape' && setShowingNavigationDropdown(false);
+        document.addEventListener('keydown', close);
+        document.body.style.overflow = showingNavigationDropdown ? 'hidden' : '';
+        return () => { document.removeEventListener('keydown', close); document.body.style.overflow = ''; };
+    }, [showingNavigationDropdown]);
 
     return (
         <div className="min-h-screen bg-[#f3f4f6] text-slate-900">
@@ -330,52 +338,16 @@ export default function Authenticated({
                     </div>
                 </div>
 
-                <div className={(showingNavigationDropdown ? 'block' : 'hidden') + ' border-t border-slate-800 bg-slate-950 xl:hidden'}>
+                {showingNavigationDropdown && <div className="fixed inset-0 z-[60] bg-slate-950/60 xl:hidden" onMouseDown={() => setShowingNavigationDropdown(false)}>
+                    <div className="h-full w-[min(22rem,88vw)] overflow-y-auto bg-slate-950 pb-4" onMouseDown={(event) => event.stopPropagation()}>
+                    <div className="flex items-center justify-between px-4 py-3 text-white"><strong>Menú</strong><button type="button" onClick={() => setShowingNavigationDropdown(false)} className="min-h-11 min-w-11 rounded-lg" aria-label="Cerrar menú">×</button></div>
                     <div className="space-y-1 pb-3 pt-2">
-                        <ResponsiveNavLink href={route('dashboard')} active={route().current('dashboard')}>
-                            Inicio
-                        </ResponsiveNavLink>
-                        {hasModule('pos') && can('pos.view') && (
-                        <ResponsiveNavLink href={route('sales.create')} active={route().current('sales.create')}>
-                            POS
-                        </ResponsiveNavLink>
-                        )}
-
-                        {managementItems.length > 0 && (
-                            <div className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                                Gestión
-                            </div>
-                        )}
-                        {managementItems.map((item) => (
-                            <ResponsiveNavLink key={item.label} href={item.href} active={item.active}>
-                                {item.label}
-                            </ResponsiveNavLink>
-                        ))}
-
-                        {reportItems.length > 0 && (
-                            <div className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                                Reportes
-                            </div>
-                        )}
-                        {reportItems.map((item) => (
-                            <ResponsiveNavLink key={item.label} href={item.href} active={item.active}>
-                                {item.label}
-                            </ResponsiveNavLink>
-                        ))}
-
-                        {settingsVisible && (
-                            <div className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                                Configuración
-                            </div>
-                        )}
-                        {settingsItems.map((item) => (
-                            <ResponsiveNavLink key={item.label} href={item.href} active={item.active}>
-                                {item.label}
-                            </ResponsiveNavLink>
-                        ))}
-
+                        <MobileMenuLink item={{ label: 'Inicio', href: route('dashboard'), active: route().current('dashboard') }} close={() => setShowingNavigationDropdown(false)} />
+                        {hasModule('pos') && can('pos.view') && <MobileMenuLink item={{ label: 'POS', href: route('sales.create'), active: route().current('sales.create') }} close={() => setShowingNavigationDropdown(false)} />}
+                        <MobileMenuGroup label="Gestión" items={managementItems} open={mobileGroups.management} setOpen={() => setMobileGroups({ ...mobileGroups, management: !mobileGroups.management })} close={() => setShowingNavigationDropdown(false)} />
+                        <MobileMenuGroup label="Reportes" items={reportItems} open={mobileGroups.reports} setOpen={() => setMobileGroups({ ...mobileGroups, reports: !mobileGroups.reports })} close={() => setShowingNavigationDropdown(false)} />
+                        {settingsVisible && <MobileMenuGroup label="Configuración" items={settingsItems} open={mobileGroups.settings} setOpen={() => setMobileGroups({ ...mobileGroups, settings: !mobileGroups.settings })} close={() => setShowingNavigationDropdown(false)} />}
                     </div>
-
                     <div className="border-t border-slate-800 pb-1 pt-4">
                         <div className="px-4">
                             <div className="text-base font-medium text-white">{user?.name}</div>
@@ -445,7 +417,7 @@ export default function Authenticated({
                             </ResponsiveNavLink>
                         </div>
                     </div>
-                </div>
+                    </div></div></div>}
             </nav>
             <MaintenanceAnnouncementBanner announcement={maintenanceAnnouncement} />
 
@@ -535,6 +507,15 @@ function HomeNavLink({ active }: { active: boolean }) {
             </svg>
         </Link>
     );
+}
+
+function MobileMenuLink({ item, close }: { item: NavItem; close: () => void }) {
+    return <Link href={item.href} onClick={close} className={`mx-3 flex min-h-11 items-center rounded-lg px-3 text-sm ${item.active ? 'bg-orange-500/15 font-semibold text-orange-300' : 'text-slate-200 hover:bg-slate-800'}`}>{item.label}</Link>;
+}
+
+function MobileMenuGroup({ label, items, open, setOpen, close }: { label: string; items: NavItem[]; open: boolean; setOpen: () => void; close: () => void }) {
+    if (items.length === 0) return null;
+    return <section className="border-t border-slate-800 py-1"><button type="button" aria-expanded={open} onClick={setOpen} className="flex min-h-11 w-full items-center justify-between px-6 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">{label}<span>{open ? '−' : '+'}</span></button>{open && items.map((item) => <MobileMenuLink key={item.label} item={item} close={close} />)}</section>;
 }
 
 function TopNavDropdown({
