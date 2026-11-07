@@ -280,6 +280,55 @@ class CashRegisterClosingOperationsTest extends TestCase
         $this->assertSame(0, $summary['ambiguous_count']);
     }
 
+    public function test_historical_closing_total_keeps_a_sale_cancelled_in_a_later_session(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        $openedAt = now()->subDays(3)->startOfDay()->addHours(8);
+        $closedAt = $openedAt->copy()->addHours(8);
+        $session->update([
+            'status' => 'closed',
+            'opened_at' => $openedAt,
+            'closed_at' => $closedAt,
+        ]);
+
+        $saleAt = $openedAt->copy()->addHour();
+        $cancelledAt = $closedAt->copy()->addDay()->addHour();
+        $laterSession = CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'opened_by' => $user->id,
+            'status' => 'closed',
+            'opening_amount' => 0,
+            'expected_cash' => 0,
+            'opened_at' => $cancelledAt->copy()->subHour(),
+            'closed_at' => $cancelledAt->copy()->addHour(),
+        ]);
+        $sale = $this->sale($business, $branch, $user, 195);
+        Sale::query()->whereKey($sale->id)->update([
+            'created_at' => $saleAt,
+            'updated_at' => $cancelledAt,
+            'status' => 'cancelled',
+            'cancelled_at' => $cancelledAt,
+        ]);
+        SalePayment::query()->create([
+            'business_id' => $business->id,
+            'sale_id' => $sale->id,
+            'method' => 'cash',
+            'amount' => 195,
+            'collected_at' => $saleAt,
+            'cash_register_session_id' => $session->id,
+            'status' => 'captured',
+        ]);
+
+        $originalSummary = CashRegisterClosingSales::forSession($session->fresh());
+        $laterSummary = CashRegisterClosingSales::forSession($laterSession);
+
+        $this->assertSame(195.0, $originalSummary['total']);
+        $this->assertSame(1, $originalSummary['count']);
+        $this->assertSame(0.0, $laterSummary['total']);
+        $this->assertSame(0, $laterSummary['count']);
+    }
+
     public function test_commercial_sales_total_excludes_timestamp_matches_when_the_session_is_ambiguous(): void
     {
         [$business, $branch, $user, $session] = $this->context();

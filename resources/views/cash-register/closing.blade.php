@@ -139,7 +139,18 @@
                         <strong>{{ match($method['method']) { 'cash' => 'EFECTIVO', 'card' => 'TARJETA', 'check' => 'CHEQUE', 'transfer' => 'TRANSFERENCIA', default => 'OTROS' } }}</strong>
                         <strong class="{{ $method['net'] < 0 ? 'negative' : 'positive' }}">{{ formatMoney($method['net'], $business?->country) }}</strong>
                     </div>
-                    <div class="muted">Ventas {{ formatMoney($method['sales'], $business?->country) }} · Abonos {{ formatMoney($method['credit_payments'], $business?->country) }}@if ((float) $method['purchases'] !== 0.0) · Compras -{{ formatMoney(abs((float) $method['purchases']), $business?->country) }}@endif@if ((float) $method['purchases_outside_cash'] !== 0.0) · Compras fuera {{ formatMoney($method['purchases_outside_cash'], $business?->country) }}@endif@if ((float) $method['expenses'] !== 0.0) · Gastos -{{ formatMoney(abs((float) $method['expenses']), $business?->country) }}@endif</div>
+                    <div class="muted">
+                        Ventas {{ formatMoney($method['sales'], $business?->country) }} · Abonos {{ formatMoney($method['credit_payments'], $business?->country) }}
+                        @if ((float) $method['purchases'] !== 0.0)
+                            · Compras -{{ formatMoney(abs((float) $method['purchases']), $business?->country) }}
+                        @endif
+                        @if ((float) $method['purchases_outside_cash'] !== 0.0)
+                            · Compras fuera {{ formatMoney($method['purchases_outside_cash'], $business?->country) }}
+                        @endif
+                        @if ((float) $method['expenses'] !== 0.0)
+                            · Gastos -{{ formatMoney(abs((float) $method['expenses']), $business?->country) }}
+                        @endif
+                    </div>
                 </div>
             @empty
                 <p class="muted">No hay operaciones atribuibles a esta sesión.</p>

@@ -11,7 +11,8 @@ use Carbon\CarbonInterface;
  *
  * Sales do not persist a session id. A captured payment linked to the session
  * is authoritative; older or credit sales are included only when their
- * creation time belongs to exactly one session in the same branch.
+ * creation time belongs to exactly one session in the same branch. A historic
+ * closing uses the commercial state as of its closing timestamp.
  */
 final class CashRegisterClosingSales
 {
@@ -30,7 +31,16 @@ final class CashRegisterClosingSales
         $sales = Sale::query()
             ->where('business_id', $session->business_id)
             ->where('branch_id', $session->branch_id)
-            ->where(fn ($query) => $query->where('status', 'completed')->orWhereNull('status'))
+            ->where('created_at', '<=', $to)
+            ->where(function ($query) use ($to) {
+                $query->where('status', 'completed')
+                    ->orWhereNull('status')
+                    ->orWhere(function ($query) use ($to) {
+                        $query->where('status', 'cancelled')
+                            ->whereNotNull('cancelled_at')
+                            ->where('cancelled_at', '>', $to);
+                    });
+            })
             ->where(function ($query) use ($session, $from, $to) {
                 $query->whereHas('capturedPayments', fn ($payments) => $payments
                     ->where('cash_register_session_id', $session->id))
