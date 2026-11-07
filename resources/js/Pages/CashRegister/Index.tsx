@@ -124,6 +124,7 @@ export default function Index({
         idempotency_key: '',
     });
     const closeForm = useForm({ counted_cash: '', closing_notes: '' });
+    const closeCashRegisterError = (closeForm.errors as Record<string, string | undefined>).cash_register;
     const cancellationForm = useForm({ cancellation_note: '' });
     const openingOperationKeyRef = useRef<string | null>(null);
     const openingSubmissionLockedRef = useRef(false);
@@ -445,6 +446,11 @@ export default function Index({
                 <Modal title="Cerrar caja" onClose={() => setCloseModalOpen(false)}>
                     <form onSubmit={submitClose} className="space-y-4">
                         <Field label="Efectivo contado" type="number" step="0.01" value={closeForm.data.counted_cash} onChange={(value) => closeForm.setData('counted_cash', value)} error={closeForm.errors.counted_cash} />
+                        {closeCashRegisterError && (
+                            <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700" role="alert">
+                                {closeCashRegisterError}
+                            </p>
+                        )}
                         {closeDifference === null ? (
                             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                                 Ingresa el efectivo contado para calcular la diferencia.

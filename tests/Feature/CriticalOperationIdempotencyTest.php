@@ -12,6 +12,7 @@ use App\Models\CustomerCreditPayment;
 use App\Models\CreditCustomerTransfer;
 use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
+use App\Models\FiscalDocumentIntent;
 use App\Models\InventoryTransfer;
 use App\Models\PreSale;
 use App\Models\Product;
@@ -379,6 +380,10 @@ class CriticalOperationIdempotencyTest extends TestCase
             'opened_at' => now(),
         ]);
 
+        $this->actingAs($user)->post(route('cash-register.close'), [])
+            ->assertSessionHasErrors('counted_cash');
+        $this->assertSame('open', $session->refresh()->status);
+
         $this->actingAs($user)->post(route('cash-register.close'), [
             'counted_cash' => 0,
         ])->assertRedirect(route('cash-register.closings.show', $session));
@@ -389,6 +394,51 @@ class CriticalOperationIdempotencyTest extends TestCase
 
         $this->assertSame('closed', $session->refresh()->status);
         $this->assertNotNull($session->closed_at);
+    }
+
+    public function test_cash_register_close_allows_unknown_and_certified_fiscal_intents_without_mutation(): void
+    {
+        [$business, $user, $branch] = $this->tenant('owner', ['cash_register', 'fel_gt']);
+        $session = CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'opened_by' => $user->id,
+            'status' => 'open',
+            'opening_amount' => 0,
+            'expected_cash' => 0,
+            'opened_at' => now(),
+        ]);
+        $intents = collect([FiscalDocumentIntent::UNKNOWN, FiscalDocumentIntent::CERTIFIED])
+            ->map(fn (string $status) => FiscalDocumentIntent::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'cash_register_session_id' => $session->id,
+                'created_by' => $user->id,
+                'country' => 'GT',
+                'provider' => 'digifact',
+                'environment' => 'test',
+                'document_type' => 'invoice',
+                'operation_type' => 'sale',
+                'internal_reference' => 'CLOSE-'.strtoupper($status).'-'.uniqid(),
+                'idempotency_key' => 'close-'.strtolower($status).'-'.uniqid(),
+                'status' => $status,
+                'operation_payload' => [],
+                'fiscal_payload' => [],
+            ]));
+
+        $this->actingAs($user)->post(route('cash-register.close'), [
+            'counted_cash' => 0,
+        ])->assertRedirect(route('cash-register.closings.show', $session));
+
+        $this->assertSame('closed', $session->refresh()->status);
+        $this->assertSame(
+            [FiscalDocumentIntent::UNKNOWN, FiscalDocumentIntent::CERTIFIED],
+            $intents->map(fn (FiscalDocumentIntent $intent) => $intent->refresh()->status)->all(),
+        );
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('sale_payments', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
     }
 
     private function tenant(
