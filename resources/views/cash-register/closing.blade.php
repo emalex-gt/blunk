@@ -96,6 +96,7 @@
 
         <div class="line"></div>
 
+        <h2 style="font-size: {{ $receiptFormat === 'ticket' ? '13px' : '16px' }};">Arqueo de efectivo</h2>
         <table>
             <tbody>
                 <tr><td>Monto inicial</td><td class="right">{{ formatMoney($session->opening_amount, $business?->country) }}</td></tr>
