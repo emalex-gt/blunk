@@ -985,6 +985,8 @@ export default function POS({
     const quotationEditLoadedRef = useRef(false);
     const identityLookupRequestRef = useRef(0);
     const draftLoadInitializedRef = useRef(false);
+    const fiscalStatusRequestRef = useRef(0);
+    const draftRecoveryRequestRef = useRef(0);
     const latestDraftRef = useRef<PosDraft | null>(null);
     const productSearchRequestRef = useRef(0);
     const draftProductFetchKeyRef = useRef<string | null>(null);
@@ -1938,6 +1940,17 @@ export default function POS({
         focusSearch();
     }
 
+    function releaseAcceptedProvisionalOperationForNewSale() {
+        fiscalStatusRequestRef.current += 1;
+        draftRecoveryRequestRef.current += 1;
+        setDraftRecoveryStatus(null);
+        setRecoveredCompletedSale(null);
+        setFelStatusMessage('');
+        setFelSubmissionBranchId(null);
+        setFelSlowNotice(false);
+        setCheckingFelStatus(false);
+    }
+
     async function posSaleStatusForKey(operationKey: string, branchId = activeBranchId): Promise<PosDraftRecoveryStatus> {
         if (!operationKey || !branchId) {
             return { status: 'not_found' };
@@ -1999,13 +2012,23 @@ export default function POS({
     async function consultFelStatus(operationKey = idempotencyKey, branchId = felSubmissionBranchId ?? activeBranchId) {
         if (checkingFelStatus) return;
 
+        const requestId = ++fiscalStatusRequestRef.current;
         setCheckingFelStatus(true);
         try {
-            applyFiscalStatus(await posSaleStatusForKey(operationKey, branchId));
+            const status = await posSaleStatusForKey(operationKey, branchId);
+            if (requestId !== fiscalStatusRequestRef.current) {
+                return;
+            }
+
+            applyFiscalStatus(status);
         } catch {
-            setFelStatusMessage('No se pudo verificar el estado en este momento. Conserva el carrito y no reenvíes la factura.');
+            if (requestId === fiscalStatusRequestRef.current) {
+                setFelStatusMessage('No se pudo verificar el estado en este momento. Conserva el carrito y no reenvíes la factura.');
+            }
         } finally {
-            setCheckingFelStatus(false);
+            if (requestId === fiscalStatusRequestRef.current) {
+                setCheckingFelStatus(false);
+            }
         }
     }
 
@@ -2023,6 +2046,7 @@ export default function POS({
                 if (receiptUrl) {
                     window.open(receiptUrl, '_blank');
                 }
+                releaseAcceptedProvisionalOperationForNewSale();
                 setProvisionalIntent(null);
                 clearPosDraftAndState();
                 showMessage('Constancia provisional de operación generada. La certificación FEL sigue en verificación.');
@@ -3312,6 +3336,7 @@ export default function POS({
         }
 
         const isBranchChange = draftLoadInitializedRef.current;
+        const recoveryRequestId = ++draftRecoveryRequestRef.current;
         setRestoreDraft(null);
         setDraftRecoveryStatus(null);
         setDraftReady(false);
@@ -3341,7 +3366,7 @@ export default function POS({
                 try {
                     const status = await posSaleStatusForDraft(draft);
 
-                    if (cancelled) {
+                    if (cancelled || recoveryRequestId !== draftRecoveryRequestRef.current) {
                         return;
                     }
 
@@ -3361,10 +3386,12 @@ export default function POS({
                         setDraftRecoveryStatus(status);
                     }
                 } catch {
-                    setDraftRecoveryStatus({ status: 'verification_unavailable' });
+                    if (recoveryRequestId === draftRecoveryRequestRef.current) {
+                        setDraftRecoveryStatus({ status: 'verification_unavailable' });
+                    }
                 }
 
-                if (cancelled) {
+                if (cancelled || recoveryRequestId !== draftRecoveryRequestRef.current) {
                     return;
                 }
 
@@ -3378,7 +3405,7 @@ export default function POS({
                     draftProductFetchKeyRef.current = `${draftKey}:${missingKey}`;
                     void fetchPosProducts({ ids: missingProductIds, limit: 50 })
                         .then((payload) => {
-                            if (cancelled) return;
+                            if (cancelled || recoveryRequestId !== draftRecoveryRequestRef.current) return;
                             const hydratedMap = new Map(productsByIdRef.current);
                             [
                                 ...(payload.products ?? []),
@@ -3388,7 +3415,9 @@ export default function POS({
                             restoreDraftWithProducts(hydratedMap);
                         })
                         .catch(() => {
-                            if (!cancelled) restoreDraftWithProducts(productsByIdRef.current);
+                            if (!cancelled && recoveryRequestId === draftRecoveryRequestRef.current) {
+                                restoreDraftWithProducts(productsByIdRef.current);
+                            }
                         });
                     return;
                 }
