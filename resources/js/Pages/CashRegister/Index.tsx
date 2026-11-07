@@ -123,7 +123,7 @@ export default function Index({
         amount: '',
         idempotency_key: '',
     });
-    const closeForm = useForm({ counted_cash: openSession ? String(openSession.expected_cash) : '', closing_notes: '' });
+    const closeForm = useForm({ counted_cash: '', closing_notes: '' });
     const cancellationForm = useForm({ cancellation_note: '' });
     const openingOperationKeyRef = useRef<string | null>(null);
     const openingSubmissionLockedRef = useRef(false);
@@ -131,11 +131,15 @@ export default function Index({
     const expenseSubmissionLockedRef = useRef(false);
 
     const closeDifference = useMemo(() => {
-        if (!openSession) {
-            return 0;
+        const countedCash = closeForm.data.counted_cash.trim();
+
+        if (!openSession || countedCash === '') {
+            return null;
         }
 
-        return Number(closeForm.data.counted_cash || 0) - openSession.expected_cash;
+        const amount = Number(countedCash);
+
+        return Number.isFinite(amount) ? amount - openSession.expected_cash : null;
     }, [closeForm.data.counted_cash, openSession]);
 
     const categorySuggestions = useMemo(() => {
@@ -362,7 +366,8 @@ export default function Index({
                                         <button
                                             type="button"
                                             onClick={() => {
-                                                closeForm.setData('counted_cash', String(openSession.expected_cash));
+                                                closeForm.setData('counted_cash', '');
+                                                closeForm.clearErrors('counted_cash');
                                                 setCloseModalOpen(true);
                                             }}
                                             className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700"
@@ -439,21 +444,27 @@ export default function Index({
             {closeModalOpen && openSession && canCloseCashRegister && (
                 <Modal title="Cerrar caja" onClose={() => setCloseModalOpen(false)}>
                     <form onSubmit={submitClose} className="space-y-4">
-                        <div className="rounded-2xl bg-slate-50 p-4">
-                            <div className="flex justify-between gap-4 text-sm">
-                                <span className="font-medium text-slate-600">Efectivo esperado</span>
-                                <span className="font-bold text-slate-950">{formatCurrency(openSession.expected_cash, country)}</span>
-                            </div>
-                        </div>
                         <Field label="Efectivo contado" type="number" step="0.01" value={closeForm.data.counted_cash} onChange={(value) => closeForm.setData('counted_cash', value)} error={closeForm.errors.counted_cash} />
-                        <div className="flex justify-between rounded-2xl border border-slate-200 p-4 text-sm">
-                            <span className="font-medium text-slate-600">Diferencia</span>
-                            <span className={`font-bold ${closeDifference < 0 ? 'text-red-600' : closeDifference > 0 ? 'text-amber-600' : 'text-emerald-700'}`}>
-                                {formatCurrency(closeDifference, country)}
-                            </span>
-                        </div>
+                        {closeDifference === null ? (
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                                Ingresa el efectivo contado para calcular la diferencia.
+                            </div>
+                        ) : (
+                            <div className="rounded-2xl border border-slate-200 p-4 text-sm">
+                                <div className="flex justify-between gap-4">
+                                    <span className="font-medium text-slate-600">Efectivo esperado</span>
+                                    <span className="font-bold text-slate-950">{formatCurrency(openSession.expected_cash, country)}</span>
+                                </div>
+                                <div className="mt-3 flex justify-between gap-4">
+                                    <span className="font-medium text-slate-600">Diferencia</span>
+                                    <span className={`font-bold ${closeDifference < 0 ? 'text-red-600' : closeDifference > 0 ? 'text-amber-600' : 'text-emerald-700'}`}>
+                                        {formatCurrency(closeDifference, country)}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
                         <TextArea label="Nota de cierre" value={closeForm.data.closing_notes} onChange={(value) => closeForm.setData('closing_notes', value)} error={closeForm.errors.closing_notes} />
-                        <ModalActions processing={closeForm.processing} submitLabel="Cerrar caja" danger onCancel={() => setCloseModalOpen(false)} />
+                        <ModalActions processing={closeForm.processing || closeForm.data.counted_cash.trim() === ''} submitLabel="Cerrar caja" danger onCancel={() => setCloseModalOpen(false)} />
                     </form>
                 </Modal>
             )}
