@@ -74,6 +74,15 @@
         </header>
 
         <div class="line"></div>
+        <div class="center total">
+            <div>TOTAL VENTAS</div>
+            <div>{{ formatMoney($salesSummary['total'], $business?->country) }}</div>
+        </div>
+        @if ($salesSummary['ambiguous_count'] > 0)
+            <p class="muted center">{{ $salesSummary['ambiguous_count'] }} venta(s) sin atribución segura no fueron incluidas.</p>
+        @endif
+
+        <div class="line"></div>
 
         <table>
             <tbody>
@@ -118,12 +127,23 @@
         <div class="line"></div>
         <h2 style="font-size: {{ $receiptFormat === 'ticket' ? '13px' : '16px' }};">Resumen por medio de pago</h2>
         @if ($receiptFormat === 'ticket')
-            @foreach ($paymentOperations['by_method'] as $method)
+            @php
+                $ticketPaymentMethods = collect($paymentOperations['by_method'])->filter(
+                    fn (array $method) => collect(['sales', 'credit_payments', 'purchases', 'purchases_outside_cash', 'expenses', 'net'])
+                        ->contains(fn (string $key) => (float) $method[$key] !== 0.0)
+                );
+            @endphp
+            @forelse ($ticketPaymentMethods as $method)
                 <div style="padding:5px 0; border-bottom:1px solid #e2e8f0;">
-                    <strong>{{ match($method['method']) { 'cash' => 'EFECTIVO', 'card' => 'TARJETA', 'check' => 'CHEQUE', 'transfer' => 'TRANSFERENCIA', default => 'OTROS' } }}</strong>
-                    <div>Ventas netas <span class="right" style="float:right">{{ formatMoney($method['sales'], $business?->country) }}</span></div><div>Abonos netos <span class="right" style="float:right">{{ formatMoney($method['credit_payments'], $business?->country) }}</span></div><div>Compras de caja <span class="right negative" style="float:right">{{ $method['method'] === 'cash' ? formatMoney($method['purchases'], $business?->country) : '—' }}</span></div><div>Compras fuera de caja <span class="right" style="float:right">{{ formatMoney($method['purchases_outside_cash'], $business?->country) }}</span></div><div>Gastos netos <span class="right negative" style="float:right">{{ $method['method'] === 'cash' ? formatMoney($method['expenses'], $business?->country) : '—' }}</span></div><div style="clear:both"></div>
+                    <div style="display:flex; justify-content:space-between; gap:8px;">
+                        <strong>{{ match($method['method']) { 'cash' => 'EFECTIVO', 'card' => 'TARJETA', 'check' => 'CHEQUE', 'transfer' => 'TRANSFERENCIA', default => 'OTROS' } }}</strong>
+                        <strong class="{{ $method['net'] < 0 ? 'negative' : 'positive' }}">{{ formatMoney($method['net'], $business?->country) }}</strong>
+                    </div>
+                    <div class="muted">Ventas {{ formatMoney($method['sales'], $business?->country) }} · Abonos {{ formatMoney($method['credit_payments'], $business?->country) }}@if ((float) $method['purchases'] !== 0.0) · Compras -{{ formatMoney(abs((float) $method['purchases']), $business?->country) }}@endif@if ((float) $method['purchases_outside_cash'] !== 0.0) · Compras fuera {{ formatMoney($method['purchases_outside_cash'], $business?->country) }}@endif@if ((float) $method['expenses'] !== 0.0) · Gastos -{{ formatMoney(abs((float) $method['expenses']), $business?->country) }}@endif</div>
                 </div>
-            @endforeach
+            @empty
+                <p class="muted">No hay operaciones atribuibles a esta sesión.</p>
+            @endforelse
         @else
             <table>
             <thead>
@@ -146,13 +166,9 @@
         @endif
         <p class="muted">Resumen informativo; el arqueo de efectivo se calcula exclusivamente con movimientos de caja.</p>
 
-        <div class="line"></div>
-        <h2 style="font-size: {{ $receiptFormat === 'ticket' ? '13px' : '16px' }};">Resumen de movimientos</h2>
-        @if ($receiptFormat === 'ticket')
-            @foreach ($movements as $movement)
-                <div style="padding:5px 0; border-bottom:1px solid #e2e8f0;"><div style="display:flex; justify-content:space-between; gap:8px;"><strong>{{ match($movement->type) { 'opening' => 'Apertura', 'sale_cash' => 'Venta', 'sale_refund_cash' => 'Reembolso de venta', 'sale_cash_cancel' => 'Anulación', 'expense' => 'Gasto', 'expense_cancel' => 'Anulación de gasto', 'purchase_cash' => 'Compra', default => 'Movimiento' } }}</strong><strong class="{{ (float) $movement->amount < 0 ? 'negative' : 'positive' }}">{{ formatMoney($movement->amount, $business?->country) }}</strong></div>@if ($movement->description)<div class="muted" style="overflow-wrap:anywhere;">{{ $movement->description }}</div>@endif</div>
-            @endforeach
-        @else
+        @if ($receiptFormat !== 'ticket')
+            <div class="line"></div>
+            <h2 style="font-size: 16px;">Resumen de movimientos</h2>
             <table>
             <thead>
                 <tr>
@@ -184,21 +200,23 @@
             </table>
         @endif
 
-        <div class="line"></div>
-        <h2 style="font-size: {{ $receiptFormat === 'ticket' ? '13px' : '16px' }};">Detalle de cobros y pagos</h2>
-        @forelse ($paymentOperations['details'] as $operation)
-            <div style="padding: 5px 0; border-bottom: 1px solid #e2e8f0;">
-                <div style="display:flex; justify-content:space-between; gap:8px;"><strong>{{ $operation['label'] }}</strong><strong class="{{ $operation['signed_amount'] < 0 ? 'negative' : 'positive' }}">{{ formatMoney($operation['signed_amount'], $business?->country) }}</strong></div>
-                <div class="muted">{{ $operation['occurred_at']?->copy()->timezone($timezone)->format('d/m/Y H:i') }} · {{ match($operation['method']) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'check' => 'Cheque', 'transfer', 'bank_transfer' => 'Transferencia', default => 'Otro' } }} · {{ $operation['attribution'] === 'direct' ? 'Directo' : 'Reconstruido' }}</div>
-                @if ($operation['reference'] || $operation['party'])<div style="overflow-wrap:anywhere;">{{ $operation['reference'] }}{{ $operation['party'] ? ' · '.$operation['party'] : '' }}</div>@endif
-            </div>
-        @empty
-            <p class="muted">No hay operaciones atribuibles a esta sesión.</p>
-        @endforelse
-        @if ($paymentOperations['has_more_details'])<p class="muted">Se muestran los primeros 200 de {{ $paymentOperations['detail_total'] }} movimientos.</p>@endif
-        @if (count($paymentOperations['incidents']))
-            <div class="line"></div><p><strong>Movimientos sin asignar con certeza</strong></p>
-            @foreach ($paymentOperations['incidents'] as $operation)<p class="muted" style="overflow-wrap:anywhere;">{{ $operation['reference'] }}: {{ $operation['incident'] }}</p>@endforeach
+        @if ($receiptFormat !== 'ticket')
+            <div class="line"></div>
+            <h2 style="font-size: 16px;">Detalle de cobros y pagos</h2>
+            @forelse ($paymentOperations['details'] as $operation)
+                <div style="padding: 5px 0; border-bottom: 1px solid #e2e8f0;">
+                    <div style="display:flex; justify-content:space-between; gap:8px;"><strong>{{ $operation['label'] }}</strong><strong class="{{ $operation['signed_amount'] < 0 ? 'negative' : 'positive' }}">{{ formatMoney($operation['signed_amount'], $business?->country) }}</strong></div>
+                    <div class="muted">{{ $operation['occurred_at']?->copy()->timezone($timezone)->format('d/m/Y H:i') }} · {{ match($operation['method']) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'check' => 'Cheque', 'transfer', 'bank_transfer' => 'Transferencia', default => 'Otro' } }} · {{ $operation['attribution'] === 'direct' ? 'Directo' : 'Reconstruido' }}</div>
+                    @if ($operation['reference'] || $operation['party'])<div style="overflow-wrap:anywhere;">{{ $operation['reference'] }}{{ $operation['party'] ? ' · '.$operation['party'] : '' }}</div>@endif
+                </div>
+            @empty
+                <p class="muted">No hay operaciones atribuibles a esta sesión.</p>
+            @endforelse
+            @if ($paymentOperations['has_more_details'])<p class="muted">Se muestran los primeros 200 de {{ $paymentOperations['detail_total'] }} movimientos.</p>@endif
+            @if (count($paymentOperations['incidents']))
+                <div class="line"></div><p><strong>Movimientos sin asignar con certeza</strong></p>
+                @foreach ($paymentOperations['incidents'] as $operation)<p class="muted" style="overflow-wrap:anywhere;">{{ $operation['reference'] }}: {{ $operation['incident'] }}</p>@endforeach
+            @endif
         @endif
     </main>
 

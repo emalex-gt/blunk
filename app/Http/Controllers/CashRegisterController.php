@@ -12,6 +12,7 @@ use App\Models\TenantSetting;
 use App\Support\BranchInventory;
 use App\Support\CashRegister;
 use App\Support\CashRegisterClosingOperations;
+use App\Support\CashRegisterClosingSales;
 use App\Support\IdempotencyService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\RedirectResponse;
@@ -342,6 +343,7 @@ class CashRegisterController extends Controller
             'summary' => CashRegister::summary($session),
             'movements' => CashRegister::movements($session),
             'paymentOperations' => CashRegisterClosingOperations::forSession($session),
+            'salesSummary' => CashRegisterClosingSales::forSession($session),
             'timezone' => $timezone,
         ]);
     }

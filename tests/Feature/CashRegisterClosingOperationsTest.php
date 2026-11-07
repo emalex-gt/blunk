@@ -16,6 +16,7 @@ use App\Models\User;
 use App\Http\Controllers\CashRegisterController;
 use App\Support\CashRegister;
 use App\Support\CashRegisterClosingOperations;
+use App\Support\CashRegisterClosingSales;
 use App\Support\AccountsReceivable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -246,6 +247,88 @@ class CashRegisterClosingOperationsTest extends TestCase
 
         $this->assertArrayNotHasKey('payment_operations', $listPayload);
         $this->assertArrayHasKey('payment_operations', $detailPayload);
+    }
+
+    public function test_commercial_sales_total_counts_each_sale_once_and_includes_unpaid_credit_sales(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        $splitSale = $this->sale($business, $branch, $user, 100);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $splitSale->id, 'method' => 'cash', 'amount' => 40, 'cash_register_session_id' => $session->id, 'status' => 'captured']);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $splitSale->id, 'method' => 'card', 'amount' => 60, 'cash_register_session_id' => $session->id, 'status' => 'captured']);
+
+        $cardSale = $this->sale($business, $branch, $user, 60);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $cardSale->id, 'method' => 'card', 'amount' => 60, 'cash_register_session_id' => $session->id, 'status' => 'captured']);
+
+        $creditSale = $this->sale($business, $branch, $user, 40);
+        $creditSale->update(['is_credit_sale' => true, 'payment_status' => 'unpaid']);
+
+        $cancelledSale = $this->sale($business, $branch, $user, 250);
+        $cancelledSale->update(['status' => 'cancelled', 'cancelled_at' => now()]);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $cancelledSale->id, 'method' => 'cash', 'amount' => 250, 'cash_register_session_id' => $session->id, 'status' => 'captured']);
+
+        $otherBranch = Branch::query()->create(['business_id' => $business->id, 'name' => 'Otra', 'code' => 'OTHER', 'is_active' => true]);
+        $otherSession = CashRegisterSession::query()->create(['business_id' => $business->id, 'branch_id' => $otherBranch->id, 'opened_by' => $user->id, 'status' => 'open', 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now()]);
+        $otherSale = $this->sale($business, $otherBranch, $user, 500);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $otherSale->id, 'method' => 'transfer', 'amount' => 500, 'cash_register_session_id' => $otherSession->id, 'status' => 'captured']);
+
+        $summary = CashRegisterClosingSales::forSession($session);
+
+        $this->assertSame(200.0, $summary['total']);
+        $this->assertSame(3, $summary['count']);
+        $this->assertSame(2, $summary['direct_count']);
+        $this->assertSame(1, $summary['reconstructed_count']);
+        $this->assertSame(0, $summary['ambiguous_count']);
+    }
+
+    public function test_commercial_sales_total_excludes_timestamp_matches_when_the_session_is_ambiguous(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        $session->update(['status' => 'closed', 'opened_at' => now()->subHour(), 'closed_at' => now()->addHour()]);
+        CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'opened_by' => $user->id,
+            'status' => 'closed',
+            'opening_amount' => 0,
+            'expected_cash' => 0,
+            'opened_at' => now()->subMinutes(30),
+            'closed_at' => now()->addMinutes(30),
+        ]);
+        $this->sale($business, $branch, $user, 75);
+
+        $summary = CashRegisterClosingSales::forSession($session->fresh());
+
+        $this->assertSame(0.0, $summary['total']);
+        $this->assertSame(0, $summary['count']);
+        $this->assertSame(1, $summary['ambiguous_count']);
+    }
+
+    public function test_ticket_omits_individual_lists_while_document_keeps_closing_detail(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        $sale = $this->sale($business, $branch, $user, 50);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $sale->id, 'method' => 'cash', 'amount' => 50, 'cash_register_session_id' => $session->id, 'status' => 'captured']);
+        $paymentOperations = CashRegisterClosingOperations::forSession($session);
+        $data = [
+            'paperSize' => 'Letter',
+            'company' => ['logo_url' => null, 'name' => $business->name, 'tax_id' => null, 'address' => null, 'phone' => null],
+            'business' => $business,
+            'session' => $session->fresh(),
+            'summary' => CashRegister::summary($session),
+            'movements' => CashRegister::movements($session),
+            'paymentOperations' => $paymentOperations,
+            'salesSummary' => CashRegisterClosingSales::forSession($session),
+            'timezone' => 'America/Guatemala',
+        ];
+
+        $ticket = view('cash-register.closing', [...$data, 'receiptFormat' => 'ticket'])->render();
+        $document = view('cash-register.closing', [...$data, 'receiptFormat' => 'document'])->render();
+
+        $this->assertStringContainsString('TOTAL VENTAS', $ticket);
+        $this->assertStringNotContainsString('Resumen de movimientos', $ticket);
+        $this->assertStringNotContainsString('Detalle de cobros y pagos', $ticket);
+        $this->assertStringContainsString('Resumen de movimientos', $document);
+        $this->assertStringContainsString('Detalle de cobros y pagos', $document);
     }
 
     private function context(): array
