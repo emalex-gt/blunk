@@ -9,6 +9,7 @@ export default function SuperAdminLayout({ title, actions, children }: PropsWith
     const [mobileOpen, setMobileOpen] = useState(false);
     const [open, setOpen] = useState<string | null>(null);
     const groups: Group[] = [
+        { label: 'Desarrollo', items: [{ label: 'Blunk Roadmap', href: route('super-admin.development.tasks.index'), active: route().current('super-admin.development.tasks.*') }] },
         { label: 'Inicio', items: [{ label: 'Dashboard', href: route('super-admin.dashboard'), active: route().current('super-admin.dashboard') }] },
         { label: 'Negocios', items: [{ label: 'Negocios', href: route('super-admin.tenants.index'), active: route().current('super-admin.tenants.*') }] },
         { label: 'Operaciones', items: [{ label: 'Incidencias FEL', href: route('super-admin.fel-incidents.index'), active: route().current('super-admin.fel-incidents.*') }, { label: 'Diagnóstico', href: route('super-admin.system.operations.index'), active: route().current('super-admin.system.operations.*') }] },

@@ -86,6 +86,15 @@ Route::middleware(['auth', 'super.admin'])
     ->name('super-admin.')
     ->group(function () {
         Route::get('/', SuperAdminDashboardController::class)->name('dashboard');
+        Route::prefix('development/tasks')->name('development.tasks.')->controller(\App\Http\Controllers\SuperAdmin\DevelopmentTaskController::class)->group(function () {
+            Route::get('/', 'index')->name('index');
+            Route::get('/create', 'create')->name('create');
+            Route::post('/', 'store')->name('store');
+            Route::get('/{task}', 'show')->name('show');
+            Route::put('/{task}', 'update')->name('update');
+            Route::patch('/{task}/archive', 'archive')->name('archive');
+            Route::post('/{task}/comments', 'comment')->name('comments');
+        });
         Route::get('/system/deploy', [SuperAdminDeployController::class, 'index'])->name('system.deploy.index');
         Route::post('/system/deploy/check', [SuperAdminDeployController::class, 'check'])->name('system.deploy.check');
         Route::post('/system/deploy/run', [SuperAdminDeployController::class, 'run'])->name('system.deploy.run');
