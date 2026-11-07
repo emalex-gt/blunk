@@ -536,7 +536,7 @@ class RoutePreSaleInvoiceService
             $intent = \App\Models\FiscalDocumentIntent::query()
                 ->where('business_id', $business->id)
                 ->findOrFail($result->resultId);
-            $intent = app(FiscalDocumentIntentService::class)->certify($intent);
+            $intent = app(FiscalDocumentIntentService::class)->certify($intent, allowCommercialFinalization: true);
 
             if ($intent->status === \App\Models\FiscalDocumentIntent::FINALIZED) {
                 $saleId = (int) $intent->finalized_sale_id;

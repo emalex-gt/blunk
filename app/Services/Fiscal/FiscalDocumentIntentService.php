@@ -36,7 +36,7 @@ use Illuminate\Validation\ValidationException;
  * Durable, provider-neutral fiscal intent orchestration.
  *
  * It stores a frozen operation before any provider call. A Sale is created only
- * by finalize(), after certification is known.
+ * by an explicitly authorized original operation after certification is known.
  */
 class FiscalDocumentIntentService
 {
@@ -207,7 +207,7 @@ class FiscalDocumentIntentService
         });
     }
 
-    public function certify(FiscalDocumentIntent $intent): FiscalDocumentIntent
+    public function certify(FiscalDocumentIntent $intent, bool $allowCommercialFinalization = false): FiscalDocumentIntent
     {
         // The status vocabulary intentionally has no transient "retrying" state.
         // A short distributed lock is therefore the claim that prevents two queue
@@ -262,7 +262,7 @@ class FiscalDocumentIntentService
                 'environment' => $intent->environment,
             ]);
 
-            return $this->finalizeSafely($intent->refresh());
+            return $this->finalizeSafely($intent->refresh(), $allowCommercialFinalization);
         } finally {
             $lock->release();
         }
@@ -350,9 +350,9 @@ class FiscalDocumentIntentService
         return $this->certify($reconciled->refresh());
     }
 
-    public function finalize(FiscalDocumentIntent $intent): FiscalDocumentIntent
+    public function finalize(FiscalDocumentIntent $intent, bool $allowCommercialFinalization = false): FiscalDocumentIntent
     {
-        return DB::transaction(function () use ($intent) {
+        return DB::transaction(function () use ($intent, $allowCommercialFinalization) {
             $intent = FiscalDocumentIntent::query()->lockForUpdate()->findOrFail($intent->id);
             if ($intent->status === FiscalDocumentIntent::FINALIZED) {
                 return $intent;
@@ -366,6 +366,10 @@ class FiscalDocumentIntentService
             }
 
             if ($intent->operation_type === 'route_pre_sale_invoice') {
+                if (! $allowCommercialFinalization && ! $intent->finalized_sale_id) {
+                    return $this->blockLateCommercialFinalization($intent, 'route_pre_sale_without_completed_sale');
+                }
+
                 return app(RoutePreSaleInvoiceFiscalFinalizer::class)->finalize($intent);
             }
 
@@ -374,10 +378,24 @@ class FiscalDocumentIntentService
                 ->with('items')
                 ->lockForUpdate()
                 ->first();
+            if (! $sale && ! $allowCommercialFinalization) {
+                return $this->blockLateCommercialFinalization($intent, 'missing_completed_sale');
+            }
+
+            if (! $allowCommercialFinalization
+                && $intent->operation_type === 'sale'
+                && (! $intent->provisional_accepted_at || ! $intent->provisional_accepted_by)) {
+                return $this->blockLateCommercialFinalization($intent, 'missing_explicit_provisional_acceptance', $sale);
+            }
+
             if (! $sale) {
                 $sale = $this->createFinalSale($intent, $payload);
                 $intent->update(['finalized_sale_id' => $sale->id]);
                 $sale->load('items');
+            }
+
+            if ($sale->status !== 'completed' && ! $allowCommercialFinalization) {
+                return $this->blockLateCommercialFinalization($intent, 'sale_not_commercially_completed', $sale);
             }
 
             if ($sale->status !== 'completed') {
@@ -449,10 +467,10 @@ class FiscalDocumentIntentService
         return $this->finalizeSafely($intent);
     }
 
-    private function finalizeSafely(FiscalDocumentIntent $intent): FiscalDocumentIntent
+    private function finalizeSafely(FiscalDocumentIntent $intent, bool $allowCommercialFinalization = false): FiscalDocumentIntent
     {
         try {
-            return $this->finalize($intent);
+            return $this->finalize($intent, $allowCommercialFinalization);
         } catch (\Throwable $exception) {
             FiscalDocumentIntent::query()->whereKey($intent->id)->update([
                 'last_finalization_error' => $exception->getMessage(),
@@ -469,6 +487,48 @@ class FiscalDocumentIntentService
 
             return $intent->refresh();
         }
+    }
+
+    /**
+     * Reconciliation and manual local-finalization retries may attach a DTE to
+     * a completed Sale, but must never reconstruct commercial effects from a
+     * certified provider response. The intent row is already locked by the
+     * caller, which also deduplicates the incident for concurrent retries.
+     */
+    private function blockLateCommercialFinalization(FiscalDocumentIntent $intent, string $reasonCode, ?Sale $sale = null): FiscalDocumentIntent
+    {
+        $message = 'La certificación FEL fue encontrada, pero no existe una venta comercial completa autorizada para finalizarla localmente.';
+
+        FelIncident::query()->firstOrCreate([
+            'business_id' => $intent->business_id,
+            'sale_id' => $sale?->id,
+            'internal_reference' => $intent->internal_reference,
+            'type' => 'late_commercial_finalization_blocked',
+        ], [
+            'severity' => 'critical',
+            'status' => 'open',
+            'message' => $message,
+            'metadata' => [
+                'intent_id' => $intent->id,
+                'reason_code' => $reasonCode,
+                'operation_type' => $intent->operation_type,
+            ],
+            'created_by' => $intent->created_by,
+        ]);
+
+        $intent->update(['last_finalization_error' => $message]);
+
+        OperationsLog::event('fel.finalization.failed', $intent->business_id, [
+            'branch_id' => $intent->branch_id,
+            'intent_id' => $intent->id,
+            'sale_id' => $sale?->id,
+            'document_type' => $intent->document_type,
+            'operation_type' => $intent->operation_type,
+            'status' => $intent->status,
+            'reason_code' => $reasonCode,
+        ]);
+
+        return $intent->refresh();
     }
 
     private function finalizeExistingSaleCertification(FiscalDocumentIntent $intent): FiscalDocumentIntent

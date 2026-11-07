@@ -190,6 +190,128 @@ class FiscalDocumentIntentDurabilityTest extends TestCase
         $this->assertSame('consumed', StockReservation::query()->where('source_id', $intent->id)->sole()->status);
     }
 
+    public function test_reconciliation_never_reconstructs_a_missing_commercial_sale_after_certification(): void
+    {
+        [$business, $user, $product, $branch] = $this->context();
+        $session = CashRegisterSession::query()->where('business_id', $business->id)->sole();
+        $intent = $this->unresolvedSaleIntent($business, $branch, $user, $product, $session);
+
+        $reconciliation = Mockery::mock(DigifactReconciliationService::class);
+        $reconciliation->shouldReceive('findByInternalReference')->once()->andReturn([
+            'found' => true,
+            'raw' => ['UUID' => 'LATE-CERTIFIED-'.uniqid()],
+        ]);
+
+        $result = (new FiscalDocumentIntentService(
+            Mockery::mock(DigifactInvoiceService::class),
+            $reconciliation,
+        ))->reconcile($intent);
+
+        $this->assertSame(FiscalDocumentIntent::CERTIFIED, $result->status);
+        $this->assertNull($result->finalized_sale_id);
+        $this->assertNotNull($result->last_finalization_error);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('sale_items', 0);
+        $this->assertDatabaseCount('sale_payments', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertDatabaseCount('electronic_documents', 0);
+        $this->assertDatabaseHas('stock_reservations', [
+            'source_id' => $intent->id,
+            'status' => 'active',
+        ]);
+        $this->assertDatabaseHas('fel_incidents', [
+            'business_id' => $business->id,
+            'sale_id' => null,
+            'internal_reference' => $intent->internal_reference,
+            'type' => 'late_commercial_finalization_blocked',
+            'severity' => 'critical',
+            'status' => 'open',
+        ]);
+
+        // The intent lock must make retries idempotently block the same
+        // operation rather than creating a late sale or a second incident.
+        $repeat = app(FiscalDocumentIntentService::class)->retryFinalization($result);
+        $this->assertSame(FiscalDocumentIntent::CERTIFIED, $repeat->status);
+        $this->assertSame(1, FelIncident::query()
+            ->where('business_id', $business->id)
+            ->whereNull('sale_id')
+            ->where('internal_reference', $intent->internal_reference)
+            ->where('type', 'late_commercial_finalization_blocked')
+            ->count());
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+    }
+
+    public function test_route_pre_sale_reconciliation_never_creates_a_late_commercial_sale(): void
+    {
+        [$business, $user, $product, $branch] = $this->context();
+        $session = CashRegisterSession::query()->where('business_id', $business->id)->sole();
+        $intent = $this->unresolvedSaleIntent($business, $branch, $user, $product, $session, 'route_pre_sale_invoice');
+
+        $reconciliation = Mockery::mock(DigifactReconciliationService::class);
+        $reconciliation->shouldReceive('findByInternalReference')->once()->andReturn([
+            'found' => true,
+            'raw' => ['UUID' => 'ROUTE-LATE-CERTIFIED-'.uniqid()],
+        ]);
+
+        $result = (new FiscalDocumentIntentService(
+            Mockery::mock(DigifactInvoiceService::class),
+            $reconciliation,
+        ))->reconcile($intent);
+
+        $this->assertSame(FiscalDocumentIntent::CERTIFIED, $result->status);
+        $this->assertNull($result->finalized_sale_id);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertDatabaseHas('fel_incidents', [
+            'business_id' => $business->id,
+            'sale_id' => null,
+            'internal_reference' => $intent->internal_reference,
+            'type' => 'late_commercial_finalization_blocked',
+            'severity' => 'critical',
+        ]);
+    }
+
+    public function test_inconsistent_provisional_sale_is_not_completed_again_during_local_retry(): void
+    {
+        [$business, $user, $product, $branch] = $this->context();
+        $session = CashRegisterSession::query()->where('business_id', $business->id)->sole();
+        $intent = $this->unresolvedSaleIntent($business, $branch, $user, $product, $session);
+        $accepted = app(FiscalDocumentIntentService::class)
+            ->acceptProvisionalCommercialFinalization($intent, $user->id);
+        $sale = $accepted->finalizedSale()->firstOrFail();
+        $before = [
+            'sales' => Sale::query()->count(),
+            'items' => SaleItem::query()->count(),
+            'payments' => SalePayment::query()->count(),
+            'stock' => StockMovement::query()->count(),
+            'cash' => CashMovement::query()->count(),
+        ];
+
+        $sale->update(['status' => 'fiscal_pending']);
+        $accepted->update(['status' => FiscalDocumentIntent::CERTIFIED]);
+
+        $result = app(FiscalDocumentIntentService::class)->retryFinalization($accepted);
+
+        $this->assertSame(FiscalDocumentIntent::CERTIFIED, $result->status);
+        $this->assertSame($sale->id, $result->finalized_sale_id);
+        $this->assertDatabaseHas('fel_incidents', [
+            'business_id' => $business->id,
+            'sale_id' => $sale->id,
+            'internal_reference' => $accepted->internal_reference,
+            'type' => 'late_commercial_finalization_blocked',
+            'severity' => 'critical',
+        ]);
+        $this->assertSame($before['sales'], Sale::query()->count());
+        $this->assertSame($before['items'], SaleItem::query()->count());
+        $this->assertSame($before['payments'], SalePayment::query()->count());
+        $this->assertSame($before['stock'], StockMovement::query()->count());
+        $this->assertSame($before['cash'], CashMovement::query()->count());
+    }
+
     private function independentObserverConnection()
     {
         config(['database.connections.pgsql_fel_observer' => config('database.connections.pgsql')]);
@@ -365,5 +487,44 @@ class FiscalDocumentIntentDurabilityTest extends TestCase
             'payments' => [['method' => 'cash', 'amount' => 100]],
             'cash_register_session_id' => $session->id,
         ];
+    }
+
+    private function unresolvedSaleIntent(
+        Business $business,
+        $branch,
+        User $user,
+        Product $product,
+        CashRegisterSession $session,
+        string $operationType = 'sale',
+    ): FiscalDocumentIntent {
+        $intent = FiscalDocumentIntent::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'cash_register_session_id' => $session->id,
+            'created_by' => $user->id,
+            'country' => 'GT',
+            'provider' => 'digifact',
+            'environment' => 'test',
+            'document_type' => 'invoice',
+            'operation_type' => $operationType,
+            'internal_reference' => 'LATE-FINALIZATION-'.uniqid(),
+            'idempotency_key' => 'late-finalization-'.uniqid(),
+            'status' => FiscalDocumentIntent::UNKNOWN,
+            'operation_payload' => $this->operationPayload($business, $branch, $user, $product, $session),
+            'fiscal_payload' => ['Header' => ['DocType' => 'FACT']],
+        ]);
+
+        StockReservation::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+            'source_type' => 'fiscal_document_intent',
+            'source_id' => $intent->id,
+            'quantity' => 1,
+            'status' => 'active',
+            'created_by' => $user->id,
+        ]);
+
+        return $intent;
     }
 }

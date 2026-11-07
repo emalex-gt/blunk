@@ -1015,9 +1015,9 @@ class SaleController extends Controller
             $intentService = app(FiscalDocumentIntentService::class);
 
             if ($intent->status === FiscalDocumentIntent::PENDING) {
-                $intent = $intentService->certify($intent);
+                $intent = $intentService->certify($intent, allowCommercialFinalization: true);
             } elseif ($intent->status === FiscalDocumentIntent::CERTIFIED) {
-                $intent = $intentService->finalize($intent);
+                $intent = $intentService->finalize($intent, allowCommercialFinalization: true);
             }
 
             if ($intent->status === FiscalDocumentIntent::UNKNOWN) {
