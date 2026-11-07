@@ -10,6 +10,13 @@ class DevelopmentTaskRequest extends FormRequest
 {
     public function authorize(): bool { return (bool) $this->user()?->is_super_admin; }
 
+    protected function prepareForValidation(): void
+    {
+        if ($this->input('client_name') === null || $this->input('client_name') === '') {
+            $this->merge(['client_name' => 'Blunk Core / General']);
+        }
+    }
+
     public function rules(): array
     {
         $rules = [

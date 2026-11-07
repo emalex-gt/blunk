@@ -23,7 +23,11 @@ class DevelopmentTaskController extends Controller
         if ($archived === 'active') { $query->whereNull('archived_at'); }
         if ($archived === 'archived') { $query->whereNotNull('archived_at'); }
         foreach ([...array_keys(DevelopmentTaskOptions::all()), 'client_name', 'assigned_to'] as $field) {
-            if (isset($filters[$field]) && $filters[$field] !== '') { $query->where($field, $filters[$field]); }
+            if ($field === 'client_name' && ($filters[$field] ?? null) === 'Blunk Core / General') {
+                $query->where(fn ($q) => $q->where('client_name', 'Blunk Core / General')->orWhereNull('client_name')->orWhere('client_name', ''));
+            } elseif (isset($filters[$field]) && $filters[$field] !== '') {
+                $query->where($field, $filters[$field]);
+            }
         }
         if (!empty($filters['search'])) {
             $needle = '%'.mb_strtolower($filters['search']).'%';

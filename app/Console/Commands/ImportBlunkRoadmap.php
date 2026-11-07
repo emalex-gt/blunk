@@ -28,7 +28,7 @@ class ImportBlunkRoadmap extends Command
             if (DevelopmentTask::query()->where($source)->exists()) { $skipped++; continue; }
             $implementation = $row[3] ?? 'not_started';
             $evidence = $row[4] ?? 'Sin evidencia suficiente en esta revisión acotada. Verificar el repositorio antes de iniciar desarrollo; «No iniciado» es provisional.';
-            $type = str_contains(mb_strtolower($title), 'auditoría') ? 'audit' : ($module === 'Migraciones' ? 'migration' : 'improvement');
+            $type = $row['task_type'];
             $data = [...$source, 'title' => $title, 'module' => $module, 'client_name' => $row[5] ?? 'Blunk Core / General',
                 'task_type' => $type, 'priority' => 'P2', 'sort_order' => 0,
                 'work_status' => $implementation === 'not_started' ? 'pending' : 'in_review',

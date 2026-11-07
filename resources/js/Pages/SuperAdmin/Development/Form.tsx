@@ -1,30 +1,50 @@
-import { Link, useForm } from '@inertiajs/react';
+import { Link, router, useForm } from '@inertiajs/react';
 import { useEffect } from 'react';
 import SuperAdminLayout from '@/Layouts/SuperAdminLayout';
 import { base, button, Common, input, labels, Page, Pagination, Task } from './shared';
 
 type Activity = { id: number; activity_type: string; user: { name: string } | null; created_at: string; comment: string | null; previous_values: Record<string, unknown> | null; new_values: Record<string, unknown> | null };
 type Props = Common & { task: Task | null; activities: Page<Activity> | null };
-export default function Form({ task, options, users, businesses, clients, activities }: Props) {
-    const initial = {
+function formData(task: Task | null) {
+    return {
         title: task?.title || '', description: task?.description || '', acceptance_criteria: task?.acceptance_criteria || '', technical_notes: task?.technical_notes || '', blocked_reason: task?.blocked_reason || '',
         priority: task?.priority || 'P2', work_status: task?.work_status || 'pending', implementation_status: task?.implementation_status || 'not_started', production_status: task?.production_status || 'unverified', task_type: task?.task_type || 'feature', module: task?.module || 'Core y arquitectura',
         client_name: task?.client_name || 'Blunk Core / General', business_id: task?.business_id?.toString() || '', assigned_to: task?.assigned_to?.toString() || '',
         github_branch: task?.github_branch || '', github_commit: task?.github_commit || '', github_url: task?.github_url || '', sort_order: task?.sort_order || 0, version: task?.version || 1,
         checklist: task?.checklist.map(item => ({ id: item.id, title: item.title, is_completed: item.is_completed })) || [],
     };
+}
+export default function Form({ task, options, users, businesses, clients, activities }: Props) {
+    const initial = formData(task);
     const form = useForm(initial);
     const comment = useForm({ comment: '' });
     const archive = useForm({ archived: !task?.archived_at, version: task?.version || 1 });
-    useEffect(() => { form.setData(initial); archive.setData({ archived: !task?.archived_at, version: task?.version || 1 }); }, [task?.id, task?.version]);
+    // A new server version can arrive with a validation error: keep the draft's version.
+    useEffect(() => { form.setData(initial); form.setDefaults(initial); form.clearErrors(); }, [task?.id]);
+    useEffect(() => { archive.setData({ archived: !task?.archived_at, version: task?.version || 1 }); }, [task?.id, task?.version]);
+    const conflict = !!task && (task.version !== form.data.version || !!form.errors.version);
+    const syncSaved = (saved: Task) => {
+        const data = formData(saved);
+        form.setData(data);
+        form.setDefaults(data);
+        form.clearErrors();
+        archive.clearErrors();
+    };
+    const reloadCurrent = () => {
+        if (!task || !window.confirm('¿Recargar la versión actual? Se descartarán todos los cambios locales sin guardar, incluido el checklist.')) return;
+        router.get(route(base + 'show', task.id), {}, { preserveState: true, preserveScroll: true,
+            onSuccess: page => syncSaved(page.props.task as Task),
+        });
+    };
     const errors = form.errors as Record<string, string>;
     const textField = (key: 'title' | 'client_name' | 'github_branch' | 'github_commit' | 'github_url') => <label key={key} className="block text-sm font-semibold">{labels[key]}<input required={key === 'title'} list={key === 'client_name' ? 'roadmap-clients' : undefined} className={input} value={form.data[key]} onChange={e => form.setData(key, e.target.value)} />{errors[key] && <span className="text-xs text-red-700">{errors[key]}</span>}</label>;
     return <SuperAdminLayout title={task ? `${task.code} · Blunk Roadmap` : 'Nueva tarea · Blunk Roadmap'}>
         <Link href={route(base + 'index')} className="text-sm text-orange-700">← Blunk Roadmap</Link>
-        <div className="my-5 flex flex-wrap items-center justify-between gap-3"><div><p className="font-mono text-sm text-slate-500">{task?.code || 'Nueva tarea'}</p><h1 className="text-2xl font-bold">{task?.title || 'Crear tarea'}</h1></div>{task && <button disabled={archive.processing} className={button} onClick={() => { if (window.confirm(task.archived_at ? '¿Restaurar esta tarea?' : '¿Archivar esta tarea? Se conservará su historial.')) archive.patch(route(base + 'archive', task.id), { preserveScroll: true }); }}>{task.archived_at ? 'Restaurar' : 'Archivar'}</button>}</div>
+        <div className="my-5 flex flex-wrap items-center justify-between gap-3"><div><p className="font-mono text-sm text-slate-500">{task?.code || 'Nueva tarea'}</p><h1 className="text-2xl font-bold">{task?.title || 'Crear tarea'}</h1></div>{task && <button disabled={archive.processing} className={button} onClick={() => { if (window.confirm(task.archived_at ? '¿Restaurar esta tarea?' : '¿Archivar esta tarea? Se conservará su historial.')) archive.patch(route(base + 'archive', task.id), { preserveScroll: true, onSuccess: page => { if (!form.isDirty) syncSaved(page.props.task as Task); } }); }}>{task.archived_at ? 'Restaurar' : 'Archivar'}</button>}</div>
         {task?.archived_at && <p className="mb-4 rounded-lg bg-amber-100 p-4 text-sm">Tarea archivada. Restáurala para editarla.</p>}
+        {conflict && <div role="alert" className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm"><p>Conflicto de edición: la tarea cambió en el servidor. Tu borrador local se conserva, pero debes revisar la versión actual antes de guardar.</p><button type="button" disabled={form.processing || archive.processing} onClick={reloadCurrent} className="mt-3 font-semibold text-orange-800">Recargar versión actual y descartar borrador</button></div>}
         {archive.errors.version && <p role="alert" className="mb-4 text-red-700">{archive.errors.version}</p>}
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]"><form className="min-w-0 rounded-xl border bg-white p-5" onSubmit={e => { e.preventDefault(); if (form.processing) return; if (task) form.put(route(base + 'update', task.id), { preserveScroll: true }); else form.post(route(base + 'store')); }}>
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]"><form className="min-w-0 rounded-xl border bg-white p-5" onSubmit={e => { e.preventDefault(); if (form.processing) return; if (task) form.put(route(base + 'update', task.id), { preserveScroll: true, onSuccess: page => syncSaved(page.props.task as Task) }); else form.post(route(base + 'store'), { onSuccess: page => syncSaved(page.props.task as Task) }); }}>
             <fieldset disabled={!!task?.archived_at || form.processing} className="space-y-5 disabled:opacity-60">
                 {textField('title')}
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(options).map(([key, choices]) => <label key={key} className="text-sm font-semibold">{labels[key]}<select className={input} value={String(form.data[key as keyof typeof initial])} onChange={e => form.setData(key as 'priority', e.target.value)}>{Object.entries(choices).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>)}</div>
