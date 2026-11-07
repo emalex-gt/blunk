@@ -1866,6 +1866,11 @@ export default function POS({
         return true;
     }
 
+    function resetPaymentsForNewSale() {
+        setMainPaymentMethod('cash');
+        setPayments([paymentLine('cash', '0.00')]);
+    }
+
     function clearSaleState() {
         setCart([]);
         setSearch('');
@@ -1879,7 +1884,7 @@ export default function POS({
         setSplitPayment(false);
         setPaymentCondition('paid');
         setDocumentType(singleDocumentType ?? (availableCheckoutTypes[0] ?? 'receipt'));
-        setPayments([paymentLine(mainPaymentMethod, '0.00')]);
+        resetPaymentsForNewSale();
         setCashReceived('');
         setDiscount(null);
         setCustomerEditing(false);
@@ -3076,7 +3081,7 @@ export default function POS({
                     setSplitPayment(false);
                     setDiscount(null);
                     setCashReceived('');
-                    setPayments([paymentLine(mainPaymentMethod, '0.00')]);
+                    resetPaymentsForNewSale();
                     setActiveOperationDraftId(null);
                     setIdempotencyKey(makeOperationKey());
                     setFailedSubmission(false);
@@ -3236,7 +3241,7 @@ export default function POS({
                 setDocumentType(singleDocumentType ?? (availableCheckoutTypes[0] ?? 'receipt'));
                 setDiscount(null);
                 setCashReceived('');
-                setPayments([paymentLine(mainPaymentMethod, '0.00')]);
+                resetPaymentsForNewSale();
                 setActiveOperationDraftId(null);
                 clearDraft(draftKey);
                 latestDraftRef.current = null;
