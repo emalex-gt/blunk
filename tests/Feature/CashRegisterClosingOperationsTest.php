@@ -549,6 +549,160 @@ class CashRegisterClosingOperationsTest extends TestCase
         $this->assertStringContainsString('Detalle de cobros y pagos', $document);
     }
 
+    public function test_sales_breakdown_keeps_later_credit_payments_out_of_original_closing(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+
+        $sale = $this->sale($business, $branch, $user, 100);
+        $sale->update(['is_credit_sale' => true, 'payment_status' => 'partial']);
+
+        SalePayment::query()->create([
+            'business_id' => $business->id,
+            'sale_id' => $sale->id,
+            'method' => 'cash',
+            'amount' => 30,
+            'cash_register_session_id' => $session->id,
+            'status' => 'captured',
+        ]);
+
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente de prueba',
+            'doc_type' => 'NIT',
+            'doc_number' => '123456',
+        ]);
+
+        $account = CustomerCreditAccount::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'current_balance' => 70,
+        ]);
+
+        $before = CustomerCreditPayment::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'customer_credit_account_id' => $account->id,
+            'payment_number' => 1,
+            'amount' => 20,
+            'payment_method' => 'card',
+            'status' => 'completed',
+            'created_by' => $user->id,
+        ]);
+
+        $sale->creditPaymentAllocations()->create([
+            'business_id' => $business->id,
+            'payment_id' => $before->id,
+            'amount' => 20,
+        ]);
+
+        $closedAt = now()->addMinute();
+
+        $session->update([
+            'status' => 'closed',
+            'closed_at' => $closedAt,
+        ]);
+
+        $after = CustomerCreditPayment::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'customer_credit_account_id' => $account->id,
+            'payment_number' => 2,
+            'amount' => 50,
+            'payment_method' => 'transfer',
+            'status' => 'completed',
+            'created_by' => $user->id,
+        ]);
+
+        $after->forceFill([
+            'created_at' => $closedAt->copy()->addMinute(),
+        ])->save();
+
+        $sale->creditPaymentAllocations()->create([
+            'business_id' => $business->id,
+            'payment_id' => $after->id,
+            'amount' => 50,
+        ]);
+
+        $summary = CashRegisterClosingSales::forSession($session->fresh());
+        $breakdown = $summary['payment_breakdown'];
+
+        $this->assertSame(100.0, $summary['total']);
+        $this->assertSame(30.0, $breakdown['cash']);
+        $this->assertSame(20.0, $breakdown['card']);
+        $this->assertSame(50.0, $breakdown['credit_pending']);
+        $this->assertSame(0.0, $breakdown['transfer']);
+        $this->assertSame(100.0, array_sum($breakdown));
+        $this->assertSame(0, $summary['payment_breakdown_overallocated_count']);
+    }
+    public function test_sales_breakdown_excludes_same_turn_cancellations_and_preserves_split_payments(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+
+        $splitSale = $this->sale($business, $branch, $user, 100);
+
+        foreach (['cash' => 40, 'card' => 60] as $method => $amount) {
+            SalePayment::query()->create([
+                'business_id' => $business->id,
+                'sale_id' => $splitSale->id,
+                'method' => $method,
+                'amount' => $amount,
+                'cash_register_session_id' => $session->id,
+                'status' => 'captured',
+            ]);
+        }
+
+        $creditSale = $this->sale($business, $branch, $user, 80);
+        $creditSale->update([
+            'is_credit_sale' => true,
+            'payment_status' => 'unpaid',
+        ]);
+
+        $cancelledSale = $this->sale($business, $branch, $user, 200);
+
+        SalePayment::query()->create([
+            'business_id' => $business->id,
+            'sale_id' => $cancelledSale->id,
+            'method' => 'cash',
+            'amount' => 200,
+            'cash_register_session_id' => $session->id,
+            'status' => 'captured',
+        ]);
+
+        $cancelledSale->update([
+            'status' => 'cancelled',
+            'cancelled_at' => now(),
+        ]);
+
+        $session->update([
+            'status' => 'closed',
+            'closed_at' => now()->addMinute(),
+        ]);
+
+        $summary = CashRegisterClosingSales::forSession($session->fresh());
+        $breakdown = $summary['payment_breakdown'];
+
+        $this->assertSame(380.0, $summary['gross_total']);
+        $this->assertSame(200.0, $summary['same_period_cancellations']);
+        $this->assertSame(180.0, $summary['total']);
+        $this->assertSame(40.0, $breakdown['cash']);
+        $this->assertSame(60.0, $breakdown['card']);
+        $this->assertSame(80.0, $breakdown['credit_pending']);
+        $this->assertSame(0.0, $breakdown['unclassified']);
+        $this->assertSame(180.0, array_sum($breakdown));
+
+        $snapshot = CashRegisterClosingSnapshot::capture($session->fresh());
+
+        $this->assertSame(
+            $breakdown,
+            array_map(
+                static fn ($amount): float => (float) $amount,
+                $snapshot->snapshot['commercial']['payment_breakdown']
+            )
+        );
+    }
     private function context(): array
     {
         $business = Business::query()->create(['name' => 'Cierre '.uniqid(), 'slug' => 'closing-'.uniqid(), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
