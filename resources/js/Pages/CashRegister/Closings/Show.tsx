@@ -59,6 +59,11 @@ type Session = {
     };
     payment_operations: PaymentOperations;
     movements: Movement[];
+    closing_source: 'snapshot' | 'reconstructed';
+    closing_contract: {
+        commercial: { total: number; gross_total: number; same_period_cancellations: number; credit_sales_total: number; ambiguous_count: number };
+        corrections: Array<{ id: number; type: string; amount: number; occurred_at: string | null; sale_number: number | null; original_session_id: number | null; responsible_user: string | null; reason: string | null }>;
+    };
 };
 
 export default function Show({ session }: { session: Session }) {
@@ -94,11 +99,21 @@ export default function Show({ session }: { session: Session }) {
             <div className="py-5">
                 <div className="mx-auto max-w-[1800px] space-y-5 px-5 sm:px-6">
                     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                        <Summary label="Total vendido neto" value={formatCurrency(session.closing_contract.commercial.total, country)} />
                         <Summary label="Monto inicial" value={formatCurrency(session.opening_amount, country)} />
                         <Summary label="Efectivo esperado" value={formatCurrency(session.expected_cash, country)} />
                         <Summary label="Efectivo contado" value={formatCurrency(session.counted_cash ?? 0, country)} />
                         <Summary label="Diferencia" value={formatCurrency(session.difference ?? 0, country)} tone={(session.difference ?? 0) < 0 ? 'text-red-600' : (session.difference ?? 0) > 0 ? 'text-amber-600' : 'text-emerald-700'} />
                     </section>
+
+                    {session.closing_source === 'reconstructed' && <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Este cierre es anterior a la fotografía inmutable; se muestra una reconstrucción identificada como tal.</p>}
+
+                    <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
+                        <h3 className="text-lg font-semibold text-slate-950">Total vendido del turno</h3>
+                        <div className="mt-4 grid gap-4 md:grid-cols-4"><Detail label="Ventas brutas" value={formatCurrency(session.closing_contract.commercial.gross_total, country)} /><Detail label="Anulaciones del turno" value={formatCurrency(session.closing_contract.commercial.same_period_cancellations, country)} /><Detail label="Ventas a crédito" value={formatCurrency(session.closing_contract.commercial.credit_sales_total, country)} /><Detail label="Total vendido neto" value={formatCurrency(session.closing_contract.commercial.total, country)} /></div>
+                    </section>
+
+                    {session.closing_contract.corrections.length > 0 && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h3 className="text-lg font-semibold text-amber-950">Correcciones de períodos anteriores</h3>{session.closing_contract.corrections.map((correction) => <p key={correction.id} className="mt-2 text-sm text-amber-900">{correction.occurred_at ?? '-'} · Venta #{correction.sale_number ?? '-'} · Cierre original #{correction.original_session_id ?? '-'} · {formatCurrency(correction.amount, country)} · {correction.responsible_user ?? 'No disponible'}{correction.reason ? ` · ${correction.reason}` : ''}</p>)}</section>}
 
                     <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
                         <div className="grid gap-4 md:grid-cols-4">

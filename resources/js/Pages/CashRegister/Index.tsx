@@ -79,6 +79,7 @@ type CashSession = {
     };
     movements?: Movement[];
     payment_operations?: PaymentOperations;
+    closing_contract: { commercial: { total: number; gross_total: number; same_period_cancellations: number; credit_sales_total: number; ambiguous_count: number }; corrections: Array<{ id: number; amount: number }> };
 };
 
 type ExpenseCategory = {
@@ -340,9 +341,19 @@ export default function Index({
                         <>
                             <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                                 <Metric label="Estado" value="Abierta" tone="text-emerald-700" />
+                                <Metric label="Total vendido neto" value={formatCurrency(openSession.closing_contract.commercial.total, country)} tone="text-slate-950" />
                                 <Metric label="Monto inicial" value={formatCurrency(openSession.opening_amount, country)} />
                                 <Metric label="Efectivo esperado" value={formatCurrency(openSession.expected_cash, country)} tone="text-orange-700" />
-                                <Metric label="Abierta por" value={openSession.opened_by ?? '-'} />
+                            </section>
+
+                            <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
+                                <h3 className="text-lg font-semibold text-slate-950">Total vendido del turno</h3>
+                                <div className="mt-4 grid gap-4 sm:grid-cols-4">
+                                    <Summary label="Ventas brutas" value={formatCurrency(openSession.closing_contract.commercial.gross_total, country)} />
+                                    <Summary label="Anulaciones del turno" value={formatCurrency(openSession.closing_contract.commercial.same_period_cancellations, country)} />
+                                    <Summary label="Ventas a crédito" value={formatCurrency(openSession.closing_contract.commercial.credit_sales_total, country)} />
+                                    <Summary label="Total vendido neto" value={formatCurrency(openSession.closing_contract.commercial.total, country)} />
+                                </div>
                             </section>
 
                             <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">

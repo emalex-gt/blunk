@@ -62,4 +62,9 @@ class CashRegisterSession extends Model
     {
         return $this->hasMany(CashExpense::class);
     }
+
+    public function closingSnapshot(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(CashRegisterClosingSnapshot::class, 'cash_register_session_id');
+    }
 }

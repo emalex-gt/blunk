@@ -17,6 +17,7 @@ use App\Http\Controllers\CashRegisterController;
 use App\Support\CashRegister;
 use App\Support\CashRegisterClosingOperations;
 use App\Support\CashRegisterClosingSales;
+use App\Support\CashRegisterClosingSnapshot;
 use App\Support\AccountsReceivable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -190,7 +191,8 @@ class CashRegisterClosingOperationsTest extends TestCase
 
         $result = CashRegisterClosingOperations::forSession($session);
         $cash = collect($result['by_method'])->keyBy('method')['cash'];
-        $this->assertSame(0.0, $cash['sales']);
+        $this->assertSame(500.0, $cash['sales']);
+        $this->assertSame(-500.0, $cash['same_turn_cancellations']);
         $this->assertSame(0.0, $cash['net']);
         $this->assertSame(0.0, CashRegister::expectedCash($session->id));
         $this->assertSame(2, $result['detail_total']);
@@ -211,6 +213,23 @@ class CashRegisterClosingOperationsTest extends TestCase
         $this->assertSame(-30.0, $cash['net']);
         $this->assertSame(-30.0, CashRegister::expectedCash($session->id));
         $this->assertSame(2, CashRegisterClosingOperations::forSession($session, 'cash', 'purchase')['detail_total']);
+    }
+
+    public function test_closing_snapshot_preserves_the_original_commercial_total_after_a_later_cancellation(): void
+    {
+        [$business, $branch, $user, $original] = $this->context();
+        $sale = $this->sale($business, $branch, $user, 195);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $sale->id, 'method' => 'cash', 'amount' => 195, 'cash_register_session_id' => $original->id, 'status' => 'captured']);
+        CashRegister::recordMovement($original, 'sale_cash', 195, 'sale', $sale->id, 'Venta', $user->id);
+        $original->update(['status' => 'closed', 'closed_by' => $user->id, 'closed_at' => now()]);
+
+        $snapshot = CashRegisterClosingSnapshot::capture($original->fresh());
+        $later = CashRegisterSession::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'opened_by' => $user->id, 'status' => 'open', 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now()->addMinute()]);
+        $sale->update(['status' => 'cancelled', 'cancelled_at' => now()->addMinute()]);
+        CashRegister::recordMovement($later, 'sale_cash_cancel', -195, 'sale', $sale->id, 'Anulación', $user->id);
+
+        $this->assertSame(195.0, (float) $snapshot->snapshot['commercial']['total']);
+        $this->assertSame(195.0, (float) CashRegisterClosingSnapshot::forSession($original->fresh())['commercial']['total']);
     }
 
     public function test_backend_filters_after_aggregating_the_complete_history(): void

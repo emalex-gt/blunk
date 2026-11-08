@@ -31,6 +31,7 @@ use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Fel\Providers\Digifact\DigifactNit;
 use App\Services\Fiscal\FiscalDocumentIntentService;
 use App\Support\CashRegister;
+use App\Support\CashRegisterClosingCorrections;
 use App\Support\AccountsReceivable;
 use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
@@ -836,6 +837,7 @@ class SaleController extends Controller
                     stockMovementNote('sale', $sale->business_number ?: $sale->id),
                     $request->user()->id,
                 );
+                CashRegisterClosingCorrections::recordSaleCancellation($sale, $cashSession, $request->user()->id, $data['reason']);
             }
             }
 

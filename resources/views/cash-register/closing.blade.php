@@ -75,11 +75,21 @@
 
         <div class="line"></div>
         <div class="center total">
-            <div>TOTAL VENTAS</div>
+            <div>TOTAL VENDIDO DEL TURNO</div>
             <div>{{ formatMoney($salesSummary['total'], $business?->country) }}</div>
         </div>
+        <table>
+            <tbody>
+                <tr><td>Ventas brutas</td><td class="right">{{ formatMoney($salesSummary['gross_total'] ?? $salesSummary['total'], $business?->country) }}</td></tr>
+                <tr><td>Anulaciones del turno</td><td class="right negative">-{{ formatMoney($salesSummary['same_period_cancellations'] ?? 0, $business?->country) }}</td></tr>
+                <tr><td>Ventas a crédito</td><td class="right">{{ formatMoney($salesSummary['credit_sales_total'] ?? 0, $business?->country) }}</td></tr>
+            </tbody>
+        </table>
         @if ($salesSummary['ambiguous_count'] > 0)
             <p class="muted center">{{ $salesSummary['ambiguous_count'] }} venta(s) sin atribución segura no fueron incluidas.</p>
+        @endif
+        @if (($closingContract['source'] ?? null) === 'reconstructed')
+            <p class="muted center">Reconstrucción histórica: este cierre no cuenta con fotografía inmutable.</p>
         @endif
 
         <div class="line"></div>
@@ -178,6 +188,19 @@
         @endif
         <p class="muted">Resumen informativo; el arqueo de efectivo se calcula exclusivamente con movimientos de caja.</p>
 
+        @if (count($closingContract['corrections'] ?? []))
+            <div class="line"></div>
+            <h2 style="font-size: {{ $receiptFormat === 'ticket' ? '13px' : '16px' }};">Correcciones de períodos anteriores</h2>
+            @foreach ($closingContract['corrections'] as $correction)
+                <div style="padding: 5px 0; border-bottom: 1px solid #e2e8f0;">
+                    <strong>{{ $correction['type'] === 'sale_cancellation' ? 'Anulación comercial/fiscal' : 'Corrección' }}</strong>
+                    <span class="right" style="float:right">{{ formatMoney($correction['amount'], $business?->country) }}</span>
+                    <div class="muted">Venta #{{ $correction['sale_number'] ?? '-' }} · Cierre original #{{ $correction['original_session_id'] ?? '-' }} · {{ $correction['occurred_at'] ? \Carbon\Carbon::parse($correction['occurred_at'])->timezone($timezone)->format('d/m/Y H:i') : '-' }}</div>
+                    @if (! empty($correction['reason']))<div>{{ $correction['reason'] }}</div>@endif
+                </div>
+            @endforeach
+        @endif
+
         @if ($receiptFormat !== 'ticket')
             <div class="line"></div>
             <h2 style="font-size: 16px;">Resumen de movimientos</h2>
@@ -216,9 +239,12 @@
             <div class="line"></div>
             <h2 style="font-size: 16px;">Detalle de cobros y pagos</h2>
             @forelse ($paymentOperations['details'] as $operation)
+                @php
+                    $operationAt = $operation['occurred_at'] ? \Carbon\Carbon::parse($operation['occurred_at']) : null;
+                @endphp
                 <div style="padding: 5px 0; border-bottom: 1px solid #e2e8f0;">
                     <div style="display:flex; justify-content:space-between; gap:8px;"><strong>{{ $operation['label'] }}</strong><strong class="{{ $operation['signed_amount'] < 0 ? 'negative' : 'positive' }}">{{ formatMoney($operation['signed_amount'], $business?->country) }}</strong></div>
-                    <div class="muted">{{ $operation['occurred_at']?->copy()->timezone($timezone)->format('d/m/Y H:i') }} · {{ match($operation['method']) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'check' => 'Cheque', 'transfer', 'bank_transfer' => 'Transferencia', default => 'Otro' } }} · {{ $operation['attribution'] === 'direct' ? 'Directo' : 'Reconstruido' }}</div>
+                    <div class="muted">{{ $operationAt?->timezone($timezone)->format('d/m/Y H:i') }} · {{ match($operation['method']) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'check' => 'Cheque', 'transfer', 'bank_transfer' => 'Transferencia', default => 'Otro' } }} · {{ $operation['attribution'] === 'direct' ? 'Directo' : 'Reconstruido' }}</div>
                     @if ($operation['reference'] || $operation['party'])<div style="overflow-wrap:anywhere;">{{ $operation['reference'] }}{{ $operation['party'] ? ' · '.$operation['party'] : '' }}</div>@endif
                 </div>
             @empty

@@ -12,6 +12,7 @@ type Session = {
     expected_cash: number;
     counted_cash: number | null;
     difference: number | null;
+    closing_contract: { commercial: { total: number }; source: 'snapshot' | 'reconstructed' };
 };
 
 type PaginationLink = {
@@ -57,6 +58,7 @@ export default function Index({ sessions }: { sessions: Paginated<Session> }) {
                                         <th className="px-4 py-3">Usuario apertura</th>
                                         <th className="px-4 py-3">Usuario cierre</th>
                                         <th className="px-4 py-3 text-right">Monto inicial</th>
+                                        <th className="px-4 py-3 text-right">Total vendido</th>
                                         <th className="px-4 py-3 text-right">Efectivo esperado</th>
                                         <th className="px-4 py-3 text-right">Efectivo contado</th>
                                         <th className="px-4 py-3 text-right">Diferencia</th>
@@ -66,7 +68,7 @@ export default function Index({ sessions }: { sessions: Paginated<Session> }) {
                                 <tbody className="divide-y divide-slate-100">
                                     {sessions.data.length === 0 ? (
                                         <tr>
-                                            <td colSpan={9} className="px-4 py-12 text-center text-slate-500">Sin cierres de caja</td>
+                                            <td colSpan={10} className="px-4 py-12 text-center text-slate-500">Sin cierres de caja</td>
                                         </tr>
                                     ) : sessions.data.map((session) => (
                                         <tr key={session.id} className="hover:bg-orange-50/30">
@@ -75,6 +77,7 @@ export default function Index({ sessions }: { sessions: Paginated<Session> }) {
                                             <td className="px-4 py-3 text-slate-600">{session.opened_by ?? '-'}</td>
                                             <td className="px-4 py-3 text-slate-600">{session.closed_by ?? '-'}</td>
                                             <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-950">{formatCurrency(session.opening_amount, country)}</td>
+                                            <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-950">{formatCurrency(session.closing_contract.commercial.total, country)}{session.closing_contract.source === 'reconstructed' && <span className="ml-1 text-xs font-normal text-amber-700">*</span>}</td>
                                             <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-950">{formatCurrency(session.expected_cash, country)}</td>
                                             <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-950">{formatCurrency(session.counted_cash ?? 0, country)}</td>
                                             <td className={`whitespace-nowrap px-4 py-3 text-right font-semibold ${(session.difference ?? 0) < 0 ? 'text-red-600' : (session.difference ?? 0) > 0 ? 'text-amber-600' : 'text-emerald-700'}`}>

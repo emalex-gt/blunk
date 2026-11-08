@@ -16,7 +16,7 @@ use Carbon\CarbonInterface;
  */
 final class CashRegisterClosingSales
 {
-    /** @return array{total: float, count: int, direct_count: int, reconstructed_count: int, ambiguous_count: int} */
+    /** @return array{total: float, gross_total: float, same_period_cancellations: float, credit_sales_total: float, count: int, direct_count: int, reconstructed_count: int, ambiguous_count: int} */
     public static function forSession(CashRegisterSession $session): array
     {
         $from = $session->opened_at;
@@ -32,22 +32,13 @@ final class CashRegisterClosingSales
             ->where('business_id', $session->business_id)
             ->where('branch_id', $session->branch_id)
             ->where('created_at', '<=', $to)
-            ->where(function ($query) use ($to) {
-                $query->where('status', 'completed')
-                    ->orWhereNull('status')
-                    ->orWhere(function ($query) use ($to) {
-                        $query->where('status', 'cancelled')
-                            ->whereNotNull('cancelled_at')
-                            ->where('cancelled_at', '>', $to);
-                    });
-            })
             ->where(function ($query) use ($session, $from, $to) {
                 $query->whereHas('capturedPayments', fn ($payments) => $payments
                     ->where('cash_register_session_id', $session->id))
                     ->orWhereBetween('created_at', [$from, $to]);
             })
             ->with(['capturedPayments:id,sale_id,cash_register_session_id'])
-            ->get(['id', 'business_id', 'branch_id', 'total', 'created_at']);
+            ->get(['id', 'business_id', 'branch_id', 'total', 'is_credit_sale', 'status', 'created_at', 'cancelled_at']);
 
         $included = collect();
         $directCount = 0;
@@ -89,8 +80,19 @@ final class CashRegisterClosingSales
             }
         }
 
+        $gross = round((float) $included->sum(fn (Sale $sale) => (float) $sale->total), 2);
+        $samePeriodCancellations = round((float) $included
+            ->filter(fn (Sale $sale) => $sale->status === 'cancelled' && $sale->cancelled_at?->lessThanOrEqualTo($to))
+            ->sum(fn (Sale $sale) => (float) $sale->total), 2);
+        $net = round($gross - $samePeriodCancellations, 2);
+
         return [
-            'total' => round((float) $included->sum(fn (Sale $sale) => (float) $sale->total), 2),
+            'total' => $net,
+            'gross_total' => $gross,
+            'same_period_cancellations' => $samePeriodCancellations,
+            'credit_sales_total' => round((float) $included
+                ->filter(fn (Sale $sale) => (bool) $sale->is_credit_sale && ! ($sale->status === 'cancelled' && $sale->cancelled_at?->lessThanOrEqualTo($to)))
+                ->sum(fn (Sale $sale) => (float) $sale->total), 2),
             'count' => $included->count(),
             'direct_count' => $directCount,
             'reconstructed_count' => $reconstructedCount,

@@ -81,7 +81,10 @@ class CashRegisterClosingOperations
             }
             $method = self::method($operation['method']);
             $bucket = match ($operation['kind']) {
-                'sale', 'sale_cancellation', 'refund' => 'sales',
+                'sale' => 'sales',
+                'sale_cancellation', 'refund' => (int) ($operation['original_cash_register_session_id'] ?? 0) === (int) $session->id
+                    ? 'same_turn_cancellations'
+                    : 'prior_period_corrections',
                 'credit_payment', 'credit_payment_cancellation' => 'credit_payments',
                 'purchase' => 'purchases',
                 'expense', 'expense_cancel' => 'expenses',
@@ -133,7 +136,7 @@ class CashRegisterClosingOperations
                 $rows = [[
                     'id' => 'sale-payment-'.$payment->id, 'kind' => 'sale', 'label' => 'Venta cobrada', 'method' => $payment->method,
                     'signed_amount' => (float) $payment->amount, 'amount' => (float) $payment->amount, 'occurred_at' => $at,
-                    'cash_register_session_id' => $payment->cash_register_session_id, 'reference' => 'Venta '.format_sale_number($payment->sale),
+                    'cash_register_session_id' => $payment->cash_register_session_id, 'original_cash_register_session_id' => $payment->cash_register_session_id, 'reference' => 'Venta '.format_sale_number($payment->sale),
                     'party' => $payment->sale->customer_name, 'attribution' => null,
                 ]];
 
@@ -141,7 +144,7 @@ class CashRegisterClosingOperations
                     $rows[] = [
                         'id' => 'sale-cancellation-'.$payment->id, 'kind' => 'sale_cancellation', 'label' => 'Anulación de venta', 'method' => $payment->method,
                         'signed_amount' => -1 * (float) $payment->amount, 'amount' => (float) $payment->amount, 'occurred_at' => $payment->sale->cancelled_at,
-                        'cash_register_session_id' => null, 'reference' => 'Venta '.format_sale_number($payment->sale),
+                        'cash_register_session_id' => null, 'original_cash_register_session_id' => $payment->cash_register_session_id, 'reference' => 'Venta '.format_sale_number($payment->sale),
                         'party' => $payment->sale->customer_name, 'attribution' => null,
                     ];
                 }
@@ -240,7 +243,7 @@ class CashRegisterClosingOperations
     private static function emptySummary(): array
     {
         return collect(['cash', 'card', 'check', 'transfer', 'other'])->mapWithKeys(fn ($method) => [$method => [
-            'sales' => 0.0, 'credit_payments' => 0.0, 'purchases' => 0.0, 'purchases_outside_cash' => 0.0, 'expenses' => 0.0, 'net' => 0.0,
+            'sales' => 0.0, 'same_turn_cancellations' => 0.0, 'prior_period_corrections' => 0.0, 'credit_payments' => 0.0, 'purchases' => 0.0, 'purchases_outside_cash' => 0.0, 'expenses' => 0.0, 'net' => 0.0,
         ]])->all();
     }
 

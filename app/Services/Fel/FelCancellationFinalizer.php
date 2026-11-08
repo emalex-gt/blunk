@@ -10,6 +10,7 @@ use App\Services\SaleStockCancellationService;
 use App\Support\AccountsReceivable;
 use App\Support\BranchInventory;
 use App\Support\CashRegister;
+use App\Support\CashRegisterClosingCorrections;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -95,6 +96,7 @@ class FelCancellationFinalizer
                         stockMovementNote('sale_cancel', $sale->business_number ?: $sale->id),
                         $actor->id,
                     );
+                    CashRegisterClosingCorrections::recordSaleCancellation($sale, $cashSession, $actor->id, $lockedRequest->reason);
                 }
 
                 $sale->update([

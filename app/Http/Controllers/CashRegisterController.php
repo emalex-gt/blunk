@@ -12,6 +12,7 @@ use App\Support\BranchInventory;
 use App\Support\CashRegister;
 use App\Support\CashRegisterClosingOperations;
 use App\Support\CashRegisterClosingSales;
+use App\Support\CashRegisterClosingSnapshot;
 use App\Support\IdempotencyService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\RedirectResponse;
@@ -265,6 +266,8 @@ class CashRegisterController extends Controller
                 'closing_notes' => $data['closing_notes'] ?? null,
             ]);
 
+            CashRegisterClosingSnapshot::capture($session->refresh());
+
             return $session->id;
         });
 
@@ -284,7 +287,7 @@ class CashRegisterController extends Controller
                 ->where('business_id', $businessId)
                 ->when(BranchInventory::branchesEnabled($businessId), fn ($query) => $query->where('branch_id', BranchInventory::activeBranch($businessId)->id))
                 ->where('status', 'closed')
-                ->with(['openedBy:id,name', 'closedBy:id,name'])
+                ->with(['openedBy:id,name', 'closedBy:id,name', 'closingSnapshot'])
                 ->latest('closed_at')
                 ->paginate(25)
                 ->through(fn (CashRegisterSession $session) => $this->sessionPayload($session, $timezone)),
@@ -297,7 +300,7 @@ class CashRegisterController extends Controller
         $this->ensureSessionBelongsToActiveBranch($request, $session);
 
         $timezone = tenantTimezone($session->business_id);
-        $session->load(['openedBy:id,name', 'closedBy:id,name']);
+        $session->load(['openedBy:id,name', 'closedBy:id,name', 'closingSnapshot']);
 
         return Inertia::render('CashRegister/Closings/Show', [
             'session' => $this->sessionPayload($session, $timezone, true),
@@ -312,32 +315,35 @@ class CashRegisterController extends Controller
         $business = Business::query()->select('id', 'name', 'country')->find(currentBusinessId());
         $timezone = tenantTimezone($business);
         $settings = TenantSetting::query()->where('business_id', currentBusinessId())->first();
-        $session->load(['openedBy:id,name', 'closedBy:id,name']);
+        $session->load(['openedBy:id,name', 'closedBy:id,name', 'closingSnapshot']);
+        $closingContract = CashRegisterClosingSnapshot::forSession($session);
 
         return view('cash-register.closing', [
             'paperSize' => ($business?->country ?? 'GT') === 'AR' ? 'A4' : 'Letter',
             'receiptFormat' => $settings?->receipt_format === 'document' ? 'document' : 'ticket',
             'company' => [
                 'logo_url' => $settings?->company_logo_url,
-                'name' => $settings?->company_name ?: $business?->name,
-                'tax_id' => $settings?->company_tax_id,
-                'address' => $settings?->company_address,
-                'phone' => $settings?->company_phone,
+                'name' => $closingContract['header']['business_name'] ?: ($settings?->company_name ?: $business?->name),
+                'tax_id' => $closingContract['header']['business_tax_id'] ?? $settings?->company_tax_id,
+                'address' => $closingContract['header']['business_address'] ?? $settings?->company_address,
+                'phone' => $closingContract['header']['business_phone'] ?? $settings?->company_phone,
             ],
             'business' => $business,
             'session' => $session,
-            'summary' => CashRegister::summary($session),
-            'movements' => CashRegister::movements($session),
-            'paymentOperations' => CashRegisterClosingOperations::forSession($session),
-            'salesSummary' => CashRegisterClosingSales::forSession($session),
+            'summary' => $closingContract['cash_summary'],
+            'movements' => $closingContract['movements'],
+            'paymentOperations' => $closingContract['payment_operations'],
+            'salesSummary' => $closingContract['commercial'],
+            'closingContract' => $closingContract,
             'timezone' => $timezone,
         ]);
     }
 
     private function sessionPayload(CashRegisterSession $session, string $timezone, bool $includeMovements = false, ?array $paymentFilters = null): array
     {
-        $session->loadMissing(['openedBy:id,name', 'closedBy:id,name']);
-        $summary = CashRegister::summary($session);
+        $session->loadMissing(['openedBy:id,name', 'closedBy:id,name', 'closingSnapshot']);
+        $closingContract = CashRegisterClosingSnapshot::forSession($session);
+        $summary = $closingContract['cash_summary'];
 
         $payload = [
             'id' => $session->id,
@@ -353,14 +359,14 @@ class CashRegisterController extends Controller
             'notes' => $session->notes,
             'closing_notes' => $session->closing_notes,
             'summary' => $summary,
+            'closing_contract' => $closingContract,
+            'closing_source' => $closingContract['source'],
         ];
 
         if ($includeMovements) {
-            $payload['payment_operations'] = CashRegisterClosingOperations::forSession(
-                $session,
-                (string) ($paymentFilters['method'] ?? 'all'),
-                (string) ($paymentFilters['operation'] ?? 'all'),
-            );
+            $payload['payment_operations'] = $session->status === 'closed' && $session->closingSnapshot
+                ? $closingContract['payment_operations']
+                : CashRegisterClosingOperations::forSession($session, (string) ($paymentFilters['method'] ?? 'all'), (string) ($paymentFilters['operation'] ?? 'all'));
             // Inertia envía fechas legibles del tenant; la impresión recibe los Carbon originales.
             foreach (['details', 'incidents'] as $list) {
                 $payload['payment_operations'][$list] = array_map(
@@ -371,7 +377,9 @@ class CashRegisterController extends Controller
                     $payload['payment_operations'][$list],
                 );
             }
-            $movements = CashRegister::movements($session);
+            $movements = $session->status === 'closed' && $session->closingSnapshot
+                ? collect($closingContract['movements'])->map(fn (array $movement) => (object) $movement)
+                : CashRegister::movements($session);
             $expenseIds = $movements
                 ->where('reference_type', 'cash_expense')
                 ->pluck('reference_id')
@@ -397,7 +405,7 @@ class CashRegisterController extends Controller
                 'description' => $movement->description,
                 'amount' => (float) $movement->amount,
                 'created_at' => $this->formatDateTime($movement->created_at, $timezone),
-                'created_by' => $movement->createdBy?->name,
+                'created_by' => $movement->created_by ?? $movement->createdBy?->name,
                 'reference_type' => $movement->reference_type,
                 'reference_id' => $movement->reference_id,
                 'expense_status' => $expense?->status,
