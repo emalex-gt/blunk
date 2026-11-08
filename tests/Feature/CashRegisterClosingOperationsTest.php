@@ -359,6 +359,7 @@ class CashRegisterClosingOperationsTest extends TestCase
 
     public function test_document_print_renders_frozen_array_movements_without_object_property_access(): void
     {
+        $this->withoutVite();
         [$business, $branch, $user, $session] = $this->context();
         CashRegister::recordMovement($session, 'opening', 50, 'cash_register_session', $session->id, 'Apertura', $user->id);
         $session->update(['status' => 'closed', 'closed_by' => $user->id, 'closed_at' => now(), 'expected_cash' => 50, 'counted_cash' => 50, 'difference' => 0]);
@@ -437,9 +438,12 @@ class CashRegisterClosingOperationsTest extends TestCase
 
         $summary = CashRegisterClosingSales::forSession($session);
 
+        $this->assertSame(450.0, $summary['gross_total']);
+        $this->assertSame(250.0, $summary['same_period_cancellations']);
         $this->assertSame(200.0, $summary['total']);
-        $this->assertSame(3, $summary['count']);
-        $this->assertSame(2, $summary['direct_count']);
+
+        $this->assertSame(4, $summary['count']);
+        $this->assertSame(3, $summary['direct_count']);
         $this->assertSame(1, $summary['reconstructed_count']);
         $this->assertSame(0, $summary['ambiguous_count']);
     }
@@ -518,6 +522,7 @@ class CashRegisterClosingOperationsTest extends TestCase
 
     public function test_ticket_omits_individual_lists_while_document_keeps_closing_detail(): void
     {
+        $this->withoutVite();
         [$business, $branch, $user, $session] = $this->context();
         $sale = $this->sale($business, $branch, $user, 50);
         SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $sale->id, 'method' => 'cash', 'amount' => 50, 'cash_register_session_id' => $session->id, 'status' => 'captured']);
@@ -537,7 +542,7 @@ class CashRegisterClosingOperationsTest extends TestCase
         $ticket = view('cash-register.closing', [...$data, 'receiptFormat' => 'ticket'])->render();
         $document = view('cash-register.closing', [...$data, 'receiptFormat' => 'document'])->render();
 
-        $this->assertStringContainsString('TOTAL VENTAS', $ticket);
+        $this->assertStringContainsString('TOTAL VENDIDO DEL TURNO', $ticket);
         $this->assertStringNotContainsString('Resumen de movimientos', $ticket);
         $this->assertStringNotContainsString('Detalle de cobros y pagos', $ticket);
         $this->assertStringContainsString('Resumen de movimientos', $document);
