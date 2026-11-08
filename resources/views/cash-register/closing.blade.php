@@ -152,10 +152,42 @@
         <div class="line"></div>
 
         <h2 style="font-size: {{ $receiptFormat === 'ticket' ? '13px' : '16px' }};">Arqueo de efectivo</h2>
+        @php
+            $cashMethod = collect($paymentOperations['by_method'] ?? [])
+                ->firstWhere('method', 'cash') ?? [];
+
+            $cashReversalsCents = max(0, (int) round(100 * (
+                (float) ($summary['cash_sale_cancellations'] ?? 0)
+                + (float) ($summary['cash_refunds'] ?? 0)
+            )));
+
+            $sameTurnCents = min(
+                $cashReversalsCents,
+                max(0, (int) round(-100 * (float) ($cashMethod['same_turn_cancellations'] ?? 0)))
+            );
+
+            $priorCorrectionCents = min(
+                $cashReversalsCents - $sameTurnCents,
+                max(0, (int) round(-100 * (float) ($cashMethod['prior_period_corrections'] ?? 0)))
+            );
+
+            $unclassifiedCents = $cashReversalsCents - $sameTurnCents - $priorCorrectionCents;
+
+            $netCashCurrentTurn = round(
+                (float) $summary['cash_sales'] - $sameTurnCents / 100,
+                2
+            );
+        @endphp
         <table>
             <tbody>
                 <tr><td>Monto inicial</td><td class="right">{{ formatMoney($sessionValue('opening_amount', $session->opening_amount), $business?->country) }}</td></tr>
-                <tr><td>Efectivo neto de ventas</td><td class="right positive">{{ formatMoney($summary['cash_sales'] - $summary['cash_sale_cancellations'] - $summary['cash_refunds'], $business?->country) }}</td></tr>
+                <tr><td>Efectivo neto de ventas del turno</td><td class="right positive">{{ formatMoney($netCashCurrentTurn, $business?->country) }}</td></tr>
+                @if ($priorCorrectionCents > 0)
+                    <tr><td>Correcciones de cierres anteriores</td><td class="right negative">-{{ formatMoney($priorCorrectionCents / 100, $business?->country) }}</td></tr>
+                @endif
+                @if ($unclassifiedCents > 0)
+                    <tr><td>Anulaciones/reembolsos sin origen seguro</td><td class="right negative">-{{ formatMoney($unclassifiedCents / 100, $business?->country) }}</td></tr>
+                @endif
                 <tr><td>Abonos netos en efectivo</td><td class="right">{{ formatMoney($summary['credit_payments'] - $summary['credit_payment_cancellations'], $business?->country) }}</td></tr>
                 <tr><td>Gastos netos</td><td class="right negative">-{{ formatMoney($summary['expenses'] - $summary['expense_cancellations'], $business?->country) }}</td></tr>
                 <tr><td>Compras pagadas de caja</td><td class="right negative">-{{ formatMoney($summary['cash_purchases'], $business?->country) }}</td></tr>

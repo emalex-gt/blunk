@@ -72,6 +72,30 @@ export default function Show({ session }: { session: Session }) {
     const business = page.props.business as { country?: string | null } | null;
     const country = business?.country ?? 'GT';
     const flash = page.props.flash as { cash_closing_print_id?: number | null } | undefined;
+    const cashMethod = session.payment_operations.by_method.find(
+        (method) => method.method === 'cash',
+    );
+
+    const cashReversalsCents = Math.max(0, Math.round(100 * (
+        (session.summary.cash_sale_cancellations ?? 0)
+        + (session.summary.cash_refunds ?? 0)
+    )));
+
+    const sameTurnCents = Math.min(
+        cashReversalsCents,
+        Math.max(0, Math.round(-100 * (cashMethod?.same_turn_cancellations ?? 0))),
+    );
+
+    const priorCorrectionCents = Math.min(
+        cashReversalsCents - sameTurnCents,
+        Math.max(0, Math.round(-100 * (cashMethod?.prior_period_corrections ?? 0))),
+    );
+
+    const unclassifiedCents = cashReversalsCents - sameTurnCents - priorCorrectionCents;
+
+    const netCashCurrentTurn = Math.round(
+        session.summary.cash_sales * 100 - sameTurnCents,
+    ) / 100;
 
     useEffect(() => {
         if (flash?.cash_closing_print_id === session.id) {
@@ -126,7 +150,9 @@ export default function Show({ session }: { session: Session }) {
                             <Detail label="Cerrada por" value={session.closed_by ?? '-'} />
                         </div>
                         <div className="mt-5 grid gap-4 md:grid-cols-6">
-                            <Detail label="Efectivo neto de ventas" value={formatCurrency(session.summary.cash_sales - session.summary.cash_refunds - session.summary.cash_sale_cancellations, country)} />
+                            <Detail label="Efectivo neto de ventas del turno" value={formatCurrency(netCashCurrentTurn, country)} />
+                            {priorCorrectionCents > 0 && <Detail label="Correcciones de cierres anteriores" value={formatCurrency(-priorCorrectionCents / 100, country)} />}
+                            {unclassifiedCents > 0 && <Detail label="Anulaciones/reembolsos sin origen seguro" value={formatCurrency(-unclassifiedCents / 100, country)} />}
                             <Detail label="Abonos netos en efectivo" value={formatCurrency(session.summary.credit_payments - session.summary.credit_payment_cancellations, country)} />
                             <Detail label="Gastos netos" value={formatCurrency(session.summary.expenses - session.summary.expense_cancellations, country)} />
                             <Detail label="Compras desde caja" value={formatCurrency(session.summary.cash_purchases, country)} />

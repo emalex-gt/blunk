@@ -703,6 +703,154 @@ class CashRegisterClosingOperationsTest extends TestCase
             )
         );
     }
+    public function test_prior_period_cash_cancellation_is_separate_from_current_sales_on_ticket(): void
+    {
+        $this->withoutVite();
+
+        [$business, $branch, $user, $session] = $this->context();
+
+        $original = CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'opened_by' => $user->id,
+            'status' => 'closed',
+            'opening_amount' => 0,
+            'expected_cash' => 0,
+            'opened_at' => now()->subHours(4),
+            'closed_at' => now()->subHours(3),
+        ]);
+
+        $oldSale = $this->sale($business, $branch, $user, 195);
+
+        Sale::query()->whereKey($oldSale->id)->update([
+            'created_at' => now()->subMinutes(210),
+        ]);
+
+        SalePayment::query()->create([
+            'business_id' => $business->id,
+            'sale_id' => $oldSale->id,
+            'method' => 'cash',
+            'amount' => 195,
+            'cash_register_session_id' => $original->id,
+            'collected_at' => now()->subMinutes(205),
+            'status' => 'captured',
+        ]);
+
+        $session->update(['opening_amount' => 2500]);
+
+        CashRegister::recordMovement(
+            $session, 'opening', 2500,
+            'cash_register_session', $session->id,
+            'Apertura', $user->id
+        );
+
+        $newSale = $this->sale($business, $branch, $user, 500);
+
+        SalePayment::query()->create([
+            'business_id' => $business->id,
+            'sale_id' => $newSale->id,
+            'method' => 'cash',
+            'amount' => 500,
+            'cash_register_session_id' => $session->id,
+            'status' => 'captured',
+        ]);
+
+        CashRegister::recordMovement(
+            $session, 'sale_cash', 500,
+            'sale', $newSale->id,
+            'Venta actual', $user->id
+        );
+
+        $oldSale->update([
+            'status' => 'cancelled',
+            'cancelled_at' => now(),
+        ]);
+
+        CashRegister::recordMovement(
+            $session, 'sale_cash_cancel', -195,
+            'sale', $oldSale->id,
+            'Anulacion anterior', $user->id
+        );
+
+        CashRegisterClosingCorrections::recordSaleCancellation(
+            $oldSale->fresh(),
+            $session,
+            $user->id,
+            'Anulacion de venta anterior'
+        );
+
+        $session->update([
+            'status' => 'closed',
+            'closed_by' => $user->id,
+            'closed_at' => now()->addMinute(),
+            'expected_cash' => 2805,
+            'counted_cash' => 2805,
+            'difference' => 0,
+        ]);
+
+        CashRegisterClosingSnapshot::capture($session->fresh());
+
+        $contract = CashRegisterClosingSnapshot::forSession(
+            $session->fresh()->load('closingSnapshot')
+        );
+
+        $cashMethod = collect(
+            $contract['payment_operations']['by_method']
+        )->firstWhere('method', 'cash');
+
+        $this->assertSame(500.0, (float) $cashMethod['sales']);
+        $this->assertSame(
+            -195.0,
+            (float) $cashMethod['prior_period_corrections']
+        );
+        $this->assertSame(
+            2805.0,
+            (float) $contract['cash_summary']['expected_cash']
+        );
+
+        $html = view('cash-register.closing', [
+            'paperSize' => 'Letter',
+            'receiptFormat' => 'ticket',
+            'company' => [
+                'logo_url' => null,
+                'name' => $business->name,
+                'tax_id' => null,
+                'address' => null,
+                'phone' => null,
+            ],
+            'business' => $business,
+            'session' => $session->fresh(),
+            'summary' => $contract['cash_summary'],
+            'movements' => $contract['movements'],
+            'paymentOperations' => $contract['payment_operations'],
+            'salesSummary' => $contract['commercial'],
+            'closingContract' => $contract,
+            'timezone' => 'America/Guatemala',
+        ])->render();
+
+        $this->assertStringContainsString(
+            'Efectivo neto de ventas del turno</td><td class="right positive">'
+                .formatMoney(500, $business->country),
+            $html
+        );
+
+        $this->assertStringContainsString(
+            'Correcciones de cierres anteriores</td><td class="right negative">-'
+                .formatMoney(195, $business->country),
+            $html
+        );
+
+        $this->assertStringContainsString(
+            'Efectivo esperado</td><td class="right total">'
+                .formatMoney(2805, $business->country),
+            $html
+        );
+
+        $this->assertSame(
+            2805.0,
+            CashRegister::expectedCash($session->id)
+        );
+    }
     private function context(): array
     {
         $business = Business::query()->create(['name' => 'Cierre '.uniqid(), 'slug' => 'closing-'.uniqid(), 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
