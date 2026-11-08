@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Business;
 use App\Models\CashExpense;
 use App\Models\CashExpenseCategory;
+use App\Models\CashRegisterClosingCorrection;
 use App\Models\CashRegisterSession;
 use App\Services\BranchAccessService;
 use App\Models\TenantSetting;
@@ -322,7 +323,7 @@ class CashRegisterController extends Controller
             'paperSize' => ($business?->country ?? 'GT') === 'AR' ? 'A4' : 'Letter',
             'receiptFormat' => $settings?->receipt_format === 'document' ? 'document' : 'ticket',
             'company' => [
-                'logo_url' => $settings?->company_logo_url,
+                'logo_url' => $closingContract['header']['business_logo_url'] ?? $settings?->company_logo_url,
                 'name' => $closingContract['header']['business_name'] ?: ($settings?->company_name ?: $business?->name),
                 'tax_id' => $closingContract['header']['business_tax_id'] ?? $settings?->company_tax_id,
                 'address' => $closingContract['header']['business_address'] ?? $settings?->company_address,
@@ -339,25 +340,79 @@ class CashRegisterController extends Controller
         ]);
     }
 
+    public function correctionPrint(Request $request, CashRegisterClosingCorrection $correction)
+    {
+        abort_unless((int) $correction->business_id === (int) currentBusinessId(), 403);
+
+        if (BranchInventory::branchesEnabled((int) $correction->business_id)) {
+            app(BranchAccessService::class)->assertCanAccessBranch($request->user(), (int) $correction->branch_id, (int) $correction->business_id);
+        }
+
+        $correction->load([
+            'sale:id,business_number,total',
+            'originalSession:id,opened_at,closed_at',
+            'correctionSession:id,opened_at,closed_at',
+            'responsibleUser:id,name',
+        ]);
+        $settings = TenantSetting::query()->where('business_id', $correction->business_id)->first();
+        $business = Business::query()->select('id', 'name', 'country')->find($correction->business_id);
+
+        return view('cash-register.correction', [
+            'correction' => $correction,
+            'company' => [
+                'name' => $settings?->company_name ?: $business?->name,
+                'tax_id' => $settings?->company_tax_id,
+                'address' => $settings?->company_address,
+                'phone' => $settings?->company_phone,
+            ],
+            'timezone' => tenantTimezone($correction->business_id),
+        ]);
+    }
+
     private function sessionPayload(CashRegisterSession $session, string $timezone, bool $includeMovements = false, ?array $paymentFilters = null): array
     {
         $session->loadMissing(['openedBy:id,name', 'closedBy:id,name', 'closingSnapshot']);
-        $closingContract = CashRegisterClosingSnapshot::forSession($session);
-        $summary = $closingContract['cash_summary'];
+        $storedSnapshot = $session->status === 'closed' ? $session->closingSnapshot : null;
+
+        // The paginated history only needs its frozen summary. Avoid rebuilding
+        // every movement and payment operation for every row in the listing.
+        if (! $includeMovements && $storedSnapshot) {
+            $frozenSnapshot = $storedSnapshot->snapshot;
+            $closingContract = [
+                'commercial' => $frozenSnapshot['commercial'] ?? CashRegisterClosingSales::forSession($session),
+                'source' => 'snapshot',
+                'schema_version' => $storedSnapshot->schema_version,
+            ];
+            $summary = $frozenSnapshot['cash_summary'] ?? CashRegister::summary($session);
+            $frozen = $frozenSnapshot['session'] ?? [];
+        } elseif (! $includeMovements) {
+            $closingContract = [
+                'commercial' => CashRegisterClosingSales::forSession($session),
+                'source' => 'reconstructed',
+                'schema_version' => null,
+            ];
+            $summary = CashRegister::summary($session);
+            $frozen = [];
+        } else {
+            $closingContract = CashRegisterClosingSnapshot::forSession($session);
+            $summary = $closingContract['cash_summary'];
+            $frozen = $storedSnapshot ? ($closingContract['session'] ?? []) : [];
+        }
+
 
         $payload = [
             'id' => $session->id,
             'status' => $session->status,
-            'opening_amount' => (float) $session->opening_amount,
-            'expected_cash' => (float) ($session->status === 'open' ? $summary['expected_cash'] : $session->expected_cash),
-            'counted_cash' => $session->counted_cash !== null ? (float) $session->counted_cash : null,
-            'difference' => $session->difference !== null ? (float) $session->difference : null,
-            'opened_at' => $this->formatDateTime($session->opened_at, $timezone),
-            'closed_at' => $this->formatDateTime($session->closed_at, $timezone),
-            'opened_by' => $session->openedBy?->name,
-            'closed_by' => $session->closedBy?->name,
-            'notes' => $session->notes,
-            'closing_notes' => $session->closing_notes,
+            'opening_amount' => (float) ($frozen['opening_amount'] ?? $session->opening_amount),
+            'expected_cash' => (float) ($session->status === 'open' ? $summary['expected_cash'] : ($frozen['expected_cash'] ?? $session->expected_cash)),
+            'counted_cash' => array_key_exists('counted_cash', $frozen) ? $frozen['counted_cash'] : ($session->counted_cash !== null ? (float) $session->counted_cash : null),
+            'difference' => array_key_exists('difference', $frozen) ? $frozen['difference'] : ($session->difference !== null ? (float) $session->difference : null),
+            'opened_at' => $this->formatDateTime($frozen['opened_at'] ?? $session->opened_at, $timezone),
+            'closed_at' => $this->formatDateTime($frozen['closed_at'] ?? $session->closed_at, $timezone),
+            'opened_by' => $frozen['opened_by'] ?? $session->openedBy?->name,
+            'closed_by' => $frozen['closed_by'] ?? $session->closedBy?->name,
+            'notes' => $frozen['notes'] ?? $session->notes,
+            'closing_notes' => $frozen['closing_notes'] ?? $session->closing_notes,
             'summary' => $summary,
             'closing_contract' => $closingContract,
             'closing_source' => $closingContract['source'],
@@ -405,7 +460,7 @@ class CashRegisterController extends Controller
                 'description' => $movement->description,
                 'amount' => (float) $movement->amount,
                 'created_at' => $this->formatDateTime($movement->created_at, $timezone),
-                'created_by' => $movement->created_by ?? $movement->createdBy?->name,
+                'created_by' => $movement->created_by_name ?? $movement->createdBy?->name,
                 'reference_type' => $movement->reference_type,
                 'reference_id' => $movement->reference_id,
                 'expense_status' => $expense?->status,
@@ -414,6 +469,30 @@ class CashRegisterController extends Controller
                 'expense_cancellation_note' => $expense?->cancellation_note,
             ];
             })->values();
+
+            $payload['subsequent_corrections'] = $session->status === 'closed'
+                ? CashRegisterClosingCorrection::query()
+                    ->where('business_id', $session->business_id)
+                    ->where('branch_id', $session->branch_id)
+                    ->where('original_cash_register_session_id', $session->id)
+                    ->where(function ($query) use ($session) {
+                        $query->whereNull('correction_cash_register_session_id')
+                            ->orWhere('correction_cash_register_session_id', '!=', $session->id);
+                    })
+                    ->with(['sale:id,business_number', 'correctionSession:id,closed_at', 'responsibleUser:id,name'])
+                    ->orderBy('occurred_at')
+                    ->get()
+                    ->map(fn (CashRegisterClosingCorrection $correction) => [
+                        'id' => $correction->id,
+                        'amount' => (float) $correction->amount,
+                        'payment_method' => $correction->payment_method,
+                        'occurred_at' => $this->formatDateTime($correction->occurred_at, $timezone),
+                        'reason' => $correction->reason,
+                        'sale_number' => $correction->sale?->business_number,
+                        'correction_session_id' => $correction->correction_cash_register_session_id,
+                        'responsible_user' => $correction->responsibleUser?->name,
+                    ])->values()
+                : collect();
         }
 
         return $payload;

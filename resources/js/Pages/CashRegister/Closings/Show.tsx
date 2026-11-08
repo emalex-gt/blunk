@@ -27,7 +27,7 @@ type PaymentOperation = {
 };
 
 type PaymentOperations = {
-    by_method: Array<{ method: string; sales: number; credit_payments: number; purchases: number; purchases_outside_cash: number; expenses: number; net: number }>;
+    by_method: Array<{ method: string; sales: number; same_turn_cancellations: number; prior_period_corrections: number; historical_unattributed: number; credit_payments: number; purchases: number; purchases_outside_cash: number; expenses: number; net: number }>;
     details: PaymentOperation[];
     detail_total: number;
     has_more_details: boolean;
@@ -64,6 +64,7 @@ type Session = {
         commercial: { total: number; gross_total: number; same_period_cancellations: number; credit_sales_total: number; ambiguous_count: number };
         corrections: Array<{ id: number; type: string; amount: number; occurred_at: string | null; sale_number: number | null; original_session_id: number | null; responsible_user: string | null; reason: string | null }>;
     };
+    subsequent_corrections: Array<{ id: number; amount: number; occurred_at: string | null; sale_number: number | null; correction_session_id: number | null; responsible_user: string | null; reason: string | null }>;
 };
 
 export default function Show({ session }: { session: Session }) {
@@ -113,7 +114,9 @@ export default function Show({ session }: { session: Session }) {
                         <div className="mt-4 grid gap-4 md:grid-cols-4"><Detail label="Ventas brutas" value={formatCurrency(session.closing_contract.commercial.gross_total, country)} /><Detail label="Anulaciones del turno" value={formatCurrency(session.closing_contract.commercial.same_period_cancellations, country)} /><Detail label="Ventas a crédito" value={formatCurrency(session.closing_contract.commercial.credit_sales_total, country)} /><Detail label="Total vendido neto" value={formatCurrency(session.closing_contract.commercial.total, country)} /></div>
                     </section>
 
-                    {session.closing_contract.corrections.length > 0 && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h3 className="text-lg font-semibold text-amber-950">Correcciones de períodos anteriores</h3>{session.closing_contract.corrections.map((correction) => <p key={correction.id} className="mt-2 text-sm text-amber-900">{correction.occurred_at ?? '-'} · Venta #{correction.sale_number ?? '-'} · Cierre original #{correction.original_session_id ?? '-'} · {formatCurrency(correction.amount, country)} · {correction.responsible_user ?? 'No disponible'}{correction.reason ? ` · ${correction.reason}` : ''}</p>)}</section>}
+                    {session.closing_contract.corrections.length > 0 && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h3 className="text-lg font-semibold text-amber-950">Correcciones de períodos anteriores</h3>{session.closing_contract.corrections.map((correction) => <p key={correction.id} className="mt-2 text-sm text-amber-900">{correction.occurred_at ?? '-'} · Venta #{correction.sale_number ?? '-'} · Cierre original #{correction.original_session_id ?? 'No determinado'} · {formatCurrency(correction.amount, country)} · {correction.responsible_user ?? 'No disponible'}{correction.reason ? ` · ${correction.reason}` : ''} · <a className="font-semibold underline" href={route('cash-register.closing-corrections.print', correction.id)} target="_blank">Imprimir correctivo</a></p>)}</section>}
+
+                    {session.subsequent_corrections.length > 0 && <section className="rounded-2xl border border-sky-200 bg-sky-50 p-5"><h3 className="text-lg font-semibold text-sky-950">Correcciones posteriores a este cierre</h3><p className="mt-1 text-sm text-sky-900">Son informativas y no alteran los importes congelados del cierre original.</p>{session.subsequent_corrections.map((correction) => <p key={correction.id} className="mt-2 text-sm text-sky-900">{correction.occurred_at ?? '-'} · Venta #{correction.sale_number ?? '-'} · {formatCurrency(correction.amount, country)} · {correction.responsible_user ?? 'No disponible'}{correction.reason ? ` · ${correction.reason}` : ''} · <a className="font-semibold underline" href={route('cash-register.closing-corrections.print', correction.id)} target="_blank">Imprimir correctivo</a></p>)}</section>}
 
                     <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
                         <div className="grid gap-4 md:grid-cols-4">
@@ -123,7 +126,7 @@ export default function Show({ session }: { session: Session }) {
                             <Detail label="Cerrada por" value={session.closed_by ?? '-'} />
                         </div>
                         <div className="mt-5 grid gap-4 md:grid-cols-6">
-                            <Detail label="Ventas netas en efectivo" value={formatCurrency(session.summary.cash_sales - session.summary.cash_refunds - session.summary.cash_sale_cancellations, country)} />
+                            <Detail label="Efectivo neto de ventas" value={formatCurrency(session.summary.cash_sales - session.summary.cash_refunds - session.summary.cash_sale_cancellations, country)} />
                             <Detail label="Abonos netos en efectivo" value={formatCurrency(session.summary.credit_payments - session.summary.credit_payment_cancellations, country)} />
                             <Detail label="Gastos netos" value={formatCurrency(session.summary.expenses - session.summary.expense_cancellations, country)} />
                             <Detail label="Compras desde caja" value={formatCurrency(session.summary.cash_purchases, country)} />
@@ -144,12 +147,12 @@ export default function Show({ session }: { session: Session }) {
                         <div className="overflow-x-auto">
                             <table className="min-w-[760px] w-full text-sm">
                                 <thead><tr className="bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                    <th className="px-4 py-3">Medio</th><th className="px-4 py-3 text-right">Ventas netas</th><th className="px-4 py-3 text-right">Abonos netos</th><th className="px-4 py-3 text-right">Compras desde caja</th><th className="px-4 py-3 text-right">Compras fuera de caja</th><th className="px-4 py-3 text-right">Gastos netos</th>
+                                    <th className="px-4 py-3">Medio</th><th className="px-4 py-3 text-right">Ventas cobradas</th><th className="px-4 py-3 text-right">Anulaciones turno</th><th className="px-4 py-3 text-right">Correcciones anteriores</th><th className="px-4 py-3 text-right">Neto financiero</th><th className="px-4 py-3 text-right">Abonos netos</th><th className="px-4 py-3 text-right">Compras desde caja</th><th className="px-4 py-3 text-right">Compras fuera de caja</th><th className="px-4 py-3 text-right">Gastos netos</th>
                                 </tr></thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {session.payment_operations.by_method.map((row) => <tr key={row.method}>
                                         <td className="px-4 py-3 font-semibold text-slate-800">{paymentMethodLabel(row.method)}</td>
-                                        <Amount value={row.sales} country={country} /><Amount value={row.credit_payments} country={country} />{row.method === 'cash' ? <Amount value={row.purchases} country={country} /> : <td className="px-4 py-3 text-right text-slate-400">—</td>}<Amount value={row.purchases_outside_cash} country={country} />{row.method === 'cash' ? <Amount value={row.expenses} country={country} /> : <td className="px-4 py-3 text-right text-slate-400">—</td>}
+                                        <Amount value={row.sales} country={country} /><Amount value={row.same_turn_cancellations} country={country} /><Amount value={row.prior_period_corrections} country={country} /><Amount value={row.net} country={country} /><Amount value={row.credit_payments} country={country} />{row.method === 'cash' ? <Amount value={row.purchases} country={country} /> : <td className="px-4 py-3 text-right text-slate-400">—</td>}<Amount value={row.purchases_outside_cash} country={country} />{row.method === 'cash' ? <Amount value={row.expenses} country={country} /> : <td className="px-4 py-3 text-right text-slate-400">—</td>}
                                     </tr>)}
                                 </tbody>
                             </table>
@@ -163,6 +166,7 @@ export default function Show({ session }: { session: Session }) {
                         {session.payment_operations.has_more_details && <p className="border-t border-amber-100 bg-amber-50 px-5 py-3 text-sm text-amber-900">Se muestran los primeros 200 de {session.payment_operations.detail_total} movimientos.</p>}
                         {session.payment_operations.details.length === 0 && <p className="p-5 text-sm text-slate-500">No hay cobros, pagos, devoluciones ni anulaciones atribuibles a esta sesión.</p>}
                         {session.payment_operations.incidents.length > 0 && <div className="border-t border-red-100 bg-red-50 p-5"><h4 className="font-semibold text-red-900">Movimientos sin asignar con certeza</h4>{session.payment_operations.incidents.map((operation) => <p key={operation.id} className="mt-2 text-sm text-red-800">{operation.reference}: {operation.incident}</p>)}</div>}
+                        {session.payment_operations.by_method.some((row) => row.historical_unattributed !== 0) && <p className="border-t border-amber-100 bg-amber-50 px-5 py-3 text-sm text-amber-900">Hay anulaciones o reembolsos con origen histórico no determinado; no se asignaron a un turno arbitrariamente.</p>}
                     </section>
 
                     <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">

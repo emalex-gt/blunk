@@ -82,9 +82,11 @@ class CashRegisterClosingOperations
             $method = self::method($operation['method']);
             $bucket = match ($operation['kind']) {
                 'sale' => 'sales',
-                'sale_cancellation', 'refund' => (int) ($operation['original_cash_register_session_id'] ?? 0) === (int) $session->id
-                    ? 'same_turn_cancellations'
-                    : 'prior_period_corrections',
+                'sale_cancellation', 'refund' => ! isset($operation['original_cash_register_session_id']) || ! $operation['original_cash_register_session_id']
+                    ? 'historical_unattributed'
+                    : ((int) $operation['original_cash_register_session_id'] === (int) $session->id
+                        ? 'same_turn_cancellations'
+                        : 'prior_period_corrections'),
                 'credit_payment', 'credit_payment_cancellation' => 'credit_payments',
                 'purchase' => 'purchases',
                 'expense', 'expense_cancel' => 'expenses',
@@ -228,10 +230,10 @@ class CashRegisterClosingOperations
                 $query->where('cash_register_session_id', $session->id)
                     ->orWhereBetween('refunded_at', [$from, $to])
                     ->orWhere(fn ($query) => $query->whereNull('refunded_at')->whereBetween('created_at', [$from, $to]));
-            })->get()
+            })->with('payment:id,cash_register_session_id')->get()
             ->map(fn (SaleRefund $refund) => ['id' => 'refund-'.$refund->id, 'kind' => 'refund', 'label' => 'Devolución', 'method' => $refund->refund_method,
                 'signed_amount' => -1 * (float) $refund->amount, 'amount' => (float) $refund->amount, 'occurred_at' => $refund->refunded_at ?? $refund->created_at,
-                'cash_register_session_id' => $refund->cash_register_session_id, 'reference' => $refund->reference ?: 'Devolución #'.$refund->id, 'party' => $refund->refunded_to, 'attribution' => null]);
+                'cash_register_session_id' => $refund->cash_register_session_id, 'original_cash_register_session_id' => $refund->payment?->cash_register_session_id, 'reference' => $refund->reference ?: 'Devolución #'.$refund->id, 'party' => $refund->refunded_to, 'attribution' => null]);
     }
 
     private static function inSession(CarbonInterface $at, CashRegisterSession $session): bool
@@ -243,7 +245,7 @@ class CashRegisterClosingOperations
     private static function emptySummary(): array
     {
         return collect(['cash', 'card', 'check', 'transfer', 'other'])->mapWithKeys(fn ($method) => [$method => [
-            'sales' => 0.0, 'same_turn_cancellations' => 0.0, 'prior_period_corrections' => 0.0, 'credit_payments' => 0.0, 'purchases' => 0.0, 'purchases_outside_cash' => 0.0, 'expenses' => 0.0, 'net' => 0.0,
+            'sales' => 0.0, 'same_turn_cancellations' => 0.0, 'prior_period_corrections' => 0.0, 'historical_unattributed' => 0.0, 'credit_payments' => 0.0, 'purchases' => 0.0, 'purchases_outside_cash' => 0.0, 'expenses' => 0.0, 'net' => 0.0,
         ]])->all();
     }
 

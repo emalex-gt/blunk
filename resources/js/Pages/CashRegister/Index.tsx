@@ -39,6 +39,9 @@ type PaymentOperations = {
     by_method: Array<{
         method: string;
         sales: number;
+        same_turn_cancellations: number;
+        prior_period_corrections: number;
+        historical_unattributed: number;
         credit_payments: number;
         purchases: number;
         purchases_outside_cash: number;
@@ -358,7 +361,7 @@ export default function Index({
 
                             <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
                                 <div className="grid gap-4 md:grid-cols-4">
-                                    <Summary label="Ventas netas en efectivo" value={formatCurrency(openSession.summary.cash_sales - openSession.summary.cash_refunds - openSession.summary.cash_sale_cancellations, country)} />
+                                    <Summary label="Efectivo neto de ventas" value={formatCurrency(openSession.summary.cash_sales - openSession.summary.cash_refunds - openSession.summary.cash_sale_cancellations, country)} />
                                     <Summary label="Abonos netos en efectivo" value={formatCurrency(openSession.summary.credit_payments - openSession.summary.credit_payment_cancellations, country)} />
                                     <Summary label="Gastos netos de caja" value={formatCurrency(openSession.summary.expenses - openSession.summary.expense_cancellations, country)} />
                                     <Summary label="Compras pagadas desde caja" value={formatCurrency(openSession.summary.cash_purchases, country)} />
@@ -555,7 +558,10 @@ function PaymentOperationsOverview({ paymentOperations, country, onFiltersChange
                         <thead>
                             <tr className="bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                                 <th className="px-4 py-3">Medio</th>
-                                <th className="px-4 py-3 text-right">Ventas netas</th>
+                                <th className="px-4 py-3 text-right">Ventas cobradas</th>
+                                <th className="px-4 py-3 text-right">Anulaciones turno</th>
+                                <th className="px-4 py-3 text-right">Correcciones anteriores</th>
+                                <th className="px-4 py-3 text-right">Neto financiero</th>
                                 <th className="px-4 py-3 text-right">Abonos netos</th>
                                 <th className="px-4 py-3 text-right">Compras desde caja</th>
                                 <th className="px-4 py-3 text-right">Compras fuera de caja</th>
@@ -565,12 +571,15 @@ function PaymentOperationsOverview({ paymentOperations, country, onFiltersChange
                         <tbody className="divide-y divide-slate-100">
                             {operations.by_method.length === 0 ? (
                                 <tr>
-                                    <td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-500">No hay operaciones de pago atribuibles a esta sesión.</td>
+                                    <td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-500">No hay operaciones de pago atribuibles a esta sesión.</td>
                                 </tr>
                             ) : operations.by_method.map((row) => (
                                 <tr key={row.method}>
                                     <td className="px-4 py-3 font-semibold text-slate-800">{paymentMethodLabel(row.method)}</td>
                                     <PaymentAmount value={row.sales} country={country} />
+                                    <PaymentAmount value={row.same_turn_cancellations} country={country} />
+                                    <PaymentAmount value={row.prior_period_corrections} country={country} />
+                                    <PaymentAmount value={row.net} country={country} />
                                     <PaymentAmount value={row.credit_payments} country={country} />
                                     {row.method === 'cash'
                                         ? <PaymentAmount value={row.purchases} country={country} />
@@ -584,6 +593,9 @@ function PaymentOperationsOverview({ paymentOperations, country, onFiltersChange
                         </tbody>
                     </table>
                 </div>
+                    {operations.by_method.some((row) => row.historical_unattributed !== 0) && (
+                        <p className="border-t border-amber-100 bg-amber-50 px-5 py-3 text-sm text-amber-900">Hay anulaciones o reembolsos con origen histórico no determinado; no se asignaron a un turno arbitrariamente.</p>
+                    )}
             </section>
 
             <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">

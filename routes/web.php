@@ -576,6 +576,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/cash-register/closings', [CashRegisterController::class, 'closings'])->middleware('permission:cash_register.view')->name('cash-register.closings.index');
             Route::get('/cash-register/closings/{session}', [CashRegisterController::class, 'closingShow'])->middleware('permission:cash_register.view')->name('cash-register.closings.show');
             Route::get('/cash-register/closings/{session}/print', [CashRegisterController::class, 'closingPrint'])->middleware('permission:cash_register.view')->name('cash-register.closings.print');
+            Route::get('/cash-register/closing-corrections/{correction}/print', [CashRegisterController::class, 'correctionPrint'])->middleware('permission:cash_register.view')->name('cash-register.closing-corrections.print');
         });
 
         Route::middleware('module:purchases')->group(function () {

@@ -8,13 +8,24 @@ use App\Models\Sale;
 
 final class CashRegisterClosingCorrections
 {
-    public static function recordSaleCancellation(Sale $sale, CashRegisterSession $correctionSession, ?int $userId, ?string $reason): void
+    public static function recordSaleCancellation(Sale $sale, ?CashRegisterSession $correctionSession, ?int $userId, ?string $reason): void
     {
-        $originalSessionId = $sale->capturedPayments()
-            ->whereNotNull('cash_register_session_id')
-            ->value('cash_register_session_id');
+        $sale->loadMissing('payments');
 
-        if (! $originalSessionId || (int) $originalSessionId === (int) $correctionSession->id) {
+        $originalSessionIds = $sale->capturedPayments()
+            ->whereNotNull('cash_register_session_id')
+            ->pluck('cash_register_session_id')
+            ->map(fn ($sessionId) => (int) $sessionId)
+            ->unique()
+            ->values();
+
+        // A sale paid from more than one historical session cannot be assigned to
+        // one closing without evidence. Keep it observable as unattributed.
+        $originalSessionId = $originalSessionIds->count() === 1
+            ? $originalSessionIds->first()
+            : null;
+
+        if ($originalSessionId && $correctionSession && $originalSessionId === (int) $correctionSession->id) {
             return;
         }
 
@@ -26,13 +37,14 @@ final class CashRegisterClosingCorrections
             'business_id' => $sale->business_id,
             'branch_id' => $sale->branch_id,
             'original_cash_register_session_id' => $originalSessionId,
-            'correction_cash_register_session_id' => $correctionSession->id,
+            'correction_cash_register_session_id' => $correctionSession?->id,
             'sale_id' => $sale->id,
-            'payment_method' => 'cash',
-            'amount' => -1 * CashRegister::cashAmountFromPayments($sale->payments),
+            'payment_method' => $sale->payments->first()?->method,
+            'amount' => -1 * (float) $sale->total,
             'occurred_at' => now(),
             'responsible_user_id' => $userId,
             'reason' => $reason,
+            'metadata' => ['cash_effect' => -1 * CashRegister::cashAmountFromPayments($sale->payments)],
         ]);
     }
 }

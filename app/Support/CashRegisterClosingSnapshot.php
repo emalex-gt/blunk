@@ -73,6 +73,7 @@ final class CashRegisterClosingSnapshot
                 'closing_notes' => $session->closing_notes,
             ],
             'header' => [
+                'business_logo_url' => $settings?->company_logo_url,
                 'business_name' => $settings?->company_name ?: $business?->name,
                 'business_tax_id' => $settings?->company_tax_id,
                 'business_address' => $settings?->company_address,
@@ -89,7 +90,7 @@ final class CashRegisterClosingSnapshot
                 'amount' => (float) $movement->amount,
                 'description' => $movement->description,
                 'created_at' => $movement->created_at?->toIso8601String(),
-                'created_by' => $movement->createdBy?->name,
+                'created_by_name' => $movement->createdBy?->name,
                 'reference_type' => $movement->reference_type,
                 'reference_id' => $movement->reference_id,
             ])->all(),

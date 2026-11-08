@@ -837,7 +837,6 @@ class SaleController extends Controller
                     stockMovementNote('sale', $sale->business_number ?: $sale->id),
                     $request->user()->id,
                 );
-                CashRegisterClosingCorrections::recordSaleCancellation($sale, $cashSession, $request->user()->id, $data['reason']);
             }
             }
 
@@ -1510,6 +1509,7 @@ class SaleController extends Controller
 
             $branchId = (int) ($sale->branch_id ?: BranchInventory::defaultBranch($businessId)->id);
             $cashAmount = CashRegister::cashAmountFromPayments($sale->payments);
+            $cashSession = null;
 
             if ($cashAmount > 0) {
                 CashRegister::requireOpenSession(
@@ -1555,6 +1555,13 @@ class SaleController extends Controller
                 'cancelled_by' => $request->user()->id,
                 'cancellation_reason' => $data['reason'],
             ]);
+
+            CashRegisterClosingCorrections::recordSaleCancellation(
+                $sale,
+                $cashSession ?: CashRegister::currentOpenSession($businessId, true, $branchId),
+                $request->user()->id,
+                $data['reason'],
+            );
                 });
 
                 return [

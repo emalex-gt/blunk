@@ -66,6 +66,7 @@ class FelCancellationFinalizer
 
                 $branchId = (int) ($sale->branch_id ?: BranchInventory::defaultBranch($businessId)->id);
                 $cashAmount = CashRegister::cashAmountFromPayments($sale->payments);
+                $cashSession = null;
 
                 if ($cashAmount > 0) {
                     CashRegister::requireOpenSession(
@@ -96,7 +97,6 @@ class FelCancellationFinalizer
                         stockMovementNote('sale_cancel', $sale->business_number ?: $sale->id),
                         $actor->id,
                     );
-                    CashRegisterClosingCorrections::recordSaleCancellation($sale, $cashSession, $actor->id, $lockedRequest->reason);
                 }
 
                 $sale->update([
@@ -105,6 +105,13 @@ class FelCancellationFinalizer
                     'cancelled_by' => $actor->id,
                     'cancellation_reason' => $lockedRequest->reason,
                 ]);
+
+                CashRegisterClosingCorrections::recordSaleCancellation(
+                    $sale,
+                    $cashSession ?: CashRegister::currentOpenSession($businessId, true, $branchId),
+                    $actor->id,
+                    $lockedRequest->reason,
+                );
 
                 $lockedRequest->update([
                     'finalized_at' => now(),

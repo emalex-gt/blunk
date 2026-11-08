@@ -18,6 +18,7 @@ use App\Support\CashRegister;
 use App\Support\CashRegisterClosingOperations;
 use App\Support\CashRegisterClosingSales;
 use App\Support\CashRegisterClosingSnapshot;
+use App\Support\CashRegisterClosingCorrections;
 use App\Support\AccountsReceivable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -230,6 +231,51 @@ class CashRegisterClosingOperationsTest extends TestCase
 
         $this->assertSame(195.0, (float) $snapshot->snapshot['commercial']['total']);
         $this->assertSame(195.0, (float) CashRegisterClosingSnapshot::forSession($original->fresh())['commercial']['total']);
+    }
+
+    public function test_later_sale_cancellation_creates_one_commercial_correction_without_changing_the_original_snapshot(): void
+    {
+        [$business, $branch, $user, $original] = $this->context();
+        $sale = $this->sale($business, $branch, $user, 195);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $sale->id, 'method' => 'card', 'amount' => 195, 'cash_register_session_id' => $original->id, 'status' => 'captured']);
+        $original->update(['status' => 'closed', 'closed_by' => $user->id, 'closed_at' => now()]);
+        CashRegisterClosingSnapshot::capture($original->fresh());
+
+        $later = CashRegisterSession::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'opened_by' => $user->id, 'status' => 'open', 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now()->addMinute()]);
+        $sale->update(['status' => 'cancelled', 'cancelled_at' => now()->addMinute()]);
+
+        CashRegisterClosingCorrections::recordSaleCancellation($sale->fresh(), $later, $user->id, 'Anulación posterior');
+        CashRegisterClosingCorrections::recordSaleCancellation($sale->fresh(), $later, $user->id, 'Anulación posterior');
+
+        $this->assertDatabaseCount('cash_register_closing_corrections', 1);
+        $this->assertDatabaseHas('cash_register_closing_corrections', [
+            'business_id' => $business->id,
+            'sale_id' => $sale->id,
+            'original_cash_register_session_id' => $original->id,
+            'correction_cash_register_session_id' => $later->id,
+            'amount' => '-195.00',
+        ]);
+        $this->assertSame(195.0, (float) CashRegisterClosingSnapshot::forSession($original->fresh())['commercial']['total']);
+    }
+
+    public function test_document_print_renders_frozen_array_movements_without_object_property_access(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        CashRegister::recordMovement($session, 'opening', 50, 'cash_register_session', $session->id, 'Apertura', $user->id);
+        $session->update(['status' => 'closed', 'closed_by' => $user->id, 'closed_at' => now(), 'expected_cash' => 50, 'counted_cash' => 50, 'difference' => 0]);
+        CashRegisterClosingSnapshot::capture($session->fresh());
+        $contract = CashRegisterClosingSnapshot::forSession($session->fresh()->load('closingSnapshot'));
+
+        $html = view('cash-register.closing', [
+            'paperSize' => 'Letter', 'receiptFormat' => 'document',
+            'company' => ['logo_url' => null, 'name' => $business->name, 'tax_id' => null, 'address' => null, 'phone' => null],
+            'business' => $business, 'session' => $session->fresh(), 'summary' => $contract['cash_summary'],
+            'movements' => $contract['movements'], 'paymentOperations' => $contract['payment_operations'],
+            'salesSummary' => $contract['commercial'], 'closingContract' => $contract, 'timezone' => 'America/Guatemala',
+        ])->render();
+
+        $this->assertStringContainsString('Resumen de movimientos', $html);
+        $this->assertStringContainsString('Apertura', $html);
     }
 
     public function test_backend_filters_after_aggregating_the_complete_history(): void

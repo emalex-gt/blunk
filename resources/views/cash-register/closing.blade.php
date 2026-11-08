@@ -50,6 +50,7 @@
     </style>
 </head>
 <body>
+    @php($frozenSession = ($closingContract['source'] ?? null) === 'snapshot' ? ($closingContract['session'] ?? []) : [])
     <div class="no-print">
         @include('print.partials.pdf-download-button', ['target' => '.page', 'filename' => 'cierre-caja-'.$session->id.'.pdf', 'kind' => $receiptFormat === 'ticket' ? 'ticket' : 'document', 'paper' => $receiptFormat === 'ticket' ? null : $paperSize, 'widthMm' => $receiptFormat === 'ticket' ? 80 : null, 'marginMm' => $receiptFormat === 'ticket' ? 3 : 12, 'class' => 'print-button'])
         <button class="print-button" onclick="window.print()">Imprimir cierre</button>
@@ -97,10 +98,10 @@
         <table>
             <tbody>
                 <tr><td>Cierre</td><td class="right">#{{ $session->id }}</td></tr>
-                <tr><td>Abierta</td><td class="right">{{ $session->opened_at?->copy()->timezone($timezone)->format('d/m/Y H:i') }}</td></tr>
-                <tr><td>Cerrada</td><td class="right">{{ $session->closed_at?->copy()->timezone($timezone)->format('d/m/Y H:i') }}</td></tr>
-                <tr><td>Abierta por</td><td class="right">{{ $session->openedBy?->name ?? '-' }}</td></tr>
-                <tr><td>Cerrada por</td><td class="right">{{ $session->closedBy?->name ?? '-' }}</td></tr>
+                <tr><td>Abierta</td><td class="right">{{ ! empty($frozenSession['opened_at']) ? \Carbon\Carbon::parse($frozenSession['opened_at'])->timezone($timezone)->format('d/m/Y H:i') : $session->opened_at?->copy()->timezone($timezone)->format('d/m/Y H:i') }}</td></tr>
+                <tr><td>Cerrada</td><td class="right">{{ ! empty($frozenSession['closed_at']) ? \Carbon\Carbon::parse($frozenSession['closed_at'])->timezone($timezone)->format('d/m/Y H:i') : $session->closed_at?->copy()->timezone($timezone)->format('d/m/Y H:i') }}</td></tr>
+                <tr><td>Abierta por</td><td class="right">{{ $frozenSession['opened_by'] ?? $session->openedBy?->name ?? '-' }}</td></tr>
+                <tr><td>Cerrada por</td><td class="right">{{ $frozenSession['closed_by'] ?? $session->closedBy?->name ?? '-' }}</td></tr>
             </tbody>
         </table>
 
@@ -109,29 +110,29 @@
         <h2 style="font-size: {{ $receiptFormat === 'ticket' ? '13px' : '16px' }};">Arqueo de efectivo</h2>
         <table>
             <tbody>
-                <tr><td>Monto inicial</td><td class="right">{{ formatMoney($session->opening_amount, $business?->country) }}</td></tr>
-                <tr><td>Ventas netas en efectivo</td><td class="right positive">{{ formatMoney($summary['cash_sales'] - $summary['cash_sale_cancellations'] - $summary['cash_refunds'], $business?->country) }}</td></tr>
+                <tr><td>Monto inicial</td><td class="right">{{ formatMoney($frozenSession['opening_amount'] ?? $session->opening_amount, $business?->country) }}</td></tr>
+                <tr><td>Efectivo neto de ventas</td><td class="right positive">{{ formatMoney($summary['cash_sales'] - $summary['cash_sale_cancellations'] - $summary['cash_refunds'], $business?->country) }}</td></tr>
                 <tr><td>Abonos netos en efectivo</td><td class="right">{{ formatMoney($summary['credit_payments'] - $summary['credit_payment_cancellations'], $business?->country) }}</td></tr>
                 <tr><td>Gastos netos</td><td class="right negative">-{{ formatMoney($summary['expenses'] - $summary['expense_cancellations'], $business?->country) }}</td></tr>
                 <tr><td>Compras pagadas de caja</td><td class="right negative">-{{ formatMoney($summary['cash_purchases'], $business?->country) }}</td></tr>
-                <tr><td class="total">Efectivo esperado</td><td class="right total">{{ formatMoney($session->expected_cash, $business?->country) }}</td></tr>
-                <tr><td class="total">Efectivo contado</td><td class="right total">{{ formatMoney($session->counted_cash, $business?->country) }}</td></tr>
+                <tr><td class="total">Efectivo esperado</td><td class="right total">{{ formatMoney($frozenSession['expected_cash'] ?? $session->expected_cash, $business?->country) }}</td></tr>
+                <tr><td class="total">Efectivo contado</td><td class="right total">{{ formatMoney($frozenSession['counted_cash'] ?? $session->counted_cash, $business?->country) }}</td></tr>
                 <tr>
                     <td class="total">Diferencia</td>
-                    <td class="right total {{ (float) $session->difference < 0 ? 'negative' : 'positive' }}">
-                        {{ formatMoney($session->difference, $business?->country) }}
+                    <td class="right total {{ (float) ($frozenSession['difference'] ?? $session->difference) < 0 ? 'negative' : 'positive' }}">
+                        {{ formatMoney($frozenSession['difference'] ?? $session->difference, $business?->country) }}
                     </td>
                 </tr>
             </tbody>
         </table>
 
-        @if ($session->notes || $session->closing_notes)
+        @if (($frozenSession['notes'] ?? $session->notes) || ($frozenSession['closing_notes'] ?? $session->closing_notes))
             <div class="line"></div>
-            @if ($session->notes)
-                <p><strong>Notas:</strong><br>{{ $session->notes }}</p>
+            @if ($frozenSession['notes'] ?? $session->notes)
+                <p><strong>Notas:</strong><br>{{ $frozenSession['notes'] ?? $session->notes }}</p>
             @endif
-            @if ($session->closing_notes)
-                <p><strong>Nota de cierre:</strong><br>{{ $session->closing_notes }}</p>
+            @if ($frozenSession['closing_notes'] ?? $session->closing_notes)
+                <p><strong>Nota de cierre:</strong><br>{{ $frozenSession['closing_notes'] ?? $session->closing_notes }}</p>
             @endif
         @endif
 
@@ -140,7 +141,7 @@
         @if ($receiptFormat === 'ticket')
             @php
                 $ticketPaymentMethods = collect($paymentOperations['by_method'])->filter(
-                    fn (array $method) => collect(['sales', 'credit_payments', 'purchases', 'purchases_outside_cash', 'expenses', 'net'])
+                    fn (array $method) => collect(['sales', 'same_turn_cancellations', 'prior_period_corrections', 'historical_unattributed', 'credit_payments', 'purchases', 'purchases_outside_cash', 'expenses', 'net'])
                         ->contains(fn (string $key) => (float) $method[$key] !== 0.0)
                 );
             @endphp
@@ -151,7 +152,7 @@
                         <strong class="{{ $method['net'] < 0 ? 'negative' : 'positive' }}">{{ formatMoney($method['net'], $business?->country) }}</strong>
                     </div>
                     <div class="muted">
-                        Ventas {{ formatMoney($method['sales'], $business?->country) }} · Abonos {{ formatMoney($method['credit_payments'], $business?->country) }}
+                        Ventas cobradas {{ formatMoney($method['sales'], $business?->country) }} · Anulaciones del turno {{ formatMoney($method['same_turn_cancellations'] ?? 0, $business?->country) }} · Correcciones anteriores {{ formatMoney($method['prior_period_corrections'] ?? 0, $business?->country) }} · Abonos {{ formatMoney($method['credit_payments'], $business?->country) }}
                         @if ((float) $method['purchases'] !== 0.0)
                             · Compras -{{ formatMoney(abs((float) $method['purchases']), $business?->country) }}
                         @endif
@@ -169,13 +170,16 @@
         @else
             <table>
             <thead>
-                <tr><th>Medio</th><th class="right">Ventas netas</th><th class="right">Abonos netos</th><th class="right">Compras caja</th><th class="right">Compras fuera de caja</th><th class="right">Gastos netos</th></tr>
+                <tr><th>Medio</th><th class="right">Ventas cobradas</th><th class="right">Anulaciones turno</th><th class="right">Correcciones anteriores</th><th class="right">Neto financiero</th><th class="right">Abonos netos</th><th class="right">Compras caja</th><th class="right">Compras fuera de caja</th><th class="right">Gastos netos</th></tr>
             </thead>
             <tbody>
                 @foreach ($paymentOperations['by_method'] as $method)
                     <tr>
                         <td>{{ match($method['method']) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'check' => 'Cheque', 'transfer' => 'Transferencia', default => 'Otros' } }}</td>
                         <td class="right">{{ formatMoney($method['sales'], $business?->country) }}</td>
+                        <td class="right">{{ formatMoney($method['same_turn_cancellations'] ?? 0, $business?->country) }}</td>
+                        <td class="right">{{ formatMoney($method['prior_period_corrections'] ?? 0, $business?->country) }}</td>
+                        <td class="right">{{ formatMoney($method['net'], $business?->country) }}</td>
                         <td class="right">{{ formatMoney($method['credit_payments'], $business?->country) }}</td>
                         <td class="right negative">{{ $method['method'] === 'cash' ? formatMoney($method['purchases'], $business?->country) : '—' }}</td>
                         <td class="right">{{ formatMoney($method['purchases_outside_cash'], $business?->country) }}</td>
@@ -187,6 +191,9 @@
             </table>
         @endif
         <p class="muted">Resumen informativo; el arqueo de efectivo se calcula exclusivamente con movimientos de caja.</p>
+        @if (collect($paymentOperations['by_method'])->contains(fn (array $method) => (float) ($method['historical_unattributed'] ?? 0) !== 0.0))
+            <p class="muted">Advertencia: hay anulaciones o reembolsos con origen histórico no determinado; no se asignaron a un turno arbitrariamente.</p>
+        @endif
 
         @if (count($closingContract['corrections'] ?? []))
             <div class="line"></div>
@@ -215,7 +222,7 @@
             <tbody>
                 @foreach ($movements as $movement)
                     <tr>
-                        <td>{{ match($movement->type) {
+                        <td>{{ match($movement['type']) {
                             'opening' => 'Apertura',
                             'sale_cash' => 'Venta',
                             'sale_refund_cash' => 'Reembolso de venta',
@@ -225,9 +232,9 @@
                             'purchase_cash' => 'Compra',
                             default => 'Movimiento',
                         } }}</td>
-                        <td>{{ $movement->description }}</td>
-                        <td class="right {{ (float) $movement->amount < 0 ? 'negative' : 'positive' }}">
-                            {{ formatMoney($movement->amount, $business?->country) }}
+                        <td>{{ $movement['description'] }}</td>
+                        <td class="right {{ (float) $movement['amount'] < 0 ? 'negative' : 'positive' }}">
+                            {{ formatMoney($movement['amount'], $business?->country) }}
                         </td>
                     </tr>
                 @endforeach
