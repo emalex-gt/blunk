@@ -561,6 +561,7 @@ function PaymentOperationsOverview({ paymentOperations, country, onFiltersChange
                                 <th className="px-4 py-3 text-right">Ventas cobradas</th>
                                 <th className="px-4 py-3 text-right">Anulaciones turno</th>
                                 <th className="px-4 py-3 text-right">Correcciones anteriores</th>
+                                <th className="px-4 py-3 text-right">Origen indeterminado</th>
                                 <th className="px-4 py-3 text-right">Neto financiero</th>
                                 <th className="px-4 py-3 text-right">Abonos netos</th>
                                 <th className="px-4 py-3 text-right">Compras desde caja</th>
@@ -571,7 +572,7 @@ function PaymentOperationsOverview({ paymentOperations, country, onFiltersChange
                         <tbody className="divide-y divide-slate-100">
                             {operations.by_method.length === 0 ? (
                                 <tr>
-                                    <td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-500">No hay operaciones de pago atribuibles a esta sesión.</td>
+                                    <td colSpan={10} className="px-4 py-8 text-center text-sm text-slate-500">No hay operaciones de pago atribuibles a esta sesión.</td>
                                 </tr>
                             ) : operations.by_method.map((row) => (
                                 <tr key={row.method}>
@@ -579,6 +580,7 @@ function PaymentOperationsOverview({ paymentOperations, country, onFiltersChange
                                     <PaymentAmount value={row.sales} country={country} />
                                     <PaymentAmount value={row.same_turn_cancellations} country={country} />
                                     <PaymentAmount value={row.prior_period_corrections} country={country} />
+                                    <PaymentAmount value={row.historical_unattributed} country={country} />
                                     <PaymentAmount value={row.net} country={country} />
                                     <PaymentAmount value={row.credit_payments} country={country} />
                                     {row.method === 'cash'

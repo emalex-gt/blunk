@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Branch;
 use App\Models\Business;
 use App\Models\CashMovement;
+use App\Models\CashRegisterClosingCorrection;
 use App\Models\CashRegisterSession;
 use App\Models\Customer;
 use App\Models\CustomerCreditAccount;
@@ -12,6 +13,7 @@ use App\Models\CustomerCreditPayment;
 use App\Models\Purchase;
 use App\Models\Sale;
 use App\Models\SalePayment;
+use App\Models\TenantSetting;
 use App\Models\User;
 use App\Http\Controllers\CashRegisterController;
 use App\Support\CashRegister;
@@ -256,6 +258,87 @@ class CashRegisterClosingOperationsTest extends TestCase
             'amount' => '-195.00',
         ]);
         $this->assertSame(195.0, (float) CashRegisterClosingSnapshot::forSession($original->fresh())['commercial']['total']);
+    }
+
+    public function test_credit_sale_without_payments_cancelled_in_its_only_session_does_not_create_a_prior_period_correction(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        $sale = $this->sale($business, $branch, $user, 80);
+        $sale->update(['is_credit_sale' => true, 'payment_status' => 'unpaid', 'status' => 'cancelled', 'cancelled_at' => now()]);
+
+        CashRegisterClosingCorrections::recordSaleCancellation($sale->fresh(), $session, $user->id, 'Anulación en el turno');
+
+        $this->assertDatabaseCount('cash_register_closing_corrections', 0);
+    }
+
+    public function test_cash_sale_cancelled_in_its_original_session_does_not_create_a_corrective_receipt(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        $sale = $this->sale($business, $branch, $user, 55);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $sale->id, 'method' => 'cash', 'amount' => 55, 'cash_register_session_id' => $session->id, 'status' => 'captured']);
+        $sale->update(['status' => 'cancelled', 'cancelled_at' => now()]);
+
+        CashRegisterClosingCorrections::recordSaleCancellation($sale->fresh(), $session, $user->id, 'Anulación en el turno');
+
+        $this->assertDatabaseCount('cash_register_closing_corrections', 0);
+    }
+
+    public function test_mixed_payment_cancellation_keeps_a_reliable_breakdown_without_assigning_the_total_to_one_method(): void
+    {
+        [$business, $branch, $user, $original] = $this->context();
+        $sale = $this->sale($business, $branch, $user, 100);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $sale->id, 'method' => 'cash', 'amount' => 40, 'cash_register_session_id' => $original->id, 'status' => 'captured']);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $sale->id, 'method' => 'card', 'amount' => 60, 'cash_register_session_id' => $original->id, 'status' => 'captured']);
+        $later = CashRegisterSession::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'opened_by' => $user->id, 'status' => 'open', 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now()->addMinute()]);
+
+        CashRegisterClosingCorrections::recordSaleCancellation($sale->fresh(), $later, $user->id, 'Anulación mixta');
+
+        $correction = CashRegisterClosingCorrection::query()->sole();
+        $this->assertSame('mixed', $correction->payment_method);
+        $this->assertSame(-100.0, (float) $correction->amount);
+        $this->assertSame(-40.0, (float) $correction->metadata['cash_effect']);
+        $this->assertCount(2, $correction->metadata['payment_breakdown']);
+    }
+
+    public function test_operation_with_undetermined_historical_origin_is_exposed_as_its_own_financial_bucket(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        $sale = $this->sale($business, $branch, $user, 45);
+        $sale->update(['status' => 'cancelled', 'cancelled_at' => now()]);
+        SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $sale->id, 'method' => 'transfer', 'amount' => 45, 'status' => 'captured']);
+
+        $transfer = collect(CashRegisterClosingOperations::forSession($session)['by_method'])->keyBy('method')['transfer'];
+
+        $this->assertSame(45.0, $transfer['sales']);
+        $this->assertSame(-45.0, $transfer['historical_unattributed']);
+        $this->assertSame(0.0, $transfer['net']);
+    }
+
+    public function test_snapshot_keeps_null_branding_and_original_receipt_format_after_settings_change(): void
+    {
+        [$business, , $user, $session] = $this->context();
+        TenantSetting::query()->create([
+            'business_id' => $business->id,
+            'company_name' => null,
+            'company_address' => null,
+            'company_phone' => null,
+            'receipt_format' => 'ticket',
+        ]);
+        $session->update(['status' => 'closed', 'closed_by' => $user->id, 'closed_at' => now()]);
+        CashRegisterClosingSnapshot::capture($session->fresh());
+
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'company_name' => 'Marca posterior',
+            'company_address' => 'Dirección posterior',
+            'company_phone' => '5555-5555',
+            'receipt_format' => 'document',
+        ]);
+
+        $contract = CashRegisterClosingSnapshot::forSession($session->fresh()->load('closingSnapshot'));
+        $this->assertNull($contract['header']['business_name']);
+        $this->assertNull($contract['header']['business_address']);
+        $this->assertNull($contract['header']['business_phone']);
+        $this->assertSame('ticket', $contract['header']['receipt_format']);
     }
 
     public function test_document_print_renders_frozen_array_movements_without_object_property_access(): void

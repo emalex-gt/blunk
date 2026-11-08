@@ -5,13 +5,20 @@
     <title>Correctivo de cierre #{{ $correction->id }}</title>
     <style>
         body { color: #111827; font-family: Arial, sans-serif; font-size: 12px; margin: 28px; }
+        .page { max-width: 720px; margin: 0 auto; } .no-print { margin-bottom: 16px; text-align: center; }
+        .print-button { border: 1px solid #cbd5e1; background: white; border-radius: 10px; padding: 8px 14px; cursor: pointer; }
         .center { text-align: center; } .muted { color: #64748b; } .amount { font-size: 20px; font-weight: 700; }
         .card { border: 1px solid #cbd5e1; margin-top: 18px; padding: 14px; }
         table { border-collapse: collapse; width: 100%; } td { padding: 6px 0; vertical-align: top; }
-        td:first-child { color: #475569; width: 42%; } @media print { body { margin: 12mm; } }
+        td:first-child { color: #475569; width: 42%; } @media print { body { margin: 12mm; } .no-print { display: none; } }
     </style>
 </head>
 <body>
+    <div class="no-print">
+        @include('print.partials.pdf-download-button', ['target' => '.page', 'filename' => 'correctivo-cierre-'.$correction->id.'.pdf', 'kind' => 'document', 'paper' => ($company['country'] ?? 'GT') === 'AR' ? 'A4' : 'Letter', 'marginMm' => 12, 'class' => 'print-button'])
+        <button class="print-button" onclick="window.print()">Imprimir correctivo</button>
+    </div>
+    <main class="page">
     <div class="center">
         <strong>{{ $company['name'] }}</strong><br>
         @if($company['tax_id'])<span class="muted">{{ $company['tax_id'] }}</span><br>@endif
@@ -30,8 +37,9 @@
             <tr><td>Responsable</td><td>{{ $correction->responsibleUser?->name ?? 'No disponible' }}</td></tr>
             @if($correction->reason)<tr><td>Motivo</td><td>{{ $correction->reason }}</td></tr>@endif
         </table>
-        <p class="amount">Corrección comercial: Q {{ number_format((float) $correction->amount, 2) }}</p>
+        <p class="amount">Corrección comercial: {{ formatMoney((float) $correction->amount, $company['country'] ?? null) }}</p>
         <p class="muted">Este comprobante no modifica el cierre original ni vuelve a registrar movimientos de caja.</p>
     </div>
+    </main>
 </body>
 </html>

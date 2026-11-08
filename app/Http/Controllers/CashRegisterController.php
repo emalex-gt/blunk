@@ -314,20 +314,30 @@ class CashRegisterController extends Controller
         $this->ensureSessionBelongsToActiveBranch($request, $session);
 
         $business = Business::query()->select('id', 'name', 'country')->find(currentBusinessId());
-        $timezone = tenantTimezone($business);
+        $currentTimezone = tenantTimezone($business);
         $settings = TenantSetting::query()->where('business_id', currentBusinessId())->first();
         $session->load(['openedBy:id,name', 'closedBy:id,name', 'closingSnapshot']);
         $closingContract = CashRegisterClosingSnapshot::forSession($session);
+        $isSnapshot = $closingContract['source'] === 'snapshot';
+        $header = $closingContract['header'] ?? [];
+        $headerValue = static fn (string $key, mixed $fallback = null): mixed => $isSnapshot
+            ? (array_key_exists($key, $header) ? $header[$key] : null)
+            : $fallback;
+        $country = $headerValue('country', $business?->country) ?: 'GT';
+        $timezone = $headerValue('timezone', $currentTimezone) ?: $currentTimezone;
+        $receiptFormat = $headerValue('receipt_format', $settings?->receipt_format === 'document' ? 'document' : 'ticket') === 'document'
+            ? 'document'
+            : 'ticket';
 
         return view('cash-register.closing', [
-            'paperSize' => ($business?->country ?? 'GT') === 'AR' ? 'A4' : 'Letter',
-            'receiptFormat' => $settings?->receipt_format === 'document' ? 'document' : 'ticket',
+            'paperSize' => $country === 'AR' ? 'A4' : 'Letter',
+            'receiptFormat' => $receiptFormat,
             'company' => [
-                'logo_url' => $closingContract['header']['business_logo_url'] ?? $settings?->company_logo_url,
-                'name' => $closingContract['header']['business_name'] ?: ($settings?->company_name ?: $business?->name),
-                'tax_id' => $closingContract['header']['business_tax_id'] ?? $settings?->company_tax_id,
-                'address' => $closingContract['header']['business_address'] ?? $settings?->company_address,
-                'phone' => $closingContract['header']['business_phone'] ?? $settings?->company_phone,
+                'logo_url' => $headerValue('business_logo_url', $settings?->company_logo_url),
+                'name' => $headerValue('business_name', $settings?->company_name ?: $business?->name),
+                'tax_id' => $headerValue('business_tax_id', $settings?->company_tax_id),
+                'address' => $headerValue('business_address', $settings?->company_address),
+                'phone' => $headerValue('business_phone', $settings?->company_phone),
             ],
             'business' => $business,
             'session' => $session,
@@ -364,6 +374,7 @@ class CashRegisterController extends Controller
                 'tax_id' => $settings?->company_tax_id,
                 'address' => $settings?->company_address,
                 'phone' => $settings?->company_phone,
+                'country' => $business?->country,
             ],
             'timezone' => tenantTimezone($correction->business_id),
         ]);
@@ -400,19 +411,23 @@ class CashRegisterController extends Controller
         }
 
 
+        $sessionValue = static fn (string $key, mixed $fallback = null): mixed => $storedSnapshot && array_key_exists($key, $frozen)
+            ? $frozen[$key]
+            : $fallback;
+
         $payload = [
             'id' => $session->id,
             'status' => $session->status,
-            'opening_amount' => (float) ($frozen['opening_amount'] ?? $session->opening_amount),
-            'expected_cash' => (float) ($session->status === 'open' ? $summary['expected_cash'] : ($frozen['expected_cash'] ?? $session->expected_cash)),
-            'counted_cash' => array_key_exists('counted_cash', $frozen) ? $frozen['counted_cash'] : ($session->counted_cash !== null ? (float) $session->counted_cash : null),
-            'difference' => array_key_exists('difference', $frozen) ? $frozen['difference'] : ($session->difference !== null ? (float) $session->difference : null),
-            'opened_at' => $this->formatDateTime($frozen['opened_at'] ?? $session->opened_at, $timezone),
-            'closed_at' => $this->formatDateTime($frozen['closed_at'] ?? $session->closed_at, $timezone),
-            'opened_by' => $frozen['opened_by'] ?? $session->openedBy?->name,
-            'closed_by' => $frozen['closed_by'] ?? $session->closedBy?->name,
-            'notes' => $frozen['notes'] ?? $session->notes,
-            'closing_notes' => $frozen['closing_notes'] ?? $session->closing_notes,
+            'opening_amount' => (float) $sessionValue('opening_amount', $session->opening_amount),
+            'expected_cash' => (float) ($session->status === 'open' ? $summary['expected_cash'] : $sessionValue('expected_cash', $session->expected_cash)),
+            'counted_cash' => $sessionValue('counted_cash', $session->counted_cash !== null ? (float) $session->counted_cash : null),
+            'difference' => $sessionValue('difference', $session->difference !== null ? (float) $session->difference : null),
+            'opened_at' => $this->formatDateTime($sessionValue('opened_at', $session->opened_at), $timezone),
+            'closed_at' => $this->formatDateTime($sessionValue('closed_at', $session->closed_at), $timezone),
+            'opened_by' => $sessionValue('opened_by', $session->openedBy?->name),
+            'closed_by' => $sessionValue('closed_by', $session->closedBy?->name),
+            'notes' => $sessionValue('notes', $session->notes),
+            'closing_notes' => $sessionValue('closing_notes', $session->closing_notes),
             'summary' => $summary,
             'closing_contract' => $closingContract,
             'closing_source' => $closingContract['source'],
