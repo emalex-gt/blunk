@@ -384,6 +384,14 @@ class CashRegisterController extends Controller
     {
         $session->loadMissing(['openedBy:id,name', 'closedBy:id,name', 'closingSnapshot']);
         $storedSnapshot = $session->status === 'closed' ? $session->closingSnapshot : null;
+        // Mantener la zona horaria original del cierre.
+        if ($storedSnapshot) {
+            $snapshotTimezone = $storedSnapshot->snapshot['header']['timezone'] ?? null;
+
+            if (is_string($snapshotTimezone) && $snapshotTimezone !== '') {
+                $timezone = $snapshotTimezone;
+            }
+        }
 
         // The paginated history only needs its frozen summary. Avoid rebuilding
         // every movement and payment operation for every row in the listing.

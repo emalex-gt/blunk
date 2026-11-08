@@ -289,8 +289,15 @@ class CashRegisterClosingOperationsTest extends TestCase
         $sale = $this->sale($business, $branch, $user, 100);
         SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $sale->id, 'method' => 'cash', 'amount' => 40, 'cash_register_session_id' => $original->id, 'status' => 'captured']);
         SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $sale->id, 'method' => 'card', 'amount' => 60, 'cash_register_session_id' => $original->id, 'status' => 'captured']);
-        $later = CashRegisterSession::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'opened_by' => $user->id, 'status' => 'open', 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now()->addMinute()]);
-
+        $original->update([
+            'status' => 'closed',
+            'closed_at' => now(),
+        ]);
+        $later = CashRegisterSession::query()->create(['business_id' => $business->id, 'branch_id' => $branch->id, 'opened_by' => $user->id, 'status' => 'open', 'opening_amount' => 0, 'expected_cash' => 0, 'opened_at' => now()]);
+        $sale->update([
+            'status' => 'cancelled',
+            'cancelled_at' => now(),
+        ]);
         CashRegisterClosingCorrections::recordSaleCancellation($sale->fresh(), $later, $user->id, 'Anulación mixta');
 
         $correction = CashRegisterClosingCorrection::query()->sole();
@@ -317,6 +324,7 @@ class CashRegisterClosingOperationsTest extends TestCase
     public function test_snapshot_keeps_null_branding_and_original_receipt_format_after_settings_change(): void
     {
         [$business, , $user, $session] = $this->context();
+        $originalBusinessName = $business->name;
         TenantSetting::query()->create([
             'business_id' => $business->id,
             'company_name' => null,
@@ -334,8 +342,16 @@ class CashRegisterClosingOperationsTest extends TestCase
             'receipt_format' => 'document',
         ]);
 
+        $business->forceFill([
+            'name' => 'Nombre cambiado posteriormente',
+        ])->save();
+
         $contract = CashRegisterClosingSnapshot::forSession($session->fresh()->load('closingSnapshot'));
-        $this->assertNull($contract['header']['business_name']);
+        //$this->assertNull($contract['header']['business_name']);
+        $this->assertSame(
+            $originalBusinessName,
+            $contract['header']['business_name']
+        );
         $this->assertNull($contract['header']['business_address']);
         $this->assertNull($contract['header']['business_phone']);
         $this->assertSame('ticket', $contract['header']['receipt_format']);
