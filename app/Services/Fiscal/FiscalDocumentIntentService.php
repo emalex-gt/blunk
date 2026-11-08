@@ -8,6 +8,7 @@ use App\Models\CreditReceiptLineInvoice;
 use App\Models\ElectronicDocument;
 use App\Models\FelIncident;
 use App\Models\FiscalDocumentIntent;
+use App\Models\PreSale;
 use App\Models\Product;
 use App\Models\Quotation;
 use App\Models\Sale;
@@ -366,8 +367,11 @@ class FiscalDocumentIntentService
             }
 
             if ($intent->operation_type === 'route_pre_sale_invoice') {
-                if (! $allowCommercialFinalization && ! $intent->finalized_sale_id) {
-                    return $this->blockLateCommercialFinalization($intent, 'route_pre_sale_without_completed_sale');
+                if (! $allowCommercialFinalization) {
+                    // The route finalizer writes a Sale, stock, payments and cash.
+                    // A late caller may only attach the certificate to the
+                    // already completed Sale belonging to this same intent.
+                    return $this->finalizeCompletedRouteCertification($intent);
                 }
 
                 return app(RoutePreSaleInvoiceFiscalFinalizer::class)->finalize($intent);
@@ -487,6 +491,56 @@ class FiscalDocumentIntentService
 
             return $intent->refresh();
         }
+    }
+
+    /**
+     * A late route certification can only be attached to the exact completed
+     * commercial Sale previously linked to this fiscal intent. It cannot
+     * invoke RoutePreSaleInvoiceFiscalFinalizer, which creates commercial effects.
+     * The caller already holds the intent row lock inside a transaction.
+     */
+    private function finalizeCompletedRouteCertification(FiscalDocumentIntent $intent): FiscalDocumentIntent
+    {
+        $preSaleId = (int) data_get($intent->operation_payload, 'route_pre_sale.pre_sale_id', 0);
+        $preSale = $preSaleId > 0
+            ? PreSale::query()
+                ->where('business_id', $intent->business_id)
+                ->where('branch_id', $intent->branch_id)
+                ->lockForUpdate()
+                ->find($preSaleId)
+            : null;
+        $sale = $intent->finalizedSale()
+            ->with('electronicDocument')
+            ->lockForUpdate()
+            ->first();
+
+        if (! $preSale || ! $sale
+            || $preSale->status !== PreSale::STATUS_CONVERTED
+            || (int) $preSale->converted_sale_id !== (int) $sale->id
+            || (int) $sale->business_id !== (int) $intent->business_id
+            || (int) $sale->branch_id !== (int) $intent->branch_id
+            || $sale->status !== 'completed'
+            || (string) $sale->fel_internal_reference !== (string) $intent->internal_reference
+            || ($sale->electronicDocument
+                && (string) $sale->electronicDocument->internal_reference !== (string) $intent->internal_reference)) {
+            return $this->blockLateCommercialFinalization($intent, 'route_pre_sale_not_linked_to_completed_sale', $sale);
+        }
+
+        $ids = $this->invoiceService->extractCertificationIdentifiers($intent->provider_response ?? []);
+        $providerUuid = trim((string) ($ids['uuid'] ?? ''));
+        $existingUuid = trim((string) ($sale->electronicDocument?->uuid ?: $sale->fel_uuid));
+        if ($providerUuid === '' || ($existingUuid !== '' && ! $this->authorizationUuidsMatch($existingUuid, $providerUuid))) {
+            return $this->blockLateCommercialFinalization($intent, 'route_pre_sale_authorization_mismatch', $sale);
+        }
+
+        $this->attachCertificationToSale($intent, $sale);
+        $intent->update([
+            'status' => FiscalDocumentIntent::FINALIZED,
+            'finalized_at' => now(),
+            'last_finalization_error' => null,
+        ]);
+
+        return $intent->refresh();
     }
 
     /**

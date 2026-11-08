@@ -1014,10 +1014,15 @@ class SaleController extends Controller
                 ->findOrFail($saleId);
             $intentService = app(FiscalDocumentIntentService::class);
 
-            if ($intent->status === FiscalDocumentIntent::PENDING) {
+            // An idempotency replay is not the original POS operation. Never
+            // send an unresolved pending intent again or authorize late stock,
+            // cash, payments and CxC effects from a replayed request.
+            if ($intent->status === FiscalDocumentIntent::PENDING && ! $idempotencyResult->replayed) {
                 $intent = $intentService->certify($intent, allowCommercialFinalization: true);
             } elseif ($intent->status === FiscalDocumentIntent::CERTIFIED) {
-                $intent = $intentService->finalize($intent, allowCommercialFinalization: true);
+                // A certificate already present when the POS response is handled
+                // is not proof that this request may replay commercial effects.
+                $intent = $intentService->finalize($intent);
             }
 
             if ($intent->status === FiscalDocumentIntent::UNKNOWN) {

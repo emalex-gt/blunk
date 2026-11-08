@@ -536,7 +536,15 @@ class RoutePreSaleInvoiceService
             $intent = \App\Models\FiscalDocumentIntent::query()
                 ->where('business_id', $business->id)
                 ->findOrFail($result->resultId);
-            $intent = app(FiscalDocumentIntentService::class)->certify($intent, allowCommercialFinalization: true);
+            $intentService = app(FiscalDocumentIntentService::class);
+
+            // Replaying a key must never re-send a pending fiscal operation or
+            // grant commercial finalization rights after a late certification.
+            if (! $result->replayed && $intent->status === \App\Models\FiscalDocumentIntent::PENDING) {
+                $intent = $intentService->certify($intent, allowCommercialFinalization: true);
+            } elseif ($intent->status === \App\Models\FiscalDocumentIntent::CERTIFIED) {
+                $intent = $intentService->finalize($intent);
+            }
 
             if ($intent->status === \App\Models\FiscalDocumentIntent::FINALIZED) {
                 $saleId = (int) $intent->finalized_sale_id;
