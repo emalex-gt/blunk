@@ -81,10 +81,48 @@
         </header>
 
         <div class="line"></div>
-        <div class="center total">
-            <div>TOTAL VENDIDO DEL TURNO</div>
-            <div>{{ formatMoney($salesSummary['total'], $business?->country) }}</div>
-        </div>
+<div class="center total">
+    @if ($receiptFormat === 'ticket')
+        <div style="font-size:18px;">{{ formatMoney($salesSummary['total'], $business?->country) }}</div>
+        <div class="muted" style="font-size:11px; font-weight:normal;">TOTAL VENDIDO DEL TURNO</div>
+    @else
+        <div>TOTAL VENDIDO DEL TURNO</div>
+        <div>{{ formatMoney($salesSummary['total'], $business?->country) }}</div>
+    @endif
+</div>
+@if ($receiptFormat === 'ticket' && isset($salesSummary['payment_breakdown']))
+    @php
+        $paymentLabels = [
+            'cash' => 'Efectivo',
+            'card' => 'Tarjeta',
+            'transfer' => 'Transferencia',
+            'check' => 'Cheque',
+            'credit_pending' => 'Crédito pendiente',
+            'other' => 'Otros',
+            'unclassified' => 'Sin clasificar',
+        ];
+
+        $salesMethodRows = collect($paymentLabels)->filter(
+            fn (string $label, string $method) =>
+                (float) ($salesSummary['payment_breakdown'][$method] ?? 0) > 0.005
+        );
+    @endphp
+
+    @if ($salesMethodRows->isNotEmpty())
+        <div class="line"></div>
+        <h2 style="font-size:13px;">VENTAS POR MÉTODO DE PAGO</h2>
+        <table>
+            <tbody>
+                @foreach ($salesMethodRows as $method => $label)
+                    <tr>
+                        <td>{{ $label }}</td>
+                        <td class="right">{{ formatMoney($salesSummary['payment_breakdown'][$method], $business?->country) }}</td>
+                    </tr>
+                @endforeach
+            </tbody>
+        </table>
+    @endif
+@endif
         <table>
             <tbody>
                 <tr><td>Ventas brutas</td><td class="right">{{ formatMoney($salesSummary['gross_total'] ?? $salesSummary['total'], $business?->country) }}</td></tr>

@@ -37,8 +37,12 @@ final class CashRegisterClosingSales
                     ->where('cash_register_session_id', $session->id))
                     ->orWhereBetween('created_at', [$from, $to]);
             })
-            ->with(['capturedPayments:id,sale_id,cash_register_session_id'])
-            ->get(['id', 'business_id', 'branch_id', 'total', 'is_credit_sale', 'status', 'created_at', 'cancelled_at']);
+            ->with([
+                'capturedPayments:id,sale_id,cash_register_session_id,method,amount,collected_at,created_at',
+                'creditPaymentAllocations:id,payment_id,sale_id,amount,created_at',
+                'creditPaymentAllocations.payment:id,payment_method,status,cancelled_at,created_at',
+            ])
+            ->get(['id', 'business_id', 'branch_id', 'total', 'is_credit_sale', 'payment_method', 'status', 'created_at', 'cancelled_at']);
 
         $included = collect();
         $directCount = 0;
@@ -86,6 +90,98 @@ final class CashRegisterClosingSales
             ->sum(fn (Sale $sale) => (float) $sale->total), 2);
         $net = round($gross - $samePeriodCancellations, 2);
 
+        $breakdownCents = array_fill_keys(
+            ['cash', 'card', 'check', 'transfer', 'other', 'credit_pending', 'unclassified'],
+            0
+        );
+        $overallocatedCount = 0;
+
+        $normalizeMethod = static fn (?string $value): string => match (strtolower(trim((string) $value))) {
+            'cash', 'efectivo' => 'cash',
+            'card', 'credit_card', 'debit_card', 'tarjeta' => 'card',
+            'check', 'cheque' => 'check',
+            'transfer', 'bank_transfer', 'transferencia' => 'transfer',
+            '', 'credit', 'credito', 'crédito', 'mixed', 'multiple' => 'unclassified',
+            default => 'other',
+        };
+
+        foreach ($included as $sale) {
+            if ($sale->status === 'cancelled' && $sale->cancelled_at?->lessThanOrEqualTo($to)) {
+                continue;
+            }
+
+            $remaining = max(0, (int) round((float) $sale->total * 100));
+            $overallocated = false;
+
+            $applyPayment = static function (?string $method, mixed $amount) use (
+                &$remaining, &$breakdownCents, &$overallocated, $normalizeMethod
+            ): void {
+                $cents = max(0, (int) round((float) $amount * 100));
+
+                if ($cents === 0) {
+                    return;
+                }
+
+                if ($cents > $remaining) {
+                    $overallocated = true;
+                }
+
+                $applied = min($cents, $remaining);
+                $breakdownCents[$normalizeMethod($method)] += $applied;
+                $remaining -= $applied;
+            };
+
+            foreach ($sale->capturedPayments as $payment) {
+                $at = $payment->collected_at ?? $payment->created_at;
+
+                if (! $at || $at->greaterThan($to)) {
+                    continue;
+                }
+
+                $applyPayment($payment->method, $payment->amount);
+            }
+
+            foreach ($sale->creditPaymentAllocations as $allocation) {
+                $creditPayment = $allocation->payment;
+
+                if (! $creditPayment || ! $creditPayment->created_at ||
+                    $creditPayment->created_at->greaterThan($to) ||
+                    ! $allocation->created_at ||
+                    $allocation->created_at->greaterThan($to)) {
+                    continue;
+                }
+
+                if (! in_array($creditPayment->status, ['completed', 'cancelled'], true) ||
+                    ($creditPayment->cancelled_at &&
+                    $creditPayment->cancelled_at->lessThanOrEqualTo($to)) ||
+                    ($creditPayment->status === 'cancelled' &&
+                    ! $creditPayment->cancelled_at)) {
+                    continue;
+                }
+
+                $applyPayment($creditPayment->payment_method, $allocation->amount);
+            }
+
+            if ($overallocated) {
+                $overallocatedCount++;
+            }
+
+            if ($remaining === 0) {
+                continue;
+            }
+
+            if ($sale->is_credit_sale) {
+                $key = 'credit_pending';
+            } elseif ($sale->capturedPayments->isEmpty() &&
+                $sale->creditPaymentAllocations->isEmpty()) {
+                $key = $normalizeMethod($sale->payment_method);
+            } else {
+                $key = 'unclassified';
+            }
+
+            $breakdownCents[$key] += $remaining;
+        }
+
         return [
             'total' => $net,
             'gross_total' => $gross,
@@ -93,6 +189,8 @@ final class CashRegisterClosingSales
             'credit_sales_total' => round((float) $included
                 ->filter(fn (Sale $sale) => (bool) $sale->is_credit_sale && ! ($sale->status === 'cancelled' && $sale->cancelled_at?->lessThanOrEqualTo($to)))
                 ->sum(fn (Sale $sale) => (float) $sale->total), 2),
+            'payment_breakdown' => array_map(static fn (int $cents): float => $cents / 100, $breakdownCents),
+            'payment_breakdown_overallocated_count' => $overallocatedCount,
             'count' => $included->count(),
             'direct_count' => $directCount,
             'reconstructed_count' => $reconstructedCount,
