@@ -3224,17 +3224,24 @@ class SaleController extends Controller
         if ($business->country === 'GT') {
             $submittedType = CustomerIdentity::normalizeGuatemalaDocType($customerData['doc_type'] ?? null);
             $submittedDocument = CustomerIdentity::normalizeDocument($submittedType ?? '', $customerData['doc_number'] ?? null) ?? '';
+            $submittedName = CustomerIdentity::normalizeName($customerData['name'] ?? null);
+            $submittedCommercialName = CustomerIdentity::normalizeName($customerData['commercial_name'] ?? null);
+            $submittedCountry = mb_strtoupper(trim((string) ($customerData['country'] ?? $customer->country ?? $business->country)));
+            $expectedCountry = mb_strtoupper(trim((string) ($customer->country ?: $business->country)));
+            $submittedIsFinalConsumer = (bool) ($customerData['consumidor_final'] ?? false);
             $currentIdentity = [
                 'type' => CustomerIdentity::normalizeGuatemalaDocType($customer->doc_type),
                 'document' => CustomerIdentity::normalizeDocument((string) $customer->doc_type, $customer->doc_number) ?? '',
+                'name' => CustomerIdentity::normalizeName($customer->name),
             ];
             $historicalIdentities = $lines
                 ->map(fn (CreditReceiptLine $line) => [
                     'type' => CustomerIdentity::normalizeGuatemalaDocType($line->receipt?->customer_doc_type),
                     'document' => CustomerIdentity::normalizeDocument((string) $line->receipt?->customer_doc_type, $line->receipt?->customer_doc_number) ?? '',
+                    'name' => CustomerIdentity::normalizeName($line->receipt?->customer_name),
                 ])
-                ->filter(fn (array $identity) => $identity['type'] !== null && $identity['document'] !== '')
-                ->unique(fn (array $identity) => $identity['type'].'|'.$identity['document'])
+                ->filter(fn (array $identity) => $identity['type'] !== null && $identity['document'] !== '' && $identity['name'] !== '')
+                ->unique(fn (array $identity) => $identity['type'].'|'.$identity['document'].'|'.$identity['name'])
                 ->values();
 
             // A verified current identity is authoritative. Historical
@@ -3243,17 +3250,27 @@ class SaleController extends Controller
             $expectedIdentities = $this->customerHasCurrentVerifiedFiscalIdentity($customer)
                 ? collect([$currentIdentity])
                 : $historicalIdentities;
+            $expectedCommercialName = CustomerIdentity::normalizeName($customer->commercial_name);
+            $expectedIdentity = $expectedIdentities->first();
+            $expectedIsFinalConsumer = is_array($expectedIdentity)
+                && $expectedIdentity['type'] === CustomerIdentity::CF;
 
             if (
                 $expectedIdentities->count() !== 1
                 || $submittedType === null
                 || $submittedDocument === ''
+                || $submittedName === ''
+                || $submittedCountry !== $expectedCountry
+                || $submittedIsFinalConsumer !== $expectedIsFinalConsumer
+                || ($submittedCommercialName !== '' && $submittedCommercialName !== $expectedCommercialName)
                 || $expectedIdentities->doesntContain(
-                    fn (array $identity) => $identity['type'] === $submittedType && $identity['document'] === $submittedDocument
+                    fn (array $identity) => $identity['type'] === $submittedType
+                        && $identity['document'] === $submittedDocument
+                        && $identity['name'] === $submittedName
                 )
             ) {
                 throw ValidationException::withMessages([
-                    'customer.doc_number' => 'No puedes modificar el NIT o la identidad fiscal de una reserva desde el POS. Utiliza la transferencia de cliente en Reservas de Crédito.',
+                    'customer.doc_number' => 'No puedes modificar la identidad fiscal de una reserva desde el POS. Utiliza la transferencia de cliente en Reservas de Crédito.',
                 ]);
             }
         }

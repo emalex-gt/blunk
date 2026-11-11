@@ -4320,6 +4320,153 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('Cliente no titular', $otherCustomer->refresh()->name);
     }
 
+    public function test_credit_reservation_checkout_rejects_a_changed_custom_cf_name_without_side_effects(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $line = $this->creditReservation($business, $branch, $product, 1);
+        $receipt = CreditReceipt::query()->findOrFail($line->credit_receipt_id);
+        $customer = $receipt->customer()->firstOrFail();
+        $customer->update([
+            'name' => 'CF personalizado original',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+            'is_final_consumer' => true,
+        ]);
+        $receipt->update([
+            'customer_name' => 'CF personalizado original',
+            'customer_doc_type' => 'CF',
+            'customer_doc_number' => 'CF',
+        ]);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                customer: [
+                    'id' => $customer->id,
+                    'name' => 'CF personalizado modificado',
+                    'doc_type' => 'CF',
+                    'doc_number' => 'CF',
+                    'country' => 'GT',
+                    'consumidor_final' => true,
+                ],
+                itemOverrides: ['credit_line_id' => $line->id],
+            ))
+            ->assertSessionHasErrors('customer.doc_number');
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertSame('CF personalizado original', $customer->refresh()->name);
+        $this->assertSame(1, $line->refresh()->qty_pending);
+        $this->assertSame(10.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+    }
+
+    public function test_credit_reservation_checkout_rejects_nit_marked_as_final_consumer(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->actingAs($user)->post(route('credits.receipts.store'), $this->creditPayload($product, 1))->assertRedirect();
+        $line = CreditReceiptLine::query()->sole();
+        $customer = CreditReceipt::query()->findOrFail($line->credit_receipt_id)->customer()->firstOrFail();
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                customer: [
+                    'id' => $customer->id,
+                    'name' => $customer->name,
+                    'doc_type' => 'NIT',
+                    'doc_number' => $customer->doc_number,
+                    'country' => 'GT',
+                    'consumidor_final' => true,
+                ],
+                itemOverrides: ['credit_line_id' => $line->id],
+            ))
+            ->assertSessionHasErrors('customer.doc_number');
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertSame(1, $line->refresh()->qty_pending);
+        $this->assertFalse((bool) $customer->refresh()->is_final_consumer);
+    }
+
+    public function test_credit_reservation_checkout_rejects_a_changed_customer_country(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->actingAs($user)->post(route('credits.receipts.store'), $this->creditPayload($product, 1))->assertRedirect();
+        $line = CreditReceiptLine::query()->sole();
+        $customer = CreditReceipt::query()->findOrFail($line->credit_receipt_id)->customer()->firstOrFail();
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: 1,
+                total: 100,
+                customer: [
+                    'id' => $customer->id,
+                    'name' => $customer->name,
+                    'doc_type' => 'NIT',
+                    'doc_number' => $customer->doc_number,
+                    'country' => 'AR',
+                ],
+                itemOverrides: ['credit_line_id' => $line->id],
+            ))
+            ->assertSessionHasErrors('customer.doc_number');
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertSame('GT', $customer->refresh()->country);
+        $this->assertSame(1, $line->refresh()->qty_pending);
+    }
+
+    public function test_credit_reservation_checkout_allows_its_owner_and_additional_normal_products(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits'], role: 'owner', enableCredits: true);
+        $reservedProduct = $this->product($business, stock: 10, salePrice: 100);
+        $normalProduct = $this->product($business, name: 'Producto normal adicional', stock: 5, salePrice: 50);
+        $this->actingAs($user)->post(route('credits.receipts.store'), $this->creditPayload($reservedProduct, 1))->assertRedirect();
+        $line = CreditReceiptLine::query()->sole();
+        $customer = CreditReceipt::query()->findOrFail($line->credit_receipt_id)->customer()->firstOrFail();
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload(
+                $reservedProduct,
+                quantity: 1,
+                total: 150,
+                customer: [
+                    'id' => $customer->id,
+                    'name' => $customer->name,
+                    'doc_type' => $customer->doc_type,
+                    'doc_number' => $customer->doc_number,
+                    'country' => $customer->country,
+                ],
+                items: [
+                    ['product' => $reservedProduct, 'quantity' => 1, 'credit_line_id' => $line->id],
+                    ['product' => $normalProduct, 'quantity' => 1],
+                ],
+            ))
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseCount('sales', 1);
+        $this->assertSame(0, $line->refresh()->qty_pending);
+        $this->assertSame(9.0, (float) ProductBranchStock::query()->where('product_id', $reservedProduct->id)->value('stock'));
+        $this->assertSame(4.0, (float) ProductBranchStock::query()->where('product_id', $normalProduct->id)->value('stock'));
+    }
+
     public function test_credit_reservation_checkout_allows_one_consistent_historical_identity_for_an_unverified_owner(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits'], role: 'owner', enableCredits: true);
