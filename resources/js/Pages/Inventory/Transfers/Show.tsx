@@ -12,7 +12,7 @@ type Transfer = {
     created_by: { id: number; name: string } | null;
     lines: {
         id: number;
-        quantity: number;
+        quantity: string;
         product: { id: number; name: string; code: string | null; barcode: string | null } | null;
     }[];
 };
@@ -67,7 +67,7 @@ export default function Show({ transfer, timezone }: { transfer: Transfer; timez
                                 <tr key={line.id}>
                                     <td className="px-4 py-3 font-semibold text-slate-900">{line.product?.name ?? '-'}</td>
                                     <td className="px-4 py-3 text-slate-600">{line.product?.code || line.product?.barcode || '-'}</td>
-                                    <td className="px-4 py-3 text-right font-semibold text-slate-900">{line.quantity}</td>
+                                    <td className="px-4 py-3 text-right font-semibold text-slate-900">{line.quantity.replace(/\.0+$/, '')}</td>
                                 </tr>
                             ))}
                         </tbody>

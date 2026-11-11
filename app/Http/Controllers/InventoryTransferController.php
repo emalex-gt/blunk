@@ -12,6 +12,7 @@ use App\Support\BranchInventory;
 use App\Support\DocumentCompanyHeader;
 use App\Support\Exports\TableExporter;
 use App\Support\IdempotencyService;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\Inventory\StockPolicy;
 use App\Support\OperationDrafts;
 use App\Support\Permissions;
@@ -78,7 +79,7 @@ class InventoryTransferController extends Controller
             $transfer->status ?? 'completed',
             $line->product?->name ?? '-',
             $line->product?->code ?? $line->product?->barcode ?? '-',
-            (int) $line->quantity,
+            (string) $line->quantity,
             $transfer->createdBy?->name ?? '-',
         ]))->values()->all();
 
@@ -92,7 +93,10 @@ class InventoryTransferController extends Controller
             'rows' => $rows,
             'summary' => [
                 ['label' => 'Total traslados', 'value' => $count],
-                ['label' => 'Total unidades', 'value' => $transfers->sum(fn (InventoryTransfer $transfer) => $transfer->lines->sum('quantity'))],
+                ['label' => 'Total unidades', 'value' => $transfers->flatMap->lines->reduce(
+                    fn (string $total, $line) => ProductQuantityPolicy::add($total, $line->quantity),
+                    '0',
+                )],
             ],
         ], $format, 'traslados');
     }
@@ -131,7 +135,7 @@ class InventoryTransferController extends Controller
         }
 
         $products = $this->transferProductQuery($businessId, $sourceBranch->id, $search, $ids, $limit)
-            ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'stock', 'location']);
+            ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'stock', 'allow_decimal_quantity', 'location']);
 
         return response()->json([
             'products' => $this->transferProductPayload($products, $businessId, $sourceBranch->id),
@@ -150,7 +154,7 @@ class InventoryTransferController extends Controller
             'notes' => ['nullable', 'string', 'max:2000'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
-            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
         ]);
 
         $businessId = currentBusinessId();
@@ -198,7 +202,7 @@ class InventoryTransferController extends Controller
                     ]);
                 }
 
-                $quantity = (int) $line['quantity'];
+                $quantity = ProductQuantityPolicy::positive($product, $line['quantity']);
                 StockPolicy::assertCanDecreaseStock($businessId, $from, $product, null, $quantity, 'transfer');
 
                 [$previousFrom, $newFrom] = BranchInventory::decrease($product, $from->id, $quantity);
@@ -215,7 +219,7 @@ class InventoryTransferController extends Controller
                     'branch_id' => $from->id,
                     'product_id' => $product->id,
                     'type' => 'transfer_out',
-                    'quantity' => -1 * $quantity,
+                    'quantity' => '-'.$quantity,
                     'previous_stock' => $previousFrom,
                     'new_stock' => $newFrom,
                     'note' => "Traslado #{$transfer->id} hacia {$to->name}",
@@ -337,7 +341,7 @@ class InventoryTransferController extends Controller
             'items' => collect($data['items'] ?? [])
                 ->map(fn (array $item) => [
                     'product_id' => (int) ($item['product_id'] ?? 0),
-                    'quantity' => (int) ($item['quantity'] ?? 0),
+                    'quantity' => ProductQuantityPolicy::canonicalForIdempotency($item['quantity'] ?? 0),
                 ])
                 ->sortBy(fn (array $item) => implode('|', [$item['product_id'], $item['quantity']]))
                 ->values()
@@ -425,9 +429,10 @@ class InventoryTransferController extends Controller
                 'barcode' => $product->barcode,
                 'category_name' => $product->category?->name,
                 'brand_name' => $product->brand?->name,
-                'stock' => (float) $stock['physical_stock'],
-                'reserved_stock' => (float) $stock['reserved_total'],
-                'available_stock' => (float) $stock['available_stock'],
+                'allow_decimal_quantity' => (bool) $product->allow_decimal_quantity,
+                'stock' => $stock['physical_stock'],
+                'reserved_stock' => $stock['reserved_total'],
+                'available_stock' => $stock['available_stock'],
                 'location' => $product->location,
             ];
         })->values()->all();

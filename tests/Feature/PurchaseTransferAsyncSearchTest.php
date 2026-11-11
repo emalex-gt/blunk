@@ -171,7 +171,7 @@ class PurchaseTransferAsyncSearchTest extends TestCase
 
         $this->assertStringContainsString('sm:grid-cols-[160px_minmax(0,1fr)_auto]', $source);
         $this->assertStringContainsString('xl:grid-cols-[160px_minmax(0,1fr)_auto]', $source);
-        $this->assertStringContainsString('step="1"', $source);
+        $this->assertStringContainsString("inputMode={item.product.allow_decimal_quantity ? 'decimal' : 'numeric'}", $source);
     }
 
     public function test_stock_menu_points_to_paginated_stock_index_not_full_catalog_quick_page(): void
@@ -217,6 +217,52 @@ class PurchaseTransferAsyncSearchTest extends TestCase
             ->assertOk()
             ->assertJsonPath('products.0.id', $product->id)
             ->assertJsonPath('products.0.available_stock', 5);
+    }
+
+    public function test_transfer_moves_a_decimal_quantity_once_between_the_authorized_branches(): void
+    {
+        [$business, $user, $from] = $this->tenant('stock_manager', ['branches', 'inventory']);
+        $to = Branch::query()->create(['business_id' => $business->id, 'name' => 'Destino decimal', 'code' => 'DEC-DST', 'is_active' => true]);
+        $product = $this->product($business, 'Producto traslado decimal', 'TR-DECIMAL');
+        $product->update(['allow_decimal_quantity' => true]);
+        ProductBranchStock::query()->create(['business_id' => $business->id, 'branch_id' => $from->id, 'product_id' => $product->id, 'stock' => '10.5000']);
+        ProductBranchStock::query()->create(['business_id' => $business->id, 'branch_id' => $to->id, 'product_id' => $product->id, 'stock' => '2.2500']);
+
+        $payload = [
+            'idempotency_key' => 'transfer-decimal-exact',
+            'from_branch_id' => $from->id,
+            'to_branch_id' => $to->id,
+            'items' => [['product_id' => $product->id, 'quantity' => '1.1250']],
+        ];
+
+        $this->actingAs($user)->post(route('inventory.transfers.store'), $payload)->assertSessionHasNoErrors();
+        $this->actingAs($user)->post(route('inventory.transfers.store'), [...$payload, 'items' => [[
+            'product_id' => $product->id,
+            'quantity' => '1.125',
+        ]]])->assertSessionHasNoErrors();
+
+        $this->assertSame('9.3750', ProductBranchStock::query()->where('branch_id', $from->id)->where('product_id', $product->id)->value('stock'));
+        $this->assertSame('3.3750', ProductBranchStock::query()->where('branch_id', $to->id)->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(1, DB::table('inventory_transfers')->where('business_id', $business->id)->count());
+        $this->assertSame(2, StockMovement::query()->where('product_id', $product->id)->count());
+    }
+
+    public function test_transfer_rejects_fractional_quantity_for_integer_product_without_side_effects(): void
+    {
+        [$business, $user, $from] = $this->tenant('stock_manager', ['branches', 'inventory']);
+        $to = Branch::query()->create(['business_id' => $business->id, 'name' => 'Destino entero', 'code' => 'INT-DST', 'is_active' => true]);
+        $product = $this->product($business, 'Producto traslado entero', 'TR-INTEGER');
+        ProductBranchStock::query()->create(['business_id' => $business->id, 'branch_id' => $from->id, 'product_id' => $product->id, 'stock' => 10]);
+
+        $this->actingAs($user)->post(route('inventory.transfers.store'), [
+            'idempotency_key' => 'transfer-integer-reject',
+            'from_branch_id' => $from->id,
+            'to_branch_id' => $to->id,
+            'items' => [['product_id' => $product->id, 'quantity' => '0.7500']],
+        ])->assertSessionHasErrors('quantity');
+
+        $this->assertSame(0, DB::table('inventory_transfers')->where('business_id', $business->id)->count());
+        $this->assertSame(0, StockMovement::query()->where('product_id', $product->id)->count());
     }
 
     public function test_stock_index_uses_operational_async_search_source(): void

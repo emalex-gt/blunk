@@ -16,7 +16,7 @@
 <body>
 @php
     $company ??= \App\Support\DocumentCompanyHeader::make($business, $transfer->fromBranch, $tenantSetting);
-    $totalUnits = $transfer->lines->sum(fn ($line) => (int) $line->quantity);
+    $totalUnits = $transfer->lines->reduce(fn ($total, $line) => bcadd((string) $total, (string) $line->quantity, 4), '0');
 @endphp
 
 <div class="toolbar no-print">
@@ -87,7 +87,7 @@
                 <tr>
                     <td>{{ $line->product?->code ?: $line->product?->barcode ?: '-' }}</td>
                     <td>{{ $line->product?->name ?: '-' }}</td>
-                    <td class="right">{{ number_format((float) $line->quantity, 2) }}</td>
+                    <td class="right">{{ rtrim(rtrim((string) $line->quantity, '0'), '.') ?: '0' }}</td>
                     <td>Unidad</td>
                     <td>-</td>
                 </tr>
@@ -99,7 +99,7 @@
         <div></div>
         <table>
             <tr><td>Total productos</td><td class="right">{{ $transfer->lines->count() }}</td></tr>
-            <tr><td><strong>Total unidades</strong></td><td class="right total">{{ number_format($totalUnits, 0) }}</td></tr>
+            <tr><td><strong>Total unidades</strong></td><td class="right total">{{ rtrim(rtrim($totalUnits, '0'), '.') ?: '0' }}</td></tr>
         </table>
     </section>
 

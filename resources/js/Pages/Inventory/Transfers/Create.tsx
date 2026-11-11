@@ -8,7 +8,7 @@ import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from '
 import type { ReactNode } from 'react';
 
 type Branch = { id: number; name: string; code: string | null };
-type Product = { id: number; name: string; code: string | null; barcode: string | null; category_name?: string | null; brand_name?: string | null; stock: number; reserved_stock?: number; available_stock?: number; location?: string | null };
+type Product = { id: number; name: string; code: string | null; barcode: string | null; category_name?: string | null; brand_name?: string | null; stock: number | string; reserved_stock?: number | string; available_stock?: number | string; location?: string | null; allow_decimal_quantity: boolean };
 type Line = { product_id: number; quantity: string };
 type TransferDraft = {
     from_branch_id: number | null;
@@ -16,6 +16,26 @@ type TransferDraft = {
     notes: string;
     items: Line[];
 };
+
+function quantityIsValid(value: string, product: Product | undefined): boolean {
+    if (!product) {
+        return false;
+    }
+
+    const normalized = value.trim().replace(',', '.');
+    const pattern = product.allow_decimal_quantity
+        ? /^\d+(?:\.\d{1,4})?$/
+        : /^[1-9]\d*$/;
+
+    return pattern.test(normalized) && Number(normalized) > 0;
+}
+
+function incrementQuantity(value: string): string {
+    const [whole = '0', fraction] = value.replace(',', '.').split('.', 2);
+    const nextWhole = String(Number.parseInt(whole || '0', 10) + 1);
+
+    return fraction === undefined ? nextWhole : `${nextWhole}.${fraction}`;
+}
 
 export default function Create({
     branches,
@@ -242,14 +262,25 @@ export default function Create({
     function validateTransferBeforeSubmit(): boolean {
         setMessage('');
 
-        const invalid = items.some((item) => {
+        const invalid = items.find((item) => {
             const product = productsById.get(Number(item.product_id));
             const quantity = Number(item.quantity);
 
-            return !Number.isInteger(quantity) || quantity < 1 || (!allow_negative_stock && quantity > productAvailable(product));
+            return !quantityIsValid(item.quantity, product)
+                || !Number.isFinite(quantity)
+                || quantity <= 0
+                || (!allow_negative_stock && quantity > productAvailable(product));
         });
 
         if (invalid) {
+            const product = productsById.get(Number(invalid.product_id));
+            if (!quantityIsValid(invalid.quantity, product)) {
+                setMessage(product?.allow_decimal_quantity
+                    ? 'La cantidad debe ser mayor a 0 y tener como máximo cuatro decimales.'
+                    : 'Este producto solo permite cantidades enteras.');
+                return false;
+            }
+
             setMessage('No hay suficiente stock disponible para trasladar.');
             return false;
         }
@@ -282,7 +313,7 @@ export default function Create({
             draft_id: activeDraftId,
             items: items.map((item) => ({
                 product_id: item.product_id,
-                quantity: Number(item.quantity),
+                quantity: item.quantity.replace(',', '.'),
             })),
         }, {
             preserveScroll: true,
@@ -308,21 +339,29 @@ export default function Create({
                         return item;
                     }
 
-                    const nextQuantity = allow_negative_stock
-                        ? Number(item.quantity || 0) + 1
-                        : Math.min(productAvailable(product), Number(item.quantity || 0) + 1);
+                    const nextQuantity = incrementQuantity(item.quantity || '0');
 
-                    return { ...item, quantity: String(Math.max(1, nextQuantity)) };
+                    if (!allow_negative_stock && Number(nextQuantity) > productAvailable(product)) {
+                        setMessage('No hay suficiente stock disponible para trasladar.');
+                        return item;
+                    }
+
+                    return { ...item, quantity: nextQuantity };
                 });
             }
 
-            if (!allow_negative_stock && productAvailable(product) < 1) {
+            const available = productAvailable(product);
+            if (!allow_negative_stock && available <= 0) {
                 setMessage('No hay suficiente stock disponible para trasladar.');
 
                 return current;
             }
 
-            return [...current, { product_id: product.id, quantity: '1' }];
+            const initialQuantity = product.allow_decimal_quantity && available < 1
+                ? String(product.available_stock ?? product.stock).replace(',', '.')
+                : '1';
+
+            return [...current, { product_id: product.id, quantity: initialQuantity }];
         });
         setSearch('');
         requestAnimationFrame(() => searchInputRef.current?.focus());
@@ -348,14 +387,19 @@ export default function Create({
     }
 
     function updateLine(index: number, field: keyof Line, value: string | number) {
-        if (field === 'quantity' && /[.,]/.test(String(value))) {
-            setMessage('La cantidad debe ser un número entero.');
+        const product = productsById.get(Number(items[index]?.product_id));
+        const normalized = String(value).replace(',', '.');
+        const inputPattern = product?.allow_decimal_quantity
+            ? /^\d*(?:\.\d{0,4})?$/
+            : /^\d*$/;
+        if (field === 'quantity' && (!product || !inputPattern.test(normalized))) {
+            setMessage(product?.allow_decimal_quantity ? 'La cantidad admite hasta cuatro decimales.' : 'La cantidad debe ser un número entero.');
 
             return;
         }
 
         setItems((current) => current.map((item, itemIndex) => (
-            itemIndex === index ? { ...item, [field]: String(value).replace(/\D/g, '') } : item
+            itemIndex === index ? { ...item, [field]: field === 'quantity' ? normalized : String(value) } : item
         )));
     }
 
@@ -536,10 +580,9 @@ export default function Create({
                                     <input
                                         className={inputClass}
                                         value={item.quantity}
-                                        min="1"
-                                        step="1"
-                                        inputMode="numeric"
-                                        pattern="[0-9]*"
+                                        type="text"
+                                        inputMode={product?.allow_decimal_quantity ? 'decimal' : 'numeric'}
+                                        pattern={product?.allow_decimal_quantity ? '[0-9]*[.,]?[0-9]{0,4}' : '[0-9]*'}
                                         onChange={(event) => updateLine(index, 'quantity', event.target.value)}
                                     />
                                     <button type="button" onClick={() => setItems(items.filter((_, itemIndex) => itemIndex !== index))} className="rounded-xl px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">
