@@ -117,6 +117,87 @@ class SaleDuplicateIdempotencyTest extends TestCase
         $this->assertSame(4.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
     }
 
+    public function test_completed_sale_replay_rejects_changed_customer_product_quantity_or_payment_without_duplicate_effects(): void
+    {
+        [$business, $user] = $this->tenant();
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $otherProduct = $this->product($business, name: 'Producto alterno', stock: 5, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente validado',
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+            'country' => 'GT',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
+        ]);
+        $otherCustomer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Otro cliente validado',
+            'doc_type' => 'NIT',
+            'doc_number' => '12345678',
+            'country' => 'GT',
+            'name_locked' => true,
+            'tax_lookup_verified_at' => now(),
+        ]);
+        $payload = $this->salePayload($product, 'idem-sale-immutable-payload', customer: [
+            'id' => $customer->id,
+            'name' => $customer->name,
+            'doc_type' => 'NIT',
+            'doc_number' => '57289085',
+            'country' => 'GT',
+        ]);
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $payload)->assertSessionHasNoErrors();
+
+        $mutations = [
+            function (array $candidate) use ($otherCustomer): array {
+                $candidate['customer']['id'] = $otherCustomer->id;
+                $candidate['customer']['name'] = $otherCustomer->name;
+                $candidate['customer']['doc_number'] = $otherCustomer->doc_number;
+
+                return $candidate;
+            },
+            function (array $candidate): array {
+                $candidate['customer']['doc_number'] = '99999999';
+
+                return $candidate;
+            },
+            function (array $candidate) use ($otherProduct): array {
+                $candidate['items'][0]['product_id'] = $otherProduct->id;
+
+                return $candidate;
+            },
+            function (array $candidate): array {
+                $candidate['items'][0]['quantity'] = 2;
+                $candidate['payments'][0]['amount'] = 200;
+
+                return $candidate;
+            },
+            function (array $candidate): array {
+                $candidate['payments'][0]['method'] = 'card';
+
+                return $candidate;
+            },
+        ];
+
+        foreach ($mutations as $mutate) {
+            $this->actingAs($user)
+                ->from(route('sales.create'))
+                ->post(route('sales.store'), $mutate($payload))
+                ->assertStatus(409);
+        }
+
+        $this->assertSame(1, Sale::query()->count());
+        $this->assertSame(1, SaleItem::query()->count());
+        $this->assertSame(1, SalePayment::query()->count());
+        $this->assertSame(1, CashMovement::query()->where('type', 'sale_cash')->count());
+        $this->assertSame(1, StockMovement::query()->where('type', 'sale')->count());
+        $this->assertSame(4.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+        $this->assertSame(5.0, (float) ProductBranchStock::query()->where('product_id', $otherProduct->id)->value('stock'));
+    }
+
     public function test_inertia_pos_payload_conflict_returns_an_operational_error_instead_of_a_generic_409_page(): void
     {
         [$business, $user] = $this->tenant();

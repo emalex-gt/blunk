@@ -12,6 +12,7 @@ use App\Models\OperationDraft;
 use App\Models\Supplier;
 use App\Support\OperationDrafts;
 use App\Support\Permissions;
+use App\Support\IdempotencyService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\URL;
@@ -60,6 +61,20 @@ class OperationDraftController extends Controller
 
         if (! $record) {
             return response()->json(['status' => 'not_found']);
+        }
+
+        // Only a marked validation failure can be retried. Any technical or
+        // historical failure remains unresolved unless its fiscal state can be
+        // verified independently.
+        if (IdempotencyService::isSafelyRecoverableFailure($record)) {
+            $hasFiscalIntent = FiscalDocumentIntent::query()
+                ->where('business_id', $businessId)
+                ->where('idempotency_key', $data['idempotency_key'])
+                ->exists();
+
+            if (! $hasFiscalIntent) {
+                return response()->json(['status' => 'failed']);
+            }
         }
 
         $sale = null;

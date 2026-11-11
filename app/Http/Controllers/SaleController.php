@@ -465,7 +465,34 @@ class SaleController extends Controller
             ]);
         }
 
-        if (($data['document_type'] ?? null) === 'invoice') {
+        $idempotencyPayloads = $this->saleIdempotencyPayloadCandidates(
+            $business,
+            $data,
+            $activeBranch->id,
+            $request->user()->id,
+        );
+        $completedPayload = app(IdempotencyService::class)->matchingCompletedPayload(
+            $business->id,
+            $activeBranch->id,
+            $request->user()->id,
+            'pos_sale',
+            $data['idempotency_key'],
+            $idempotencyPayloads,
+        );
+        $completedReplay = $completedPayload !== null;
+        $idempotencyPayload = $completedPayload ?? $idempotencyPayloads[0];
+
+        // Validate the owner of credit reservations before any fiscal identity
+        // lookup or customer mutation. The transactional line locks remain in place.
+        $this->assertCreditReservationCheckoutOwner(
+            $business,
+            $activeBranch,
+            $data['items'],
+            $data['customer'] ?? null,
+            $completedReplay,
+        );
+
+        if (($data['document_type'] ?? null) === 'invoice' && ! $completedReplay) {
             // Resolve an unverified migrated NIT before validation and before the
             // commercial transaction begins. The browser's timestamp is never trusted.
             $data['customer'] = $this->prepareInvoiceFiscalIdentity($business, $data['customer'] ?? null);
@@ -518,7 +545,7 @@ class SaleController extends Controller
                 $request->user()->id,
                 'pos_sale',
                 $data['idempotency_key'],
-                $this->saleIdempotencyPayload($data, $activeBranch->id, $business->id, $request->user()->id),
+                $idempotencyPayload,
                 function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
             return DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
             $businessId = currentBusinessId();
@@ -1878,6 +1905,73 @@ class SaleController extends Controller
         ];
     }
 
+    /**
+     * Produces the only two payload representations that can legitimately
+     * describe the same submitted sale: the browser request and, for a
+     * previously verified Guatemala identity, the server-normalized form that
+     * older sales stored after fiscal preparation. This lets completed replays
+     * bypass mutable fiscal preparation without accepting a changed payload.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function saleIdempotencyPayloadCandidates(Business $business, array $data, int $branchId, int $userId): array
+    {
+        $payloads = [
+            $this->saleIdempotencyPayload($data, $branchId, $business->id, $userId),
+        ];
+
+        if ($business->country !== 'GT' || ($data['document_type'] ?? null) !== 'invoice') {
+            return $payloads;
+        }
+
+        $customerData = is_array($data['customer'] ?? null) ? $data['customer'] : [];
+        $docType = CustomerIdentity::normalizeGuatemalaDocType($customerData['doc_type'] ?? null);
+        $docNumber = CustomerIdentity::normalizeDocument($docType ?? '', $customerData['doc_number'] ?? null) ?? '';
+
+        if (! in_array($docType, [CustomerIdentity::NIT, CustomerIdentity::CUI], true) || $docNumber === '') {
+            return $payloads;
+        }
+
+        $customer = filled($customerData['id'] ?? null)
+            ? Customer::query()->where('business_id', $business->id)->find($customerData['id'])
+            : Customer::query()
+                ->where('business_id', $business->id)
+                ->where('normalized_tax_id', $docNumber)
+                ->first();
+
+        if (! $customer || ! $this->customerHasCurrentVerifiedFiscalIdentity($customer)) {
+            return $payloads;
+        }
+
+        $submittedCustomerId = (int) ($customerData['id'] ?? 0);
+
+        if ($submittedCustomerId > 0 && $submittedCustomerId !== (int) $customer->id) {
+            return $payloads;
+        }
+
+        $verifiedType = CustomerIdentity::normalizeGuatemalaDocType($customer->doc_type);
+        $verifiedNumber = CustomerIdentity::normalizeDocument($verifiedType ?? '', $customer->doc_number) ?? '';
+
+        if ($verifiedType !== $docType || $verifiedNumber !== $docNumber) {
+            return $payloads;
+        }
+
+        $normalizedData = $data;
+        $normalizedData['customer'] = [
+            ...$customerData,
+            'id' => $customer->id,
+            'consumidor_final' => false,
+            'doc_type' => $verifiedType,
+            'doc_number' => $verifiedNumber,
+            'name' => $customer->name,
+            'name_locked' => true,
+            'tax_lookup_verified_at' => $customer->tax_lookup_verified_at?->toIso8601String(),
+        ];
+        $payloads[] = $this->saleIdempotencyPayload($normalizedData, $branchId, $business->id, $userId);
+
+        return $payloads;
+    }
+
     /** The POS only receives a server-authenticated, immutable quotation snapshot. */
     private function quotationSource(Request $request, Business $business, Branch $activeBranch): ?array
     {
@@ -3057,6 +3151,112 @@ class SaleController extends Controller
         }
 
         return $available;
+    }
+
+    /**
+     * Refuses a reservation checkout when the submitted customer or fiscal
+     * identity differs from the current owner of any linked reservation line.
+     * The locked checks inside the sale transaction remain authoritative.
+     */
+    private function assertCreditReservationCheckoutOwner(
+        Business $business,
+        Branch $branch,
+        array $items,
+        ?array $customerData,
+        bool $completedReplay,
+    ): void {
+        $reservedItems = collect($items)->filter(
+            fn (array $item): bool => filled($item['credit_line_id'] ?? null)
+        );
+
+        if ($reservedItems->isEmpty()) {
+            return;
+        }
+
+        if ($completedReplay) {
+            return;
+        }
+
+        $customerId = (int) ($customerData['id'] ?? 0);
+        $lineIds = $reservedItems->pluck('credit_line_id')
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $lines = CreditReceiptLine::query()
+            ->with('receipt:id,business_id,branch_id,customer_id,customer_doc_type,customer_doc_number')
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->whereIn('id', $lineIds)
+            ->get()
+            ->keyBy('id');
+
+        foreach ($reservedItems as $item) {
+            $line = $lines->get((int) $item['credit_line_id']);
+
+            if (
+                $customerId <= 0
+                || ! $line
+                || (int) $line->product_id !== (int) $item['product_id']
+                || (int) $line->receipt?->business_id !== (int) $business->id
+                || (int) $line->receipt?->branch_id !== (int) $branch->id
+                || (int) $line->receipt?->customer_id !== $customerId
+                || ! in_array($line->status, ['pending', 'partially_invoiced'], true)
+                || (int) $line->qty_pending <= 0
+            ) {
+                throw ValidationException::withMessages([
+                    'customer.id' => 'Esta reserva pertenece a otro cliente o ya no está disponible. Para cambiar de cliente, utiliza la transferencia desde Reservas de Crédito y vuelve a abrirla.',
+                ]);
+            }
+        }
+
+        $customer = Customer::query()
+            ->where('business_id', $business->id)
+            ->find($customerId);
+
+        if (! $customer) {
+            throw ValidationException::withMessages([
+                'customer.id' => 'No se encontró el cliente propietario de la reserva.',
+            ]);
+        }
+
+        if ($business->country === 'GT') {
+            $submittedType = CustomerIdentity::normalizeGuatemalaDocType($customerData['doc_type'] ?? null);
+            $submittedDocument = CustomerIdentity::normalizeDocument($submittedType ?? '', $customerData['doc_number'] ?? null) ?? '';
+            $currentIdentity = [
+                'type' => CustomerIdentity::normalizeGuatemalaDocType($customer->doc_type),
+                'document' => CustomerIdentity::normalizeDocument((string) $customer->doc_type, $customer->doc_number) ?? '',
+            ];
+            $historicalIdentities = $lines
+                ->map(fn (CreditReceiptLine $line) => [
+                    'type' => CustomerIdentity::normalizeGuatemalaDocType($line->receipt?->customer_doc_type),
+                    'document' => CustomerIdentity::normalizeDocument((string) $line->receipt?->customer_doc_type, $line->receipt?->customer_doc_number) ?? '',
+                ])
+                ->filter(fn (array $identity) => $identity['type'] !== null && $identity['document'] !== '')
+                ->unique(fn (array $identity) => $identity['type'].'|'.$identity['document'])
+                ->values();
+
+            // A verified current identity is authoritative. Historical
+            // reservation snapshots are accepted only for legacy customers
+            // whose current fiscal identity has not yet been verified.
+            $expectedIdentities = $this->customerHasCurrentVerifiedFiscalIdentity($customer)
+                ? collect([$currentIdentity])
+                : $historicalIdentities;
+
+            if (
+                $expectedIdentities->count() !== 1
+                || $submittedType === null
+                || $submittedDocument === ''
+                || $expectedIdentities->doesntContain(
+                    fn (array $identity) => $identity['type'] === $submittedType && $identity['document'] === $submittedDocument
+                )
+            ) {
+                throw ValidationException::withMessages([
+                    'customer.doc_number' => 'No puedes modificar el NIT o la identidad fiscal de una reserva desde el POS. Utiliza la transferencia de cliente en Reservas de Crédito.',
+                ]);
+            }
+        }
     }
 
     /**
