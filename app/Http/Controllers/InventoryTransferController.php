@@ -46,6 +46,7 @@ class InventoryTransferController extends Controller
                 ->withQueryString(),
             'filters' => $this->transferFilters($request, $range),
             'branches' => app(BranchAccessService::class)->authorizedBranches($request->user(), $businessId),
+            'timezone' => tenantTimezone($business),
         ]);
     }
 
@@ -262,6 +263,7 @@ class InventoryTransferController extends Controller
 
         return Inertia::render('Inventory/Transfers/Show', [
             'transfer' => $transfer->load(['fromBranch:id,name', 'toBranch:id,name', 'createdBy:id,name', 'lines.product:id,name,code,barcode']),
+            'timezone' => tenantTimezone($transfer->business_id),
         ]);
     }
 

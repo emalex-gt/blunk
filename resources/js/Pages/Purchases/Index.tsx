@@ -1,4 +1,5 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import { formatTenantDateTime } from '@/lib/tenantDateTime';
 import { formatCurrency } from '@/utils/currency';
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import { FormEvent, ReactNode, useState } from 'react';
@@ -30,7 +31,7 @@ type Paginated<T> = {
 
 type Filters = Record<string, string | null>;
 
-export default function Index({ purchases, filters = {} }: { purchases: Paginated<Purchase>; filters?: Filters }) {
+export default function Index({ purchases, filters = {}, timezone }: { purchases: Paginated<Purchase>; filters?: Filters; timezone: string }) {
     const business = usePage().props.business as { country?: string | null } | null;
     const country = business?.country ?? 'GT';
     const [form, setForm] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(filters).map(([key, value]) => [key, value ?? ''])));
@@ -136,7 +137,7 @@ export default function Index({ purchases, filters = {} }: { purchases: Paginate
                                         purchases.data.map((purchase) => (
                                             <tr key={purchase.id} className="transition-colors hover:bg-orange-50/30">
                                                 <td className="px-4 py-3 text-slate-600">
-                                                    {formatDate(purchase.created_at)}
+                                                    {formatTenantDateTime(purchase.created_at, timezone)}
                                                 </td>
                                                 <td className="px-4 py-3 font-semibold text-slate-950">
                                                     {formatPurchaseNumber(purchase)}
@@ -200,13 +201,6 @@ export default function Index({ purchases, filters = {} }: { purchases: Paginate
             </div>
         </AuthenticatedLayout>
     );
-}
-
-function formatDate(value: string) {
-    return new Intl.DateTimeFormat('es', {
-        dateStyle: 'short',
-        timeStyle: 'short',
-    }).format(new Date(value));
 }
 
 function formatPurchaseNumber(purchase: Purchase) {

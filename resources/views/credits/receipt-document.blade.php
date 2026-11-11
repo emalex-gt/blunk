@@ -30,7 +30,7 @@
             <h1>RECIBO DE PRODUCTOS A CRÉDITO</h1>
             <div><strong>PENDIENTE DE FACTURAR</strong></div>
             <div class="muted">{{ $number }}</div>
-            <div class="muted">{{ $receipt->created_at?->format('d/m/Y H:i') }}</div>
+            <div class="muted">{{ $receipt->created_at?->timezone(tenantTimezone($receipt->business))->format('d/m/Y H:i') }}</div>
         </div>
     </header>
 

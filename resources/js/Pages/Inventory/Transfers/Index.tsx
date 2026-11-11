@@ -1,4 +1,5 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import { formatTenantDateTime } from '@/lib/tenantDateTime';
 import { Head, Link, router } from '@inertiajs/react';
 import { FormEvent, ReactNode, useState } from 'react';
 
@@ -21,7 +22,7 @@ type Paginated<T> = {
 
 type BranchOption = { id: number; name: string };
 
-export default function Index({ transfers, filters = {}, branches = [] }: { transfers: Paginated<Transfer>; filters?: Record<string, string | null>; branches?: BranchOption[] }) {
+export default function Index({ transfers, filters = {}, branches = [], timezone }: { transfers: Paginated<Transfer>; filters?: Record<string, string | null>; branches?: BranchOption[]; timezone: string }) {
     const [form, setForm] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(filters).map(([key, value]) => [key, value ?? ''])));
 
     function setField(key: string, value: string) {
@@ -101,7 +102,7 @@ export default function Index({ transfers, filters = {}, branches = [] }: { tran
                         <tbody className="divide-y divide-slate-100">
                             {transfers.data.map((transfer) => (
                                 <tr key={transfer.id}>
-                                    <td className="px-4 py-3 text-slate-600">{transfer.created_at}</td>
+                                    <td className="px-4 py-3 text-slate-600">{formatTenantDateTime(transfer.created_at, timezone)}</td>
                                     <td className="px-4 py-3 font-semibold text-slate-900">{transfer.from_branch?.name ?? '-'}</td>
                                     <td className="px-4 py-3 font-semibold text-slate-900">{transfer.to_branch?.name ?? '-'}</td>
                                     <td className="px-4 py-3 text-slate-600">{transfer.created_by?.name ?? '-'}</td>

@@ -1,4 +1,5 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import { formatTenantDateTime } from '@/lib/tenantDateTime';
 import { Head, Link } from '@inertiajs/react';
 
 type Transfer = {
@@ -16,7 +17,7 @@ type Transfer = {
     }[];
 };
 
-export default function Show({ transfer }: { transfer: Transfer }) {
+export default function Show({ transfer, timezone }: { transfer: Transfer; timezone: string }) {
     return (
         <AuthenticatedLayout>
             <Head title={`Traslado #${transfer.id}`} />
@@ -46,7 +47,7 @@ export default function Show({ transfer }: { transfer: Transfer }) {
 
                     <div className="mt-5 grid grid-cols-1 gap-4 text-sm md:grid-cols-3">
                         <Info label="Estado" value={transfer.status === 'completed' ? 'Completado' : transfer.status} />
-                        <Info label="Fecha" value={formatDate(transfer.created_at)} />
+                        <Info label="Fecha" value={formatTenantDateTime(transfer.created_at, timezone)} />
                         <Info label="Creado por" value={transfer.created_by?.name ?? '-'} />
                         <Info label="Notas" value={transfer.notes ?? '-'} />
                     </div>
@@ -84,11 +85,4 @@ function Info({ label, value }: { label: string; value: string }) {
             <div className="mt-1 font-semibold text-slate-900">{value}</div>
         </div>
     );
-}
-
-function formatDate(value: string) {
-    return new Intl.DateTimeFormat('es', {
-        dateStyle: 'short',
-        timeStyle: 'short',
-    }).format(new Date(value));
 }

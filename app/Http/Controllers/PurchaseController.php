@@ -43,6 +43,7 @@ class PurchaseController extends Controller
                 ->paginate(25)
                 ->withQueryString(),
             'filters' => $this->purchaseFilters($request, $range),
+            'timezone' => tenantTimezone($business),
         ]);
     }
 
