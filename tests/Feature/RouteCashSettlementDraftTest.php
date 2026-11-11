@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Services\Routes\RouteCashSettlementDraftService;
 use App\Support\BranchInventory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
@@ -53,6 +54,23 @@ class RouteCashSettlementDraftTest extends TestCase
 
         $this->expectException(ValidationException::class);
         $service->create($actor, $collector->id, [['origin' => 'pre_sale_collection', 'collection_id' => $collections[0]->id]], 'settlement-reserve-two-0001');
+    }
+
+    public function test_draft_reservation_probe_does_not_lock_active_settlement_item_rows(): void
+    {
+        [$actor, $collector, $collections] = $this->fixture();
+        $queries = [];
+        DB::listen(function ($query) use (&$queries): void {
+            $queries[] = strtolower($query->sql);
+        });
+
+        app(RouteCashSettlementDraftService::class)->create($actor, $collector->id, [
+            ['origin' => 'pre_sale_collection', 'collection_id' => $collections[0]->id],
+        ], 'settlement-draft-probe-no-item-lock-0001');
+
+        $itemProbeLocks = array_filter($queries, fn (string $sql): bool => str_contains($sql, 'route_cash_settlement_items') && str_contains($sql, 'for update'));
+
+        $this->assertSame([], array_values($itemProbeLocks));
     }
 
     public function test_remove_and_cancel_release_reservations_without_changing_custody(): void
