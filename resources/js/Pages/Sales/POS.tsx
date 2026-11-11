@@ -1945,6 +1945,7 @@ export default function POS({
             return;
         }
 
+        clearFiscalRecoveryState();
         setIdempotencyKey(makeOperationKey());
         setFailedSubmission(false);
     }
@@ -2011,7 +2012,7 @@ export default function POS({
     }
 
     async function posSaleStatusForDraft(draft: PosDraft): Promise<PosDraftRecoveryStatus> {
-        return posSaleStatusForKey(draft.idempotency_key ?? '');
+        return posSaleStatusForKey(draft.idempotency_key ?? '', draft.branch_id ?? activeBranchId);
     }
 
     function applyFiscalStatus(
@@ -2833,6 +2834,33 @@ export default function POS({
             return;
         }
 
+        // The selected draft replaces the current operation only after its status is known.
+        // Ignore late status responses from the operation currently on screen meanwhile.
+        fiscalStatusRequestRef.current += 1;
+        const recoveryRequestId = ++draftRecoveryRequestRef.current;
+        let fiscalStatus: PosDraftRecoveryStatus;
+
+        if (!draft.payload.idempotency_key || !draft.payload.branch_id) {
+            fiscalStatus = { status: 'verification_unavailable' };
+        } else {
+            try {
+                fiscalStatus = await posSaleStatusForDraft(draft.payload);
+            } catch {
+                fiscalStatus = { status: 'verification_unavailable' };
+            }
+        }
+
+        if (recoveryRequestId !== draftRecoveryRequestRef.current) {
+            return;
+        }
+
+        if (fiscalStatus.status === 'finalized') {
+            const message = 'Este borrador ya fue registrado y no se restauró para evitar una duplicación.';
+            showMessage(message);
+            toast.info(message);
+            return;
+        }
+
         const missingProductIds = (draft.payload.cart ?? [])
             .map((item) => item.product_id)
             .filter((productId) => !productsByIdRef.current.has(productId));
@@ -2850,6 +2878,10 @@ export default function POS({
             } catch {
                 productRecoveryFailed = true;
             }
+        }
+
+        if (recoveryRequestId !== draftRecoveryRequestRef.current) {
+            return;
         }
 
         const unresolvedProductIds = missingProductIds.filter((productId) => !restoreProductMap.has(productId));
@@ -2872,7 +2904,11 @@ export default function POS({
             return;
         }
 
+        clearFiscalRecoveryState();
         applyPosDraftRestore(draft.payload, prepared);
+        if (!['not_found', 'fiscal_rejected'].includes(fiscalStatus.status)) {
+            rememberFiscalStatus(fiscalStatus, draft.payload.idempotency_key ?? '', draft.payload.branch_id ?? activeBranchId);
+        }
         setActiveOperationDraftId(draft.id);
         setSavedDraftsOpen(false);
         setSearch('');
@@ -3385,9 +3421,9 @@ export default function POS({
         }
 
         const isBranchChange = draftLoadInitializedRef.current;
+        clearFiscalRecoveryState();
         const recoveryRequestId = ++draftRecoveryRequestRef.current;
         setRestoreDraft(null);
-        setFiscalRecoveryState(null);
         setDraftReady(false);
         const draft = loadDraft<PosDraft>(draftKey);
         const finishDraftInitialization = () => {
