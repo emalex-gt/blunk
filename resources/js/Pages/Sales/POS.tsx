@@ -80,6 +80,12 @@ type PosDraftRecoveryStatus = {
     document_url?: string;
 };
 
+type PosFiscalRecoveryState = {
+    idempotencyKey: string;
+    branchId: number | string | null;
+    status: PosDraftRecoveryStatus;
+};
+
 type ProductViewMode = 'grid' | 'list';
 
 type PriceType = {
@@ -940,7 +946,7 @@ export default function POS({
     const [cashReceived, setCashReceived] = useState('');
     const [restoreDraft, setRestoreDraft] = useState<PosDraft | null>(null);
     const [recoveredCompletedSale, setRecoveredCompletedSale] = useState<PosDraftRecoveryStatus | null>(null);
-    const [draftRecoveryStatus, setDraftRecoveryStatus] = useState<PosDraftRecoveryStatus | null>(null);
+    const [fiscalRecoveryState, setFiscalRecoveryState] = useState<PosFiscalRecoveryState | null>(null);
     const [hasPendingFiscalOperation, setHasPendingFiscalOperation] = useState(false);
     const [idempotencyKey, setIdempotencyKey] = useState(makeOperationKey);
     const [failedSubmission, setFailedSubmission] = useState(false);
@@ -948,9 +954,15 @@ export default function POS({
     const [showClearSaleModal, setShowClearSaleModal] = useState(false);
     const [activeOperationDraftId, setActiveOperationDraftId] = useState<number | null>(null);
     const [savedDraftsOpen, setSavedDraftsOpen] = useState(false);
-    const fiscalDraftRecoveryBlocked = draftRecoveryStatus !== null
-        && !['not_found', 'finalized', 'fiscal_rejected'].includes(draftRecoveryStatus.status);
-    const draftVerificationUnavailable = draftRecoveryStatus?.status === 'verification_unavailable';
+    const activeFiscalOperationBranchId = felSubmissionBranchId ?? activeBranchId;
+    const activeDraftRecoveryStatus = fiscalRecoveryState !== null
+        && fiscalRecoveryState.idempotencyKey === idempotencyKey
+        && String(fiscalRecoveryState.branchId ?? '') === String(activeFiscalOperationBranchId ?? '')
+        ? fiscalRecoveryState.status
+        : null;
+    const fiscalDraftRecoveryBlocked = activeDraftRecoveryStatus !== null
+        && !['not_found', 'finalized', 'fiscal_rejected'].includes(activeDraftRecoveryStatus.status);
+    const draftVerificationUnavailable = activeDraftRecoveryStatus?.status === 'verification_unavailable';
     const [savedDrafts, setSavedDrafts] = useState<OperationDraftRecord<PosDraft>[]>([]);
     const [draftListLoading, setDraftListLoading] = useState(false);
     const [draftSaving, setDraftSaving] = useState(false);
@@ -1873,7 +1885,33 @@ export default function POS({
         setPayments([paymentLine('cash', '0.00')]);
     }
 
+    function clearFiscalRecoveryState() {
+        // Invalidate every in-flight status lookup before giving the POS a new operation key.
+        fiscalStatusRequestRef.current += 1;
+        draftRecoveryRequestRef.current += 1;
+        setFiscalRecoveryState(null);
+        setRecoveredCompletedSale(null);
+        setFelStatusMessage('');
+        setFelSubmissionBranchId(null);
+        setFelSlowNotice(false);
+        setCheckingFelStatus(false);
+    }
+
+    function rememberFiscalStatus(status: PosDraftRecoveryStatus, operationKey: string, branchId: number | string | null) {
+        setFiscalRecoveryState({
+            idempotencyKey: operationKey,
+            branchId,
+            status,
+        });
+    }
+
+    function isCurrentFiscalOperation(operationKey: string, branchId: number | string | null) {
+        return operationKey === idempotencyKey
+            && String(branchId ?? '') === String((felSubmissionBranchId ?? activeBranchId) ?? '');
+    }
+
     function clearSaleState() {
+        clearFiscalRecoveryState();
         setCart([]);
         setSearch('');
         setErrorMessage('');
@@ -1896,7 +1934,14 @@ export default function POS({
     }
 
     function renewOperationKeyAfterFailedMutation() {
-        if (!failedSubmission || processing || creditProcessing || saleSubmitLockedRef.current) {
+        if (
+            !failedSubmission
+            || processing
+            || creditProcessing
+            || saleSubmitLockedRef.current
+            || fiscalDraftRecoveryBlocked
+            || draftVerificationUnavailable
+        ) {
             return;
         }
 
@@ -1912,6 +1957,7 @@ export default function POS({
         latestSubmitFailureHandledRef.current = true;
 
         if (fiscalIntentRejected || idempotencyError === 'La venta cambió después del intento anterior. Intenta confirmar nuevamente.') {
+            clearFiscalRecoveryState();
             setIdempotencyKey(makeOperationKey());
             setFailedSubmission(false);
         } else {
@@ -1941,14 +1987,7 @@ export default function POS({
     }
 
     function releaseAcceptedProvisionalOperationForNewSale() {
-        fiscalStatusRequestRef.current += 1;
-        draftRecoveryRequestRef.current += 1;
-        setDraftRecoveryStatus(null);
-        setRecoveredCompletedSale(null);
-        setFelStatusMessage('');
-        setFelSubmissionBranchId(null);
-        setFelSlowNotice(false);
-        setCheckingFelStatus(false);
+        clearFiscalRecoveryState();
     }
 
     async function posSaleStatusForKey(operationKey: string, branchId = activeBranchId): Promise<PosDraftRecoveryStatus> {
@@ -1975,8 +2014,16 @@ export default function POS({
         return posSaleStatusForKey(draft.idempotency_key ?? '');
     }
 
-    function applyFiscalStatus(status: PosDraftRecoveryStatus) {
-        setDraftRecoveryStatus(status);
+    function applyFiscalStatus(
+        status: PosDraftRecoveryStatus,
+        operationKey: string,
+        branchId: number | string | null,
+    ) {
+        if (!isCurrentFiscalOperation(operationKey, branchId)) {
+            return;
+        }
+
+        rememberFiscalStatus(status, operationKey, branchId);
 
         if (status.status === 'finalized') {
             setRecoveredCompletedSale(status);
@@ -2020,9 +2067,9 @@ export default function POS({
                 return;
             }
 
-            applyFiscalStatus(status);
+            applyFiscalStatus(status, operationKey, branchId);
         } catch {
-            if (requestId === fiscalStatusRequestRef.current) {
+            if (requestId === fiscalStatusRequestRef.current && isCurrentFiscalOperation(operationKey, branchId)) {
                 setFelStatusMessage('No se pudo verificar el estado en este momento. Conserva el carrito y no reenvíes la factura.');
             }
         } finally {
@@ -3107,6 +3154,7 @@ export default function POS({
                     setCashReceived('');
                     resetPaymentsForNewSale();
                     setActiveOperationDraftId(null);
+                    clearFiscalRecoveryState();
                     setIdempotencyKey(makeOperationKey());
                     setFailedSubmission(false);
                     clearDraft(draftKey);
@@ -3276,6 +3324,7 @@ export default function POS({
                 setData('branch_id', activeBranchId);
                 setData('customer', defaultCustomer);
                 setCustomerEditing(false);
+                clearFiscalRecoveryState();
                 setIdempotencyKey(makeOperationKey());
                 setFailedSubmission(false);
                 setProvisionalIntent(null);
@@ -3338,7 +3387,7 @@ export default function POS({
         const isBranchChange = draftLoadInitializedRef.current;
         const recoveryRequestId = ++draftRecoveryRequestRef.current;
         setRestoreDraft(null);
-        setDraftRecoveryStatus(null);
+        setFiscalRecoveryState(null);
         setDraftReady(false);
         const draft = loadDraft<PosDraft>(draftKey);
         const finishDraftInitialization = () => {
@@ -3383,11 +3432,11 @@ export default function POS({
                     }
 
                     if (!['not_found', 'fiscal_rejected'].includes(status.status)) {
-                        setDraftRecoveryStatus(status);
+                        rememberFiscalStatus(status, draft.idempotency_key ?? '', activeBranchId);
                     }
                 } catch {
                     if (recoveryRequestId === draftRecoveryRequestRef.current) {
-                        setDraftRecoveryStatus({ status: 'verification_unavailable' });
+                        rememberFiscalStatus({ status: 'verification_unavailable' }, draft.idempotency_key ?? '', activeBranchId);
                     }
                 }
 
@@ -3908,7 +3957,7 @@ export default function POS({
                             )}
                             {hasPendingFiscalOperation && !fiscalDraftRecoveryBlocked && (
                                 <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="status">
-                                    Hay una operación FEL anterior en verificación. No se reenviará automáticamente; una factura igual se bloqueará hasta que exista evidencia fiscal de su resolución.
+                                    Hay una operación FEL anterior en verificación. No se reenviará automáticamente; esta venta nueva puede continuar si es independiente.
                                 </div>
                             )}
                             <div className="flex flex-wrap items-center justify-between gap-3">
