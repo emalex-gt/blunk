@@ -6,11 +6,14 @@ use App\Models\Category;
 use App\Models\Brand;
 use App\Models\BranchProductPrice;
 use App\Models\Product;
+use App\Models\ProductBranchStock;
 use App\Models\ProductLocation;
 use App\Models\ProductPrice;
+use App\Models\StockReservation;
 use App\Models\StockMovement;
 use App\Support\BranchInventory;
 use App\Support\IdempotencyService;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\PriceLists;
 use App\Support\ProductSupplierCostHistory;
 use App\Support\Permissions;
@@ -68,6 +71,7 @@ class ProductController extends Controller
                 'sale_price',
                 'stock',
                 'min_stock',
+                'allow_decimal_quantity',
                 'location',
                 'is_active',
                 'image_url',
@@ -249,9 +253,9 @@ class ProductController extends Controller
 
                     $product = Product::create($data);
                     $this->syncProductPrices($product, $prices, (float) $product->sale_price, $branch->id);
-                    BranchInventory::adjust($product, $branch->id, (float) $product->stock);
+                    BranchInventory::adjust($product, $branch->id, $product->stock);
 
-                    if ($product->stock > 0) {
+                    if (ProductQuantityPolicy::compare($product->stock, '0') > 0) {
                         StockMovement::create([
                             'business_id' => $businessId,
                             'branch_id' => $branch->id,
@@ -295,7 +299,7 @@ class ProductController extends Controller
             $locationName = $data['location_name'] ?? ($data['location'] ?? null);
             unset($data['category_name'], $data['brand_name'], $data['brand_id'], $data['location_name'], $data['image'], $data['prices']);
             $branch = BranchInventory::activeBranch(currentBusinessId());
-            $oldStock = (float) (BranchInventory::stockMap(currentBusinessId(), [$product->id], $branch->id)[$product->id] ?? 0);
+            $oldStock = ProductQuantityPolicy::signed(BranchInventory::stockMap(currentBusinessId(), [$product->id], $branch->id)[$product->id] ?? 0);
             $oldImagePublicId = $product->image_public_id;
             $data['category_id'] = $this->resolveCategoryId(
                 currentBusinessId(),
@@ -320,7 +324,7 @@ class ProductController extends Controller
                 ];
             }
 
-            $targetStock = (float) ($data['stock'] ?? $oldStock);
+            $targetStock = $data['stock'] ?? $oldStock;
             $salePrice = (float) ($data['sale_price'] ?? $product->sale_price);
             unset($data['stock']);
             if (BranchInventory::pricingScope(currentBusinessId()) === 'branch') {
@@ -344,9 +348,9 @@ class ProductController extends Controller
                 }
             }
 
-            $difference = $newStock - $previousStock;
+            $difference = ProductQuantityPolicy::subtract($newStock, $previousStock);
 
-            if ($difference !== 0) {
+            if (ProductQuantityPolicy::compare($difference, '0') !== 0) {
                 StockMovement::create([
                     'business_id' => currentBusinessId(),
                     'branch_id' => $branch->id,
@@ -367,7 +371,7 @@ class ProductController extends Controller
         abort_unless($product->business_id === currentBusinessId(), 403);
         $businessId = currentBusinessId();
         $activeBranch = BranchInventory::activeBranch($businessId);
-        $stock = (float) (BranchInventory::stockMap($businessId, [$product->id], $activeBranch->id)[$product->id] ?? 0);
+        $stock = ProductQuantityPolicy::signed(BranchInventory::stockMap($businessId, [$product->id], $activeBranch->id)[$product->id] ?? 0);
         $reserved = StockAvailability::reservedStock($product, null, $activeBranch->id);
 
         $movements = StockMovement::query()
@@ -391,7 +395,7 @@ class ProductController extends Controller
                 ]),
                 'stock' => $stock,
                 'reserved_stock' => $reserved,
-                'available_stock' => $stock - $reserved,
+                'available_stock' => ProductQuantityPolicy::subtract($stock, $reserved),
                 'branch' => [
                     'id' => $activeBranch->id,
                     'name' => $activeBranch->name,
@@ -425,8 +429,9 @@ class ProductController extends Controller
             'barcode' => ['nullable', 'string', 'max:255'],
             'cost_price' => ['required', 'numeric', 'decimal:0,5', 'min:0'],
             'sale_price' => ['required', 'numeric', 'decimal:0,2', 'min:0'],
-            'stock' => ['required', 'integer', 'min:0'],
-            'min_stock' => ['required', 'integer', 'min:0'],
+            'stock' => ['required', 'numeric', 'decimal:0,4', 'min:0'],
+            'min_stock' => ['required', 'numeric', 'decimal:0,4', 'min:0'],
+            'allow_decimal_quantity' => ['sometimes', 'boolean'],
             'location' => ['nullable', 'string', 'max:255'],
             'location_name' => ['nullable', 'string', 'max:255'],
             'is_active' => ['boolean'],
@@ -459,6 +464,16 @@ class ProductController extends Controller
             $data['location'] = $this->normalizeCatalogName($data['location']);
         }
         $data['brand_id'] = $data['brand_id'] ?? null;
+        $data['allow_decimal_quantity'] = (bool) ($data['allow_decimal_quantity'] ?? $product?->allow_decimal_quantity ?? false);
+        $quantityProduct = new Product(['allow_decimal_quantity' => $data['allow_decimal_quantity']]);
+        $data['stock'] = ProductQuantityPolicy::absolute($quantityProduct, $data['stock']);
+        $data['min_stock'] = ProductQuantityPolicy::absolute($quantityProduct, $data['min_stock']);
+
+        if ($product?->allow_decimal_quantity && ! $data['allow_decimal_quantity'] && $this->hasActiveFractionalQuantity($product)) {
+            throw ValidationException::withMessages([
+                'allow_decimal_quantity' => 'No puedes desactivar cantidades decimales mientras existan existencias o reservas fraccionarias. Regulariza esas cantidades primero.',
+            ]);
+        }
 
         if ($data['code'] === null && $data['barcode'] === null) {
             throw ValidationException::withMessages([
@@ -474,6 +489,27 @@ class ProductController extends Controller
         }
 
         return $data;
+    }
+
+    private function hasActiveFractionalQuantity(Product $product): bool
+    {
+        return ProductBranchStock::query()
+            ->where('business_id', $product->business_id)
+            ->where('product_id', $product->id)
+            ->whereRaw('stock <> trunc(stock)')
+            ->exists()
+            || StockReservation::query()
+                ->where('business_id', $product->business_id)
+                ->where('product_id', $product->id)
+                ->where('status', 'active')
+                ->whereRaw('quantity <> trunc(quantity)')
+                ->exists()
+            || Product::query()
+                ->whereKey($product->id)
+                ->where(fn ($query) => $query
+                    ->whereRaw('stock <> trunc(stock)')
+                    ->orWhereRaw('min_stock <> trunc(min_stock)'))
+                ->exists();
     }
 
     private function productIdempotencyPayload(Request $request): array

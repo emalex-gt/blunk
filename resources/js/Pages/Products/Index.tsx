@@ -39,8 +39,9 @@ type Product = {
     barcode: string | null;
     cost_price?: string;
     sale_price: string;
-    stock: number;
-    min_stock: number;
+    stock: number | string;
+    min_stock: number | string;
+    allow_decimal_quantity: boolean;
     location: string | null;
     is_active: boolean;
     image_url: string | null;
@@ -112,6 +113,7 @@ type ProductForm = {
     sale_price: string;
     stock: string;
     min_stock: string;
+    allow_decimal_quantity: boolean;
     location: string;
     is_active: boolean;
     image: File | null;
@@ -143,6 +145,7 @@ const emptyForm: ProductForm = {
     sale_price: '0',
     stock: '0',
     min_stock: '0',
+    allow_decimal_quantity: false,
     location: '',
     is_active: true,
     image: null,
@@ -508,6 +511,7 @@ export default function ProductIndex({
             sale_price: product.sale_price,
             stock: String(product.stock),
             min_stock: String(product.min_stock),
+            allow_decimal_quantity: product.allow_decimal_quantity,
             location: product.location ?? '',
             is_active: product.is_active,
             image: null,
@@ -977,14 +981,19 @@ export default function ProductIndex({
                         </section>
                     )}
 
+                    <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                        <input type="checkbox" checked={data.allow_decimal_quantity} onChange={(event) => setData('allow_decimal_quantity', event.target.checked)} className="mt-0.5 rounded border-slate-300 text-orange-600 focus:ring-orange-500" />
+                        <span><span className="font-semibold text-slate-900">Permitir cantidades decimales</span><span className="mt-1 block text-xs text-slate-500">Permite fracciones de hasta cuatro decimales en operaciones de inventario habilitadas.</span></span>
+                    </label>
+
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <InputLabel htmlFor="stock" value={t('stock.stock')} />
-                            <TextInput id="stock" type="number" className="mt-1 block w-full" value={data.stock} onChange={(e) => setData('stock', e.target.value)} />
+                            <TextInput id="stock" type="number" min="0" step={data.allow_decimal_quantity ? '0.0001' : '1'} className="mt-1 block w-full" value={data.stock} onChange={(e) => setData('stock', limitDecimalPlaces(e.target.value, 4))} />
                         </div>
                         <div>
                             <InputLabel htmlFor="min_stock" value={t('products.min_stock')} />
-                            <TextInput id="min_stock" type="number" className="mt-1 block w-full" value={data.min_stock} onChange={(e) => setData('min_stock', e.target.value)} />
+                            <TextInput id="min_stock" type="number" min="0" step={data.allow_decimal_quantity ? '0.0001' : '1'} className="mt-1 block w-full" value={data.min_stock} onChange={(e) => setData('min_stock', limitDecimalPlaces(e.target.value, 4))} />
                         </div>
                     </div>
 
