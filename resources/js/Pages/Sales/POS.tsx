@@ -2015,6 +2015,13 @@ export default function POS({
         return posSaleStatusForKey(draft.idempotency_key ?? '', draft.branch_id ?? activeBranchId);
     }
 
+    function hasVerifiableDraftOperation(draft: PosDraft) {
+        return Boolean(draft.idempotency_key?.trim())
+            && draft.branch_id !== null
+            && draft.branch_id !== undefined
+            && String(draft.branch_id).trim() !== '';
+    }
+
     function applyFiscalStatus(
         status: PosDraftRecoveryStatus,
         operationKey: string,
@@ -2834,20 +2841,23 @@ export default function POS({
             return;
         }
 
+        if (!hasVerifiableDraftOperation(draft.payload)) {
+            const message = 'No se puede verificar con seguridad este borrador porque le falta la identificación de la operación. No se restauró.';
+            showError(message);
+            toast.error(message);
+            return;
+        }
+
         // The selected draft replaces the current operation only after its status is known.
         // Ignore late status responses from the operation currently on screen meanwhile.
         fiscalStatusRequestRef.current += 1;
         const recoveryRequestId = ++draftRecoveryRequestRef.current;
         let fiscalStatus: PosDraftRecoveryStatus;
 
-        if (!draft.payload.idempotency_key || !draft.payload.branch_id) {
+        try {
+            fiscalStatus = await posSaleStatusForDraft(draft.payload);
+        } catch {
             fiscalStatus = { status: 'verification_unavailable' };
-        } else {
-            try {
-                fiscalStatus = await posSaleStatusForDraft(draft.payload);
-            } catch {
-                fiscalStatus = { status: 'verification_unavailable' };
-            }
         }
 
         if (recoveryRequestId !== draftRecoveryRequestRef.current) {
@@ -3448,6 +3458,17 @@ export default function POS({
         if (draft && isMeaningfulPosDraft(draft)) {
             let cancelled = false;
             const recoverAfterVerification = async () => {
+                if (!hasVerifiableDraftOperation(draft)) {
+                    if (!cancelled && recoveryRequestId === draftRecoveryRequestRef.current) {
+                        const message = 'No se puede verificar con seguridad el borrador local porque le falta la identificación de la operación. Se conservó sin restaurarlo.';
+                        setDraftReady(true);
+                        showError(message);
+                        toast.warning(message, { persistent: true });
+                        finishDraftInitialization();
+                    }
+                    return;
+                }
+
                 try {
                     const status = await posSaleStatusForDraft(draft);
 
