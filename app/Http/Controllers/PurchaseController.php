@@ -14,6 +14,7 @@ use App\Support\BusinessCounter;
 use App\Support\DocumentCompanyHeader;
 use App\Support\Exports\TableExporter;
 use App\Support\IdempotencyService;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\ProductSupplierCostHistory;
@@ -138,7 +139,7 @@ class PurchaseController extends Controller
         }
 
         $products = $this->purchaseProductQuery($businessId, $activeBranch->id, $search, $ids, $limit)
-            ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'cost_price', 'sale_price', 'stock', 'min_stock', 'location', 'image_url']);
+            ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'cost_price', 'sale_price', 'stock', 'min_stock', 'allow_decimal_quantity', 'location', 'image_url']);
 
         return response()->json([
             'products' => $this->purchaseProductPayload($products, $businessId, $activeBranch->id),
@@ -205,12 +206,12 @@ class PurchaseController extends Controller
             'note' => ['nullable', 'string', 'max:2000'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'exists:products,id'],
-            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
             'items.*.unit_cost' => ['required', 'numeric', 'decimal:0,5', 'min:0'],
         ], [
-            'items.*.quantity.required' => 'La cantidad debe ser un número entero.',
-            'items.*.quantity.integer' => 'La cantidad debe ser un número entero.',
-            'items.*.quantity.min' => 'La cantidad debe ser un número entero.',
+            'items.*.quantity.required' => 'La cantidad es obligatoria.',
+            'items.*.quantity.decimal' => 'La cantidad debe tener como máximo cuatro decimales.',
+            'items.*.quantity.gt' => 'La cantidad debe ser mayor a cero.',
         ]);
 
         $businessId = currentBusinessId();
@@ -267,7 +268,7 @@ class PurchaseController extends Controller
                 'created_by' => $request->user()->id,
             ]);
 
-            $total = 0;
+            $total = '0';
 
             foreach ($data['items'] as $item) {
                 $product = Product::query()
@@ -283,17 +284,28 @@ class PurchaseController extends Controller
                 }
                 BranchInventory::ensureProductInBranch($product, $branch->id);
 
-                $incomingQty = (int) $item['quantity'];
-                $incomingCost = (float) $item['unit_cost'];
-                $currentStock = (float) $product->stock;
-                $currentCost = (float) $product->cost_price;
+                $incomingQty = ProductQuantityPolicy::positive($product, $item['quantity']);
+                $incomingCost = $this->decimal($item['unit_cost'], 5);
+                $currentStock = ProductQuantityPolicy::signed($product->stock);
+                $currentCost = $this->decimal($product->cost_price, 5);
                 [$currentBranchStock, $newBranchStock] = BranchInventory::increase($product, $branch->id, $incomingQty);
-                $newStock = (float) Product::query()->whereKey($product->id)->value('stock');
-                $newAverageCost = $currentStock <= 0
+                $newStock = ProductQuantityPolicy::signed(Product::query()->whereKey($product->id)->value('stock'));
+                $newAverageCost = ProductQuantityPolicy::compare($currentStock, '0') <= 0
                     ? $incomingCost
-                    : (($currentStock * $currentCost) + ($incomingQty * $incomingCost)) / $newStock;
-                $lineTotal = round($incomingQty * $incomingCost, 5);
-                $total += $lineTotal;
+                    : $this->roundDecimal(
+                        bcdiv(
+                            bcadd(
+                                bcmul($currentStock, $currentCost, 9),
+                                bcmul($incomingQty, $incomingCost, 9),
+                                9,
+                            ),
+                            $newStock,
+                            9,
+                        ),
+                        5,
+                    );
+                $lineTotal = $this->roundDecimal(bcmul($incomingQty, $incomingCost, 9), 5);
+                $total = bcadd($total, $lineTotal, 5);
 
                 $purchase->items()->create([
                     'business_id' => $businessId,
@@ -302,12 +314,12 @@ class PurchaseController extends Controller
                     'quantity' => $incomingQty,
                     'unit_cost' => $incomingCost,
                     'previous_cost' => $currentCost,
-                    'new_average_cost' => round($newAverageCost, 5),
+                    'new_average_cost' => $newAverageCost,
                     'total' => $lineTotal,
                 ]);
 
                 $product->update([
-                    'cost_price' => round($newAverageCost, 5),
+                    'cost_price' => $newAverageCost,
                 ]);
 
                 StockMovement::create([
@@ -324,11 +336,11 @@ class PurchaseController extends Controller
                 ]);
             }
 
-            $purchaseTotal = round($total + (float) ($data['transport_cost'] ?? 0), 5);
+            $purchaseTotal = $this->roundDecimal(bcadd($total, $this->decimal($data['transport_cost'] ?? 0, 2), 5), 5);
             $purchase->update(['total' => $purchaseTotal]);
 
-            if ($paidFromCash && $cashSession && $purchaseTotal > 0) {
-                $cashPurchaseAmount = round($purchaseTotal, 2);
+            if ($paidFromCash && $cashSession && ProductQuantityPolicy::compare($purchaseTotal, '0') > 0) {
+                $cashPurchaseAmount = (float) $this->roundDecimal($purchaseTotal, 2);
                 CashRegister::recordMovement(
                     $cashSession,
                     'purchase_cash',
@@ -463,7 +475,7 @@ class PurchaseController extends Controller
             'items' => collect($data['items'] ?? [])
                 ->map(fn (array $item) => [
                     'product_id' => (int) ($item['product_id'] ?? 0),
-                    'quantity' => (int) ($item['quantity'] ?? 0),
+                    'quantity' => ProductQuantityPolicy::canonicalForIdempotency($item['quantity'] ?? 0),
                     'unit_cost' => round((float) ($item['unit_cost'] ?? 0), 5),
                 ])
                 ->sortBy(fn (array $item) => implode('|', [$item['product_id'], $item['quantity'], $item['unit_cost']]))
@@ -563,13 +575,26 @@ class PurchaseController extends Controller
                 'brand_name' => $product->brand?->name,
                 'cost_price' => (string) $product->cost_price,
                 'sale_price' => (string) $product->sale_price,
-                'stock' => (float) $product->stock,
-                'min_stock' => (float) $product->min_stock,
+                'stock' => (string) $product->stock,
+                'min_stock' => (string) $product->min_stock,
+                'allow_decimal_quantity' => (bool) $product->allow_decimal_quantity,
                 'location' => $product->location,
                 'image_url' => $product->image_url,
                 'supplier_costs' => $supplierCosts->get($product->id, collect())->values(),
             ];
         })->values()->all();
+    }
+
+    private function decimal(mixed $value, int $scale): string
+    {
+        return bcadd((string) $value, '0', $scale);
+    }
+
+    private function roundDecimal(string $value, int $scale): string
+    {
+        $halfUnit = '0.'.str_repeat('0', max(0, $scale - 1)).'5';
+
+        return bcadd(bcadd($value, $halfUnit, $scale + 1), '0', $scale);
     }
 
     private function normalizeProductSearchTerm(string $value): string

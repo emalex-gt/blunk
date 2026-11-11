@@ -56,6 +56,49 @@ class PurchasePrecisionTest extends TestCase
         $this->assertSame('1.77778', $product->fresh()->cost_price);
     }
 
+    public function test_decimal_product_purchase_preserves_quantity_stock_and_weighted_cost_exactly(): void
+    {
+        [, $user, $product] = $this->context(stock: 2, cost: '10.00000');
+        $product->update(['allow_decimal_quantity' => true]);
+        $payload = $this->payload($product, '14.00000', '1.2500');
+
+        $this->actingAs($user)->post(route('purchases.store'), $payload)->assertRedirect(route('purchases.index'));
+
+        $item = Purchase::query()->sole()->items()->sole();
+        $this->assertSame('1.2500', $item->quantity);
+        $this->assertSame('3.2500', ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+        $this->assertSame('11.53846', $product->fresh()->cost_price);
+    }
+
+    public function test_purchase_rejects_fractional_quantity_for_integer_product_without_stock_movement(): void
+    {
+        [, $user, $product] = $this->context();
+
+        $this->actingAs($user)
+            ->post(route('purchases.store'), $this->payload($product, '10.00000', '2.1250'))
+            ->assertSessionHasErrors('quantity');
+
+        $this->assertDatabaseCount('purchases', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+    }
+
+    public function test_purchase_idempotency_canonicalizes_equivalent_decimal_quantity_formats(): void
+    {
+        [, $user, $product] = $this->context();
+        $product->update(['allow_decimal_quantity' => true]);
+        $payload = $this->payload($product, '10.00000', '2.125');
+        $payload['idempotency_key'] = 'purchase-decimal-idempotency';
+
+        $this->actingAs($user)->post(route('purchases.store'), $payload)->assertRedirect(route('purchases.index'));
+        $this->actingAs($user)->post(route('purchases.store'), [...$payload, 'items' => [[
+            ...$payload['items'][0],
+            'quantity' => '2.1250',
+        ]]])->assertRedirect(route('purchases.index'));
+
+        $this->assertDatabaseCount('purchases', 1);
+        $this->assertSame('2.1250', ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+    }
+
     public function test_purchase_rejects_a_unit_cost_with_more_than_five_decimals(): void
     {
         [, $user, $product] = $this->context();
@@ -183,7 +226,7 @@ class PurchasePrecisionTest extends TestCase
         return [$business, $user, $product];
     }
 
-    private function payload(Product $product, string $cost, int $quantity = 1): array
+    private function payload(Product $product, string $cost, int|string $quantity = 1): array
     {
         return ['idempotency_key' => 'purchase-precision-'.uniqid(), 'payment_method' => 'card', 'items' => [['product_id' => $product->id, 'quantity' => $quantity, 'unit_cost' => $cost]]];
     }

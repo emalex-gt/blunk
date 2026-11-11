@@ -21,10 +21,11 @@ type Product = {
     brand_name?: string | null;
     cost_price: string;
     sale_price?: string;
-    stock: number;
-    min_stock: number;
+    stock: number | string;
+    min_stock: number | string;
     location: string | null;
     image_url: string | null;
+    allow_decimal_quantity: boolean;
     supplier_costs: SupplierCost[];
 };
 
@@ -94,20 +95,47 @@ function isMeaningfulPurchaseDraft(draft: PurchaseDraft) {
     );
 }
 
-function quantityError(value: string): string | null {
-    if (!/^[1-9]\d*$/.test(value.trim())) {
-        return 'La cantidad debe ser un número entero.';
+function quantityError(value: string, product: Product): string | null {
+    const normalized = value.trim().replace(',', '.');
+    const pattern = product.allow_decimal_quantity
+        ? /^\d+(?:\.\d{1,4})?$/
+        : /^[1-9]\d*$/;
+
+    if (!pattern.test(normalized) || Number(normalized) <= 0) {
+        return product.allow_decimal_quantity
+            ? 'La cantidad debe ser mayor a 0 y tener hasta cuatro decimales.'
+            : 'La cantidad debe ser un número entero.';
     }
 
     return null;
 }
 
-function sanitizeQuantityInput(value: string): string | null {
-    if (/[.,]/.test(value)) {
-        return null;
+function sanitizeQuantityInput(value: string, product: Product): string | null {
+    const normalized = value.replace(',', '.');
+    const pattern = product.allow_decimal_quantity
+        ? /^\d*(?:\.\d{0,4})?$/
+        : /^\d*$/;
+
+    return pattern.test(normalized) ? normalized : null;
+}
+
+function incrementQuantity(value: string): string {
+    const [whole = '0', fraction] = value.replace(',', '.').split('.', 2);
+    const nextWhole = String(Number.parseInt(whole || '0', 10) + 1);
+
+    return fraction === undefined ? nextWhole : `${nextWhole}.${fraction}`;
+}
+
+function decrementQuantity(value: string): string {
+    const normalized = value.replace(',', '.');
+    const [whole = '0', fraction] = normalized.split('.', 2);
+    const numericWhole = Number.parseInt(whole || '0', 10);
+
+    if (numericWhole > 1) {
+        return fraction === undefined ? String(numericWhole - 1) : `${numericWhole - 1}.${fraction}`;
     }
 
-    return value.replace(/\D/g, '');
+    return fraction && !/^0*$/.test(fraction) ? `0.${fraction}` : '1';
 }
 
 function loadProductViewMode(key: string): ProductViewMode {
@@ -260,7 +288,7 @@ export default function Create({
             if (existing) {
                 return items.map((item) =>
                     item.product.id === product.id
-                        ? { ...item, quantity: String(Number(item.quantity || 0) + 1) }
+                        ? { ...item, quantity: incrementQuantity(item.quantity || '0') }
                         : item,
                 );
             }
@@ -339,11 +367,15 @@ export default function Create({
 
     function updateItem(productId: number, field: 'quantity' | 'unit_cost', value: string) {
         if (field === 'quantity') {
-            const sanitized = sanitizeQuantityInput(value);
+            const product = cart.find((item) => item.product.id === productId)?.product;
+            const sanitized = product ? sanitizeQuantityInput(value, product) : null;
 
             if (sanitized === null) {
-                setMessage('La cantidad debe ser un número entero.');
-                toast.error('La cantidad debe ser un número entero.');
+                const error = product?.allow_decimal_quantity
+                    ? 'La cantidad admite hasta cuatro decimales.'
+                    : 'La cantidad debe ser un número entero.';
+                setMessage(error);
+                toast.error(error);
                 return;
             }
 
@@ -576,11 +608,12 @@ export default function Create({
             return false;
         }
 
-        const invalidQuantity = cart.find((item) => quantityError(item.quantity));
+        const invalidQuantity = cart.find((item) => quantityError(item.quantity, item.product));
 
         if (invalidQuantity) {
-            setMessage('La cantidad debe ser un número entero.');
-            toast.error('La cantidad debe ser un número entero.');
+            const error = quantityError(invalidQuantity.quantity, invalidQuantity.product) ?? 'Revisa la cantidad.';
+            setMessage(error);
+            toast.error(error);
             return false;
         }
 
@@ -654,7 +687,7 @@ export default function Create({
             supplier_name: newSupplier?.name || cleanSupplierName || null,
             supplier: newSupplier,
             supplier_invoice_number: supplierInvoiceNumber.trim() || null,
-            transport_cost: Number(transportCost.replace(',', '.')),
+            transport_cost: transportCost.replace(',', '.'),
             payment_method: paymentMethod,
             paid_from_cash: paymentMethod === 'cash' && paidFromCash,
             branch_id: branchId,
@@ -662,8 +695,8 @@ export default function Create({
             note,
             items: cart.map((item) => ({
                 product_id: item.product.id,
-                quantity: Number(item.quantity),
-                unit_cost: Number(item.unit_cost),
+                quantity: item.quantity.replace(',', '.'),
+                unit_cost: item.unit_cost.replace(',', '.'),
             })),
         }, {
             preserveScroll: true,
@@ -1306,7 +1339,7 @@ export default function Create({
                             <div className="space-y-3">
                                 {cart.map((item) => {
                                     const lineTotal = Number(item.quantity || 0) * Number(item.unit_cost || 0);
-                                    const quantityMessage = quantityError(item.quantity);
+                                    const quantityMessage = quantityError(item.quantity, item.product);
 
                                     return (
                                         <div
@@ -1339,17 +1372,15 @@ export default function Create({
                                                     <div className="flex h-10 overflow-hidden rounded-xl border border-slate-200 bg-white">
                                                         <button
                                                             type="button"
-                                                            onClick={() => updateItem(item.product.id, 'quantity', String(Math.max(1, Number(item.quantity || 1) - 1)))}
+                                                            onClick={() => updateItem(item.product.id, 'quantity', decrementQuantity(item.quantity || '1'))}
                                                             className="w-9 text-sm font-bold text-slate-500 hover:bg-slate-50"
                                                         >
                                                             -
                                                         </button>
                                                         <input
-                                                            type="number"
-                                                            min="1"
-                                                            step="1"
-                                                            inputMode="numeric"
-                                                            pattern="[0-9]*"
+                                                            type="text"
+                                                            inputMode={item.product.allow_decimal_quantity ? 'decimal' : 'numeric'}
+                                                            pattern={item.product.allow_decimal_quantity ? '[0-9]*[.,]?[0-9]{0,4}' : '[0-9]*'}
                                                             value={item.quantity}
                                                             onChange={(event) => updateItem(item.product.id, 'quantity', event.target.value)}
                                                             onWheel={(event) => event.currentTarget.blur()}
@@ -1357,7 +1388,7 @@ export default function Create({
                                                         />
                                                         <button
                                                             type="button"
-                                                            onClick={() => updateItem(item.product.id, 'quantity', String(Number(item.quantity || 0) + 1))}
+                                                            onClick={() => updateItem(item.product.id, 'quantity', incrementQuantity(item.quantity || '0'))}
                                                             className="w-9 text-sm font-bold text-slate-500 hover:bg-slate-50"
                                                         >
                                                             +

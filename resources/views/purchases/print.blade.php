@@ -105,7 +105,7 @@
                 <tr>
                     <td>{{ $item->product?->code ?: $item->product?->barcode ?: '-' }}</td>
                     <td>{{ $item->product_name }}</td>
-                    <td class="right">{{ number_format((float) $item->quantity, 2) }}</td>
+                    <td class="right">{{ rtrim(rtrim((string) $item->quantity, '0'), '.') ?: '0' }}</td>
                     <td class="right">{{ formatMoney($item->unit_cost, $business->country, 5) }}</td>
                     <td class="right">{{ formatMoney($item->total, $business->country, 5) }}</td>
                 </tr>

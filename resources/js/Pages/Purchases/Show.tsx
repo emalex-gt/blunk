@@ -113,7 +113,7 @@ export default function Show({ purchase }: { purchase: Purchase }) {
                                             <td className="px-4 py-3 text-slate-600">
                                                 {item.product?.barcode || item.product?.code || '-'}
                                             </td>
-                                            <td className="px-4 py-3 text-right text-slate-700">{Number(item.quantity)}</td>
+                                            <td className="px-4 py-3 text-right text-slate-700">{item.quantity.replace(/\.0+$/, '')}</td>
                                             <td className="whitespace-nowrap px-4 py-3 text-right text-slate-700">
                                                 {formatCurrency(item.previous_cost, country, 5)}
                                             </td>
