@@ -11,6 +11,7 @@ use App\Models\ProductBranchStock;
 use App\Models\TenantFelSetting;
 use App\Models\User;
 use App\Services\BranchAccessService;
+use App\Support\Inventory\ProductQuantityPolicy;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -193,7 +194,7 @@ class BranchInventory
         $priceMap = self::priceMap($businessId, $productIds, $branchId);
 
         return $products->each(function (Product $product) use ($stockMap, $priceMap) {
-            $product->setAttribute('stock', (float) ($stockMap[$product->id] ?? 0));
+            $product->setAttribute('stock', ProductQuantityPolicy::signed($stockMap[$product->id] ?? 0));
 
             if (array_key_exists($product->id, $priceMap->all())) {
                 $product->setAttribute('sale_price', $priceMap[$product->id]);
@@ -240,22 +241,23 @@ class BranchInventory
         }
     }
 
-    public static function increase(Product $product, int $branchId, float $quantity): array
+    public static function increase(Product $product, int $branchId, mixed $quantity): array
     {
-        return self::change($product, $branchId, abs($quantity));
+        return self::change($product, $branchId, ProductQuantityPolicy::positive($product, $quantity));
     }
 
-    public static function decrease(Product $product, int $branchId, float $quantity): array
+    public static function decrease(Product $product, int $branchId, mixed $quantity): array
     {
-        return self::change($product, $branchId, -1 * abs($quantity));
+        return self::change($product, $branchId, '-'.ProductQuantityPolicy::positive($product, $quantity));
     }
 
-    public static function adjust(Product $product, int $branchId, float $newStock): array
+    public static function adjust(Product $product, int $branchId, mixed $newStock): array
     {
         $row = self::lockedStockRow($product, $branchId);
-        $previous = (float) $row->stock;
+        $previous = ProductQuantityPolicy::signed($row->stock);
+        $newStock = ProductQuantityPolicy::signed($newStock);
 
-        if ($newStock < 0 && ! \App\Support\Inventory\StockPolicy::allowsNegativeStockForBusinessId((int) $product->business_id)) {
+        if (ProductQuantityPolicy::compare($newStock, '0') < 0 && ! \App\Support\Inventory\StockPolicy::allowsNegativeStockForBusinessId((int) $product->business_id)) {
             throw ValidationException::withMessages([
                 'quantity' => 'El stock no puede quedar negativo.',
             ]);
@@ -267,13 +269,13 @@ class BranchInventory
         return [$previous, $newStock];
     }
 
-    private static function change(Product $product, int $branchId, float $delta): array
+    private static function change(Product $product, int $branchId, string $delta): array
     {
         $row = self::lockedStockRow($product, $branchId);
-        $previous = (float) $row->stock;
-        $newStock = $previous + $delta;
+        $previous = ProductQuantityPolicy::signed($row->stock);
+        $newStock = ProductQuantityPolicy::add($previous, $delta);
 
-        if ($newStock < 0 && ! \App\Support\Inventory\StockPolicy::allowsNegativeStockForBusinessId((int) $product->business_id)) {
+        if (ProductQuantityPolicy::compare($newStock, '0') < 0 && ! \App\Support\Inventory\StockPolicy::allowsNegativeStockForBusinessId((int) $product->business_id)) {
             throw ValidationException::withMessages([
                 'items' => "Stock insuficiente para {$product->name}. Disponible: {$previous}.",
                 'quantity' => 'El stock no puede quedar negativo.',

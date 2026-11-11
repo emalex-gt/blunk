@@ -22,9 +22,9 @@ class StockMovement extends Model
     ];
 
     protected $casts = [
-        'quantity' => 'float',
-        'previous_stock' => 'float',
-        'new_stock' => 'float',
+        'quantity' => 'decimal:4',
+        'previous_stock' => 'decimal:4',
+        'new_stock' => 'decimal:4',
     ];
 
     public function product(): BelongsTo

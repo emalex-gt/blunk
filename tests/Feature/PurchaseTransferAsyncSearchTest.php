@@ -477,8 +477,82 @@ class PurchaseTransferAsyncSearchTest extends TestCase
         $this->assertSame(0, StockMovement::query()->where('product_id', $product->id)->count());
 
         $source = file_get_contents(resource_path('js/Pages/Stock/Index.tsx'));
-        $this->assertMatchesRegularExpression('/type="number"\s+min="1"\s+step="1"\s+value=\{quantity\}/', $source);
-        $this->assertStringContainsString('Number.isInteger(numericQuantity)', $source);
+        $this->assertStringContainsString("inputMode={selectedProduct.allow_decimal_quantity ? 'decimal' : 'numeric'}", $source);
+        $this->assertStringContainsString('quantityError(quantity, selectedProduct)', $source);
+    }
+
+    public function test_stock_adjustment_preserves_four_decimal_quantities_for_decimal_products(): void
+    {
+        [$business, $user, $branch] = $this->tenant('stock_manager', ['inventory']);
+        $product = $this->product($business, 'Producto decimal', 'ADJ-DECIMAL');
+        $product->update(['allow_decimal_quantity' => true]);
+        ProductBranchStock::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+            'stock' => '10.5000',
+        ]);
+
+        $this->actingAs($user)
+            ->postJson(route('stock.adjustments.store'), [
+                'idempotency_key' => 'test-stock-adjust-decimal-in',
+                'product_id' => $product->id,
+                'type' => 'increase',
+                'quantity' => '0.1250',
+                'note' => 'Entrada decimal válida',
+            ])
+            ->assertOk()
+            ->assertJsonPath('new_stock', '10.625');
+
+        $this->actingAs($user)
+            ->postJson(route('stock.adjustments.store'), [
+                'idempotency_key' => 'test-stock-adjust-decimal-out',
+                'product_id' => $product->id,
+                'type' => 'decrease',
+                'quantity' => '1.5000',
+                'note' => 'Salida decimal válida',
+            ])
+            ->assertOk()
+            ->assertJsonPath('new_stock', '9.125');
+
+        $this->assertSame('9.1250', ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+        $this->assertSame('0.1250', StockMovement::query()->where('product_id', $product->id)->where('type', 'entry')->value('quantity'));
+        $this->assertSame('-1.5000', StockMovement::query()->where('product_id', $product->id)->where('type', 'exit')->value('quantity'));
+    }
+
+    public function test_stock_adjustment_idempotency_treats_equivalent_decimal_formats_as_one_operation(): void
+    {
+        [$business, $user, $branch] = $this->tenant('stock_manager', ['inventory']);
+        $product = $this->product($business, 'Producto decimal idempotente', 'ADJ-IDEM-DECIMAL');
+        $product->update(['allow_decimal_quantity' => true]);
+        ProductBranchStock::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+            'stock' => '1.0000',
+        ]);
+
+        $payload = [
+            'idempotency_key' => 'test-stock-adjust-decimal-idempotency',
+            'product_id' => $product->id,
+            'type' => 'increase',
+            'quantity' => '0.75',
+            'note' => 'Ajuste decimal idempotente',
+        ];
+
+        $this->actingAs($user)->postJson(route('stock.adjustments.store'), $payload)->assertOk();
+        $this->actingAs($user)->postJson(route('stock.adjustments.store'), [...$payload, 'quantity' => '0.7500'])->assertOk();
+
+        $this->assertSame('1.7500', ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+        $this->assertSame(1, StockMovement::query()->where('product_id', $product->id)->count());
     }
 
     private function tenant(string $role, array $modules, string $name = 'Tenant async'): array

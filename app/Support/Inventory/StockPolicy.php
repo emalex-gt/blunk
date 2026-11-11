@@ -28,7 +28,7 @@ class StockPolicy
         Branch|int $branch,
         Product $product,
         mixed $variant,
-        int|float $qty,
+        mixed $qty,
         string $operation,
     ): void {
         $businessId = $business instanceof Business ? (int) $business->id : (int) $business;
@@ -40,7 +40,10 @@ class StockPolicy
 
         $variantId = is_numeric($variant) ? (int) $variant : null;
 
-        if (self::availableStock($product, $variantId, $branchId) < (float) $qty) {
+        if (! ProductQuantityPolicy::isAvailable(
+            StockAvailability::availableStockExact($product, $variantId, $branchId),
+            ProductQuantityPolicy::positive($product, $qty),
+        )) {
             throw ValidationException::withMessages([
                 'items' => self::messageForOperation($operation),
                 'quantity' => self::messageForOperation($operation),

@@ -17,9 +17,10 @@ type StockProduct = {
     brand_name: string | null;
     location: string | null;
     sale_price: string | number | null;
-    physical_stock: number;
-    reserved_stock: number;
-    available_stock: number;
+    allow_decimal_quantity: boolean;
+    physical_stock: string | number;
+    reserved_stock: string | number;
+    available_stock: string | number;
 };
 
 type Branch = {
@@ -32,11 +33,33 @@ type AdjustmentType = 'increase' | 'decrease';
 
 type AdjustmentResponse = {
     message: string;
-    previous_stock: number;
-    adjustment: number;
-    new_stock: number;
+    previous_stock: string | number;
+    adjustment: string | number;
+    new_stock: string | number;
     product: StockProduct;
 };
+
+function quantityError(value: string, product: StockProduct | null): string | null {
+    const normalized = value.trim().replace(',', '.');
+
+    if (normalized === '' || !product) {
+        return 'La cantidad es obligatoria.';
+    }
+
+    const pattern = product.allow_decimal_quantity
+        ? /^\d+(?:\.\d{1,4})?$/
+        : /^\d+$/;
+
+    if (!pattern.test(normalized)) {
+        return product.allow_decimal_quantity
+            ? 'La cantidad debe ser mayor a 0 y tener como máximo cuatro decimales.'
+            : 'Este producto solo permite cantidades enteras mayores a 0.';
+    }
+
+    return Number(normalized) > 0
+        ? null
+        : 'La cantidad debe ser mayor a 0.';
+}
 
 export default function StockIndex({
     active_branch = null,
@@ -66,12 +89,14 @@ export default function StockIndex({
     const [idempotencyKey, setIdempotencyKey] = useState(() => makeOperationKey('stock'));
     const submitLockedRef = useRef(false);
 
-    const numericQuantity = Number(quantity);
+    const numericQuantity = Number(quantity.replace(',', '.'));
+    const physicalStock = selectedProduct ? Number(selectedProduct.physical_stock) : 0;
+    const availableStock = selectedProduct ? Number(selectedProduct.available_stock) : 0;
     const estimatedNewPhysicalStock = selectedProduct
-        ? selectedProduct.physical_stock + (adjustmentType === 'decrease' ? -numericQuantity : numericQuantity)
+        ? physicalStock + (adjustmentType === 'decrease' ? -numericQuantity : numericQuantity)
         : 0;
     const estimatedNewAvailableStock = selectedProduct
-        ? selectedProduct.available_stock + (adjustmentType === 'decrease' ? -numericQuantity : numericQuantity)
+        ? availableStock + (adjustmentType === 'decrease' ? -numericQuantity : numericQuantity)
         : 0;
     const negativeWarning = Boolean(
         selectedProduct
@@ -87,12 +112,12 @@ export default function StockIndex({
             return false;
         }
 
-        if (!Number.isFinite(numericQuantity) || numericQuantity <= 0 || note.trim().length < 5) {
+        if (quantityError(quantity, selectedProduct) || note.trim().length < 5) {
             return false;
         }
 
-        return allow_negative_stock || adjustmentType === 'increase' || selectedProduct.available_stock >= numericQuantity;
-    }, [adjustmentType, allow_negative_stock, can_adjust_stock, note, numericQuantity, saving, selectedProduct]);
+        return allow_negative_stock || adjustmentType === 'increase' || availableStock >= numericQuantity;
+    }, [adjustmentType, allow_negative_stock, availableStock, can_adjust_stock, note, quantity, saving, selectedProduct]);
 
     function openAdjustmentModal(product: StockProduct) {
         if (!can_adjust_stock) {
@@ -101,7 +126,7 @@ export default function StockIndex({
 
         setSelectedProduct(product);
         setAdjustmentType('increase');
-        setQuantity('1');
+        setQuantity(product.allow_decimal_quantity ? '1.0000' : '1');
         setNote('');
         setModalError('');
         setIdempotencyKey(makeOperationKey('stock'));
@@ -149,8 +174,9 @@ export default function StockIndex({
             return false;
         }
 
-        if (!Number.isInteger(numericQuantity) || numericQuantity <= 0) {
-            setModalError('La cantidad debe ser un número entero mayor a 0.');
+        const quantityValidationError = quantityError(quantity, selectedProduct);
+        if (quantityValidationError) {
+            setModalError(quantityValidationError);
             return false;
         }
 
@@ -159,7 +185,7 @@ export default function StockIndex({
             return false;
         }
 
-        if (adjustmentType === 'decrease' && !allow_negative_stock && selectedProduct.available_stock < numericQuantity) {
+        if (adjustmentType === 'decrease' && !allow_negative_stock && Number(selectedProduct.available_stock) < numericQuantity) {
             setModalError('No puedes reducir esa cantidad porque dejaría stock disponible negativo.');
             return false;
         }
@@ -180,7 +206,7 @@ export default function StockIndex({
             idempotency_key: idempotencyKey,
             product_id: selectedProduct.id,
             type: adjustmentType,
-            quantity: numericQuantity,
+            quantity: quantity.replace(',', '.'),
             note: note.trim(),
         }, {
             headers: { Accept: 'application/json' },
@@ -347,7 +373,7 @@ export default function StockIndex({
                                         </div>
                                         <div className="rounded-xl bg-slate-50 px-3 py-2">
                                             <div className="text-[11px] font-semibold uppercase text-slate-400">Disponible</div>
-                                            <div className={`text-lg font-bold ${product.available_stock < 0 ? 'text-red-600' : 'text-slate-950'}`}>
+                                            <div className={`text-lg font-bold ${Number(product.available_stock) < 0 ? 'text-red-600' : 'text-slate-950'}`}>
                                                 {product.available_stock}
                                             </div>
                                         </div>
@@ -401,7 +427,7 @@ export default function StockIndex({
                                 </div>
                                 <div className="rounded-xl bg-white px-3 py-2">
                                     <div className="text-[11px] font-semibold uppercase text-slate-400">Disponible</div>
-                                    <div className={`text-lg font-bold ${selectedProduct.available_stock < 0 ? 'text-red-600' : 'text-slate-950'}`}>
+                                    <div className={`text-lg font-bold ${Number(selectedProduct.available_stock) < 0 ? 'text-red-600' : 'text-slate-950'}`}>
                                         {selectedProduct.available_stock}
                                     </div>
                                 </div>
@@ -424,9 +450,10 @@ export default function StockIndex({
                                 <label className="text-sm font-medium text-slate-700">Cantidad</label>
                                 <input
                                     ref={quantityInputRef}
-                                    type="number"
-                                    min="1"
-                                    step="1"
+                                    type="text"
+                                    inputMode={selectedProduct.allow_decimal_quantity ? 'decimal' : 'numeric'}
+                                    min="0"
+                                    step={selectedProduct.allow_decimal_quantity ? '0.0001' : '1'}
                                     value={quantity}
                                     onChange={(event) => setQuantity(event.target.value)}
                                     className="mt-1 h-11 w-full rounded-xl border-slate-200 bg-white text-right text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"

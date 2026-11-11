@@ -15,7 +15,7 @@ class ProductBranchStock extends Model
     ];
 
     protected $casts = [
-        'stock' => 'float',
+        'stock' => 'decimal:4',
     ];
 
     public function branch(): BelongsTo

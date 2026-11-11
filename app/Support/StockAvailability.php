@@ -8,6 +8,7 @@ use App\Models\ProductBranchStock;
 use App\Models\PreSale;
 use App\Models\StockReservation;
 use App\Support\Inventory\DraftReservationLease;
+use App\Support\Inventory\ProductQuantityPolicy;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -31,7 +32,7 @@ class StockAvailability
             ->where('branch_id', $branchId)
             ->whereIn('product_id', $productIds)
             ->pluck('stock', 'product_id')
-            ->map(fn ($quantity) => (float) $quantity);
+            ->map(fn ($quantity) => ProductQuantityPolicy::signed($quantity));
 
         $reservedPreSales = StockReservation::query()
             ->join('pre_sales', function ($join) {
@@ -61,7 +62,7 @@ class StockAvailability
             ->groupBy('stock_reservations.product_id')
             ->selectRaw('stock_reservations.product_id, COALESCE(SUM(stock_reservations.quantity), 0) as reserved')
             ->pluck('reserved', 'product_id')
-            ->map(fn ($quantity) => (float) $quantity);
+            ->map(fn ($quantity) => ProductQuantityPolicy::canonical($quantity));
 
         $reservedCreditReservations = Credits::reserveStockOnCreditReservations($businessId)
             ? CreditReceiptLine::query()
@@ -73,7 +74,7 @@ class StockAvailability
                 ->groupBy('product_id')
                 ->selectRaw('product_id, COALESCE(SUM(LEAST(qty_reserved, qty_pending)), 0) as reserved')
                 ->pluck('reserved', 'product_id')
-                ->map(fn ($quantity) => (float) $quantity)
+                ->map(fn ($quantity) => ProductQuantityPolicy::canonical($quantity))
             : collect();
 
         $reservedOther = StockReservation::query()
@@ -85,7 +86,7 @@ class StockAvailability
             ->groupBy('product_id')
             ->selectRaw('product_id, COALESCE(SUM(quantity), 0) as reserved')
             ->pluck('reserved', 'product_id')
-            ->map(fn ($quantity) => (float) $quantity);
+            ->map(fn ($quantity) => ProductQuantityPolicy::canonical($quantity));
 
         return collect($productIds)->mapWithKeys(function (int $productId) use (
             $physicalStock,
@@ -93,11 +94,11 @@ class StockAvailability
             $reservedCreditReservations,
             $reservedOther
         ) {
-            $physical = (float) ($physicalStock[$productId] ?? 0);
-            $preSales = (float) ($reservedPreSales[$productId] ?? 0);
-            $creditReservations = (float) ($reservedCreditReservations[$productId] ?? 0);
-            $other = (float) ($reservedOther[$productId] ?? 0);
-            $reservedTotal = $preSales + $creditReservations + $other;
+            $physical = ProductQuantityPolicy::signed($physicalStock[$productId] ?? 0);
+            $preSales = ProductQuantityPolicy::canonical($reservedPreSales[$productId] ?? 0);
+            $creditReservations = ProductQuantityPolicy::canonical($reservedCreditReservations[$productId] ?? 0);
+            $other = ProductQuantityPolicy::canonical($reservedOther[$productId] ?? 0);
+            $reservedTotal = ProductQuantityPolicy::add(ProductQuantityPolicy::add($preSales, $creditReservations), $other);
 
             return [$productId => [
                 'physical_stock' => $physical,
@@ -105,9 +106,19 @@ class StockAvailability
                 'reserved_credit_reservations' => $creditReservations,
                 'reserved_other' => $other,
                 'reserved_total' => $reservedTotal,
-                'available_stock' => $physical - $reservedTotal,
+                'available_stock' => ProductQuantityPolicy::subtract($physical, $reservedTotal),
             ]];
         });
+    }
+
+    public static function availableStockExact(Product|int $product, ?int $variantId = null, ?int $branchId = null): string
+    {
+        $productId = $product instanceof Product ? (int) $product->id : (int) $product;
+        $businessId = $product instanceof Product ? (int) $product->business_id : currentBusinessId();
+        $branchId ??= BranchInventory::activeBranch($businessId)->id;
+
+        return self::getBreakdownForProducts($businessId, $branchId, [$productId])
+            ->get($productId, ['available_stock' => '0'])['available_stock'];
     }
 
     public static function totalStock(Product|int $product, ?int $variantId = null, ?int $branchId = null): float
