@@ -7,6 +7,7 @@ use Closure;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 class IdempotencyService
@@ -14,6 +15,15 @@ class IdempotencyService
     public const STATUS_PROCESSING = 'processing';
     public const STATUS_COMPLETED = 'completed';
     public const STATUS_FAILED = 'failed';
+    public const FAILURE_KIND_VALIDATION = 'validation';
+
+    public static function isSafelyRecoverableFailure(OperationIdempotencyKey $record): bool
+    {
+        return $record->status === self::STATUS_FAILED
+            && ! $record->result_id
+            && ! $record->result_type
+            && data_get($record->response_payload, 'failure_kind') === self::FAILURE_KIND_VALIDATION;
+    }
 
     public function replayCompleted(
         int $businessId,
@@ -68,6 +78,57 @@ class IdempotencyService
                 resultType: (string) $record->result_type,
             );
         });
+    }
+
+    /**
+     * Returns the exact payload that produced a completed result without
+     * changing its replay counters. Callers may provide a server-normalized
+     * historical representation when an older operation was hashed only after
+     * immutable server-side normalization.
+     *
+     * @param  array<int, array<string, mixed>>  $requestPayloads
+     * @return array<string, mixed>|null
+     */
+    public function matchingCompletedPayload(
+        int $businessId,
+        ?int $branchId,
+        ?int $userId,
+        string $operationType,
+        string $idempotencyKey,
+        array $requestPayloads,
+    ): ?array {
+        $payloadsByHash = collect($requestPayloads)
+            ->mapWithKeys(fn (array $payload): array => [self::requestHash($payload) => $payload])
+            ->all();
+
+        try {
+            return DB::transaction(function () use ($businessId, $branchId, $userId, $operationType, $idempotencyKey, $payloadsByHash) {
+                $record = $this->recordQuery($businessId, $branchId, $userId, $operationType, $idempotencyKey)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $record) {
+                    return null;
+                }
+
+                $payload = $payloadsByHash[(string) $record->request_hash] ?? null;
+
+                if ($payload === null) {
+                    throw new IdempotencyConflictException(
+                        IdempotencyConflictException::PAYLOAD_MISMATCH,
+                        'Esta operación ya fue usada con otros datos. Inicia una nueva operación.',
+                    );
+                }
+
+                return $record->status === self::STATUS_COMPLETED && (bool) $record->result_id
+                    ? $payload
+                    : null;
+            });
+        } catch (IdempotencyConflictException $exception) {
+            $this->recordConflict($businessId, $branchId, $userId, $operationType, $idempotencyKey, $exception->kind);
+
+            throw $exception;
+        }
     }
 
     public function run(
@@ -141,6 +202,7 @@ class IdempotencyService
                         'status' => self::STATUS_PROCESSING,
                         'locked_at' => now(),
                         'last_error' => null,
+                        'response_payload' => null,
                     ]);
                 }
 
@@ -260,8 +322,15 @@ class IdempotencyService
 
     private function recordFailure(int $businessId, ?int $branchId, ?int $userId, string $operationType, string $idempotencyKey, string $requestHash, Throwable $exception): void
     {
+        $failurePayload = $exception instanceof ValidationException
+            ? ['failure_kind' => self::FAILURE_KIND_VALIDATION]
+            : null;
+        $failurePayloadJson = $failurePayload === null
+            ? null
+            : json_encode($failurePayload, JSON_THROW_ON_ERROR);
+
         try {
-            DB::transaction(function () use ($businessId, $branchId, $userId, $operationType, $idempotencyKey, $requestHash, $exception) {
+            DB::transaction(function () use ($businessId, $branchId, $userId, $operationType, $idempotencyKey, $requestHash, $exception, $failurePayload, $failurePayloadJson) {
                 $now = now();
                 DB::table('operation_idempotency_keys')->insertOrIgnore([
                     'business_id' => $businessId,
@@ -272,6 +341,7 @@ class IdempotencyService
                     'request_hash' => $requestHash,
                     'status' => self::STATUS_FAILED,
                     'last_error' => $this->safeError($exception),
+                    'response_payload' => $failurePayloadJson,
                     'expires_at' => $now->copy()->addDay(),
                     'created_at' => $now,
                     'updated_at' => $now,
@@ -288,6 +358,7 @@ class IdempotencyService
                 $record->update([
                     'status' => self::STATUS_FAILED,
                     'last_error' => $this->safeError($exception),
+                    'response_payload' => $failurePayload,
                     'updated_at' => $now,
                 ]);
                 $this->log('idempotency.failed', $record, [
