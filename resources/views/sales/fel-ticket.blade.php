@@ -79,7 +79,7 @@
 
     <div class="fel-name"><strong>{{ $company['name'] }}</strong></div>
     @if (! empty($company['establishment_name']))
-        <div class="center">{{ $company['establishment_name'] }}</div>
+        <div class="center">{{ html_entity_decode($company['establishment_name'], ENT_QUOTES | ENT_HTML5, 'UTF-8') }}</div>
     @endif
     <div class="center">NIT: {{ $company['tax_id'] }}</div>
     <div class="center">{{ $company['address'] ?: 'Ciudad' }}</div>

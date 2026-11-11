@@ -88,7 +88,7 @@
         <div class="document-company center">
             <h1>{{ $company['name'] }}</h1>
             @if (! empty($company['establishment_name']))
-                <p><strong>{{ $company['establishment_name'] }}</strong></p>
+                <p><strong>{{ html_entity_decode($company['establishment_name'], ENT_QUOTES | ENT_HTML5, 'UTF-8') }}</strong></p>
             @endif
             <p>{{ $company['address'] ?: 'Ciudad' }}</p>
             <p>{{ $company['municipality'] }} {{ $company['department'] }}</p>
