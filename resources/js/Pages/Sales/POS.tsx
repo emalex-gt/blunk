@@ -3747,11 +3747,7 @@ export default function POS({
         return () => window.clearTimeout(timer);
     }, [isFelProcessing, idempotencyKey]);
 
-    const checkoutHasErrors =
-        customerModalErrors.length > 0 ||
-        paymentModalErrors.length > 0 ||
-        checkoutBackendErrors.length > 0 ||
-        invoiceIdentityBlocksCheckout;
+    const checkoutProcessingReason = 'La operación actual se está procesando. Espera su resultado antes de confirmar otra vez.';
     const checkoutDisabledReasons = useMemo(() => {
         const reasons: string[] = [];
 
@@ -3760,7 +3756,7 @@ export default function POS({
         }
 
         if (processing || creditProcessing) {
-            reasons.push('La operación actual se está procesando. Espera su resultado antes de confirmar otra vez.');
+            reasons.push(checkoutProcessingReason);
         }
 
         if (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && !paymentIsBalanced) {
@@ -3807,8 +3803,12 @@ export default function POS({
         paymentCondition,
         paymentIsBalanced,
         processing,
+        checkoutProcessingReason,
     ]);
     const checkoutConfirmDisabled = checkoutDisabledReasons.length > 0;
+    const checkoutProcessing = processing || creditProcessing;
+    const checkoutNonProcessingDisabledReasons = checkoutDisabledReasons
+        .filter((reason) => reason !== checkoutProcessingReason);
     const customerFormExpanded = customerEditing || hasCustomerFieldErrors || nitLookupLoading;
     const customerTypeLabel = country === 'GT'
         ? (data.customer.consumidor_final ? 'Consumidor Final' : (data.customer.doc_type || 'NIT'))
@@ -5079,13 +5079,26 @@ export default function POS({
                         </div>
 
                         <div className="space-y-5 p-5">
-                            {(checkoutHasErrors || checkoutDisabledReasons.length > 0) && (
+                            {checkoutProcessing && (
+                                <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
+                                    La operación actual se está procesando. Confirmar venta permanecerá deshabilitado hasta recibir un resultado.
+                                </div>
+                            )}
+
+                            {!checkoutProcessing && checkoutBackendErrors.length > 0 && (
+                                <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                                    <div>{checkoutConfirmDisabled ? 'Revisa los siguientes mensajes antes de confirmar:' : 'Revisa los siguientes mensajes:'}</div>
+                                    <ul className="mt-2 list-inside list-disc space-y-1 font-medium">
+                                        {checkoutBackendErrors.map((message) => <li key={message}>{message}</li>)}
+                                    </ul>
+                                </div>
+                            )}
+
+                            {!checkoutProcessing && checkoutNonProcessingDisabledReasons.length > 0 && (
                                 <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
                                     <div>No se puede confirmar la venta hasta corregir lo siguiente:</div>
                                     <ul className="mt-2 list-inside list-disc space-y-1 font-medium">
-                                        {[...checkoutBackendErrors, ...checkoutDisabledReasons]
-                                            .filter((message, index, messages) => messages.indexOf(message) === index)
-                                            .map((message) => <li key={message}>{message}</li>)}
+                                        {checkoutNonProcessingDisabledReasons.map((message) => <li key={message}>{message}</li>)}
                                     </ul>
                                 </div>
                             )}
