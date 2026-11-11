@@ -4,6 +4,7 @@ namespace App\Services\System;
 
 use App\Models\FelIncident;
 use App\Models\FiscalDocumentIntent;
+use App\Models\OperationalMonitorRun;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -15,20 +16,61 @@ class OperationalMonitor
 
     public function run(): array
     {
-        if (! config('operational_monitor.enabled')) return ['enabled' => false, 'active' => []];
+        if (! config('operational_monitor.enabled')) {
+            return ['enabled' => false, 'active' => [], 'skipped' => false];
+        }
+
+        $lock = Cache::lock('operational-monitor:run', (int) config('operational_monitor.lock_seconds'));
+        if (! $lock->get()) {
+            return ['enabled' => true, 'active' => [], 'skipped' => true];
+        }
+
+        $startedAt = now();
+        $startedNs = hrtime(true);
         $active = [];
-        foreach (['database', 'queue', 'fiscal', 'host'] as $check) {
-            try { $active = array_merge($active, $this->{$check}()); } catch (\Throwable $exception) {
-                $active[] = $this->report('monitor:'.$check.'_check_failed', 'monitor_check_failed', 'P1', 'La comprobación '.$check.' no pudo completarse.', ['check' => $check]);
-            }
-        }
-        $fingerprints = array_column($active, 'fingerprint');
+        $checks = [];
+
         try {
-            $this->incidents->recoverAbsent($fingerprints);
-        } catch (\Throwable $exception) {
-            Log::warning('operational_monitor.recovery_failed', ['reason' => 'incident_store_unavailable']);
+            foreach (['database', 'queue', 'fiscal', 'host'] as $check) {
+                try {
+                    $detected = $this->{$check}();
+                    $active = array_merge($active, $detected);
+                    $checks[$check] = ['status' => 'ok', 'active_incidents' => count($detected)];
+                } catch (\Throwable $exception) {
+                    $active[] = $this->report('monitor:'.$check.'_check_failed', 'monitor_check_failed', 'P1', 'La comprobación '.$check.' no pudo completarse.', ['check' => $check]);
+                    $checks[$check] = ['status' => 'failed', 'active_incidents' => 1];
+                }
+            }
+
+            $fingerprints = array_column($active, 'fingerprint');
+            $completedChecks = collect($checks)->filter(fn (array $result) => $result['status'] === 'ok')->keys()->all();
+            try {
+                $this->incidents->recoverAbsent($fingerprints, $completedChecks);
+            } catch (\Throwable $exception) {
+                Log::warning('operational_monitor.recovery_failed', ['reason' => 'incident_store_unavailable']);
+            }
+
+            $failedChecks = collect($checks)->where('status', 'failed')->count();
+            $status = $failedChecks > 0 ? 'failed' : (count($active) > 0 ? 'degraded' : 'healthy');
+            $durationMs = (int) floor((hrtime(true) - $startedNs) / 1_000_000);
+
+            try {
+                OperationalMonitorRun::query()->create([
+                    'status' => $status,
+                    'checks' => $checks,
+                    'active_incident_count' => count($active),
+                    'started_at' => $startedAt,
+                    'finished_at' => now(),
+                    'duration_ms' => $durationMs,
+                ]);
+            } catch (\Throwable $exception) {
+                Log::warning('operational_monitor.run_unavailable', ['reason' => 'monitor_run_store_unavailable']);
+            }
+
+            return ['enabled' => true, 'active' => $active, 'checks' => $checks, 'status' => $status, 'skipped' => false];
+        } finally {
+            $lock->release();
         }
-        return ['enabled' => true, 'active' => $active];
     }
 
     private function database(): array

@@ -2,6 +2,7 @@
 
 return [
     'enabled' => (bool) env('OPERATIONAL_MONITOR_ENABLED', false),
+    'lock_seconds' => max(60, (int) env('OPERATIONAL_MONITOR_LOCK_SECONDS', 240)),
     'reminder_minutes' => max(15, (int) env('OPERATIONAL_MONITOR_REMINDER_MINUTES', 60)),
     'confirmations' => max(1, (int) env('OPERATIONAL_MONITOR_CONFIRMATIONS', 2)),
     'disk_min_free_mb' => max(1, (int) env('OPERATIONAL_MONITOR_DISK_MIN_FREE_MB', 1024)),

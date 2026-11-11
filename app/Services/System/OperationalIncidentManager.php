@@ -42,10 +42,30 @@ class OperationalIncidentManager
         return $incident;
     }
 
-    public function recoverAbsent(array $activeFingerprints): void
+    public function recoverAbsent(array $activeFingerprints, array $completedChecks): void
     {
+        $prefixes = collect($completedChecks)
+            ->flatMap(fn (string $check) => match ($check) {
+                'database' => ['monitor:database_check_failed'],
+                'queue' => ['monitor:queue_check_failed', 'monitor:failed_jobs', 'monitor:queue_lag'],
+                'fiscal' => ['monitor:fiscal_check_failed', 'monitor:fel_stale:', 'monitor:fel_critical:'],
+                'host' => ['monitor:host_check_failed', 'monitor:disk_free', 'monitor:memory_available', 'monitor:swap_available', 'monitor:cpu_load'],
+                default => [],
+            })
+            ->unique()
+            ->values();
+
+        if ($prefixes->isEmpty()) {
+            return;
+        }
+
         OperationalIncident::query()->whereIn('status', [OperationalIncident::OPEN, OperationalIncident::ACKNOWLEDGED])
-            ->where('fingerprint', 'like', 'monitor:%')->whereNotIn('fingerprint', $activeFingerprints ?: ['__none__'])
+            ->where(function ($query) use ($prefixes): void {
+                foreach ($prefixes as $prefix) {
+                    $query->orWhere('fingerprint', 'like', $prefix.'%');
+                }
+            })
+            ->whereNotIn('fingerprint', $activeFingerprints ?: ['__none__'])
             ->orderBy('id')->each(function (OperationalIncident $incident): void {
                 $incident->update(['status' => OperationalIncident::RESOLVED, 'resolved_at' => now()]);
                 $this->notifier->notify($incident->fresh(), true);

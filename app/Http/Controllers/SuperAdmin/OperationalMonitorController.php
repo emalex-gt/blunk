@@ -4,6 +4,7 @@ namespace App\Http\Controllers\SuperAdmin;
 
 use App\Http\Controllers\Controller;
 use App\Models\OperationalIncident;
+use App\Models\OperationalMonitorRun;
 use App\Services\System\OperationalIncidentManager;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -24,7 +25,11 @@ class OperationalMonitorController extends Controller
                 'p0_open' => OperationalIncident::query()->whereIn('status', ['open', 'acknowledged'])->where('severity', 'P0')->count(),
                 'p1_open' => OperationalIncident::query()->whereIn('status', ['open', 'acknowledged'])->where('severity', 'P1')->count(),
                 'active' => OperationalIncident::query()->whereIn('status', ['open', 'acknowledged'])->count(),
+                'historical' => OperationalIncident::query()->where('status', OperationalIncident::RESOLVED)->count(),
             ],
+            'lastRun' => OperationalMonitorRun::query()->latest('finished_at')->first([
+                'status', 'checks', 'active_incident_count', 'started_at', 'finished_at', 'duration_ms',
+            ]),
         ]);
     }
 
