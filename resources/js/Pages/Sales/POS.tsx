@@ -3657,6 +3657,37 @@ export default function POS({
     const customerError = typedErrors['customer.doc_number'];
     const paymentsError = typedErrors.payments;
     const cashRegisterError = typedErrors.cash_register;
+    const checkoutBackendErrors = useMemo(() => {
+        const labels: Array<[string, string]> = [
+            ['customer', 'Cliente e identidad fiscal'],
+            ['payments', 'Pagos'],
+            ['cash_register', 'Caja'],
+            ['document_type', 'Documento'],
+            ['idempotency_key', 'Operación'],
+            ['fiscal', 'Estado fiscal'],
+            ['fiscal_intent_status', 'Estado fiscal'],
+            ['quantity', 'Cantidades'],
+            ['product', 'Productos'],
+            ['stock', 'Stock'],
+        ];
+        const messages = new Set<string>();
+
+        Object.entries(typedErrors).forEach(([key, value]) => {
+            if (!value) {
+                return;
+            }
+
+            const label = key === 'items' || key.startsWith('items.')
+                ? (key.includes('quantity') ? 'Cantidades' : 'Productos y stock')
+                : labels.find(([prefix]) => key === prefix || key.startsWith(`${prefix}.`))?.[1];
+
+            if (label) {
+                messages.add(`${label}: ${value}`);
+            }
+        });
+
+        return Array.from(messages);
+    }, [typedErrors]);
     const customerModalErrors = [
         typedErrors['customer.name'],
         typedErrors['customer.doc_number'],
@@ -3719,7 +3750,65 @@ export default function POS({
     const checkoutHasErrors =
         customerModalErrors.length > 0 ||
         paymentModalErrors.length > 0 ||
-        Boolean(documentError || cashRegisterError || errors.items || invoiceIdentityBlocksCheckout);
+        checkoutBackendErrors.length > 0 ||
+        invoiceIdentityBlocksCheckout;
+    const checkoutDisabledReasons = useMemo(() => {
+        const reasons: string[] = [];
+
+        if (cart.length === 0) {
+            reasons.push('Agrega al menos un producto antes de confirmar.');
+        }
+
+        if (processing || creditProcessing) {
+            reasons.push('La operación actual se está procesando. Espera su resultado antes de confirmar otra vez.');
+        }
+
+        if (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && !paymentIsBalanced) {
+            reasons.push('El total pagado debe coincidir con el total de la venta.');
+        }
+
+        if (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && !cashReceivedIsValid) {
+            reasons.push(cashReceived.trim() === ''
+                ? 'Ingresa el efectivo recibido.'
+                : 'El efectivo recibido no cubre el monto en efectivo.');
+        }
+
+        if (invoiceIdentityBlocksCheckout) {
+            reasons.push(invoiceIdentityVerificationMessage);
+        }
+
+        if (hasInvalidCartQuantities) {
+            reasons.push('Revisa las cantidades de los productos antes de confirmar.');
+        }
+
+        if (noAvailableDocumentTypes) {
+            reasons.push('No hay ningún tipo de documento habilitado para esta empresa.');
+        }
+
+        if (draftVerificationUnavailable) {
+            reasons.push('No se pudo verificar el estado del trabajo anterior. No confirmes una nueva venta hasta comprobarlo.');
+        } else if (fiscalDraftRecoveryBlocked) {
+            reasons.push('La operación anterior requiere verificación fiscal antes de confirmar una nueva venta.');
+        }
+
+        return Array.from(new Set(reasons));
+    }, [
+        cart.length,
+        cashReceived,
+        cashReceivedIsValid,
+        creditProcessing,
+        draftVerificationUnavailable,
+        effectiveCheckoutType,
+        fiscalDraftRecoveryBlocked,
+        hasInvalidCartQuantities,
+        invoiceIdentityBlocksCheckout,
+        invoiceIdentityVerificationMessage,
+        noAvailableDocumentTypes,
+        paymentCondition,
+        paymentIsBalanced,
+        processing,
+    ]);
+    const checkoutConfirmDisabled = checkoutDisabledReasons.length > 0;
     const customerFormExpanded = customerEditing || hasCustomerFieldErrors || nitLookupLoading;
     const customerTypeLabel = country === 'GT'
         ? (data.customer.consumidor_final ? 'Consumidor Final' : (data.customer.doc_type || 'NIT'))
@@ -4990,9 +5079,14 @@ export default function POS({
                         </div>
 
                         <div className="space-y-5 p-5">
-                            {checkoutHasErrors && (
-                                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-                                    {cashRegisterError || 'No se pudo completar la venta. Revisa los datos ingresados.'}
+                            {(checkoutHasErrors || checkoutDisabledReasons.length > 0) && (
+                                <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                                    <div>No se puede confirmar la venta hasta corregir lo siguiente:</div>
+                                    <ul className="mt-2 list-inside list-disc space-y-1 font-medium">
+                                        {[...checkoutBackendErrors, ...checkoutDisabledReasons]
+                                            .filter((message, index, messages) => messages.indexOf(message) === index)
+                                            .map((message) => <li key={message}>{message}</li>)}
+                                    </ul>
                                 </div>
                             )}
 
@@ -5357,7 +5451,7 @@ export default function POS({
                             <button
                                 type="button"
                                 onClick={submitSale}
-                                disabled={cart.length === 0 || processing || creditProcessing || (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && (!paymentIsBalanced || !cashReceivedIsValid)) || invoiceIdentityBlocksCheckout || hasInvalidCartQuantities || noAvailableDocumentTypes || fiscalDraftRecoveryBlocked || draftVerificationUnavailable}
+                                disabled={checkoutConfirmDisabled}
                                 className="rounded-xl bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-orange-200 hover:from-orange-700 hover:via-orange-600 hover:to-amber-600 disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : ((processing || creditProcessing) ? 'Confirmando...' : (effectiveCheckoutType === 'credit' ? 'Confirmar crédito' : 'Confirmar venta'))}
