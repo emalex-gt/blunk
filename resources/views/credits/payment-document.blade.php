@@ -16,7 +16,7 @@
 <main class="document-page">
     <header class="document-header">
         <div class="document-brand">@if($logoUrl)<img class="document-logo" src="{{ $logoUrl }}" alt="Logo">@endif<div class="document-company"><h1>{{ $business->name }}</h1>@if($branch)<div class="muted">{{ $branch->name }}</div>@endif</div></div>
-        <div class="document-title"><h1>RECIBO DE ABONO</h1><strong>{{ format_credit_payment_number($payment) }}</strong><div class="muted">{{ $payment->created_at?->format('d/m/Y H:i') }}</div></div>
+        <div class="document-title"><h1>RECIBO DE ABONO</h1><strong>{{ format_credit_payment_number($payment) }}</strong><div class="muted">{{ $payment->created_at?->timezone(tenantTimezone($business))->format('d/m/Y H:i') }}</div></div>
     </header>
     <section class="document-info"><div><span class="label">Cliente</span><div>{{ $payment->customer->name }}</div><span class="label">NIT</span><div>{{ $payment->customer->doc_number }}</div></div><div><span class="label">Método</span><div>{{ $payment->payment_method }}</div>@if($payment->reference)<span class="label">Referencia</span><div>{{ $payment->reference }}</div>@endif</div></section>
     <table class="payment-totals"><tr><td>Saldo anterior</td><td class="right">{{ formatMoney($previousBalance, $business->country) }}</td></tr><tr><td><strong>Abono recibido</strong></td><td class="right"><strong>{{ formatMoney($payment->amount, $business->country) }}</strong></td></tr><tr><td><strong>Nuevo saldo</strong></td><td class="right total">{{ formatMoney($newBalance, $business->country) }}</td></tr></table>

@@ -18,7 +18,7 @@
         @if($branch)<div class="muted">{{ $branch->name }}</div>@endif
         <h2>RECIBO DE ABONO</h2>
         <div><strong>{{ format_credit_payment_number($payment) }}</strong></div>
-        <div class="muted">{{ $payment->created_at?->format('d/m/Y H:i') }}</div>
+        <div class="muted">{{ $payment->created_at?->timezone(tenantTimezone($business))->format('d/m/Y H:i') }}</div>
     </div>
     <div class="line"></div>
     <div><strong>Cliente:</strong> {{ $payment->customer->name }}</div>

@@ -63,7 +63,7 @@
 
         <section>
             <div class="row"><span>No. interno:</span><strong class="internal-reference">{{ $internalNumber }}</strong></div>
-            <div class="row"><span>Fecha:</span><span>{{ $intent->created_at?->format('Y-m-d H:i') }}</span></div>
+            <div class="row"><span>Fecha:</span><span>{{ $intent->created_at?->timezone(tenantTimezone($intent->business))->format('Y-m-d H:i') }}</span></div>
             <div class="row"><span>Cliente:</span><span class="right">{{ data_get($sale, 'customer_name', 'Consumidor final') }}</span></div>
             @if (filled(data_get($sale, 'customer_doc_number')))
                 <div class="row"><span>NIT:</span><span>{{ data_get($sale, 'customer_doc_number') }}</span></div>
