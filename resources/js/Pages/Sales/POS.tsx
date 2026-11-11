@@ -1000,6 +1000,7 @@ export default function POS({
     const fiscalStatusRequestRef = useRef(0);
     const draftRecoveryRequestRef = useRef(0);
     const latestDraftRef = useRef<PosDraft | null>(null);
+    const preservedUnverifiableDraftKeyRef = useRef<string | null>(null);
     const productSearchRequestRef = useRef(0);
     const draftProductFetchKeyRef = useRef<string | null>(null);
     const recentProductFetchKeyRef = useRef<string | null>(null);
@@ -1982,9 +1983,16 @@ export default function POS({
 
     function clearPosDraftAndState() {
         clearSaleState();
-        clearDraft(draftKey);
-        latestDraftRef.current = null;
+        clearCurrentPosDraft();
         focusSearch();
+    }
+
+    function clearCurrentPosDraft() {
+        if (preservedUnverifiableDraftKeyRef.current !== draftKey) {
+            clearDraft(draftKey);
+        }
+
+        latestDraftRef.current = null;
     }
 
     function releaseAcceptedProvisionalOperationForNewSale() {
@@ -2011,15 +2019,25 @@ export default function POS({
         return await response.json() as PosDraftRecoveryStatus;
     }
 
-    async function posSaleStatusForDraft(draft: PosDraft): Promise<PosDraftRecoveryStatus> {
-        return posSaleStatusForKey(draft.idempotency_key ?? '', draft.branch_id ?? activeBranchId);
+    function normalizedDraftBranchId(draft: PosDraft): number | null {
+        const branchId = typeof draft.branch_id === 'number'
+            ? draft.branch_id
+            : Number(draft.branch_id);
+
+        return Number.isSafeInteger(branchId) && branchId > 0 ? branchId : null;
+    }
+
+    async function posSaleStatusForDraft(draft: PosDraft, branchId = normalizedDraftBranchId(draft)): Promise<PosDraftRecoveryStatus> {
+        if (branchId === null) {
+            throw new Error('El borrador no tiene una sucursal válida para verificar su estado.');
+        }
+
+        return posSaleStatusForKey(draft.idempotency_key ?? '', branchId);
     }
 
     function hasVerifiableDraftOperation(draft: PosDraft) {
         return Boolean(draft.idempotency_key?.trim())
-            && draft.branch_id !== null
-            && draft.branch_id !== undefined
-            && String(draft.branch_id).trim() !== '';
+            && normalizedDraftBranchId(draft) !== null;
     }
 
     function applyFiscalStatus(
@@ -2841,7 +2859,8 @@ export default function POS({
             return;
         }
 
-        if (!hasVerifiableDraftOperation(draft.payload)) {
+        const draftBranchId = normalizedDraftBranchId(draft.payload);
+        if (!hasVerifiableDraftOperation(draft.payload) || draftBranchId === null) {
             const message = 'No se puede verificar con seguridad este borrador porque le falta la identificación de la operación. No se restauró.';
             showError(message);
             toast.error(message);
@@ -2855,7 +2874,7 @@ export default function POS({
         let fiscalStatus: PosDraftRecoveryStatus;
 
         try {
-            fiscalStatus = await posSaleStatusForDraft(draft.payload);
+            fiscalStatus = await posSaleStatusForDraft(draft.payload, draftBranchId);
         } catch {
             fiscalStatus = { status: 'verification_unavailable' };
         }
@@ -2917,7 +2936,7 @@ export default function POS({
         clearFiscalRecoveryState();
         applyPosDraftRestore(draft.payload, prepared);
         if (!['not_found', 'fiscal_rejected'].includes(fiscalStatus.status)) {
-            rememberFiscalStatus(fiscalStatus, draft.payload.idempotency_key ?? '', draft.payload.branch_id ?? activeBranchId);
+            rememberFiscalStatus(fiscalStatus, draft.payload.idempotency_key ?? '', draftBranchId);
         }
         setActiveOperationDraftId(draft.id);
         setSavedDraftsOpen(false);
@@ -3203,8 +3222,7 @@ export default function POS({
                     clearFiscalRecoveryState();
                     setIdempotencyKey(makeOperationKey());
                     setFailedSubmission(false);
-                    clearDraft(draftKey);
-                    latestDraftRef.current = null;
+                    clearCurrentPosDraft();
                     reset();
                     setData('branch_id', activeBranchId);
                     setData('customer', defaultCustomer);
@@ -3361,8 +3379,7 @@ export default function POS({
                 setCashReceived('');
                 resetPaymentsForNewSale();
                 setActiveOperationDraftId(null);
-                clearDraft(draftKey);
-                latestDraftRef.current = null;
+                clearCurrentPosDraft();
                 const successMessage = effectiveDocumentType === 'invoice'
                     ? (flash?.fel_success_message ?? 'Factura FEL certificada correctamente.')
                     : 'Venta guardada correctamente.';
@@ -3458,10 +3475,11 @@ export default function POS({
         if (draft && isMeaningfulPosDraft(draft)) {
             let cancelled = false;
             const recoverAfterVerification = async () => {
-                if (!hasVerifiableDraftOperation(draft)) {
+                const draftBranchId = normalizedDraftBranchId(draft);
+                if (!hasVerifiableDraftOperation(draft) || draftBranchId === null) {
                     if (!cancelled && recoveryRequestId === draftRecoveryRequestRef.current) {
                         const message = 'No se puede verificar con seguridad el borrador local porque le falta la identificación de la operación. Se conservó sin restaurarlo.';
-                        setDraftReady(true);
+                        preservedUnverifiableDraftKeyRef.current = draftKey;
                         showError(message);
                         toast.warning(message, { persistent: true });
                         finishDraftInitialization();
@@ -3470,7 +3488,7 @@ export default function POS({
                 }
 
                 try {
-                    const status = await posSaleStatusForDraft(draft);
+                    const status = await posSaleStatusForDraft(draft, draftBranchId);
 
                     if (cancelled || recoveryRequestId !== draftRecoveryRequestRef.current) {
                         return;
@@ -3489,11 +3507,11 @@ export default function POS({
                     }
 
                     if (!['not_found', 'fiscal_rejected'].includes(status.status)) {
-                        rememberFiscalStatus(status, draft.idempotency_key ?? '', activeBranchId);
+                        rememberFiscalStatus(status, draft.idempotency_key ?? '', draftBranchId);
                     }
                 } catch {
                     if (recoveryRequestId === draftRecoveryRequestRef.current) {
-                        rememberFiscalStatus({ status: 'verification_unavailable' }, draft.idempotency_key ?? '', activeBranchId);
+                        rememberFiscalStatus({ status: 'verification_unavailable' }, draft.idempotency_key ?? '', draftBranchId);
                     }
                 }
 
@@ -5596,6 +5614,9 @@ export default function POS({
                                 type="button"
                                 onClick={() => {
                                     clearDraft(draftKey);
+                                    if (preservedUnverifiableDraftKeyRef.current === draftKey) {
+                                        preservedUnverifiableDraftKeyRef.current = null;
+                                    }
                                     latestDraftRef.current = null;
                                     setRestoreDraft(null);
                                     setDraftReady(true);
@@ -5608,6 +5629,13 @@ export default function POS({
                             <button
                                 type="button"
                                 onClick={() => {
+                                    if (!hasVerifiableDraftOperation(restoreDraft)) {
+                                        const message = 'No se puede continuar este borrador sin verificar su identificación de operación.';
+                                        showError(message);
+                                        toast.error(message);
+                                        return;
+                                    }
+
                                     const restored = restorePosDraft(restoreDraft);
                                     if (!restored) {
                                         return;
