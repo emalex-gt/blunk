@@ -44,23 +44,24 @@ export default function Authenticated({
     header,
     children,
 }: PropsWithChildren<{ header?: ReactNode }>) {
-    const user = usePage().props.auth.user;
-    const permissions = ((usePage().props.auth as { permissions?: string[] })?.permissions ?? []);
-    const enabledModules = (usePage().props.enabled_modules as string[] | undefined) ?? [];
-    const features = (usePage().props.features as TenantFeatures | undefined) ?? {};
-    const currentBusinessId = usePage().props.current_business_id as number | null;
-    const availableBusinesses = usePage().props.available_businesses as { id: number; name: string }[] | null;
-    const branchesEnabled = Boolean(usePage().props.branches_enabled);
-    const branchCanSwitch = Boolean(usePage().props.branch_can_switch);
-    const activeBranch = usePage().props.active_branch as BranchOption | null;
-    const branches = (usePage().props.branches as BranchOption[] | undefined) ?? [];
-    const navigationBrand = (usePage().props.navigation_brand as NavigationBrand | null) ?? {
+    const page = usePage();
+    const user = page.props.auth.user;
+    const permissions = ((page.props.auth as { permissions?: string[] })?.permissions ?? []);
+    const enabledModules = (page.props.enabled_modules as string[] | undefined) ?? [];
+    const features = (page.props.features as TenantFeatures | undefined) ?? {};
+    const currentBusinessId = page.props.current_business_id as number | null;
+    const availableBusinesses = page.props.available_businesses as { id: number; name: string }[] | null;
+    const branchesEnabled = Boolean(page.props.branches_enabled);
+    const branchCanSwitch = Boolean(page.props.branch_can_switch);
+    const activeBranch = page.props.active_branch as BranchOption | null;
+    const branches = (page.props.branches as BranchOption[] | undefined) ?? [];
+    const navigationBrand = (page.props.navigation_brand as NavigationBrand | null) ?? {
         business_name: null,
         branch_name: activeBranch?.name ?? null,
         logo_url: null,
         subtitle: 'Blunk v2.0',
     };
-    const maintenanceAnnouncement = (usePage().props.maintenance_announcement as MaintenanceAnnouncement | null) ?? null;
+    const maintenanceAnnouncement = (page.props.maintenance_announcement as MaintenanceAnnouncement | null) ?? null;
     const [showingNavigationDropdown, setShowingNavigationDropdown] = useState(false);
     const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
     const [mobileGroups, setMobileGroups] = useState<Record<string, boolean>>({ management: false, reports: false, settings: false });
@@ -146,9 +147,21 @@ export default function Authenticated({
     useEffect(() => {
         const close = (event: KeyboardEvent) => event.key === 'Escape' && setShowingNavigationDropdown(false);
         document.addEventListener('keydown', close);
-        document.body.style.overflow = showingNavigationDropdown ? 'hidden' : '';
-        return () => { document.removeEventListener('keydown', close); document.body.style.overflow = ''; };
+        const previousOverflow = document.body.style.overflow;
+        if (showingNavigationDropdown) {
+            document.body.style.overflow = 'hidden';
+        }
+
+        return () => {
+            document.removeEventListener('keydown', close);
+            document.body.style.overflow = previousOverflow;
+        };
     }, [showingNavigationDropdown]);
+
+    useEffect(() => {
+        setShowingNavigationDropdown(false);
+        setOpenDropdown(null);
+    }, [page.url]);
 
     return (
         <div className="min-h-screen bg-[#f3f4f6] text-slate-900">
@@ -314,8 +327,12 @@ export default function Authenticated({
 
                         <div className="-me-2 flex items-center xl:hidden">
                             <button
+                                type="button"
                                 onClick={() => setShowingNavigationDropdown((current) => !current)}
-                                className="inline-flex items-center justify-center rounded-lg p-2 text-slate-300 transition hover:bg-slate-800 hover:text-white focus:bg-slate-800 focus:text-white focus:outline-none"
+                                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-slate-300 transition hover:bg-slate-800 hover:text-white focus:bg-slate-800 focus:text-white focus:outline-none"
+                                aria-controls="tenant-mobile-navigation"
+                                aria-expanded={showingNavigationDropdown}
+                                aria-label={showingNavigationDropdown ? 'Cerrar menú' : 'Abrir menú'}
                             >
                                 <svg className="h-6 w-6" stroke="currentColor" fill="none" viewBox="0 0 24 24">
                                     <path
@@ -341,14 +358,14 @@ export default function Authenticated({
 
             {showingNavigationDropdown && (
                     <div className="fixed inset-0 z-[60] overflow-hidden bg-slate-950/60 xl:hidden" onMouseDown={() => setShowingNavigationDropdown(false)}>
-                    <div className="h-[100dvh] max-h-screen w-[min(22rem,88vw)] overflow-y-auto overscroll-contain bg-slate-950 pb-4" onMouseDown={(event) => event.stopPropagation()}>
+                    <div id="tenant-mobile-navigation" role="dialog" aria-modal="true" aria-label="Menú principal" className="h-[100dvh] max-h-screen w-[min(22rem,88vw)] overflow-y-auto overscroll-contain bg-slate-950 pb-4" onMouseDown={(event) => event.stopPropagation()}>
                     <div className="flex items-center justify-between px-4 py-3 text-white"><strong>Menú</strong><button type="button" onClick={() => setShowingNavigationDropdown(false)} className="min-h-11 min-w-11 rounded-lg" aria-label="Cerrar menú">×</button></div>
                     <div className="space-y-1 pb-3 pt-2">
                         <MobileMenuLink item={{ label: 'Inicio', href: route('dashboard'), active: route().current('dashboard') }} close={() => setShowingNavigationDropdown(false)} />
                         {hasModule('pos') && can('pos.view') && <MobileMenuLink item={{ label: 'POS', href: route('sales.create'), active: route().current('sales.create') }} close={() => setShowingNavigationDropdown(false)} />}
-                        <MobileMenuGroup label="Gestión" items={managementItems} open={mobileGroups.management} setOpen={() => setMobileGroups({ ...mobileGroups, management: !mobileGroups.management })} close={() => setShowingNavigationDropdown(false)} />
-                        <MobileMenuGroup label="Reportes" items={reportItems} open={mobileGroups.reports} setOpen={() => setMobileGroups({ ...mobileGroups, reports: !mobileGroups.reports })} close={() => setShowingNavigationDropdown(false)} />
-                        {settingsVisible && <MobileMenuGroup label="Configuración" items={settingsItems} open={mobileGroups.settings} setOpen={() => setMobileGroups({ ...mobileGroups, settings: !mobileGroups.settings })} close={() => setShowingNavigationDropdown(false)} />}
+                        <MobileMenuGroup label="Gestión" items={managementItems} open={mobileGroups.management} setOpen={() => setMobileGroups((groups) => ({ ...groups, management: !groups.management }))} close={() => setShowingNavigationDropdown(false)} />
+                        <MobileMenuGroup label="Reportes" items={reportItems} open={mobileGroups.reports} setOpen={() => setMobileGroups((groups) => ({ ...groups, reports: !groups.reports }))} close={() => setShowingNavigationDropdown(false)} />
+                        {settingsVisible && <MobileMenuGroup label="Configuración" items={settingsItems} open={mobileGroups.settings} setOpen={() => setMobileGroups((groups) => ({ ...groups, settings: !groups.settings }))} close={() => setShowingNavigationDropdown(false)} />}
                     </div>
                     <div className="border-t border-slate-800 pb-1 pt-4">
                         <div className="px-4">
@@ -363,13 +380,14 @@ export default function Authenticated({
                                 </label>
                                 <select
                                     value={currentBusinessId ?? ''}
-                                    onChange={(event) =>
+                                    onChange={(event) => {
+                                        setShowingNavigationDropdown(false);
                                         router.post(
                                             route('tenant.switch'),
                                             { business_id: Number(event.target.value) },
                                             { preserveScroll: true },
-                                        )
-                                    }
+                                        );
+                                    }}
                                     className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                 >
                                     <option value="" disabled>
@@ -392,13 +410,14 @@ export default function Authenticated({
                                 <select
                                     value={activeBranch?.id ?? ''}
                                     disabled={!branchCanSwitch}
-                                    onChange={(event) =>
+                                    onChange={(event) => {
+                                        setShowingNavigationDropdown(false);
                                         router.post(
                                             route('branches.active'),
                                             { branch_id: Number(event.target.value) },
                                             { preserveScroll: true },
-                                        )
-                                    }
+                                        );
+                                    }}
                                     className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
                                 >
                                     {branches.map((branch) => (
@@ -411,10 +430,10 @@ export default function Authenticated({
                         )}
 
                         <div className="mt-3 space-y-1">
-                            <ResponsiveNavLink href={route('profile.edit')}>
+                            <ResponsiveNavLink href={route('profile.edit')} onClick={() => setShowingNavigationDropdown(false)}>
                                 {t('auth.profile')}
                             </ResponsiveNavLink>
-                            <ResponsiveNavLink method="post" href={route('logout')} as="button">
+                            <ResponsiveNavLink method="post" href={route('logout')} as="button" onClick={() => setShowingNavigationDropdown(false)}>
                                 {t('auth.logout')}
                             </ResponsiveNavLink>
                         </div>
