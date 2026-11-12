@@ -479,8 +479,7 @@ class SaleController extends Controller
         // in their own phases; reject these combinations before any commercial
         // or fiscal side effect can start.
         if ($hasFractionalQuantity && (
-            $isCreditSale
-            || filled($data['quotation_id'] ?? null)
+            filled($data['quotation_id'] ?? null)
             || $hasCreditReservationLine
             || ($country === 'GT' && $felModuleEnabled && $data['document_type'] === 'invoice')
         )) {
