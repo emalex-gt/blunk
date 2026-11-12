@@ -474,14 +474,11 @@ class SaleController extends Controller
         $hasCreditReservationLine = collect($data['items'])
             ->contains(fn (array $item): bool => filled($item['credit_line_id'] ?? null));
 
-        // D2.3 supports decimal quantities only for direct, non-FEL sales. The
-        // related persistence and fiscal snapshots are intentionally completed
-        // in their own phases; reject these combinations before any commercial
-        // or fiscal side effect can start.
+        // Reservation and quotation persistence remains integer-only until its
+        // dedicated phases. Direct FEL sales are now snapshot-safe in D2.4.
         if ($hasFractionalQuantity && (
             filled($data['quotation_id'] ?? null)
             || $hasCreditReservationLine
-            || ($country === 'GT' && $data['document_type'] === 'invoice')
         )) {
             throw ValidationException::withMessages([
                 'items' => 'Las cantidades fraccionarias aún no están habilitadas para esta operación.',
