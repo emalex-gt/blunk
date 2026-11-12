@@ -19,7 +19,7 @@ class CreditReceiptLineInvoice extends Model
     ];
 
     protected $casts = [
-        'quantity' => 'integer',
+        'quantity' => 'decimal:4',
         'amount' => 'decimal:2',
     ];
 

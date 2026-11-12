@@ -29,11 +29,11 @@ class CreditReceiptLine extends Model
     ];
 
     protected $casts = [
-        'quantity' => 'integer',
-        'qty_reserved' => 'integer',
-        'qty_invoiced' => 'integer',
-        'qty_cancelled' => 'integer',
-        'qty_pending' => 'integer',
+        'quantity' => 'decimal:4',
+        'qty_reserved' => 'decimal:4',
+        'qty_invoiced' => 'decimal:4',
+        'qty_cancelled' => 'decimal:4',
+        'qty_pending' => 'decimal:4',
         'unit_price' => 'decimal:2',
         'discount_amount' => 'decimal:2',
         'line_total' => 'decimal:2',
