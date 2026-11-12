@@ -10,17 +10,17 @@ type PreSaleItem = {
     product_code?: string | null;
     product_barcode?: string | null;
     product_name?: string | null;
-    quantity: number;
-    picked_quantity?: number | null;
-    stock_deducted_quantity?: number;
+    quantity: string | number;
+    picked_quantity?: string | number | null;
+    stock_deducted_quantity?: string | number;
     picking_note?: string | null;
-    reserved_quantity: number;
+    reserved_quantity: string | number;
     unit_price: number;
     discount: number;
     total: number;
-    physical_stock: number;
-    reserved_total: number;
-    available_stock: number;
+    physical_stock: string | number;
+    reserved_total: string | number;
+    available_stock: string | number;
 };
 
 type PreSale = {
@@ -550,7 +550,7 @@ function formatDate(value?: string | null) {
     return value ? new Date(value).toLocaleString() : '-';
 }
 
-function formatNumber(value: number) {
+function formatNumber(value: string | number) {
     return Number(value ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
 
@@ -559,8 +559,8 @@ function formatMoney(value: number) {
 }
 
 function preparedLineTotal(item: PreSaleItem) {
-    const quantity = item.quantity || 1;
-    const pickedQuantity = item.picked_quantity ?? 0;
+    const quantity = Number(item.quantity || 1);
+    const pickedQuantity = Number(item.picked_quantity ?? 0);
 
     return Math.max(0, (pickedQuantity * item.unit_price) - ((item.discount / quantity) * pickedQuantity));
 }

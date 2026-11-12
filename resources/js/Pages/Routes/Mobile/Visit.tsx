@@ -13,9 +13,10 @@ type Product = {
     barcode: string | null;
     sale_price: string | number;
     image_url: string | null;
-    stock: number;
-    reserved_stock: number;
-    available_stock: number;
+    stock: string | number;
+    reserved_stock: string | number;
+    available_stock: string | number;
+    allow_decimal_quantity?: boolean;
     price_type_id?: number | null;
 };
 
@@ -24,8 +25,9 @@ type Item = {
     name: string;
     code: string | null;
     barcode: string | null;
-    quantity: number;
-    maximum_quantity: number | null;
+    quantity: string;
+    maximum_quantity: string | null;
+    allow_decimal_quantity: boolean;
     unit_price: number;
     manual_price?: boolean;
     discount?: number;
@@ -36,7 +38,8 @@ type ExistingItem = {
     product_id: number;
     quantity: string;
     unit_price: string;
-    maximum_quantity?: number | null;
+    maximum_quantity?: string | number | null;
+    allow_decimal_quantity?: boolean;
     manual_price?: boolean;
     discount?: string | number;
     notes?: string | null;
@@ -96,8 +99,9 @@ export default function Visit({
         name: item.product?.name ?? 'Producto',
         code: item.product?.code ?? null,
         barcode: item.product?.barcode ?? null,
-        quantity: Number(item.quantity),
-        maximum_quantity: item.maximum_quantity === null || item.maximum_quantity === undefined ? null : Number(item.maximum_quantity),
+        quantity: String(item.quantity),
+        maximum_quantity: item.maximum_quantity === null || item.maximum_quantity === undefined ? null : String(item.maximum_quantity),
+        allow_decimal_quantity: Boolean(item.allow_decimal_quantity),
         unit_price: Number(item.unit_price ?? 0),
         manual_price: Boolean(item.manual_price),
         discount: Number(item['discount'] ?? 0),
@@ -166,15 +170,15 @@ export default function Visit({
     });
 
     const total = useMemo(() => form.data.items.reduce((sum, item) => {
-        return sum + (Number(item.unit_price ?? 0) * item.quantity);
+        return sum + (Number(item.unit_price ?? 0) * Number(normalizeQuantity(item.quantity)));
     }, 0), [form.data.items]);
 
-    const quantityLimit = (item: Item): number | null => {
+    const quantityLimit = (item: Item): string | null => {
         if (allowNegativeStock || item.maximum_quantity === null) {
             return null;
         }
 
-        return Math.max(0, Math.floor(item.maximum_quantity));
+        return item.maximum_quantity;
     };
 
     const setQuantityMessage = (productId: number, message?: string) => {
@@ -240,7 +244,7 @@ export default function Visit({
                     }),
                     signal: controller.signal,
                 });
-                let payload: { errors?: { items?: string[] }; message?: string; pre_sale?: { items?: { product_id: number; maximum_quantity: number }[] }; products?: Product[] } | null = null;
+                let payload: { errors?: { items?: string[] }; message?: string; pre_sale?: { items?: { product_id: number; maximum_quantity: string | number }[] }; products?: Product[] } | null = null;
 
                 try {
                     payload = await response.json();
@@ -269,8 +273,8 @@ export default function Visit({
                     return;
                 }
 
-                const maximumByProduct = new Map<number, number>(
-                    (payload?.pre_sale?.items ?? []).map((item: { product_id: number; maximum_quantity: number }) => [item.product_id, Number(item.maximum_quantity)]),
+                const maximumByProduct = new Map<number, string>(
+                    (payload?.pre_sale?.items ?? []).map((item: { product_id: number; maximum_quantity: string | number }) => [item.product_id, String(item.maximum_quantity)]),
                 );
                 const confirmed = items.map((item) => ({
                     ...item,
@@ -395,7 +399,7 @@ export default function Visit({
     }, [searchTerm, visit.id]);
 
     const addProduct = (product: Product) => {
-        if (!allowNegativeStock && product.available_stock <= 0) {
+        if (!allowNegativeStock && compareQuantities(product.available_stock, '0') <= 0) {
             return;
         }
 
@@ -403,14 +407,14 @@ export default function Visit({
         if (existing) {
             const maximumQuantity = quantityLimit(existing);
 
-            if (maximumQuantity !== null && existing.quantity >= maximumQuantity) {
+            if (maximumQuantity !== null && compareQuantities(existing.quantity, maximumQuantity) >= 0) {
                 setQuantityMessage(product.id, `La cantidad máxima disponible es ${maximumQuantity}.`);
                 return;
             }
 
             setQuantityMessage(product.id);
             setCartItems(form.data.items.map((item) => (
-                item.product_id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+                item.product_id === product.id ? { ...item, quantity: addQuantity(item.quantity, '1') } : item
             )));
             return;
         }
@@ -420,8 +424,9 @@ export default function Visit({
             name: product.name,
             code: product.code,
             barcode: product.barcode,
-            quantity: 1,
-            maximum_quantity: allowNegativeStock ? null : Math.max(0, Math.floor(product.available_stock)),
+            quantity: '1',
+            maximum_quantity: allowNegativeStock ? null : normalizeQuantity(product.available_stock),
+            allow_decimal_quantity: Boolean(product.allow_decimal_quantity),
             unit_price: Number(product.sale_price ?? 0),
             manual_price: false,
             discount: 0,
@@ -460,21 +465,24 @@ export default function Visit({
         setPriceTexts((prices) => ({ ...prices, [item.product_id]: formatMoneyValue(parsed) }));
     };
 
-    const updateQuantity = (index: number, requestedQuantity: number) => {
+    const updateQuantity = (index: number, requestedQuantity: string) => {
         const item = form.data.items[index];
 
         if (!item) {
             return;
         }
 
-        if (!Number.isInteger(requestedQuantity) || requestedQuantity < 1) {
-            setQuantityMessage(item.product_id, 'La cantidad debe ser un número entero mayor a 0.');
+        const error = quantityError(requestedQuantity, item.allow_decimal_quantity);
+        if (error) {
+            form.setData('items', form.data.items.map((row, rowIndex) => (
+                rowIndex === index ? { ...row, quantity: requestedQuantity } : row
+            )));
+            setQuantityMessage(item.product_id, error);
             return;
         }
 
         const maximumQuantity = quantityLimit(item);
-        if (maximumQuantity !== null && requestedQuantity > maximumQuantity) {
-            updateItem(index, { quantity: maximumQuantity });
+        if (maximumQuantity !== null && compareQuantities(requestedQuantity, maximumQuantity) > 0) {
             setQuantityMessage(item.product_id, `La cantidad máxima disponible es ${maximumQuantity}.`);
             return;
         }
@@ -514,20 +522,19 @@ export default function Visit({
         const invalidItem = form.data.items.find((item) => {
             const maximumQuantity = quantityLimit(item);
 
-            return !Number.isInteger(item.quantity)
-                || item.quantity < 1
-                || (maximumQuantity !== null && item.quantity > maximumQuantity);
+            return Boolean(quantityError(item.quantity, item.allow_decimal_quantity))
+                || (maximumQuantity !== null && compareQuantities(item.quantity, maximumQuantity) > 0);
         });
 
         if (invalidItem) {
             const maximumQuantity = quantityLimit(invalidItem);
             setQuantityMessage(
                 invalidItem.product_id,
-                maximumQuantity !== null && invalidItem.quantity > maximumQuantity
+                maximumQuantity !== null && compareQuantities(invalidItem.quantity, maximumQuantity) > 0
                     ? `La cantidad máxima disponible es ${maximumQuantity}.`
-                    : 'La cantidad debe ser un número entero mayor a 0.',
+                    : quantityError(invalidItem.quantity, invalidItem.allow_decimal_quantity) ?? 'La cantidad no es válida.',
             );
-            form.setError('items', 'Las cantidades deben ser números enteros mayores a 0.');
+            form.setError('items', 'Corrige las cantidades antes de guardar la preventa.');
             return;
         }
 
@@ -691,7 +698,7 @@ export default function Visit({
 
                 <div className="space-y-2">
                     {productResults.map((product) => {
-                        const disabled = !allowNegativeStock && product.available_stock <= 0;
+                        const disabled = !allowNegativeStock && compareQuantities(product.available_stock, '0') <= 0;
                         const reservedStock = Number(product.reserved_stock ?? 0);
                         const availableStock = Number(product.available_stock ?? 0);
                         return (
@@ -717,7 +724,7 @@ export default function Visit({
                                     </div>
                                     <span className="shrink-0 text-sm font-semibold text-orange-700">Q {Number(product.sale_price).toFixed(2)}</span>
                                 </div>
-                                {allowNegativeStock && product.available_stock <= 0 && (
+                                {allowNegativeStock && compareQuantities(product.available_stock, '0') <= 0 && (
                                     <p className="mt-2 text-xs font-semibold text-amber-700">Stock negativo permitido</p>
                                 )}
                             </button>
@@ -792,20 +799,18 @@ export default function Visit({
                                     <div className="min-w-0 space-y-1.5">
                                         <p className="text-xs font-semibold text-slate-500">Cantidad</p>
                                         <div className="flex items-center rounded-lg border border-slate-200 bg-white">
-                                            <button type="button" disabled={!canModifyPreSale} onClick={() => updateQuantity(index, Math.max(1, item.quantity - 1))} className="px-3 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">-</button>
+                                            <button type="button" disabled={!canModifyPreSale || compareQuantities(item.quantity, item.allow_decimal_quantity ? '0.0001' : '1') <= 0} onClick={() => updateQuantity(index, subtractQuantity(item.quantity, item.allow_decimal_quantity ? '0.0001' : '1'))} className="px-3 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">-</button>
                                             <input
-                                                type="number"
-                                                min="1"
-                                                max={!allowNegativeStock ? item.maximum_quantity ?? undefined : undefined}
-                                                step="1"
+                                                type="text"
+                                                inputMode={item.allow_decimal_quantity ? 'decimal' : 'numeric'}
                                                 value={item.quantity}
                                                 disabled={!canModifyPreSale}
-                                                onChange={(event) => updateQuantity(index, Number(event.target.value))}
+                                                onChange={(event) => updateQuantity(index, event.target.value)}
                                                 className="min-w-0 flex-1 border-0 p-2 text-center text-sm disabled:bg-slate-100"
                                             />
-                                            <button type="button" disabled={!canModifyPreSale} onClick={() => updateQuantity(index, item.quantity + 1)} className="px-3 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">+</button>
+                                            <button type="button" disabled={!canModifyPreSale} onClick={() => updateQuantity(index, addQuantity(item.quantity, '1'))} className="px-3 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">+</button>
                                         </div>
-                                        {!allowNegativeStock && item.maximum_quantity !== null && <p className="text-xs font-semibold text-slate-500">Stock disponible: {Math.floor(item.maximum_quantity)}</p>}
+                                        {!allowNegativeStock && item.maximum_quantity !== null && <p className="text-xs font-semibold text-slate-500">Stock disponible: {item.maximum_quantity}</p>}
                                         {quantityMessages[item.product_id] && <p className="text-xs font-semibold text-red-600">{quantityMessages[item.product_id]}</p>}
                                     </div>
 
@@ -827,7 +832,7 @@ export default function Visit({
                                     <div className="min-w-0 space-y-1.5">
                                         <p className="text-xs font-semibold text-slate-500">Subtotal</p>
                                         <div className="rounded-lg bg-white px-3 py-2 text-right text-sm font-semibold text-slate-900">
-                                            {formatCurrency(item.quantity * item.unit_price)}
+                                            {formatCurrency(Number(item.quantity || 0) * item.unit_price)}
                                         </div>
                                     </div>
                                 </div>
@@ -868,4 +873,45 @@ export default function Visit({
             />
         </AuthenticatedLayout>
     );
+}
+
+function normalizeQuantity(value: string | number | null | undefined): string {
+    return String(value ?? '').trim().replace(',', '.');
+}
+
+function quantityError(value: string | number, allowDecimal: boolean): string | null {
+    const quantity = normalizeQuantity(value);
+    if (!/^\d+(?:\.\d{1,4})?$/.test(quantity) || compareQuantities(quantity, '0') <= 0) {
+        return 'La cantidad debe ser mayor que cero y tener como máximo cuatro decimales.';
+    }
+    if (!allowDecimal && quantity.includes('.')) {
+        return 'Este producto solo permite cantidades enteras.';
+    }
+    return null;
+}
+
+function scaledQuantity(value: string | number): bigint {
+    const [whole = '0', fraction = ''] = normalizeQuantity(value).split('.');
+    return BigInt(`${whole || '0'}${fraction.padEnd(4, '0').slice(0, 4)}`);
+}
+
+function compareQuantities(left: string | number, right: string | number): number {
+    const difference = scaledQuantity(left) - scaledQuantity(right);
+    return difference === 0n ? 0 : difference > 0n ? 1 : -1;
+}
+
+function quantityFromScaled(value: bigint): string {
+    const negative = value < 0n;
+    const absolute = negative ? -value : value;
+    const whole = absolute / 10000n;
+    const fraction = (absolute % 10000n).toString().padStart(4, '0').replace(/0+$/, '');
+    return `${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`;
+}
+
+function addQuantity(left: string | number, right: string | number): string {
+    return quantityFromScaled(scaledQuantity(left) + scaledQuantity(right));
+}
+
+function subtractQuantity(left: string | number, right: string | number): string {
+    return quantityFromScaled(scaledQuantity(left) - scaledQuantity(right));
 }

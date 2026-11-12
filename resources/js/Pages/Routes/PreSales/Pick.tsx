@@ -10,14 +10,15 @@ type PickItem = {
     product_code?: string | null;
     product_barcode?: string | null;
     product_name?: string | null;
-    quantity: number;
-    reserved_quantity: number;
-    picked_quantity: number;
+    quantity: string | number;
+    reserved_quantity: string | number;
+    picked_quantity: string | number;
+    allow_decimal_quantity?: boolean;
     picking_note?: string | null;
     unit_price: number;
-    physical_stock: number;
-    reserved_total: number;
-    available_stock: number;
+    physical_stock: string | number;
+    reserved_total: string | number;
+    available_stock: string | number;
 };
 
 type PreSale = {
@@ -45,7 +46,7 @@ export default function Pick({ preSale }: Props) {
         idempotency_key: idempotencyKey,
         items: preSale.items.map((item) => ({
             id: item.id,
-            picked_quantity: String(item.picked_quantity ?? Math.min(item.quantity, item.reserved_quantity)),
+            picked_quantity: String(item.picked_quantity ?? item.quantity),
             picking_note: item.picking_note ?? '',
         })),
     });
@@ -55,6 +56,12 @@ export default function Pick({ preSale }: Props) {
         event.preventDefault();
 
         if (submitLockedRef.current || form.processing) {
+            return;
+        }
+
+        const invalid = preSale.items.find((item, index) => Boolean(quantityError(form.data.items[index]?.picked_quantity ?? '', Boolean(item.allow_decimal_quantity))));
+        if (invalid) {
+            form.setError('items', 'Corrige las cantidades preparadas antes de continuar.');
             return;
         }
 
@@ -136,10 +143,9 @@ export default function Pick({ preSale }: Props) {
                                         <td className="px-4 py-3">{formatNumber(item.available_stock)}</td>
                                         <td className="px-4 py-3">
                                             <input
-                                                type="number"
+                                                type="text"
+                                                inputMode={item.allow_decimal_quantity ? 'decimal' : 'numeric'}
                                                 min="0"
-                                                max={Math.min(item.quantity, item.reserved_quantity)}
-                                                step="1"
                                                 value={form.data.items[index]?.picked_quantity ?? ''}
                                                 onChange={(event) => updateItem(index, 'picked_quantity', event.target.value)}
                                                 className="h-10 w-28 rounded-lg border-slate-200 text-sm"
@@ -182,6 +188,13 @@ function Info({ label, value }: { label: string; value?: string | number | null 
     );
 }
 
-function formatNumber(value: number) {
+function formatNumber(value: string | number) {
     return Number(value ?? 0).toLocaleString('en-US', { maximumFractionDigits: 4 });
+}
+
+function quantityError(value: string, allowDecimal: boolean): string | null {
+    const normalized = value.trim().replace(',', '.');
+    if (!/^\d+(?:\.\d{1,4})?$/.test(normalized)) return 'La cantidad debe tener como máximo cuatro decimales.';
+    if (!allowDecimal && normalized.includes('.')) return 'Este producto solo permite cantidades enteras.';
+    return null;
 }
