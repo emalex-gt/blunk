@@ -3,6 +3,7 @@
 namespace App\Support\Exports;
 
 use App\Exports\ArrayTableExport;
+use App\Support\Inventory\ProductQuantityPolicy;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Maatwebsite\Excel\Facades\Excel;
 use Symfony\Component\HttpFoundation\Response;
@@ -33,7 +34,11 @@ class TableExporter
                 }
             }
 
-            return Excel::download(new ArrayTableExport($sheet, $payload['title']), "{$filename}.xlsx");
+            return Excel::download(new ArrayTableExport(
+                $sheet,
+                $payload['title'],
+                $payload['quantityColumnIndexes'] ?? self::quantityColumnIndexesFromLabels($payload['columns']),
+            ), "{$filename}.xlsx");
         }
 
         return Pdf::loadView('exports.table', $payload)
@@ -41,7 +46,7 @@ class TableExporter
             ->download("{$filename}.pdf");
     }
 
-    public static function value(mixed $value): string|int|float
+    public static function value(mixed $value, ?string $type = null): string|int|float
     {
         if (is_bool($value)) {
             return $value ? 'Sí' : 'No';
@@ -55,7 +60,25 @@ class TableExporter
             return json_encode($value, JSON_UNESCAPED_UNICODE);
         }
 
+        if ($type === 'quantity') {
+            return ProductQuantityPolicy::signed($value);
+        }
+
+        if (is_int($value) || (is_string($value) && preg_match('/^-?\d+$/', $value))) {
+            return (int) $value;
+        }
+
         return is_numeric($value) ? (float) $value : (string) $value;
+    }
+
+    /** @return array<int, int> One-based spreadsheet columns containing physical quantities. */
+    private static function quantityColumnIndexesFromLabels(array $columns): array
+    {
+        return collect($columns)
+            ->map(fn ($label, int $index) => trim(mb_strtolower((string) $label)) === 'cantidad' ? $index + 1 : null)
+            ->filter()
+            ->values()
+            ->all();
     }
 
     public static function filters(array $filters): string

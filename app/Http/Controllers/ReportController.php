@@ -682,7 +682,7 @@ class ReportController extends Controller
             });
 
         $summary = [
-            ['label' => 'Total unidades vendidas', 'value' => $unitsSold],
+            ['label' => 'Total unidades vendidas', 'value' => $unitsSold, 'type' => 'quantity'],
             ['label' => 'Total monetario vendido', 'value' => $totalSold, 'money' => true],
         ];
 
@@ -1335,7 +1335,7 @@ class ReportController extends Controller
             'filters' => ['date_from' => $range->dateFrom, 'date_to' => $range->dateTo],
             'summary' => [
                 ['label' => 'Total productos distintos', 'value' => $distinctProducts],
-                ['label' => 'Total unidades vendidas', 'value' => $unitsSold],
+                ['label' => 'Total unidades vendidas', 'value' => $unitsSold, 'type' => 'quantity'],
                 ['label' => 'Total monetario vendido', 'value' => $totalSold, 'money' => true],
             ],
             'branch' => $scope->payload(),
@@ -1589,7 +1589,7 @@ class ReportController extends Controller
 
         $rows = collect($data)
             ->map(fn (array $row) => $columns
-                ->map(fn (array $column) => TableExporter::value($row[$column['key']] ?? null))
+                ->map(fn (array $column) => TableExporter::value($row[$column['key']] ?? null, $column['type'] ?? null))
                 ->all())
             ->all();
 
@@ -1604,12 +1604,17 @@ class ReportController extends Controller
             'generatedAt' => now(tenantTimezone())->format('Y-m-d H:i'),
             'filters' => TableExporter::filters($props['filters'] ?? []),
             'columns' => $columns->pluck('label')->all(),
+            'quantityColumnIndexes' => $columns->keys()
+                ->filter(fn (int $index) => ($columns[$index]['type'] ?? null) === 'quantity')
+                ->map(fn (int $index) => $index + 1)
+                ->values()
+                ->all(),
             'rows' => $rows,
             'summary' => collect($props['summary'] ?? [])
                 ->reject(fn (array $item) => (bool) ($item['hidden'] ?? false))
                 ->map(fn (array $item) => [
                     'label' => $item['label'] ?? '',
-                    'value' => TableExporter::value($item['value'] ?? null),
+                    'value' => TableExporter::value($item['value'] ?? null, $item['type'] ?? null),
                 ])
                 ->values()
                 ->all(),
@@ -1640,7 +1645,11 @@ class ReportController extends Controller
                 }
             }
 
-            return Excel::download(new ArrayTableExport($sheet, $payload['title']), "{$filename}.xlsx");
+            return Excel::download(new ArrayTableExport(
+                $sheet,
+                $payload['title'],
+                $payload['quantityColumnIndexes'] ?? [],
+            ), "{$filename}.xlsx");
         }
 
         return Pdf::loadView('exports.table', $payload)
