@@ -474,12 +474,10 @@ class SaleController extends Controller
         $hasCreditReservationLine = collect($data['items'])
             ->contains(fn (array $item): bool => filled($item['credit_line_id'] ?? null));
 
-        // Reservation and quotation persistence remains integer-only until its
-        // dedicated phases. Direct FEL sales are now snapshot-safe in D2.4.
-        if ($hasFractionalQuantity && (
-            filled($data['quotation_id'] ?? null)
-            || $hasCreditReservationLine
-        )) {
+        // Quotations and route/pre-sale persistence remain integer-only until
+        // their dedicated phases. Credit reservations use a versioned decimal
+        // association payload from D2.5.
+        if ($hasFractionalQuantity && filled($data['quotation_id'] ?? null)) {
             throw ValidationException::withMessages([
                 'items' => 'Las cantidades fraccionarias aún no están habilitadas para esta operación.',
             ]);
@@ -660,7 +658,7 @@ class SaleController extends Controller
                 $availableByProduct[$productId] ??= StockAvailability::availableStockExact($product, null, $branch->id);
                 $productNames[$productId] = $product->name;
 
-                $creditQuantity = 0;
+                $creditQuantity = '0';
                 if (isset($item['credit_line_id'])) {
                     $creditLine = CreditReceiptLine::query()
                         ->with('receipt:id,customer_id')
@@ -678,18 +676,26 @@ class SaleController extends Controller
                     }
 
                     $creditLineId = (int) $creditLine->id;
-                    $creditQuantity = min($quantity, (int) $creditLine->qty_pending);
-                    $requestedByCreditLine[$creditLineId] = ($requestedByCreditLine[$creditLineId] ?? 0) + $creditQuantity;
+                    $creditQuantity = $quantity;
+                    $requestedByCreditLine[$creditLineId] = bcadd(
+                        $requestedByCreditLine[$creditLineId] ?? '0',
+                        $creditQuantity,
+                        ProductQuantityPolicy::SCALE,
+                    );
 
-                    if ($requestedByCreditLine[$creditLineId] > (int) $creditLine->qty_pending) {
+                    if (bccomp($requestedByCreditLine[$creditLineId], (string) $creditLine->qty_pending, ProductQuantityPolicy::SCALE) > 0) {
                         throw ValidationException::withMessages([
                             'items' => 'La cantidad acumulada supera lo pendiente en la reserva seleccionada.',
                         ]);
                     }
 
-                    if (Credits::reserveStockOnCreditReservations($businessId) && (int) $creditLine->qty_reserved > 0) {
-                        $reservedCreditByProduct[$productId] = ($reservedCreditByProduct[$productId] ?? 0)
-                            + min($creditQuantity, (int) $creditLine->qty_reserved);
+                    if (Credits::reserveStockOnCreditReservations($businessId)
+                        && bccomp((string) $creditLine->qty_reserved, '0', ProductQuantityPolicy::SCALE) > 0) {
+                        $reservedCreditByProduct[$productId] = bcadd(
+                            $reservedCreditByProduct[$productId] ?? '0',
+                            ProductQuantityPolicy::minimum($creditQuantity, $creditLine->qty_reserved),
+                            ProductQuantityPolicy::SCALE,
+                        );
                     }
                 }
 
@@ -859,8 +865,10 @@ class SaleController extends Controller
                 if ($line['credit_line']) {
                     /** @var CreditReceiptLine $creditLine */
                     $creditLine = $line['credit_line'];
-                    $creditQuantity = (int) $line['credit_quantity'];
-                    $creditLine->increment('qty_invoiced', $creditQuantity);
+                    $creditQuantity = ProductQuantityPolicy::canonical($line['credit_quantity']);
+                    $creditLine->update([
+                        'qty_invoiced' => bcadd((string) $creditLine->qty_invoiced, $creditQuantity, ProductQuantityPolicy::SCALE),
+                    ]);
                     $creditLine = Credits::refreshLine($creditLine->refresh());
                     Credits::refreshReceipt($creditLine->receipt);
 
@@ -870,7 +878,7 @@ class SaleController extends Controller
                         'sale_id' => $sale->id,
                         'sale_line_id' => $saleItem->id,
                         'quantity' => $creditQuantity,
-                        'amount' => round($lineTotalAfterDiscount * ($creditQuantity / (int) $line['quantity']), 2),
+                        'amount' => $this->creditLineInvoiceAmount($lineTotalAfterDiscount, $creditQuantity, $line['quantity']),
                     ]);
                 }
                 }
@@ -990,14 +998,16 @@ class SaleController extends Controller
                         // Versioned, positional associations preserve duplicate products from
                         // distinct reservations and the portion actually applied to each one.
                         'credit_line_associations' => [
-                            'version' => 3,
+                            // Version 4 is decimal-aware. Version 3 remains
+                            // readable for historical integer reservations.
+                            'version' => 4,
                             'by_item_index' => collect($saleLines)
                                 ->map(fn (array $line) => $line['credit_line'] ? [
                                     'credit_line_id' => (int) $line['credit_line']->id,
-                                    'quantity' => (int) $line['credit_quantity'],
+                                    'quantity' => ProductQuantityPolicy::canonical($line['credit_quantity']),
                                     'stock_reserved_quantity' => Credits::reserveStockOnCreditReservations($businessId)
-                                        ? min((int) $line['credit_quantity'], (int) $line['credit_line']->qty_reserved)
-                                        : 0,
+                                        ? ProductQuantityPolicy::minimum($line['credit_quantity'], $line['credit_line']->qty_reserved)
+                                        : '0',
                                 ] : null)
                                 ->values()
                                 ->all(),
@@ -1960,6 +1970,21 @@ class SaleController extends Controller
         return (float) bcdiv(bcadd($amount, '0.005', 8), '1', 2);
     }
 
+    private function creditLineInvoiceAmount(float|string $lineTotal, string $creditQuantity, string $saleQuantity): string
+    {
+        if (bccomp($saleQuantity, '0', ProductQuantityPolicy::SCALE) <= 0) {
+            throw new \LogicException('La línea de venta vinculada a una reserva no tiene una cantidad válida.');
+        }
+
+        $amount = bcdiv(
+            bcmul((string) $lineTotal, $creditQuantity, 8),
+            $saleQuantity,
+            8,
+        );
+
+        return bcdiv(bcadd($amount, '0.005', 8), '1', 2);
+    }
+
     /**
      * Produces the only two payload representations that can legitimately
      * describe the same submitted sale: the browser request and, for a
@@ -2809,9 +2834,9 @@ class SaleController extends Controller
             'lines' => $lines->map(fn (CreditReceiptLine $line) => [
                 'credit_line_id' => $line->id,
                 'product_id' => $line->product_id,
-                'quantity' => $line->qty_pending,
-                'max_quantity' => $line->qty_pending,
-                'reserved_quantity' => min((int) $line->qty_pending, (int) $line->qty_reserved),
+                'quantity' => (string) $line->qty_pending,
+                'max_quantity' => (string) $line->qty_pending,
+                'reserved_quantity' => ProductQuantityPolicy::minimum($line->qty_pending, $line->qty_reserved),
                 'unit_price' => (float) $line->unit_price,
                 'receipt_number' => Credits::formatNumber($line->receipt),
             ])->values(),
@@ -3259,7 +3284,7 @@ class SaleController extends Controller
                 || (int) $line->receipt?->branch_id !== (int) $branch->id
                 || (int) $line->receipt?->customer_id !== $customerId
                 || ! in_array($line->status, ['pending', 'partially_invoiced'], true)
-                || (int) $line->qty_pending <= 0
+                || bccomp((string) $line->qty_pending, '0', ProductQuantityPolicy::SCALE) <= 0
             ) {
                 throw ValidationException::withMessages([
                     'customer.id' => 'Esta reserva pertenece a otro cliente o ya no está disponible. Para cambiar de cliente, utiliza la transferencia desde Reservas de Crédito y vuelve a abrirla.',

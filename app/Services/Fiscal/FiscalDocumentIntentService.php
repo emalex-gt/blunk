@@ -527,7 +527,7 @@ class FiscalDocumentIntentService
                 ->all())->values()->all(),
             'payments' => $operationPayload['payments'] ?? [],
             'cash_register_session_id' => $operationPayload['cash_register_session_id'] ?? null,
-            // v3 records the consumed reservation quantity by item. credit_line_ids
+            // v4 records decimal consumption by item; v3 and credit_line_ids
             // remains only for payloads created before positional associations.
             'credit_line_associations' => $operationPayload['credit_line_associations'] ?? null,
             'credit_line_ids' => $operationPayload['credit_line_ids'] ?? [],
@@ -595,9 +595,10 @@ class FiscalDocumentIntentService
     {
         $items = $intent->operation_payload['items'] ?? [];
         $association = $intent->operation_payload['credit_line_associations'] ?? null;
-        $v3Associations = is_array($association) && ($association['version'] ?? null) === 3
+        $reservationAssociations = is_array($association) && in_array(($association['version'] ?? null), [3, 4], true)
             ? ($association['by_item_index'] ?? null)
             : null;
+        $decimalReservationAssociations = is_array($association) && ($association['version'] ?? null) === 4;
 
         foreach ($items as $index => $item) {
             $productId = (int) ($item['product_id'] ?? 0);
@@ -606,11 +607,11 @@ class FiscalDocumentIntentService
                 continue;
             }
 
-            // Credit-reservation associations remain strictly integral until D2.5.
-            // Direct FEL lines have no association and retain their exact quantity.
+            // Version 4 reservation associations retain their exact decimal
+            // quantity. Direct FEL lines have no association.
             $alreadyReservedByCredit = '0';
-            if (Credits::reserveStockOnCreditReservations($intent->business_id) && is_array($v3Associations)) {
-                $entry = $v3Associations[$index] ?? null;
+            if (Credits::reserveStockOnCreditReservations($intent->business_id) && is_array($reservationAssociations)) {
+                $entry = $reservationAssociations[$index] ?? null;
                 if ($entry !== null) {
                     $creditQuantity = is_array($entry) && is_numeric($entry['quantity'] ?? null)
                         ? ProductQuantityPolicy::canonical($entry['quantity'])
@@ -623,14 +624,14 @@ class FiscalDocumentIntentService
                         || ! is_numeric($entry['credit_line_id'] ?? null)
                         || (int) $entry['credit_line_id'] <= 0
                         || ! is_numeric($entry['quantity'] ?? null)
-                        || (int) $entry['quantity'] < 0
                         || $creditQuantity === null
-                        || str_contains($creditQuantity, '.')
+                        || bccomp($creditQuantity, '0', ProductQuantityPolicy::SCALE) < 0
+                        || (! $decimalReservationAssociations && str_contains($creditQuantity, '.'))
                         || bccomp($creditQuantity, $quantity, ProductQuantityPolicy::SCALE) > 0
                         || ! is_numeric($entry['stock_reserved_quantity'] ?? null)
-                        || (int) $entry['stock_reserved_quantity'] < 0
                         || $reservedCreditQuantity === null
-                        || str_contains($reservedCreditQuantity, '.')
+                        || bccomp($reservedCreditQuantity, '0', ProductQuantityPolicy::SCALE) < 0
+                        || (! $decimalReservationAssociations && str_contains($reservedCreditQuantity, '.'))
                         || bccomp($reservedCreditQuantity, $creditQuantity, ProductQuantityPolicy::SCALE) > 0) {
                         throw new \RuntimeException('La intención fiscal contiene una asociación de reserva inválida para apartar inventario.');
                     }
@@ -661,15 +662,47 @@ class FiscalDocumentIntentService
 
     /**
      * Resolves the reservation association format frozen with a fiscal intent.
-     * Version 3 records the exact reserved quantity consumed by each sale item.
+     * Version 4 records decimal reservation quantities. Version 3 remains
+     * strictly integer-only for historical fiscal intents.
      * Version 2 is positional and legacy payloads were keyed by product id.
      *
-     * @return array<int, array{credit_line_id: ?int, quantity: int}>
+     * @return array<int, array{credit_line_id: ?int, quantity: int|string}>
      */
     private function creditLineAssociationsForItems(array $payload, $saleItems): array
     {
         $items = $saleItems->values();
         $association = $payload['credit_line_associations'] ?? null;
+
+        if (is_array($association) && ($association['version'] ?? null) === 4) {
+            $byItemIndex = $association['by_item_index'] ?? null;
+            if (! is_array($byItemIndex) || count($byItemIndex) !== $items->count()) {
+                throw new \RuntimeException('La intención fiscal no contiene asociaciones completas de reservas para finalizarla de forma segura.');
+            }
+
+            return $items->keys()->map(function (int $index) use ($byItemIndex, $items): array {
+                $entry = $byItemIndex[$index] ?? null;
+                if ($entry === null) {
+                    return ['credit_line_id' => null, 'quantity' => '0'];
+                }
+
+                $quantity = is_array($entry) && is_numeric($entry['quantity'] ?? null)
+                    ? ProductQuantityPolicy::canonical($entry['quantity'])
+                    : null;
+                if (! is_array($entry)
+                    || ! is_numeric($entry['credit_line_id'] ?? null)
+                    || (int) $entry['credit_line_id'] <= 0
+                    || $quantity === null
+                    || bccomp($quantity, '0', ProductQuantityPolicy::SCALE) < 0
+                    || bccomp($quantity, ProductQuantityPolicy::canonical($items[$index]->quantity), ProductQuantityPolicy::SCALE) > 0) {
+                    throw new \RuntimeException('La intención fiscal contiene una asociación de reserva inválida.');
+                }
+
+                return [
+                    'credit_line_id' => (int) $entry['credit_line_id'],
+                    'quantity' => $quantity,
+                ];
+            })->all();
+        }
 
         if (is_array($association) && ($association['version'] ?? null) === 3) {
             $byItemIndex = $association['by_item_index'] ?? null;
@@ -748,6 +781,22 @@ class FiscalDocumentIntentService
         })->values()->all();
     }
 
+    private function creditLineInvoiceAmount(mixed $lineTotal, mixed $creditQuantity, mixed $saleQuantity): string
+    {
+        $saleQuantity = ProductQuantityPolicy::canonical($saleQuantity);
+        if (bccomp($saleQuantity, '0', ProductQuantityPolicy::SCALE) <= 0) {
+            throw new \LogicException('La línea de venta vinculada a una reserva no tiene una cantidad válida.');
+        }
+
+        $amount = bcdiv(
+            bcmul((string) $lineTotal, ProductQuantityPolicy::canonical($creditQuantity), 8),
+            $saleQuantity,
+            8,
+        );
+
+        return bcdiv(bcadd($amount, '0.005', 8), '1', 2);
+    }
+
     private function consumeStockReservations(FiscalDocumentIntent $intent): void
     {
         StockReservation::query()
@@ -813,8 +862,8 @@ class FiscalDocumentIntentService
 
             $creditAssociation = $creditLineAssociations[$itemIndex] ?? ['credit_line_id' => null, 'quantity' => 0];
             $creditLineId = $creditAssociation['credit_line_id'];
-            $creditQuantity = (int) $creditAssociation['quantity'];
-            if (! filled($creditLineId) || $creditQuantity === 0) {
+            $creditQuantity = ProductQuantityPolicy::canonical($creditAssociation['quantity']);
+            if (! filled($creditLineId) || bccomp($creditQuantity, '0', ProductQuantityPolicy::SCALE) === 0) {
                 continue;
             }
 
@@ -827,15 +876,25 @@ class FiscalDocumentIntentService
                 ->lockForUpdate()
                 ->find($creditLineId);
 
-            $requestedByCreditLine[$creditLineId] = ($requestedByCreditLine[$creditLineId] ?? 0) + $creditQuantity;
-            if (! $creditLine || (int) $creditLine->receipt?->customer_id !== (int) $sale->customer_id || $requestedByCreditLine[$creditLineId] > (int) $creditLine->qty_pending) {
+            $requestedByCreditLine[$creditLineId] = bcadd(
+                $requestedByCreditLine[$creditLineId] ?? '0',
+                $creditQuantity,
+                ProductQuantityPolicy::SCALE,
+            );
+            if (! $creditLine
+                || (int) $creditLine->receipt?->customer_id !== (int) $sale->customer_id
+                || bccomp($requestedByCreditLine[$creditLineId], (string) $creditLine->qty_pending, ProductQuantityPolicy::SCALE) > 0) {
                 throw \Illuminate\Validation\ValidationException::withMessages(['items' => 'La cantidad acumulada de la reserva ya no está disponible para finalizar la venta.']);
             }
 
             $creditLines[$itemIndex] = ['line' => $creditLine, 'quantity' => $creditQuantity];
-            if (Credits::reserveStockOnCreditReservations($sale->business_id) && (int) $creditLine->qty_reserved > 0) {
-                $reservedCreditByProduct[$productId] = ($reservedCreditByProduct[$productId] ?? 0)
-                    + min($creditQuantity, (int) $creditLine->qty_reserved);
+            if (Credits::reserveStockOnCreditReservations($sale->business_id)
+                && bccomp((string) $creditLine->qty_reserved, '0', ProductQuantityPolicy::SCALE) > 0) {
+                $reservedCreditByProduct[$productId] = bcadd(
+                    $reservedCreditByProduct[$productId] ?? '0',
+                    ProductQuantityPolicy::minimum($creditQuantity, $creditLine->qty_reserved),
+                    ProductQuantityPolicy::SCALE,
+                );
             }
         }
 
@@ -873,8 +932,10 @@ class FiscalDocumentIntentService
             if ($creditAssociation) {
                 /** @var CreditReceiptLine $creditLine */
                 $creditLine = $creditAssociation['line'];
-                $creditQuantity = (int) $creditAssociation['quantity'];
-                $creditLine->increment('qty_invoiced', $creditQuantity);
+                $creditQuantity = ProductQuantityPolicy::canonical($creditAssociation['quantity']);
+                $creditLine->update([
+                    'qty_invoiced' => bcadd((string) $creditLine->qty_invoiced, $creditQuantity, ProductQuantityPolicy::SCALE),
+                ]);
                 $creditLine = Credits::refreshLine($creditLine->refresh());
                 Credits::refreshReceipt($creditLine->receipt);
                 CreditReceiptLineInvoice::query()->create([
@@ -883,7 +944,7 @@ class FiscalDocumentIntentService
                     'sale_id' => $sale->id,
                     'sale_line_id' => $saleItem->id,
                     'quantity' => $creditQuantity,
-                    'amount' => round((float) $saleItem->total * ($creditQuantity / (int) $saleItem->quantity), 2),
+                    'amount' => $this->creditLineInvoiceAmount($saleItem->total, $creditQuantity, $saleItem->quantity),
                 ]);
             }
         }
