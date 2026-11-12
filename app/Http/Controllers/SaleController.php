@@ -718,7 +718,7 @@ class SaleController extends Controller
                     );
                 }
 
-                $subtotalBeforeDiscount += $lineTotal;
+                $subtotalBeforeDiscount = round($subtotalBeforeDiscount + $lineTotal, 2);
                 $saleLines[] = [
                     'product' => $product,
                     'quantity' => $quantity,
@@ -1961,7 +1961,7 @@ class SaleController extends Controller
     {
         $amount = bcmul((string) $unitAmount, $quantity, 8);
 
-        return round((float) $amount, 2);
+        return (float) bcdiv(bcadd($amount, '0.005', 8), '1', 2);
     }
 
     /**
