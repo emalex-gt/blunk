@@ -194,8 +194,8 @@ final class WarehouseOverviewMetricQuery implements DashboardMetricQuery
             'month_count' => (int) (clone $base)->count(),
             'inbound_count' => (int) (clone $base)->where('inventory_transfers.to_branch_id', $branchId)->count(),
             'outbound_count' => (int) (clone $base)->where('inventory_transfers.from_branch_id', $branchId)->count(),
-            'inbound_units' => (float) (clone $lines)->where('inventory_transfers.to_branch_id', $branchId)->sum('inventory_transfer_lines.quantity'),
-            'outbound_units' => (float) (clone $lines)->where('inventory_transfers.from_branch_id', $branchId)->sum('inventory_transfer_lines.quantity'),
+            'inbound_units' => ProductQuantityPolicy::canonical((clone $lines)->where('inventory_transfers.to_branch_id', $branchId)->sum('inventory_transfer_lines.quantity')),
+            'outbound_units' => ProductQuantityPolicy::canonical((clone $lines)->where('inventory_transfers.from_branch_id', $branchId)->sum('inventory_transfer_lines.quantity')),
         ];
     }
 
@@ -219,7 +219,7 @@ final class WarehouseOverviewMetricQuery implements DashboardMetricQuery
                     'id' => $transfer->id,
                     'direction' => $inbound ? 'inbound' : 'outbound',
                     'other_branch' => $inbound ? $transfer->fromBranch?->name : $transfer->toBranch?->name,
-                    'quantity' => (float) ($transfer->quantity ?? 0),
+                    'quantity' => ProductQuantityPolicy::canonical($transfer->quantity ?? 0),
                     'lines_count' => (int) $transfer->lines_count,
                     'created_at' => $transfer->created_at?->timezone($timezone)->toIso8601String(),
                     'href' => route('inventory.transfers.show', $transfer, absolute: false),
