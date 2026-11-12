@@ -163,11 +163,10 @@ class CriticalPosFelFlowTest extends TestCase
         ]);
     }
 
-    public function test_fractional_quantity_linked_to_a_credit_reservation_is_rejected_before_commercial_effects(): void
+    public function test_fractional_quantity_linked_to_an_integer_credit_reservation_is_rejected_before_commercial_effects(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits']);
         $product = $this->product($business, stock: 10, salePrice: 100);
-        $product->update(['allow_decimal_quantity' => true]);
         $branch = BranchInventory::defaultBranchForBusiness($business);
         $line = $this->creditReservation($business, $branch, $product, 2);
         $this->openCashRegister($business, $user);
@@ -185,7 +184,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertDatabaseCount('sales', 0);
         $this->assertDatabaseCount('stock_movements', 0);
         $this->assertDatabaseCount('fiscal_document_intents', 0);
-        $this->assertSame(2, $line->fresh()->qty_pending);
+        $this->assertSame('2.0000', $line->fresh()->qty_pending);
     }
 
     public function test_direct_fel_sale_preserves_a_decimal_quantity_in_the_payload_snapshot_sale_and_stock(): void
@@ -4520,6 +4519,117 @@ class CriticalPosFelFlowTest extends TestCase
             'amount' => 200,
         ]);
         $this->assertSame(8.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+    }
+
+    public function test_decimal_credit_reservation_is_billed_partially_without_losing_pending_stock(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 42.15);
+        $product->update(['allow_decimal_quantity' => true]);
+
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['items'][0]['quantity'] = '3.7500';
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+
+        $line = CreditReceiptLine::query()->sole();
+        $customer = CreditReceipt::query()->findOrFail($line->credit_receipt_id)->customer()->firstOrFail();
+        $this->assertSame('3.7500', $line->quantity);
+        $this->assertSame('3.7500', $line->qty_pending);
+        $this->openCashRegister($business, $user);
+
+        foreach ([['1.1250', '47.42'], ['0.6250', '26.34']] as [$quantity, $total]) {
+            $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+                $product,
+                quantity: $quantity,
+                total: (float) $total,
+                customer: [
+                    'id' => $customer->id,
+                    'name' => $customer->name,
+                    'doc_type' => $customer->doc_type,
+                    'doc_number' => $customer->doc_number,
+                    'country' => $customer->country,
+                ],
+                itemOverrides: ['credit_line_id' => $line->id],
+            ))->assertSessionHasNoErrors();
+        }
+
+        $line->refresh();
+        $this->assertSame('1.7500', $line->qty_invoiced);
+        $this->assertSame('2.0000', $line->qty_pending);
+        $this->assertSame('2.0000', $line->qty_reserved);
+        $this->assertSame('8.2500', (string) ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+        $this->assertDatabaseCount('credit_receipt_line_invoice', 2);
+    }
+
+    public function test_decimal_credit_reservation_cannot_be_invoiced_above_its_pending_quantity(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 42.15);
+        $product->update(['allow_decimal_quantity' => true]);
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['items'][0]['quantity'] = '3.7500';
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+
+        $line = CreditReceiptLine::query()->sole();
+        $customer = CreditReceipt::query()->findOrFail($line->credit_receipt_id)->customer()->firstOrFail();
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $this->salePayload(
+            $product,
+            quantity: '3.7501',
+            total: 158.07,
+            customer: [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'doc_type' => $customer->doc_type,
+                'doc_number' => $customer->doc_number,
+                'country' => $customer->country,
+            ],
+            itemOverrides: ['credit_line_id' => $line->id],
+        ))->assertSessionHasErrors('items');
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertSame('3.7500', $line->fresh()->qty_pending);
+    }
+
+    public function test_decimal_credit_reservation_replay_does_not_consume_the_pending_quantity_twice(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 42.15);
+        $product->update(['allow_decimal_quantity' => true]);
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['items'][0]['quantity'] = '3.7500';
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+
+        $line = CreditReceiptLine::query()->sole();
+        $customer = CreditReceipt::query()->findOrFail($line->credit_receipt_id)->customer()->firstOrFail();
+        $this->openCashRegister($business, $user);
+        $payload = $this->salePayload(
+            $product,
+            quantity: '1.1250',
+            total: 47.42,
+            customer: [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'doc_type' => $customer->doc_type,
+                'doc_number' => $customer->doc_number,
+                'country' => $customer->country,
+            ],
+            itemOverrides: ['credit_line_id' => $line->id],
+        );
+        $payload['idempotency_key'] = 'decimal-credit-replay-'.uniqid();
+
+        $this->actingAs($user)->post(route('sales.store'), $payload)->assertSessionHasNoErrors();
+        $this->actingAs($user)->post(route('sales.store'), $payload)->assertSessionHasNoErrors();
+
+        $this->assertDatabaseCount('sales', 1);
+        $this->assertDatabaseCount('credit_receipt_line_invoice', 1);
+        $this->assertSame('1.1250', $line->fresh()->qty_invoiced);
+        $this->assertSame('2.6250', $line->fresh()->qty_pending);
     }
 
     public function test_credit_reservation_checkout_rejects_a_different_customer_without_side_effects(): void
