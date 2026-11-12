@@ -60,8 +60,8 @@ class RouteUnpaidSaleCancellationService
         }
 
         if ($batch->stock_deduction_timing === 'picking') {
-            $picked = $preSale->items()->get()->groupBy('product_id')->map(fn ($items) => $items->sum('stock_deducted_quantity'));
-            $sold = $sale->items()->get()->groupBy('product_id')->map(fn ($items) => $items->sum('quantity'));
+            $picked = $this->quantitiesByProduct($preSale->items()->get(), 'stock_deducted_quantity');
+            $sold = $this->quantitiesByProduct($sale->items()->get(), 'quantity');
             if ($picked->keys()->sort()->values()->all() !== $sold->keys()->sort()->values()->all()) {
                 throw ValidationException::withMessages(['stock' => 'El descuento histórico de preparación no coincide con la venta.']);
             }
@@ -81,5 +81,13 @@ class RouteUnpaidSaleCancellationService
         ]);
 
         return $sale;
+    }
+
+    private function quantitiesByProduct($items, string $column): \Illuminate\Support\Collection
+    {
+        return $items->groupBy('product_id')->map(fn ($rows): string => $rows->reduce(
+            fn (string $total, $item): string => ProductQuantityPolicy::add($total, $item->{$column}),
+            '0',
+        ));
     }
 }

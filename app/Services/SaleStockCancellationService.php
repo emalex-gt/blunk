@@ -7,6 +7,7 @@ use App\Models\Sale;
 use App\Models\StockMovement;
 use App\Models\User;
 use App\Support\BranchInventory;
+use App\Support\Inventory\ProductQuantityPolicy;
 use Illuminate\Validation\ValidationException;
 
 class SaleStockCancellationService
@@ -37,14 +38,15 @@ class SaleStockCancellationService
                 continue;
             }
 
-            [$previousStock, $newStock] = BranchInventory::increase($product, $branchId, (float) $item->quantity);
+            $quantity = ProductQuantityPolicy::positive($product, $item->quantity);
+            [$previousStock, $newStock] = BranchInventory::increase($product, $branchId, $quantity);
 
             StockMovement::create([
                 'business_id' => $businessId,
                 'branch_id' => $branchId,
                 'product_id' => $product->id,
                 'type' => 'sale_cancel',
-                'quantity' => (float) $item->quantity,
+                'quantity' => $quantity,
                 'previous_stock' => $previousStock,
                 'new_stock' => $newStock,
                 'note' => $note,
