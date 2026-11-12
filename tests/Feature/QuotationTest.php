@@ -141,6 +141,11 @@ class QuotationTest extends TestCase
         $this->assertSame($quotation->id, $sale->quotation_id);
         $this->assertSame('2.7500', $sale->items()->sole()->quantity);
         $this->assertSame(Quotation::CONVERTED, $quotation->fresh()->status);
+
+        $this->actingAs($user)->post(route('quotations.duplicate', $quotation))->assertRedirect();
+        $convertedCopy = Quotation::query()->with('items')->orderByDesc('id')->firstOrFail();
+        $this->assertSame(Quotation::OPEN, $convertedCopy->status);
+        $this->assertSame('2.7500', $convertedCopy->items->sole()->quantity);
     }
 
     public function test_decimal_quotation_preserves_line_and_general_discounts_when_converted(): void
@@ -176,6 +181,17 @@ class QuotationTest extends TestCase
         $this->assertSame('1.1250', $sale->items()->sole()->quantity);
         $this->assertSame('1.00', $sale->items()->sole()->line_discount_amount);
         $this->assertSame('9.25', $sale->total);
+    }
+
+    public function test_decimal_quotation_rejects_precision_beyond_four_positions(): void
+    {
+        [, $user, $product] = $this->tenant();
+        $product->update(['allow_decimal_quantity' => true]);
+
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product, null, '1.12345'))
+            ->assertSessionHasErrors('items.0.quantity');
+
+        $this->assertDatabaseCount('quotations', 0);
     }
 
     public function test_editing_an_existing_line_preserves_its_historical_price_snapshot(): void
