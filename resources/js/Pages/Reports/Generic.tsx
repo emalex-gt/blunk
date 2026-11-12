@@ -7,7 +7,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 type Column = {
     key: string;
     label: string;
-    type?: 'money' | 'number' | 'link' | 'reservations';
+    type?: 'money' | 'number' | 'quantity' | 'link' | 'reservations';
     link_label?: string;
     decimals?: number;
 };
@@ -82,7 +82,7 @@ type ReservationRow = {
     pre_sale_status?: string | null;
     visit_status?: string | null;
     status?: string | null;
-    quantity: number;
+    quantity: string | number;
     reason?: string;
     created_at?: string;
 };
@@ -517,10 +517,8 @@ function renderCell(
     }
 
     if (column.type === 'reservations') {
-        const quantity = Number(value ?? 0);
-
-        if (quantity <= 0 || !row.reservations_url) {
-            return formatCell(value, { ...column, type: 'number' }, country);
+        if (!hasPositiveQuantity(value) || !row.reservations_url) {
+            return formatCell(value, { ...column, type: 'quantity' }, country);
         }
 
         return (
@@ -529,7 +527,7 @@ function renderCell(
                 onClick={() => onExplainReservations(row)}
                 className="font-semibold text-orange-600 underline-offset-2 hover:text-orange-800 hover:underline"
             >
-                {formatCell(value, { ...column, type: 'number' }, country)}
+                {formatCell(value, { ...column, type: 'quantity' }, country)}
             </button>
         );
     }
@@ -550,7 +548,36 @@ function formatCell(value: unknown, column: Column, country: string): string {
         return Number(value ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
     }
 
+    if (column.type === 'quantity') {
+        return formatQuantity(value);
+    }
+
     return formatValue(value);
+}
+
+function formatQuantity(value: unknown): string {
+    if (value === null || value === undefined || value === '') {
+        return '-';
+    }
+
+    const quantity = String(value);
+    if (!/^-?\d+(?:\.\d{1,4})?$/.test(quantity)) {
+        return quantity;
+    }
+
+    const [whole, fraction] = quantity.split('.');
+    const trimmedFraction = fraction?.replace(/0+$/, '');
+    const formatted = trimmedFraction === undefined || trimmedFraction === ''
+        ? whole
+        : `${whole}.${trimmedFraction}`;
+
+    return formatted === '-0' ? '0' : formatted;
+}
+
+function hasPositiveQuantity(value: unknown): boolean {
+    const quantity = String(value ?? '0');
+
+    return !quantity.startsWith('-') && /[1-9]/.test(quantity.replace('.', ''));
 }
 
 function formatValue(value: unknown): string {
@@ -786,7 +813,7 @@ function ReservationSection({ title, rows, showReason = false }: { title: string
                                         {row.route_zone_name || (row.credit_receipt_id ? `Crédito #${row.credit_receipt_id}` : row.pre_sale_id ? `Preventa #${row.pre_sale_id}` : '-')}
                                     </td>
                                     <td className="px-3 py-2 text-slate-700">{row.pre_sale_status || row.visit_status || row.status || '-'}</td>
-                                    <td className="px-3 py-2 text-slate-700">{Number(row.quantity ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}</td>
+                                    <td className="px-3 py-2 text-slate-700">{formatQuantity(row.quantity)}</td>
                                     {showReason && <td className="px-3 py-2 text-slate-700">{row.reason ?? '-'}</td>}
                                 </tr>
                             ))}
