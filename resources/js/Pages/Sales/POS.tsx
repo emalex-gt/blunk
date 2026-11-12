@@ -220,10 +220,12 @@ type QuotationSource = {
     items: Array<{
         quotation_item_id: number;
         product_id: number;
-        quantity: number;
+        quantity: number | string;
         unit_price: number;
         original_price: number;
         price_type_id: number | null;
+        line_discount_amount?: number;
+        line_discount_reason?: string | null;
     }>;
     discount: SaleDiscount | null;
 };
@@ -238,10 +240,12 @@ type QuotationEditSource = {
     items: Array<{
         quotation_item_id: number;
         product_id: number;
-        quantity: number;
+        quantity: number | string;
         unit_price: number;
         original_price: number;
         price_type_id: number | null;
+        line_discount_amount?: number;
+        line_discount_reason?: string | null;
         price_source: CartItem['price_source'];
         manual_price: boolean;
     }>;
@@ -1404,6 +1408,8 @@ export default function POS({
                 manual_price: false,
                 price_warning: null,
                 quotation_item_id: line.quotation_item_id,
+                line_discount_amount: line.line_discount_amount ? Number(line.line_discount_amount).toFixed(2) : '',
+                line_discount_reason: line.line_discount_reason ?? '',
             });
 
             return items;
@@ -1461,6 +1467,8 @@ export default function POS({
                 manual_price: line.manual_price,
                 price_warning: null,
                 quotation_item_id: line.quotation_item_id,
+                line_discount_amount: line.line_discount_amount ? Number(line.line_discount_amount).toFixed(2) : '',
+                line_discount_reason: line.line_discount_reason ?? '',
             });
 
             return items;
@@ -1691,17 +1699,7 @@ export default function POS({
             return true;
         }
 
-        const unsupported = Boolean(quotation_source);
-
-        if (!unsupported) {
-            return true;
-        }
-
-        const message = 'Las cantidades fraccionarias aún no están habilitadas para esta operación.';
-        showError(message);
-        toast.error(message);
-
-        return false;
+        return true;
     }
 
     function validateCartPrices() {
@@ -3157,15 +3155,7 @@ export default function POS({
     }
 
     function saveQuotation() {
-        if (cart.some((item) => lineDiscountAmount(item) > 0)) {
-            setQuotationError('Las cotizaciones aún no admiten descuentos de línea. Elimínalos antes de guardar.');
-            return;
-        }
-        if (cart.length === 0 || !quotationValidUntil || quotationSaving || !validateCartQuantities() || !validateCartPrices() || !validateDiscount()) return;
-        if (cart.some((item) => Number(normalizeQuantity(item.quantity)) !== Math.trunc(Number(normalizeQuantity(item.quantity))))) {
-            setQuotationError('Las cotizaciones aún no admiten cantidades fraccionarias.');
-            return;
-        }
+        if (cart.length === 0 || !quotationValidUntil || quotationSaving || !validateCartQuantities() || !validateCartPrices() || !validateLineDiscounts() || !validateDiscount()) return;
         setQuotationError('');
         setQuotationSaving(true);
         const payload = {
@@ -3178,6 +3168,8 @@ export default function POS({
                 quantity: normalizeQuantity(item.quantity),
                 price_type_id: item.price_type_id,
                 unit_price: Number(item.unit_price),
+                line_discount_amount: lineDiscountAmount(item),
+                line_discount_reason: item.line_discount_reason?.trim() || null,
                 price_source: item.price_source,
                 manual_price: item.manual_price,
             })),

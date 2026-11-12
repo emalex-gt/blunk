@@ -19,7 +19,7 @@ type Quotation = {
     customer: Record<string, string | undefined>;
     branch?: { name: string };
     created_by?: { name: string };
-    items?: Array<{ id: number; product_name: string; product_code?: string; quantity: number; unit_price: number; discount_amount: number; total: number }>;
+    items?: Array<{ id: number; product_name: string; product_code?: string; quantity: number | string; unit_price: number; discount_amount: number; total: number }>;
 };
 
 export default function Show({ quotation }: { quotation: Quotation }) {
