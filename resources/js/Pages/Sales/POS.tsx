@@ -34,6 +34,7 @@ type Product = {
     barcode: string | null;
     cost_price?: string;
     sale_price: string;
+    allow_decimal_quantity?: boolean;
     stock: number;
     physical_stock?: number;
     reserved_stock?: number;
@@ -526,27 +527,36 @@ function isMeaningfulCustomer(customer: CustomerForm) {
 }
 
 const integerQuantityMessage = 'La cantidad debe ser un número entero.';
+const decimalQuantityMessage = 'La cantidad debe ser mayor que cero y tener como máximo cuatro decimales.';
 
 function normalizeQuantity(value: number | string | null | undefined) {
-    return String(value ?? '').trim();
+    return String(value ?? '').trim().replace(',', '.');
 }
 
-function sanitizeQuantityInput(value: number | string | null | undefined): string | null {
+function sanitizeQuantityInput(value: number | string | null | undefined, allowDecimal = false): string | null {
     const raw = String(value ?? '');
 
-    if (/[.,]/.test(raw)) {
-        return null;
+    if (allowDecimal) {
+        return /^\d*(?:[.,]\d*)?$/.test(raw) ? raw : null;
     }
 
-    return raw.replace(/\D/g, '');
+    return /^\d*$/.test(raw) ? raw : null;
 }
 
-function quantityError(value: number | string | null | undefined) {
-    return /^[1-9]\d*$/.test(normalizeQuantity(value)) ? null : integerQuantityMessage;
+function quantityError(value: number | string | null | undefined, allowDecimal = false) {
+    const normalized = normalizeQuantity(value);
+
+    if (allowDecimal) {
+        return /^(?:(?:0|[1-9]\d*)(?:\.\d{1,4})?|\.\d{1,4})$/.test(normalized) && Number(normalized) > 0
+            ? null
+            : decimalQuantityMessage;
+    }
+
+    return /^[1-9]\d*$/.test(normalized) ? null : integerQuantityMessage;
 }
 
-function quantityNumber(value: number | string | null | undefined) {
-    return quantityError(value) ? 0 : Number(normalizeQuantity(value));
+function quantityNumber(value: number | string | null | undefined, allowDecimal = false) {
+    return quantityError(value, allowDecimal) ? 0 : Number(normalizeQuantity(value));
 }
 
 function reservedCreditQuantity(item: Pick<CartItem, 'credit_reserved_quantity'>) {
@@ -556,7 +566,7 @@ function reservedCreditQuantity(item: Pick<CartItem, 'credit_reserved_quantity'>
 function unreservedQuantityForProduct(items: CartItem[], productId: number) {
     return items
         .filter((item) => item.product.id === productId)
-        .reduce((total, item) => total + Math.max(0, quantityNumber(item.quantity) - reservedCreditQuantity(item)), 0);
+        .reduce((total, item) => total + Math.max(0, quantityNumber(item.quantity, Boolean(item.product.allow_decimal_quantity)) - reservedCreditQuantity(item)), 0);
 }
 
 function fiscalCustomerPayload(customer: CustomerForm) {
@@ -573,13 +583,13 @@ function roundMoney(value: number) {
 
 function cartSubtotal(items: CartItem[]) {
     return roundMoney(items.reduce(
-        (sum, item) => sum + Number(item.unit_price || item.product.sale_price) * quantityNumber(item.quantity),
+        (sum, item) => sum + Number(item.unit_price || item.product.sale_price) * quantityNumber(item.quantity, Boolean(item.product.allow_decimal_quantity)),
         0,
     ));
 }
 
 function lineSubtotal(item: CartItem) {
-    return roundMoney(Number(item.unit_price || item.product.sale_price) * quantityNumber(item.quantity));
+    return roundMoney(Number(item.unit_price || item.product.sale_price) * quantityNumber(item.quantity, Boolean(item.product.allow_decimal_quantity)));
 }
 
 function lineDiscountAmount(item: CartItem) {
@@ -779,7 +789,7 @@ function otherBranchStockSummary(product: Product) {
     const visible = branches.slice(0, 2);
     const extra = branches.length - visible.length;
     const summary = visible
-        .map((branch) => `${branch.branch_name} ${Math.floor(Number(branch.available_stock))}`)
+        .map((branch) => `${branch.branch_name} ${Number(branch.available_stock)}`)
         .join(', ');
 
     return extra > 0 ? `${summary}, +${extra} más` : summary;
@@ -1568,7 +1578,7 @@ export default function POS({
     );
 
     const cartItemsCount = useMemo(
-        () => cart.reduce((sum, item) => sum + quantityNumber(item.quantity), 0),
+        () => cart.reduce((sum, item) => sum + quantityNumber(item.quantity, Boolean(item.product.allow_decimal_quantity)), 0),
         [cart],
     );
 
@@ -1593,7 +1603,7 @@ export default function POS({
         }
 
         return cart.flatMap((item) => {
-            const quantity = quantityNumber(item.quantity);
+            const quantity = quantityNumber(item.quantity, Boolean(item.product.allow_decimal_quantity));
             const unitPrice = Number(item.unit_price);
             const rawLineSubtotal = unitPrice * quantity;
             const discountedLineSubtotal = Math.max(0, rawLineSubtotal - lineDiscountAmount(item));
@@ -1651,7 +1661,7 @@ export default function POS({
     const pendingAmount = Number((total - paidTotal).toFixed(2));
     const paymentIsBalanced = Math.round(paidTotal * 100) === Math.round(total * 100);
     const hasInvalidCartQuantities = useMemo(
-        () => cart.some((item) => Boolean(quantityError(item.quantity))),
+        () => cart.some((item) => Boolean(quantityError(item.quantity, Boolean(item.product.allow_decimal_quantity)))),
         [cart],
     );
 
@@ -1660,8 +1670,39 @@ export default function POS({
             return true;
         }
 
-        showError(integerQuantityMessage);
-        toast.error(integerQuantityMessage);
+        const message = cart
+            .map((item) => quantityError(item.quantity, Boolean(item.product.allow_decimal_quantity)))
+            .find(Boolean) ?? integerQuantityMessage;
+        showError(message);
+        toast.error(message);
+
+        return false;
+    }
+
+    function validateDecimalOperationScope() {
+        const fractionalLine = cart.find((item) => {
+            const quantity = normalizeQuantity(item.quantity);
+
+            return !quantityError(quantity, Boolean(item.product.allow_decimal_quantity))
+                && Number(quantity) !== Math.trunc(Number(quantity));
+        });
+
+        if (!fractionalLine) {
+            return true;
+        }
+
+        const unsupported = Boolean(fractionalLine.credit_line_id)
+            || Boolean(quotation_source)
+            || effectiveCheckoutType === 'credit'
+            || (country === 'GT' && Boolean(fel?.module_enabled) && effectiveDocumentType === 'invoice');
+
+        if (!unsupported) {
+            return true;
+        }
+
+        const message = 'Las cantidades fraccionarias aún no están habilitadas para esta operación.';
+        showError(message);
+        toast.error(message);
 
         return false;
     }
@@ -1794,16 +1835,16 @@ export default function POS({
                 return items;
             }
 
-            if (quantityError(item.quantity)) {
+            if (quantityError(item.quantity, Boolean(product.allow_decimal_quantity))) {
                 issues.push(`Producto ${product.name} tiene una cantidad inválida en el borrador.`);
                 return items;
             }
 
-            const quantity = Number(normalizeQuantity(item.quantity));
+            const quantity = quantityNumber(item.quantity, Boolean(product.allow_decimal_quantity));
             const availableStock = Number(product.available_stock ?? product.stock ?? 0);
 
             if (!allow_negative_stock && !item.credit_line_id && quantity > availableStock) {
-                issues.push(`Producto ${product.name}: cantidad guardada ${quantity}, disponible ${Math.floor(availableStock)}.`);
+                issues.push(`Producto ${product.name}: cantidad guardada ${quantity}, disponible ${availableStock}.`);
                 return items;
             }
 
@@ -1818,7 +1859,7 @@ export default function POS({
             items.push({
                 cart_line_id: restoredCartLineId,
                 product,
-                quantity: String(quantity),
+                quantity: normalizeQuantity(item.quantity),
                 unit_price: (manualPrice || inheritedCreditPrice) ? (item.unit_price ?? price.price) : price.price,
                 original_price: (manualPrice || inheritedCreditPrice) ? (item.original_price ?? item.unit_price ?? price.price) : price.price,
                 price_type_id: item.price_type_id ?? price.priceTypeId ?? null,
@@ -2493,13 +2534,13 @@ export default function POS({
         }
     }
 
-    function buildCartItem(product: Product): CartItem {
+    function buildCartItem(product: Product, quantity = '1'): CartItem {
         const price = priceFromList(product, default_price_type_id, default_price_type_id);
 
         return {
             cart_line_id: newCartLineId(product.id),
             product,
-            quantity: '1',
+            quantity,
             unit_price: price.price,
             original_price: price.price,
             price_type_id: price.priceTypeId ?? null,
@@ -2547,9 +2588,9 @@ export default function POS({
     }
 
     function addProduct(product: Product): boolean {
-        const availableStock = Math.floor(product.available_stock ?? product.stock);
+        const availableStock = Number(product.available_stock ?? product.stock);
 
-        if (!allow_negative_stock && availableStock < 1) {
+        if (!allow_negative_stock && availableStock <= 0) {
             showError(`${product.name}: ${t('pos.out_of_stock_for')}`);
             return false;
         }
@@ -2561,10 +2602,13 @@ export default function POS({
         const nextItems = existing
             ? items.map((item) => (
                 cartLineId(item) === cartLineId(existing)
-                    ? { ...item, quantity: String(quantityNumber(item.quantity) + 1) }
+                    ? { ...item, quantity: String(quantityNumber(item.quantity, Boolean(item.product.allow_decimal_quantity)) + 1) }
                     : item
             ))
-            : [buildCartItem(product), ...items];
+            : [buildCartItem(
+                product,
+                product.allow_decimal_quantity && availableStock < 1 ? String(availableStock) : '1',
+            ), ...items];
 
         if (!allow_negative_stock && unreservedQuantityForProduct(nextItems, product.id) > availableStock) {
             showError(
@@ -2592,19 +2636,21 @@ export default function POS({
     }
 
     function updateQuantity(lineId: string, quantity: number | string) {
-        const sanitizedQuantity = sanitizeQuantityInput(quantity);
-
-        if (sanitizedQuantity === null) {
-            showError(integerQuantityMessage);
-            toast.error(integerQuantityMessage);
-            return;
-        }
-
         renewOperationKeyAfterFailedMutation();
         setCart((items) => {
             const target = items.find((item) => cartLineId(item) === lineId);
 
             if (!target) {
+                return items;
+            }
+
+            const allowDecimal = Boolean(target.product.allow_decimal_quantity);
+            const sanitizedQuantity = sanitizeQuantityInput(quantity, allowDecimal);
+
+            if (sanitizedQuantity === null) {
+                const message = allowDecimal ? decimalQuantityMessage : integerQuantityMessage;
+                showError(message);
+                toast.error(message);
                 return items;
             }
 
@@ -2617,23 +2663,28 @@ export default function POS({
                 ));
             }
 
-            if (quantityError(sanitizedQuantity)) {
-                showError(integerQuantityMessage);
+            if (quantityError(sanitizedQuantity, allowDecimal)) {
+                if (sanitizedQuantity.endsWith('.') || sanitizedQuantity.endsWith(',')) {
+                    return items.map((item) => (
+                        cartLineId(item) === lineId ? { ...item, quantity: sanitizedQuantity } : item
+                    ));
+                }
+                showError(allowDecimal ? decimalQuantityMessage : integerQuantityMessage);
                 return items;
             }
             const nextItems = items.map((item) => (
                 cartLineId(item) === lineId
-                    ? { ...item, quantity: String(Number(sanitizedQuantity)) }
+                    ? { ...item, quantity: sanitizedQuantity }
                     : item
             ));
             const reservationMaximum = Number(target.max_quantity ?? 0);
 
-            if (target.credit_line_id && reservationMaximum > 0 && Number(sanitizedQuantity) > reservationMaximum) {
+            if (target.credit_line_id && reservationMaximum > 0 && quantityNumber(sanitizedQuantity, allowDecimal) > reservationMaximum) {
                 showError(`Esta línea tiene un máximo de ${reservationMaximum} unidades pendientes en la reserva. Para vender unidades adicionales, busca y agrega el producto desde el POS.`);
                 return items;
             }
 
-            const availableStock = Math.floor(target.product.available_stock ?? target.product.stock);
+            const availableStock = Number(target.product.available_stock ?? target.product.stock);
 
             if (!allow_negative_stock && unreservedQuantityForProduct(nextItems, target.product.id) > availableStock) {
                 showError(
@@ -2796,8 +2847,11 @@ export default function POS({
             return;
         }
 
-        const currentQuantity = quantityNumber(item.quantity) || 1;
-        updateQuantity(lineId, String(Math.max(1, currentQuantity + difference)));
+        const allowDecimal = Boolean(item.product.allow_decimal_quantity);
+        const step = allowDecimal ? 0.0001 : 1;
+        const currentQuantity = quantityNumber(item.quantity, allowDecimal) || step;
+        const nextQuantity = Math.max(step, currentQuantity + (difference * step));
+        updateQuantity(lineId, allowDecimal ? nextQuantity.toFixed(4) : String(nextQuantity));
     }
 
     function cancelSale(force = false) {
@@ -3111,6 +3165,10 @@ export default function POS({
             return;
         }
         if (cart.length === 0 || !quotationValidUntil || quotationSaving || !validateCartQuantities() || !validateCartPrices() || !validateDiscount()) return;
+        if (cart.some((item) => Number(normalizeQuantity(item.quantity)) !== Math.trunc(Number(normalizeQuantity(item.quantity))))) {
+            setQuotationError('Las cotizaciones aún no admiten cantidades fraccionarias.');
+            return;
+        }
         setQuotationError('');
         setQuotationSaving(true);
         const payload = {
@@ -3120,7 +3178,7 @@ export default function POS({
             items: cart.map((item) => ({
                 quotation_item_id: item.quotation_item_id ?? null,
                 product_id: item.product.id,
-                quantity: Number(item.quantity),
+                quantity: normalizeQuantity(item.quantity),
                 price_type_id: item.price_type_id,
                 unit_price: Number(item.unit_price),
                 price_source: item.price_source,
@@ -3159,6 +3217,10 @@ export default function POS({
         }
 
         if (!validateCartQuantities()) {
+            return;
+        }
+
+        if (!validateDecimalOperationScope()) {
             return;
         }
 
@@ -3209,7 +3271,7 @@ export default function POS({
                 customer: fiscalCustomerPayload(data.customer),
                 items: cart.map((item) => ({
                     product_id: item.product.id,
-                    quantity: quantityNumber(item.quantity),
+                    quantity: normalizeQuantity(item.quantity),
                     unit_price: Number(item.unit_price),
                 })),
             }, {
@@ -3328,7 +3390,7 @@ export default function POS({
             })),
             items: cart.map((item) => ({
                 product_id: item.product.id,
-                quantity: quantityNumber(item.quantity),
+                quantity: normalizeQuantity(item.quantity),
                 price_type_id: item.price_type_id,
                 unit_price: Number(item.unit_price),
                 price_source: item.price_source,
@@ -4634,8 +4696,8 @@ export default function POS({
                                 ? 'grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-3 min-[1700px]:grid-cols-4'
                                 : 'divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white'}>
                                 {productsToShow.map((product) => {
-                                    const availableStock = Math.floor(product.available_stock ?? product.stock);
-                                    const reservedStock = Math.floor(product.reserved_stock ?? 0);
+                                    const availableStock = Number(product.available_stock ?? product.stock);
+                                    const reservedStock = Number(product.reserved_stock ?? 0);
                                     const outOfStock = availableStock <= 0;
                                     const disabledByStock = !allow_negative_stock && outOfStock;
                                     const lowStock =
@@ -4836,11 +4898,11 @@ export default function POS({
                                                     </button>
                                                     <input
                                                         type="text"
-                                                        min="1"
-                                                        max={Math.floor((item.product.available_stock ?? item.product.stock) + reservedCreditQuantity(item))}
-                                                        step="1"
-                                                        inputMode="numeric"
-                                                        pattern="[0-9]*"
+                                                        min={item.product.allow_decimal_quantity ? '0.0001' : '1'}
+                                                        max={(item.product.available_stock ?? item.product.stock) + reservedCreditQuantity(item)}
+                                                        step={item.product.allow_decimal_quantity ? '0.0001' : '1'}
+                                                        inputMode={item.product.allow_decimal_quantity ? 'decimal' : 'numeric'}
+                                                        pattern={item.product.allow_decimal_quantity ? '[0-9]*[.,]?[0-9]*' : '[0-9]*'}
                                                         value={item.quantity}
                                                         onChange={(event) =>
                                                             updateQuantity(
@@ -4850,7 +4912,7 @@ export default function POS({
                                                         }
                                                         onWheel={(event) => event.currentTarget.blur()}
                                                         className={`h-9 w-20 border-y bg-white text-center text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-orange-500 ${
-                                                            quantityError(item.quantity) ? 'border-red-300 text-red-700' : 'border-slate-300'
+                                                            quantityError(item.quantity, Boolean(item.product.allow_decimal_quantity)) ? 'border-red-300 text-red-700' : 'border-slate-300'
                                                         }`}
                                                     />
                                                     <button
@@ -4862,9 +4924,9 @@ export default function POS({
                                                         +
                                                     </button>
                                                 </div>
-                                                {quantityError(item.quantity) && (
+                                                {quantityError(item.quantity, Boolean(item.product.allow_decimal_quantity)) && (
                                                     <p className="mt-1 text-xs font-semibold text-red-600">
-                                                        {integerQuantityMessage}
+                                                        {quantityError(item.quantity, Boolean(item.product.allow_decimal_quantity))}
                                                     </p>
                                                 )}
                                             </div>
@@ -5775,7 +5837,7 @@ export default function POS({
 
                         <div className="mt-5 max-h-[60vh] space-y-3 overflow-y-auto">
                             {duplicateProductChoices.map((product) => {
-                                const availableStock = Math.floor(product.available_stock ?? product.stock);
+                                const availableStock = Number(product.available_stock ?? product.stock);
 
                                 return (
                                     <button
