@@ -186,7 +186,8 @@ class QuotationController extends Controller
         if ($discountAmount >= $subtotal) {
             throw ValidationException::withMessages(['discount.value' => 'El descuento no puede ser mayor o igual al total.']);
         }
-        if ($discount) {
+        $hasLineDiscount = collect($lines)->contains(fn (array $line): bool => $line['lineDiscount'] > 0);
+        if ($discount || $hasLineDiscount) {
             abort_unless(module_enabled('discounts'), 403, 'Este modulo no esta habilitado para esta empresa.');
             if (! Permissions::canApplyDiscounts($request->user())) {
                 abort(403);
@@ -405,7 +406,8 @@ class QuotationController extends Controller
             if ($discountAmount >= $subtotal) {
                 throw ValidationException::withMessages(['discount.value' => 'El descuento no puede ser mayor o igual al total.']);
             }
-            if ($discount) {
+            $hasLineDiscount = collect($lines)->contains(fn (array $line): bool => $line['lineDiscount'] > 0);
+            if ($discount || $hasLineDiscount) {
                 abort_unless(module_enabled('discounts'), 403, 'Este modulo no esta habilitado para esta empresa.');
                 abort_unless(Permissions::canApplyDiscounts($request->user()), 403);
             }
