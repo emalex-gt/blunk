@@ -128,8 +128,8 @@ class QuotationController extends Controller
             'items.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
             'items.*.price_type_id' => ['nullable', 'integer'],
             'items.*.unit_price' => ['nullable', 'numeric', 'decimal:0,2', 'gt:0'],
-            'items.*.line_discount_amount' => ['prohibited'],
-            'items.*.line_discount_reason' => ['prohibited'],
+            'items.*.line_discount_amount' => ['nullable', 'numeric', 'decimal:0,2', 'gte:0'],
+            'items.*.line_discount_reason' => ['nullable', 'string', 'max:1000'],
             'items.*.price_source' => ['nullable', 'in:price_list,last_customer_price,manual'],
             'items.*.manual_price' => ['nullable', 'boolean'],
             'discount' => ['nullable', 'array'],
@@ -172,8 +172,10 @@ class QuotationController extends Controller
                 ->where('business_id', $business->id)
                 ->findOrFail($resolvedPrice['price_type_id']);
             $lineTotal = $this->quantityLineAmount($resolvedPrice['unit_price'], $quantity);
-            $subtotal += $lineTotal;
-            $lines[] = compact('product', 'priceType', 'item', 'quantity', 'resolvedPrice', 'lineTotal');
+            $lineDiscount = $this->validatedLineDiscount($item, $lineTotal, $itemIndex);
+            $lineNetTotal = round($lineTotal - $lineDiscount, 2);
+            $subtotal += $lineNetTotal;
+            $lines[] = compact('product', 'priceType', 'item', 'quantity', 'resolvedPrice', 'lineTotal', 'lineDiscount', 'lineNetTotal');
         }
 
         $discount = $data['discount'] ?? null;
@@ -228,7 +230,7 @@ class QuotationController extends Controller
                     ? 0.0
                     : ($index === array_key_last($lines)
                         ? round($discountAmount - $allocatedDiscount, 2)
-                        : round($line['lineTotal'] / $subtotal * $discountAmount, 2));
+                        : round($line['lineNetTotal'] / $subtotal * $discountAmount, 2));
                 $allocatedDiscount += $lineDiscount;
 
                 $quotation->items()->create([
@@ -244,10 +246,12 @@ class QuotationController extends Controller
                     'original_price' => $line['resolvedPrice']['original_price'],
                     'price_source' => $line['resolvedPrice']['price_source'],
                     'manual_price' => $line['resolvedPrice']['manual_price'],
+                    'line_discount_amount' => $line['lineDiscount'],
+                    'line_discount_reason' => $line['item']['line_discount_reason'] ?? null,
                     'discount_amount' => $lineDiscount,
                     'total_before_discount' => $line['lineTotal'],
-                    'total_after_discount' => round($line['lineTotal'] - $lineDiscount, 2),
-                    'total' => round($line['lineTotal'] - $lineDiscount, 2),
+                    'total_after_discount' => round($line['lineNetTotal'] - $lineDiscount, 2),
+                    'total' => round($line['lineNetTotal'] - $lineDiscount, 2),
                 ]);
             }
 
@@ -309,8 +313,8 @@ class QuotationController extends Controller
             'items.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
             'items.*.price_type_id' => ['nullable', 'integer'],
             'items.*.unit_price' => ['nullable', 'numeric', 'decimal:0,2', 'gt:0'],
-            'items.*.line_discount_amount' => ['prohibited'],
-            'items.*.line_discount_reason' => ['prohibited'],
+            'items.*.line_discount_amount' => ['nullable', 'numeric', 'decimal:0,2', 'gte:0'],
+            'items.*.line_discount_reason' => ['nullable', 'string', 'max:1000'],
             'items.*.price_source' => ['nullable', 'in:price_list,last_customer_price,manual'],
             'items.*.manual_price' => ['nullable', 'boolean'],
             'discount' => ['nullable', 'array'],
@@ -387,8 +391,10 @@ class QuotationController extends Controller
                     ->where('business_id', $business->id)
                     ->findOrFail($resolvedPrice['price_type_id']);
                 $lineTotal = $this->quantityLineAmount($resolvedPrice['unit_price'], $quantity);
-                $subtotal += $lineTotal;
-                $lines[] = compact('existingLine', 'product', 'priceType', 'item', 'quantity', 'resolvedPrice', 'lineTotal');
+                $lineDiscount = $this->validatedLineDiscount($item, $lineTotal, $itemIndex);
+                $lineNetTotal = round($lineTotal - $lineDiscount, 2);
+                $subtotal += $lineNetTotal;
+                $lines[] = compact('existingLine', 'product', 'priceType', 'item', 'quantity', 'resolvedPrice', 'lineTotal', 'lineDiscount', 'lineNetTotal');
             }
 
             $discount = $data['discount'] ?? null;
@@ -433,7 +439,7 @@ class QuotationController extends Controller
             foreach ($lines as $index => $line) {
                 $lineDiscount = $discountAmount === 0.0 ? 0.0 : ($index === array_key_last($lines)
                     ? round($discountAmount - $allocatedDiscount, 2)
-                    : round($line['lineTotal'] / $subtotal * $discountAmount, 2));
+                    : round($line['lineNetTotal'] / $subtotal * $discountAmount, 2));
                 $allocatedDiscount += $lineDiscount;
                 $attributes = [
                     'business_id' => $business->id,
@@ -448,10 +454,12 @@ class QuotationController extends Controller
                     'original_price' => $line['resolvedPrice']['original_price'],
                     'price_source' => $line['resolvedPrice']['price_source'],
                     'manual_price' => $line['resolvedPrice']['manual_price'],
+                    'line_discount_amount' => $line['lineDiscount'],
+                    'line_discount_reason' => $line['item']['line_discount_reason'] ?? null,
                     'discount_amount' => $lineDiscount,
                     'total_before_discount' => $line['lineTotal'],
-                    'total_after_discount' => round($line['lineTotal'] - $lineDiscount, 2),
-                    'total' => round($line['lineTotal'] - $lineDiscount, 2),
+                    'total_after_discount' => round($line['lineNetTotal'] - $lineDiscount, 2),
+                    'total' => round($line['lineNetTotal'] - $lineDiscount, 2),
                 ];
                 if ($line['existingLine']) {
                     $line['existingLine']->update($attributes);
@@ -616,6 +624,22 @@ class QuotationController extends Controller
         $amount = bcmul((string) $unitPrice, $quantity, 8);
 
         return (float) bcdiv(bcadd($amount, '0.005', 8), '1', 2);
+    }
+
+    private function validatedLineDiscount(array $item, float $lineTotal, int $itemIndex): float
+    {
+        $amount = round((float) ($item['line_discount_amount'] ?? 0), 2);
+        $reason = trim((string) ($item['line_discount_reason'] ?? ''));
+        if ($amount <= 0) {
+            return 0.0;
+        }
+        if ($amount >= $lineTotal || $reason === '') {
+            throw ValidationException::withMessages([
+                "items.{$itemIndex}.line_discount_amount" => 'Revisa el monto y motivo del descuento de línea.',
+            ]);
+        }
+
+        return $amount;
     }
 
     /**

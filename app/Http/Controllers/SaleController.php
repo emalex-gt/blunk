@@ -2077,6 +2077,8 @@ class SaleController extends Controller
                 'unit_price' => (float) $item->unit_price,
                 'original_price' => (float) ($item->original_price ?? $item->unit_price),
                 'price_type_id' => $item->price_type_id,
+                'line_discount_amount' => (float) ($item->line_discount_amount ?? 0),
+                'line_discount_reason' => $item->line_discount_reason,
             ])->values(),
             'discount' => $quotation->discount_amount > 0 ? [
                 'type' => $quotation->discount_type,
@@ -2130,6 +2132,8 @@ class SaleController extends Controller
                 'unit_price' => (float) $item->unit_price,
                 'original_price' => (float) ($item->original_price ?? $item->unit_price),
                 'price_type_id' => $item->price_type_id,
+                'line_discount_amount' => (float) ($item->line_discount_amount ?? 0),
+                'line_discount_reason' => $item->line_discount_reason,
                 'price_source' => $item->price_source,
                 'manual_price' => (bool) $item->manual_price,
             ])->values(),
@@ -2299,10 +2303,10 @@ class SaleController extends Controller
         }
 
         $snapshot = $quotation->items
-            ->map(fn ($item) => implode('|', [(int) $item->id, (int) $item->product_id, ProductQuantityPolicy::canonical($item->quantity), number_format((float) $item->unit_price, 2, '.', '')]))
+            ->map(fn ($item) => implode('|', [(int) $item->id, (int) $item->product_id, ProductQuantityPolicy::canonical($item->quantity), number_format((float) $item->unit_price, 2, '.', ''), number_format((float) ($item->line_discount_amount ?? 0), 2, '.', ''), trim((string) ($item->line_discount_reason ?? ''))]))
             ->sort()->values()->all();
         $submitted = collect($submittedItems)
-            ->map(fn (array $item) => implode('|', [(int) ($item['quotation_item_id'] ?? 0), (int) ($item['product_id'] ?? 0), ProductQuantityPolicy::canonical($item['quantity'] ?? 0), number_format((float) ($item['unit_price'] ?? 0), 2, '.', '')]))
+            ->map(fn (array $item) => implode('|', [(int) ($item['quotation_item_id'] ?? 0), (int) ($item['product_id'] ?? 0), ProductQuantityPolicy::canonical($item['quantity'] ?? 0), number_format((float) ($item['unit_price'] ?? 0), 2, '.', ''), number_format((float) ($item['line_discount_amount'] ?? 0), 2, '.', ''), trim((string) ($item['line_discount_reason'] ?? ''))]))
             ->sort()->values()->all();
 
         return $snapshot === $submitted;
