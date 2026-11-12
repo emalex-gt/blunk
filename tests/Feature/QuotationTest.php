@@ -54,7 +54,7 @@ class QuotationTest extends TestCase
         $this->assertSame('COT-000001', $quotation->visible_number);
         $this->assertSame('Comercial Cliente', $quotation->customer_commercial_name);
         $this->assertSame('Frente al mercado', $quotation->customer_address_reference);
-        $this->assertSame(100, $quotation->items->sole()->quantity);
+        $this->assertSame('100.0000', $quotation->items->sole()->quantity);
         $this->assertSame('1000.00', $quotation->total);
         $this->assertSame($originalStock, $product->fresh()->stock);
         $this->assertSame(0, StockMovement::query()->count());
@@ -103,7 +103,79 @@ class QuotationTest extends TestCase
         $this->assertSame($originalIssuedAt, $quotation->issued_at?->toDateTimeString());
         $this->assertSame(Quotation::OPEN, $quotation->status);
         $this->assertSame('Cotización actualizada', $quotation->note);
-        $this->assertSame(2, $quotation->items()->sole()->quantity);
+        $this->assertSame('2.0000', $quotation->items()->sole()->quantity);
+    }
+
+    public function test_decimal_quotation_preserves_quantity_through_edit_duplicate_and_conversion(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $product->update(['allow_decimal_quantity' => true]);
+
+        $this->actingAs($user)->post(route('quotations.store'), $this->payload($product, null, '1.125'))->assertRedirect();
+        $quotation = Quotation::query()->with('items')->sole();
+        $line = $quotation->items->sole();
+        $this->assertSame('1.1250', $line->quantity);
+        $this->assertSame('11.25', $line->total);
+        $this->assertSame(0, StockMovement::query()->count());
+
+        $payload = $this->payload($product, null, '2.75');
+        $payload['items'][0]['quotation_item_id'] = $line->id;
+        $payload['items'][0]['price_type_id'] = $line->price_type_id;
+        $this->actingAs($user)->patch(route('quotations.update', $quotation), $payload)->assertRedirect();
+        $this->assertSame('2.7500', $quotation->fresh()->items()->sole()->quantity);
+
+        $this->actingAs($user)->post(route('quotations.duplicate', $quotation))->assertRedirect();
+        $copy = Quotation::query()->with('items')->whereKeyNot($quotation->id)->sole();
+        $this->assertSame(Quotation::OPEN, $copy->status);
+        $this->assertSame('2.7500', $copy->items->sole()->quantity);
+
+        $this->openCash($business, $user);
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload($quotation->fresh('items'), [[
+            'product_id' => $product->id,
+            'quotation_item_id' => $quotation->items()->sole()->id,
+            'quantity' => '2.7500',
+            'unit_price' => 10,
+        ]], 27.50))->assertSessionHasNoErrors();
+
+        $sale = \App\Models\Sale::query()->sole();
+        $this->assertSame($quotation->id, $sale->quotation_id);
+        $this->assertSame('2.7500', $sale->items()->sole()->quantity);
+        $this->assertSame(Quotation::CONVERTED, $quotation->fresh()->status);
+    }
+
+    public function test_decimal_quotation_preserves_line_and_general_discounts_when_converted(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $product->update(['allow_decimal_quantity' => true]);
+        TenantModule::query()->create(['business_id' => $business->id, 'module' => 'discounts', 'is_enabled' => true, 'enabled_at' => now()]);
+        $payload = $this->payload($product, null, '1.125');
+        $payload['items'][0]['line_discount_amount'] = 1;
+        $payload['items'][0]['line_discount_reason'] = 'Descuento de línea';
+        $payload['discount'] = ['type' => 'fixed', 'value' => 1, 'reason' => 'Descuento general'];
+        $this->actingAs($user)->post(route('quotations.store'), $payload)->assertRedirect();
+
+        $quotation = Quotation::query()->with('items')->sole();
+        $line = $quotation->items->sole();
+        $this->assertSame('1.1250', $line->quantity);
+        $this->assertSame('1.00', $line->line_discount_amount);
+        $this->assertSame('9.25', $quotation->total);
+
+        $this->openCash($business, $user);
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload($quotation, [[
+            'product_id' => $product->id,
+            'quotation_item_id' => $line->id,
+            'quantity' => '1.125',
+            'unit_price' => 10,
+            'line_discount_amount' => 1,
+            'line_discount_reason' => 'Descuento de línea',
+        ]], 9.25) + [
+            'discount' => ['type' => 'fixed', 'value' => 1, 'reason' => 'Descuento general'],
+        ])->assertSessionHasNoErrors();
+
+        $sale = \App\Models\Sale::query()->sole();
+        $this->assertSame('1.1250', $sale->items()->sole()->quantity);
+        $this->assertSame('1.00', $sale->items()->sole()->line_discount_amount);
+        $this->assertSame('9.25', $sale->total);
     }
 
     public function test_editing_an_existing_line_preserves_its_historical_price_snapshot(): void
@@ -121,7 +193,7 @@ class QuotationTest extends TestCase
         $this->actingAs($user)->patch(route('quotations.update', $quotation), $payload)->assertRedirect();
 
         $line->refresh();
-        $this->assertSame(2, $line->quantity);
+        $this->assertSame('2.0000', $line->quantity);
         $this->assertSame('10.00', $line->unit_price);
         $this->assertSame('20.00', $line->total);
     }
@@ -366,7 +438,7 @@ class QuotationTest extends TestCase
         $this->actingAs($otherUser)->get(route('quotations.show', $quotation))->assertNotFound();
     }
 
-    public function test_valid_until_is_required_and_quantities_are_integer(): void
+    public function test_valid_until_is_required_and_integer_products_reject_fractional_quantities(): void
     {
         [, $user, $product] = $this->tenant();
 
@@ -664,7 +736,7 @@ class QuotationTest extends TestCase
         ]], 50))->assertSessionHasNoErrors();
 
         $item = \App\Models\Sale::query()->sole()->items()->sole();
-        $this->assertSame(2, $item->quantity);
+        $this->assertSame('2.0000', $item->quantity);
         $this->assertSame('25.00', $item->unit_price);
     }
 
@@ -718,7 +790,7 @@ class QuotationTest extends TestCase
         ]);
     }
 
-    private function appendQuotedItem(Quotation $quotation, Product $product, int $quantity, int|float $unitPrice): \App\Models\QuotationItem
+    private function appendQuotedItem(Quotation $quotation, Product $product, int|string $quantity, int|float $unitPrice): \App\Models\QuotationItem
     {
         return $quotation->items()->create([
             'business_id' => $quotation->business_id,
@@ -749,7 +821,7 @@ class QuotationTest extends TestCase
         ]);
     }
 
-    private function payload(Product $product, ?int $customerId = null, int $quantity = 1): array
+    private function payload(Product $product, ?int $customerId = null, int|string $quantity = 1): array
     {
         return [
             'customer' => $customerId ? ['id' => $customerId] : ['name' => 'Cliente de mostrador', 'doc_type' => 'CF', 'doc_number' => 'CF'],
