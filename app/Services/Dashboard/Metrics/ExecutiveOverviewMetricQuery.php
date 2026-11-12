@@ -9,6 +9,7 @@ use App\Services\Dashboard\DashboardContext;
 use App\Services\Dashboard\DashboardMetricQuery;
 use App\Services\Dashboard\DashboardPeriod;
 use App\Support\Permissions;
+use App\Support\Inventory\ProductQuantityPolicy;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
@@ -160,7 +161,7 @@ final class ExecutiveOverviewMetricQuery implements DashboardMetricQuery
             ->orderByDesc('total')
             ->limit(5)
             ->get()
-            ->map(fn ($row) => ['product_id' => $row->product_id, 'name' => $row->name, 'quantity' => (float) $row->quantity, 'total' => (float) $row->total])
+            ->map(fn ($row) => ['product_id' => $row->product_id, 'name' => $row->name, 'quantity' => ProductQuantityPolicy::canonical($row->quantity), 'total' => (float) $row->total])
             ->all();
     }
 

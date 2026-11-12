@@ -1,4 +1,5 @@
 import { formatCurrency } from '@/utils/currency';
+import { formatQuantity } from '@/utils/quantity';
 import { Link } from '@inertiajs/react';
 import type { ReactNode } from 'react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -166,7 +167,7 @@ function RankingList({ title, rows, country, kind }: { title: string; rows: any[
                 {rows.map((row, index) => (
                     <li key={row.product_id ?? row.customer_id} className="flex min-w-0 items-center gap-3 rounded-lg bg-slate-50 px-3 py-2">
                         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-xs font-bold text-slate-500">{index + 1}</span>
-                        <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-800">{row.name}</p><p className="text-xs text-slate-500">{kind === 'products' ? `${row.quantity} unidades` : `${row.sales_count} ventas`}</p></div>
+                        <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-800">{row.name}</p><p className="text-xs text-slate-500">{kind === 'products' ? `${formatQuantity(row.quantity)} unidades` : `${row.sales_count} ventas`}</p></div>
                         <span className="shrink-0 text-sm font-semibold text-slate-900">{formatCurrency(row.total, country)}</span>
                     </li>
                 ))}

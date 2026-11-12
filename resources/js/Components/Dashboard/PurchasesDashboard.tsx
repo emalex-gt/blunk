@@ -1,14 +1,15 @@
 import { formatCurrency } from '@/utils/currency';
+import { formatQuantity } from '@/utils/quantity';
 import { Link } from '@inertiajs/react';
 import type { ReactNode } from 'react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
-type PurchaseSummary = { total: string; count: number; average: string; items_quantity: number; supplier_count: number; previous_total: string; change_percent: number | null };
+type PurchaseSummary = { total: string; count: number; average: string; items_quantity: string; supplier_count: number; previous_total: string; change_percent: number | null };
 export type PurchasesDashboardData = {
     purchases_month: PurchaseSummary;
     purchase_trend: Array<{ month: string; label: string; total: number; count: number }>;
     top_suppliers: Array<{ supplier_id: number; name: string; purchases_count: number; total: number; percentage: number }>;
-    top_products: Array<{ product_id: number; name: string; quantity: number; total: number }>;
+    top_products: Array<{ product_id: number; name: string; quantity: string; total: number }>;
     replenishment: Array<{ product_id: number; name: string; code: string | null; stock: number; min_stock: number; status: 'out_of_stock' | 'low_stock'; last_purchase_cost: number | null; last_purchase_at: string | null }>;
     stock: { low_stock_count: number; out_of_stock_count: number } | null;
     cost_changes: Array<{ product_id: number; name: string; latest_cost: number; previous_cost: number; change_amount: number; change_percent: number | null; latest_purchase_at: string }>;
@@ -20,7 +21,7 @@ export type PurchasesDashboardData = {
 export default function PurchasesDashboard({ data, country }: { data: PurchasesDashboardData; country: string }) {
     const summary = data.purchases_month;
     const kpis = [
-        { label: 'Compras del mes', value: formatCurrency(summary.total, country), detail: `${summary.items_quantity} unidades compradas`, change: summary.change_percent },
+        { label: 'Compras del mes', value: formatCurrency(summary.total, country), detail: `${formatQuantity(summary.items_quantity)} unidades compradas`, change: summary.change_percent },
         { label: 'Número de compras', value: String(summary.count), detail: 'Compras válidas del período' },
         { label: 'Compra promedio', value: formatCurrency(summary.average, country), detail: 'Promedio por compra' },
         { label: 'Proveedores usados', value: String(summary.supplier_count), detail: 'Con compras en el período' },
@@ -66,7 +67,7 @@ function Replenishment({ rows, country }: { rows: PurchasesDashboardData['replen
 }
 
 function Rankings({ title, empty, rows, country, type }: { title: string; empty: string; rows: PurchasesDashboardData['top_suppliers'] | PurchasesDashboardData['top_products']; country: string; type: 'supplier' | 'product' }) {
-    return <Panel title={title}>{rows.length === 0 ? <Empty>{empty}</Empty> : <ol className="space-y-2">{rows.map((row, index) => <li key={type === 'supplier' ? (row as PurchasesDashboardData['top_suppliers'][number]).supplier_id : (row as PurchasesDashboardData['top_products'][number]).product_id} className="flex min-w-0 items-center gap-3 rounded-lg bg-slate-50 px-3 py-2"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-xs font-bold text-slate-500">{index + 1}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-800">{row.name}</p><p className="text-xs text-slate-500">{type === 'supplier' ? `${(row as PurchasesDashboardData['top_suppliers'][number]).purchases_count} compras · ${(row as PurchasesDashboardData['top_suppliers'][number]).percentage}%` : `${(row as PurchasesDashboardData['top_products'][number]).quantity} unidades`}</p></div><span className="shrink-0 text-sm font-semibold text-slate-900">{formatCurrency(row.total, country)}</span></li>)}</ol>}</Panel>;
+    return <Panel title={title}>{rows.length === 0 ? <Empty>{empty}</Empty> : <ol className="space-y-2">{rows.map((row, index) => <li key={type === 'supplier' ? (row as PurchasesDashboardData['top_suppliers'][number]).supplier_id : (row as PurchasesDashboardData['top_products'][number]).product_id} className="flex min-w-0 items-center gap-3 rounded-lg bg-slate-50 px-3 py-2"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-xs font-bold text-slate-500">{index + 1}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-800">{row.name}</p><p className="text-xs text-slate-500">{type === 'supplier' ? `${(row as PurchasesDashboardData['top_suppliers'][number]).purchases_count} compras · ${(row as PurchasesDashboardData['top_suppliers'][number]).percentage}%` : `${formatQuantity((row as PurchasesDashboardData['top_products'][number]).quantity)} unidades`}</p></div><span className="shrink-0 text-sm font-semibold text-slate-900">{formatCurrency(row.total, country)}</span></li>)}</ol>}</Panel>;
 }
 
 function PaymentMix({ rows, country }: { rows: PurchasesDashboardData['payment_mix']; country: string }) { return <Panel title="Métodos de pago">{rows.length === 0 ? <Empty>No hay compras registradas en el período.</Empty> : <div className="space-y-3">{rows.map((row) => <div key={row.method}><div className="flex items-center justify-between gap-3 text-sm"><span className="font-medium text-slate-700">{row.label}</span><span className="text-right font-semibold text-slate-900">{formatCurrency(row.total, country)} · {row.percentage}%</span></div><div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-orange-500" style={{ width: `${Math.min(100, row.percentage)}%` }} /></div></div>)}</div>}</Panel>; }

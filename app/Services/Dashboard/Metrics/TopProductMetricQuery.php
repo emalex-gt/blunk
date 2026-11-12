@@ -5,6 +5,7 @@ namespace App\Services\Dashboard\Metrics;
 use App\Services\Dashboard\DashboardContext;
 use App\Services\Dashboard\DashboardMetricQuery;
 use App\Services\Dashboard\DashboardPeriod;
+use App\Support\Inventory\ProductQuantityPolicy;
 use Illuminate\Support\Facades\DB;
 
 final class TopProductMetricQuery implements DashboardMetricQuery
@@ -25,7 +26,7 @@ final class TopProductMetricQuery implements DashboardMetricQuery
 
         return [
             'name' => $product?->product_name,
-            'quantity' => $product ? (int) $product->quantity : 0,
+            'quantity' => ProductQuantityPolicy::canonical($product?->quantity ?? 0),
         ];
     }
 }

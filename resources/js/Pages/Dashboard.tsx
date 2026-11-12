@@ -9,6 +9,7 @@ import RouteSupervisorDashboard, { type RouteSupervisorDashboardData } from '@/C
 import RouteSellerDashboard, { type RouteSellerDashboardData } from '@/Components/Dashboard/RouteSellerDashboard';
 import RouteDeliveryDashboard, { type RouteDeliveryDashboardData } from '@/Components/Dashboard/RouteDeliveryDashboard';
 import { formatCurrency } from '@/utils/currency';
+import { formatQuantity } from '@/utils/quantity';
 import { Head, Link, usePage } from '@inertiajs/react';
 
 type Widget = {
@@ -192,7 +193,7 @@ function widgetContent(widget: Widget, country: string) {
                 <p className="mt-6 line-clamp-2 text-2xl font-bold tracking-tight text-slate-950">
                     {data.name ?? 'Sin ventas'}
                 </p>
-                <p className="mt-2 text-sm text-slate-500">{data.quantity ?? 0} unidades vendidas hoy</p>
+                <p className="mt-2 text-sm text-slate-500">{formatQuantity(data.quantity)} unidades vendidas hoy</p>
             </>
         );
     }
