@@ -50,10 +50,6 @@ class RouteGlobalPreparationDocuments
         foreach ($groups as &$group) {
             usort($group['orders'], fn (array $a, array $b) => [mb_strtolower((string) ($a['customer']->commercial_name ?: $a['customer']->name ?: '')), $a['pre_sale_id']] <=> [mb_strtolower((string) ($b['customer']->commercial_name ?: $b['customer']->name ?: '')), $b['pre_sale_id']]);
             $group['products'] = array_values($group['products']);
-            foreach ($group['products'] as &$product) {
-                $product['quantity'] = (float) $product['quantity'];
-            }
-            unset($product);
             usort($group['products'], fn (array $a, array $b) => [mb_strtolower((string) $a['brand']), mb_strtolower((string) ($a['product']->name ?? ''))] <=> [mb_strtolower((string) $b['brand']), mb_strtolower((string) ($b['product']->name ?? ''))]);
         } unset($group);
 

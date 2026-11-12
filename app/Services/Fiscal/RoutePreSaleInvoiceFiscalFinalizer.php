@@ -14,6 +14,7 @@ use App\Support\AccountsReceivable;
 use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\CashRegister;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\Inventory\StockReservationService;
 use App\Support\RouteWorkDayCompletion;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
@@ -70,10 +71,10 @@ class RoutePreSaleInvoiceFiscalFinalizer
         foreach ($routeItems as $preSaleItemId => $routeItem) {
             $current = $currentItems->get($preSaleItemId);
             if (! $current || (int) $current->product_id !== (int) $routeItem['product_id']
-                || abs((float) $current->picked_quantity - (float) $routeItem['quantity']) > 0.0001) {
+                || ProductQuantityPolicy::compare($current->picked_quantity, $routeItem['quantity']) !== 0) {
                 throw ValidationException::withMessages(['pre_sale' => 'Los productos preparados ya no coinciden con la factura certificada.']);
             }
-            if ($timing === 'picking' && abs((float) $current->stock_deducted_quantity - (float) $routeItem['quantity']) > 0.0001) {
+            if ($timing === 'picking' && ProductQuantityPolicy::compare($current->stock_deducted_quantity, $routeItem['quantity']) !== 0) {
                 throw ValidationException::withMessages(['pre_sale' => 'El descuento de preparación ya no coincide con la factura certificada.']);
             }
         }
@@ -90,10 +91,13 @@ class RoutePreSaleInvoiceFiscalFinalizer
                 ->lockForUpdate()
                 ->get()
                 ->groupBy('source_item_id')
-                ->map(fn ($rows) => round((float) $rows->sum('quantity'), 4));
+                ->map(fn ($rows): string => $rows->reduce(
+                    fn (string $total, StockReservation $reservation): string => bcadd($total, (string) $reservation->quantity, ProductQuantityPolicy::SCALE),
+                    '0',
+                ));
 
             foreach ($routeItems as $preSaleItemId => $routeItem) {
-                if (abs((float) $reservations->get($preSaleItemId, 0) - (float) $routeItem['quantity']) > 0.0001) {
+                if (ProductQuantityPolicy::compare($reservations->get($preSaleItemId, 0), $routeItem['quantity']) !== 0) {
                     throw ValidationException::withMessages(['pre_sale' => 'Las reservas de la preventa ya no coinciden con la factura certificada.']);
                 }
             }
@@ -127,7 +131,7 @@ class RoutePreSaleInvoiceFiscalFinalizer
                     'branch_id' => $intent->branch_id,
                     'product_id' => $product->id,
                     'type' => 'sale',
-                    'quantity' => -1 * $saleItem->quantity,
+                    'quantity' => ProductQuantityPolicy::signed('-'.$saleItem->quantity),
                     'previous_stock' => $previous,
                     'new_stock' => $new,
                     'note' => stockMovementNote('sale', $sale->business_number ?: $sale->id),

@@ -10,6 +10,7 @@ use App\Models\StockMovement;
 use App\Models\StockReservation;
 use App\Models\User;
 use App\Support\BranchInventory;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\Inventory\StockReservationService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -27,7 +28,7 @@ class RoutePreSalePreparationService
     /**
      * Validate a pre-sale inside the caller transaction without changing its state.
      *
-     * @return array{pre_sale: PreSale, items: Collection<int, PreSaleItem>, rows: Collection<int, array>, reserved_by_item: Collection<int, float>}
+     * @return array{pre_sale: PreSale, items: Collection<int, PreSaleItem>, rows: Collection<int, array>, reserved_by_item: Collection<int, string>}
      */
     public function validate(PreSale $preSale, array $rows, string $timing): array
     {
@@ -89,47 +90,52 @@ class RoutePreSalePreparationService
             ->lockForUpdate()
             ->get(['source_item_id', 'quantity'])
             ->groupBy('source_item_id')
-            ->map(fn (Collection $reservations) => round((float) $reservations->sum('quantity'), 4));
+            ->map(fn (Collection $reservations): string => $reservations->reduce(
+                fn (string $total, StockReservation $reservation): string => bcadd($total, (string) $reservation->quantity, ProductQuantityPolicy::SCALE),
+                '0',
+            ));
 
-        $preparedQuantity = 0.0;
+        $products = Product::query()
+            ->where('business_id', $lockedPreSale->business_id)
+            ->where('is_active', true)
+            ->whereIn('id', $items->pluck('product_id')->unique()->sort()->values()->all())
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+
+        if ($products->count() !== $items->pluck('product_id')->unique()->count()) {
+            throw ValidationException::withMessages([
+                'pre_sale' => 'Uno de los productos preparados ya no está disponible.',
+            ]);
+        }
+
+        $preparedQuantity = '0';
 
         foreach ($rows as $itemId => $row) {
             $item = $items->get($itemId);
-            $pickedQuantity = round((float) ($row['picked_quantity'] ?? 0), 4);
-            $requestedQuantity = round((float) $item->quantity, 4);
-            $reservedQuantity = round((float) ($reservedByItem->get($itemId) ?? 0), 4);
+            $product = $products->get($item->product_id);
+            $pickedQuantity = ProductQuantityPolicy::absolute($product, $row['picked_quantity'] ?? 0);
+            $requestedQuantity = ProductQuantityPolicy::canonical($item->quantity);
+            $reservedQuantity = ProductQuantityPolicy::canonical($reservedByItem->get($itemId) ?? 0);
 
-            if ($pickedQuantity < 0 || $pickedQuantity > $requestedQuantity || $pickedQuantity > $reservedQuantity) {
+            if (ProductQuantityPolicy::compare($pickedQuantity, $requestedQuantity) > 0
+                || ProductQuantityPolicy::compare($pickedQuantity, $reservedQuantity) > 0) {
                 throw ValidationException::withMessages([
                     'items' => 'La cantidad preparada no puede exceder lo solicitado ni lo reservado.',
                 ]);
             }
 
-            $preparedQuantity += $pickedQuantity;
+            $preparedQuantity = ProductQuantityPolicy::add($preparedQuantity, $pickedQuantity);
         }
 
-        if ($preparedQuantity <= 0) {
+        if (ProductQuantityPolicy::compare($preparedQuantity, '0') <= 0) {
             throw ValidationException::withMessages([
                 'items' => 'No puedes marcar como listo un pedido sin productos preparados. Cancela la preventa si no se preparará.',
             ]);
         }
 
         if ($timing === self::TIMING_PICKING) {
-            $products = Product::query()
-                ->where('business_id', $lockedPreSale->business_id)
-                ->where('is_active', true)
-                ->whereIn('id', $items->pluck('product_id')->unique()->sort()->values()->all())
-                ->orderBy('id')
-                ->lockForUpdate()
-                ->get()
-                ->keyBy('id');
-
-            if ($products->count() !== $items->pluck('product_id')->unique()->count()) {
-                throw ValidationException::withMessages([
-                    'pre_sale' => 'Uno de los productos preparados ya no está disponible.',
-                ]);
-            }
-
             $products->each(function (Product $product) use ($lockedPreSale) {
                     BranchInventory::ensureProductInBranch($product, (int) $lockedPreSale->branch_id);
                 });
@@ -158,20 +164,6 @@ class RoutePreSalePreparationService
         foreach ($validated['rows'] as $itemId => $row) {
             /** @var PreSaleItem $item */
             $item = $items->get($itemId);
-            $pickedQuantity = round((float) ($row['picked_quantity'] ?? 0), 4);
-
-            $item->update([
-                'picked_quantity' => $pickedQuantity,
-                'picking_note' => $row['picking_note'] ?? null,
-                'stock_deducted_quantity' => $timing === self::TIMING_PICKING ? $pickedQuantity : 0,
-            ]);
-
-            $this->reservations->syncPreSaleItemPickedReservation($item, $pickedQuantity);
-
-            if ($timing !== self::TIMING_PICKING || $pickedQuantity <= 0) {
-                continue;
-            }
-
             $product = Product::query()
                 ->where('business_id', $lockedPreSale->business_id)
                 ->where('is_active', true)
@@ -184,6 +176,20 @@ class RoutePreSalePreparationService
                 ]);
             }
 
+            $pickedQuantity = ProductQuantityPolicy::absolute($product, $row['picked_quantity'] ?? 0);
+
+            $item->update([
+                'picked_quantity' => $pickedQuantity,
+                'picking_note' => $row['picking_note'] ?? null,
+                'stock_deducted_quantity' => $timing === self::TIMING_PICKING ? $pickedQuantity : 0,
+            ]);
+
+            $this->reservations->syncPreSaleItemPickedReservation($item, $pickedQuantity);
+
+            if ($timing !== self::TIMING_PICKING || ProductQuantityPolicy::compare($pickedQuantity, '0') <= 0) {
+                continue;
+            }
+
             [$previousStock, $newStock] = BranchInventory::decrease($product, (int) $lockedPreSale->branch_id, $pickedQuantity);
 
             StockMovement::query()->create([
@@ -191,7 +197,7 @@ class RoutePreSalePreparationService
                 'branch_id' => $lockedPreSale->branch_id,
                 'product_id' => $product->id,
                 'type' => 'pre_sale_picking',
-                'quantity' => -1 * $pickedQuantity,
+                'quantity' => ProductQuantityPolicy::signed('-'.$pickedQuantity),
                 'previous_stock' => $previousStock,
                 'new_stock' => $newStock,
                 'note' => 'Preparación de preventa #'.$lockedPreSale->id.($batch ? ' en lote #'.$batch->id : ''),
@@ -219,12 +225,12 @@ class RoutePreSalePreparationService
 
         return [
             'pre_sale' => $lockedPreSale->refresh(),
-            'total_items' => (int) $validated['rows']->filter(fn (array $row) => (float) ($row['picked_quantity'] ?? 0) > 0)->count(),
+            'total_items' => (int) $validated['rows']->filter(fn (array $row) => ProductQuantityPolicy::compare($row['picked_quantity'] ?? 0, '0') > 0)->count(),
             'total_amount' => round((float) $lockedPreSale->total, 2),
         ];
     }
 
-    /** @return array<int, array{id: int, picked_quantity: float, picking_note: null}> */
+    /** @return array<int, array{id: int, picked_quantity: string, picking_note: null}> */
     public function fullPreparationRows(PreSale $preSale): array
     {
         return $preSale->items()
@@ -232,7 +238,7 @@ class RoutePreSalePreparationService
             ->get(['id', 'quantity'])
             ->map(fn (PreSaleItem $item) => [
                 'id' => $item->id,
-                'picked_quantity' => (float) $item->quantity,
+                'picked_quantity' => ProductQuantityPolicy::canonical($item->quantity),
                 'picking_note' => null,
             ])
             ->all();

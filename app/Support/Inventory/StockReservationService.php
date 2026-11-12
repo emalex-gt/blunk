@@ -95,10 +95,10 @@ class StockReservationService
             ]);
     }
 
-    public function syncPreSaleItemPickedReservation(PreSaleItem $item, int|float $pickedQuantity): void
+    public function syncPreSaleItemPickedReservation(PreSaleItem $item, string|int $pickedQuantity): void
     {
         $preSale = $item->preSale()->firstOrFail();
-        $pickedQuantity = round((float) $pickedQuantity, 4);
+        $pickedQuantity = ProductQuantityPolicy::absolute($item->product()->firstOrFail(), $pickedQuantity);
 
         $reservations = StockReservation::query()
             ->where('business_id', $item->business_id)
@@ -111,15 +111,18 @@ class StockReservationService
             ->lockForUpdate()
             ->get();
 
-        $reservedQuantity = round((float) $reservations->sum(fn (StockReservation $reservation) => (float) $reservation->quantity), 4);
+        $reservedQuantity = $reservations->reduce(
+            fn (string $total, StockReservation $reservation): string => bcadd($total, (string) $reservation->quantity, ProductQuantityPolicy::SCALE),
+            '0',
+        );
 
-        if ($pickedQuantity > $reservedQuantity) {
+        if (bccomp($pickedQuantity, $reservedQuantity, ProductQuantityPolicy::SCALE) > 0) {
             throw ValidationException::withMessages([
                 'items' => 'La reserva de stock cambió. Actualiza la página e intenta de nuevo.',
             ]);
         }
 
-        if ($pickedQuantity <= 0) {
+        if (bccomp($pickedQuantity, '0', ProductQuantityPolicy::SCALE) <= 0) {
             $reservations->each->update([
                 'status' => 'released',
                 'released_at' => now(),
@@ -131,9 +134,9 @@ class StockReservationService
         $remaining = $pickedQuantity;
 
         foreach ($reservations as $reservation) {
-            $reservationQuantity = (float) $reservation->quantity;
+            $reservationQuantity = ProductQuantityPolicy::canonical($reservation->quantity);
 
-            if ($remaining <= 0) {
+            if (bccomp($remaining, '0', ProductQuantityPolicy::SCALE) <= 0) {
                 $reservation->update([
                     'status' => 'released',
                     'released_at' => now(),
@@ -142,14 +145,14 @@ class StockReservationService
                 continue;
             }
 
-            if ($reservationQuantity > $remaining) {
-                $reservation->update(['quantity' => round($remaining, 4)]);
-                $remaining = 0;
+            if (bccomp($reservationQuantity, $remaining, ProductQuantityPolicy::SCALE) > 0) {
+                $reservation->update(['quantity' => $remaining]);
+                $remaining = '0';
 
                 continue;
             }
 
-            $remaining = round($remaining - $reservationQuantity, 4);
+            $remaining = bcsub($remaining, $reservationQuantity, ProductQuantityPolicy::SCALE);
         }
     }
 
@@ -227,7 +230,7 @@ class StockReservationService
         Business|int $business,
         Branch|int $branch,
         Product $product,
-        int|float $qty,
+        string|int $qty,
         ?int $ignorePreSaleItemId = null,
     ): void {
         $businessId = $business instanceof Business ? (int) $business->id : (int) $business;
@@ -237,7 +240,8 @@ class StockReservationService
             return;
         }
 
-        $available = StockAvailability::availableStock($product, null, $branchId);
+        $requested = ProductQuantityPolicy::positive($product, $qty);
+        $available = StockAvailability::availableStockExact($product, null, $branchId);
 
         if ($ignorePreSaleItemId) {
             $ownReservation = StockReservation::query()
@@ -253,10 +257,14 @@ class StockReservationService
                 ->where('stock_reservations.source_item_id', $ignorePreSaleItemId)
                 ->where('stock_reservations.status', 'active');
             DraftReservationLease::applyEffectivePreSaleReservationLease($ownReservation);
-            $available += (float) $ownReservation->sum('stock_reservations.quantity');
+            $available = bcadd(
+                $available,
+                (string) $ownReservation->sum('stock_reservations.quantity'),
+                ProductQuantityPolicy::SCALE,
+            );
         }
 
-        if ($available < (float) $qty) {
+        if (bccomp($available, $requested, ProductQuantityPolicy::SCALE) < 0) {
             throw ValidationException::withMessages([
                 'items' => 'No hay suficiente stock disponible.',
             ]);

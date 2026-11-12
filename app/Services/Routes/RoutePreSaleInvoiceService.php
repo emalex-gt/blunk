@@ -28,6 +28,7 @@ use App\Support\CustomerIdentity;
 use App\Support\Credits;
 use App\Support\IdempotencyResult;
 use App\Support\IdempotencyService;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\Inventory\StockReservationService;
 use App\Support\Permissions;
 use App\Support\PriceLists;
@@ -135,7 +136,7 @@ class RoutePreSaleInvoiceService
                         }
 
                         $items = $lockedPreSale->items
-                            ->filter(fn (PreSaleItem $item) => (float) ($item->picked_quantity ?? 0) > 0)
+                            ->filter(fn (PreSaleItem $item) => ProductQuantityPolicy::compare($item->picked_quantity ?? 0, '0') > 0)
                             ->values();
 
                         if ($items->isEmpty()) {
@@ -165,7 +166,10 @@ class RoutePreSaleInvoiceService
                                 ->lockForUpdate()
                                 ->get()
                                 ->groupBy('source_item_id')
-                                ->map(fn ($rows) => round((float) $rows->sum('quantity'), 4));
+                                ->map(fn ($rows): string => $rows->reduce(
+                                    fn (string $total, StockReservation $reservation): string => bcadd($total, (string) $reservation->quantity, ProductQuantityPolicy::SCALE),
+                                    '0',
+                                ));
                         }
 
                         $saleLines = [];
@@ -173,35 +177,6 @@ class RoutePreSaleInvoiceService
                         $discountTotal = 0.0;
 
                         foreach ($items as $item) {
-                            $pickedQuantity = round((float) $item->picked_quantity, 4);
-                            $requestedQuantity = round((float) $item->quantity, 4);
-                            $reservedQuantity = (float) ($reservedByItem->get($item->id) ?? 0);
-                            $stockDeductedQuantity = round((float) ($item->stock_deducted_quantity ?? 0), 4);
-
-                            if ($pickedQuantity <= 0 || $pickedQuantity > $requestedQuantity) {
-                                throw ValidationException::withMessages([
-                                    'pre_sale' => 'No se puede facturar porque las cantidades preparadas no coinciden con las reservas activas.',
-                                ]);
-                            }
-
-                            if ($stockDeductionTiming === 'invoice' && abs($pickedQuantity - $reservedQuantity) > 0.0001) {
-                                throw ValidationException::withMessages([
-                                    'pre_sale' => 'No se puede facturar porque las cantidades preparadas no coinciden con las reservas activas.',
-                                ]);
-                            }
-
-                            if ($stockDeductionTiming === 'picking' && abs($pickedQuantity - $stockDeductedQuantity) > 0.0001) {
-                                throw ValidationException::withMessages([
-                                    'pre_sale' => 'No se puede facturar porque el descuento de stock de la preparación no coincide con las cantidades preparadas.',
-                                ]);
-                            }
-
-                            if (abs($pickedQuantity - round($pickedQuantity)) > 0.0001) {
-                                throw ValidationException::withMessages([
-                                    'pre_sale' => 'Las cantidades preparadas deben ser enteras para crear la venta.',
-                                ]);
-                            }
-
                             $product = Product::query()
                                 ->where('business_id', $lockedPreSale->business_id)
                                 ->where('is_active', true)
@@ -214,17 +189,40 @@ class RoutePreSaleInvoiceService
                                 ]);
                             }
 
+                            $pickedQuantity = ProductQuantityPolicy::positive($product, $item->picked_quantity);
+                            $requestedQuantity = ProductQuantityPolicy::canonical($item->quantity);
+                            $reservedQuantity = ProductQuantityPolicy::canonical($reservedByItem->get($item->id) ?? 0);
+                            $stockDeductedQuantity = ProductQuantityPolicy::canonical($item->stock_deducted_quantity ?? 0);
+
+                            if (ProductQuantityPolicy::compare($pickedQuantity, $requestedQuantity) > 0) {
+                                throw ValidationException::withMessages([
+                                    'pre_sale' => 'No se puede facturar porque las cantidades preparadas no coinciden con las reservas activas.',
+                                ]);
+                            }
+
+                            if ($stockDeductionTiming === 'invoice' && ProductQuantityPolicy::compare($pickedQuantity, $reservedQuantity) !== 0) {
+                                throw ValidationException::withMessages([
+                                    'pre_sale' => 'No se puede facturar porque las cantidades preparadas no coinciden con las reservas activas.',
+                                ]);
+                            }
+
+                            if ($stockDeductionTiming === 'picking' && ProductQuantityPolicy::compare($pickedQuantity, $stockDeductedQuantity) !== 0) {
+                                throw ValidationException::withMessages([
+                                    'pre_sale' => 'No se puede facturar porque el descuento de stock de la preparación no coincide con las cantidades preparadas.',
+                                ]);
+                            }
+
                             BranchInventory::ensureProductInBranch($product, (int) $lockedPreSale->branch_id);
 
-                            $lineSubtotal = round((float) $item->unit_price * $pickedQuantity, 2);
-                            $lineDiscount = round(((float) $item->discount / max($requestedQuantity, 1)) * $pickedQuantity, 2);
+                            $lineSubtotal = $this->moneyProduct($item->unit_price, $pickedQuantity);
+                            $lineDiscount = $this->proportionalMoney($item->discount, $pickedQuantity, $requestedQuantity);
                             $lineDiscount = min($lineDiscount, $lineSubtotal);
                             $lineTotal = round($lineSubtotal - $lineDiscount, 2);
 
                             $saleLines[] = [
                                 'item' => $item,
                                 'product' => $product,
-                                'quantity' => (int) round($pickedQuantity),
+                                'quantity' => $pickedQuantity,
                                 'unit_price' => round((float) $item->unit_price, 2),
                                 'original_price' => round((float) ($item->original_price ?? $item->unit_price), 2),
                                 'price_type_id' => $item->price_type_id,
@@ -296,6 +294,7 @@ class RoutePreSaleInvoiceService
                             $sale->setRelation('items', collect($saleLines)->map(function (array $line) use ($sale) {
                                 $product = $line['product'];
                                 $unitCost = round((float) $product->cost_price, 4);
+                                $totalCost = $this->moneyProduct($unitCost, $line['quantity']);
 
                                 $saleItem = new SaleItem([
                                     'business_id' => $sale->business_id,
@@ -308,8 +307,8 @@ class RoutePreSaleInvoiceService
                                     'price_source' => $line['manual_price'] ? PriceLists::SOURCE_MANUAL : PriceLists::SOURCE_PRICE_LIST,
                                     'manual_price' => $line['manual_price'],
                                     'unit_cost' => $unitCost,
-                                    'total_cost' => round($unitCost * $line['quantity'], 2),
-                                    'profit_amount' => round($line['line_total'] - ($unitCost * $line['quantity']), 2),
+                                    'total_cost' => $totalCost,
+                                    'profit_amount' => round($line['line_total'] - $totalCost, 2),
                                     'total' => $line['line_total'],
                                     'discount_amount' => $line['line_discount'],
                                     'total_before_discount' => $line['line_subtotal'],
@@ -389,7 +388,7 @@ class RoutePreSaleInvoiceService
                         foreach ($saleLines as $line) {
                             $product = $line['product'];
                             $unitCost = round((float) $product->cost_price, 4);
-                            $totalCost = round($unitCost * $line['quantity'], 2);
+                            $totalCost = $this->moneyProduct($unitCost, $line['quantity']);
 
                             $sale->items()->create([
                                 'business_id' => $sale->business_id,
@@ -418,7 +417,7 @@ class RoutePreSaleInvoiceService
                                     'branch_id' => $sale->branch_id,
                                     'product_id' => $product->id,
                                     'type' => 'sale',
-                                    'quantity' => -1 * $line['quantity'],
+                                    'quantity' => ProductQuantityPolicy::signed('-'.$line['quantity']),
                                     'previous_stock' => $previousStock,
                                     'new_stock' => $newStock,
                                     'note' => stockMovementNote('sale', $sale->business_number ?: $sale->id),
@@ -685,6 +684,28 @@ class RoutePreSaleInvoiceService
         ];
     }
 
+    private function moneyProduct(string|int|float $unitPrice, string $quantity): float
+    {
+        return round((float) bcmul(
+            number_format((float) $unitPrice, 4, '.', ''),
+            ProductQuantityPolicy::canonical($quantity),
+            ProductQuantityPolicy::SCALE + 2,
+        ), 2);
+    }
+
+    private function proportionalMoney(string|int|float $amount, string $part, string $whole): float
+    {
+        if (ProductQuantityPolicy::compare($whole, '0') <= 0) {
+            return 0.0;
+        }
+
+        return round((float) bcmul(
+            bcdiv(number_format((float) $amount, 2, '.', ''), ProductQuantityPolicy::canonical($whole), ProductQuantityPolicy::SCALE + 2),
+            ProductQuantityPolicy::canonical($part),
+            ProductQuantityPolicy::SCALE + 2,
+        ), 2);
+    }
+
     private function idempotencyPayload(PreSale $preSale, array $data, $items): array
     {
         return [
@@ -701,7 +722,7 @@ class RoutePreSaleInvoiceService
             'items' => $items->map(fn (PreSaleItem $item) => [
                 'pre_sale_item_id' => $item->id,
                 'product_id' => $item->product_id,
-                'picked_quantity' => round((float) ($item->picked_quantity ?? 0), 4),
+                'picked_quantity' => ProductQuantityPolicy::canonicalForIdempotency($item->picked_quantity ?? 0),
                 'unit_price' => round((float) $item->unit_price, 2),
             ])->values()->all(),
         ];

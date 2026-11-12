@@ -25,6 +25,7 @@ use App\Support\GuatemalaCustomerIdentityPolicy;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\GuatemalaLocations;
 use App\Support\IdempotencyService;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\Inventory\StockReservationService;
 use App\Support\Inventory\DraftReservationLease;
 use App\Support\ManualPricePolicy;
@@ -644,7 +645,7 @@ class RouteController extends Controller
             'customer:id,name,commercial_name,contact_name,doc_number,address,address_reference,phone',
             'workDay:id,work_date,status,started_at,closed_at',
             'visit:id,status,visit_order,no_sale_reason,no_sale_note,started_at,finished_at',
-            'items.product:id,business_id,name,code,barcode,image_url',
+            'items.product:id,business_id,name,code,barcode,image_url,allow_decimal_quantity',
             'collections' => fn ($query) => $query->whereIn('status', ['captured', 'linked'])->with(['collectedBy:id,name', 'recordedBy:id,name']),
         ]);
 
@@ -759,10 +760,20 @@ class RouteController extends Controller
                 'discount_total' => (float) $preSale->discount_total,
                 'total' => (float) $preSale->total,
                 'prepared_total' => round((float) $preSale->items->sum(function ($item) {
-                    $picked = (float) ($item->picked_quantity ?? 0);
-                    $quantity = max((float) $item->quantity, 1);
+                    $picked = ProductQuantityPolicy::canonical($item->picked_quantity ?? 0);
+                    $quantity = ProductQuantityPolicy::canonical($item->quantity);
+                    if (ProductQuantityPolicy::compare($quantity, '0') <= 0) {
+                        return 0;
+                    }
 
-                    return max(0, round(($picked * (float) $item->unit_price) - (((float) $item->discount / $quantity) * $picked), 2));
+                    $subtotal = bcmul(number_format((float) $item->unit_price, 2, '.', ''), $picked, ProductQuantityPolicy::SCALE + 2);
+                    $discount = bcmul(
+                        bcdiv(number_format((float) $item->discount, 2, '.', ''), $quantity, ProductQuantityPolicy::SCALE + 2),
+                        $picked,
+                        ProductQuantityPolicy::SCALE + 2,
+                    );
+
+                    return max(0, round((float) bcsub($subtotal, $discount, ProductQuantityPolicy::SCALE + 2), 2));
                 }), 2),
                 'branch' => $preSale->branch,
                 'zone' => $preSale->zone,
@@ -779,17 +790,18 @@ class RouteController extends Controller
                         'product_code' => $item->product?->code ?: $item->product?->barcode,
                         'product_barcode' => $item->product?->barcode,
                         'product_name' => $item->product?->name,
-                        'quantity' => (float) $item->quantity,
-                        'picked_quantity' => $item->picked_quantity !== null ? (float) $item->picked_quantity : null,
-                        'stock_deducted_quantity' => (float) ($item->stock_deducted_quantity ?? 0),
+                        'allow_decimal_quantity' => (bool) $item->product?->allow_decimal_quantity,
+                        'quantity' => ProductQuantityPolicy::canonical($item->quantity),
+                        'picked_quantity' => $item->picked_quantity !== null ? ProductQuantityPolicy::canonical($item->picked_quantity) : null,
+                        'stock_deducted_quantity' => ProductQuantityPolicy::canonical($item->stock_deducted_quantity ?? 0),
                         'picking_note' => $item->picking_note,
-                        'reserved_quantity' => (float) ($reservedByItem[$item->id] ?? 0),
+                        'reserved_quantity' => ProductQuantityPolicy::canonical($reservedByItem[$item->id] ?? 0),
                         'unit_price' => (float) $item->unit_price,
                         'discount' => (float) $item->discount,
                         'total' => (float) $item->total,
-                        'physical_stock' => (float) ($breakdown['physical_stock'] ?? 0),
-                        'reserved_total' => (float) ($breakdown['reserved_total'] ?? 0),
-                        'available_stock' => (float) ($breakdown['available_stock'] ?? 0),
+                        'physical_stock' => ProductQuantityPolicy::canonical($breakdown['physical_stock'] ?? 0),
+                        'reserved_total' => ProductQuantityPolicy::canonical($breakdown['reserved_total'] ?? 0),
+                        'available_stock' => ProductQuantityPolicy::canonical($breakdown['available_stock'] ?? 0),
                     ];
                 })->values(),
             ],
@@ -838,7 +850,7 @@ class RouteController extends Controller
             'zone:id,name',
             'seller:id,name',
             'customer:id,name,commercial_name,contact_name,doc_number,address,address_reference,phone',
-            'items.product:id,business_id,name,code,barcode,image_url',
+            'items.product:id,business_id,name,code,barcode,image_url,allow_decimal_quantity',
         ]);
 
         $productIds = $preSale->items->pluck('product_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
@@ -865,8 +877,8 @@ class RouteController extends Controller
                 'customer' => $preSale->customer,
                 'items' => $preSale->items->map(function ($item) use ($stockBreakdown, $reservedByItem) {
                     $breakdown = $stockBreakdown->get((int) $item->product_id, []);
-                    $requestedQuantity = (float) $item->quantity;
-                    $reservedQuantity = (float) ($reservedByItem[$item->id] ?? 0);
+                    $requestedQuantity = ProductQuantityPolicy::canonical($item->quantity);
+                    $reservedQuantity = ProductQuantityPolicy::canonical($reservedByItem[$item->id] ?? 0);
 
                     return [
                         'id' => $item->id,
@@ -874,16 +886,17 @@ class RouteController extends Controller
                         'product_code' => $item->product?->code ?: $item->product?->barcode,
                         'product_barcode' => $item->product?->barcode,
                         'product_name' => $item->product?->name,
+                        'allow_decimal_quantity' => (bool) $item->product?->allow_decimal_quantity,
                         'quantity' => $requestedQuantity,
                         'reserved_quantity' => $reservedQuantity,
                         'picked_quantity' => $item->picked_quantity !== null
-                            ? (float) $item->picked_quantity
-                            : min($requestedQuantity, $reservedQuantity),
+                            ? ProductQuantityPolicy::canonical($item->picked_quantity)
+                            : ProductQuantityPolicy::minimum($requestedQuantity, $reservedQuantity),
                         'picking_note' => $item->picking_note,
                         'unit_price' => (float) $item->unit_price,
-                        'physical_stock' => (float) ($breakdown['physical_stock'] ?? 0),
-                        'reserved_total' => (float) ($breakdown['reserved_total'] ?? 0),
-                        'available_stock' => (float) ($breakdown['available_stock'] ?? 0),
+                        'physical_stock' => ProductQuantityPolicy::canonical($breakdown['physical_stock'] ?? 0),
+                        'reserved_total' => ProductQuantityPolicy::canonical($breakdown['reserved_total'] ?? 0),
+                        'available_stock' => ProductQuantityPolicy::canonical($breakdown['available_stock'] ?? 0),
                     ];
                 })->values(),
             ],
@@ -900,10 +913,10 @@ class RouteController extends Controller
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.id' => ['required', 'integer'],
-            'items.*.picked_quantity' => ['required', 'integer', 'min:0'],
+            'items.*.picked_quantity' => ['required', 'numeric', 'decimal:0,4', 'gte:0'],
             'items.*.picking_note' => ['nullable', 'string', 'max:1000'],
         ], [
-            'items.*.picked_quantity.integer' => 'La cantidad preparada debe ser un número entero.',
+            'items.*.picked_quantity.decimal' => 'La cantidad preparada puede tener como máximo cuatro decimales.',
         ]);
 
         app(IdempotencyService::class)->run(
@@ -918,7 +931,10 @@ class RouteController extends Controller
                 'user_id' => $request->user()->id,
                 'operation_type' => 'pre_sale_pick',
                 'pre_sale_id' => $preSale->id,
-                'items' => $data['items'],
+                'items' => collect($data['items'])->map(fn (array $item) => [
+                    ...$item,
+                    'picked_quantity' => ProductQuantityPolicy::canonicalForIdempotency($item['picked_quantity']),
+                ])->all(),
             ],
             function () use ($request, $preSale, $data, $preparation) {
                 DB::transaction(function () use ($request, $preSale, $data, $preparation) {
@@ -1107,7 +1123,7 @@ class RouteController extends Controller
             ->where('business_id', currentBusinessId())
             ->where('route_visit_id', $visit->id)
             ->where('status', '!=', 'cancelled')
-            ->with('items.product:id,name,code,barcode,image_url')
+            ->with('items.product:id,name,code,barcode,image_url,allow_decimal_quantity')
             ->first();
 
         if ($preSale) {
@@ -1131,7 +1147,10 @@ class RouteController extends Controller
 
             $preSale->items->each(function (PreSaleItem $item) use ($stockBreakdown, $reservedByProduct) {
                 $breakdown = $stockBreakdown->get((int) $item->product_id, []);
-                $item->setAttribute('maximum_quantity', (float) ($breakdown['available_stock'] ?? 0) + (float) ($reservedByProduct[$item->product_id] ?? 0));
+                $item->setAttribute('maximum_quantity', ProductQuantityPolicy::add(
+                    $breakdown['available_stock'] ?? 0,
+                    $reservedByProduct[$item->product_id] ?? 0,
+                ));
             });
         }
 
@@ -1216,15 +1235,15 @@ class RouteController extends Controller
         $data = $request->validate([
             'items' => ['present', 'array'],
             'items.*.product_id' => ['required', 'integer'],
-            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
             'items.*.price_type_id' => ['nullable', 'integer'],
             'items.*.unit_price' => ['nullable', 'numeric', 'gt:0'],
             'items.*.manual_price' => ['nullable', 'boolean'],
             'items.*.discount' => ['nullable', 'numeric', 'min:0'],
             'items.*.notes' => ['nullable', 'string'],
         ], [
-            'items.*.quantity.integer' => 'La cantidad debe ser un número entero.',
-            'items.*.quantity.min' => 'La cantidad debe ser al menos 1.',
+            'items.*.quantity.decimal' => 'La cantidad puede tener como máximo cuatro decimales.',
+            'items.*.quantity.gt' => 'La cantidad debe ser mayor que cero.',
         ]);
 
         $this->assertVisitEditable($visit);
@@ -1295,7 +1314,7 @@ class RouteController extends Controller
             ]);
 
             return [
-                'pre_sale' => $preSale->fresh(['items.product:id,name,code,barcode']),
+                'pre_sale' => $preSale->fresh(['items.product:id,name,code,barcode,allow_decimal_quantity']),
                 'affected_product_ids' => $affectedProductIds,
             ];
         });
@@ -1314,8 +1333,8 @@ class RouteController extends Controller
 
                     return [
                         'product_id' => $item->product_id,
-                        'quantity' => (float) $item->quantity,
-                        'maximum_quantity' => (float) ($breakdown['available_stock'] ?? 0) + (float) $item->quantity,
+                        'quantity' => ProductQuantityPolicy::canonical($item->quantity),
+                        'maximum_quantity' => ProductQuantityPolicy::add($breakdown['available_stock'] ?? 0, $item->quantity),
                     ];
                 })->values(),
             ],
@@ -1324,9 +1343,9 @@ class RouteController extends Controller
 
                 return [
                     'id' => $productId,
-                    'stock' => (float) ($breakdown['physical_stock'] ?? 0),
-                    'reserved_stock' => (float) ($breakdown['reserved_total'] ?? 0),
-                    'available_stock' => (float) ($breakdown['available_stock'] ?? 0),
+                    'stock' => ProductQuantityPolicy::canonical($breakdown['physical_stock'] ?? 0),
+                    'reserved_stock' => ProductQuantityPolicy::canonical($breakdown['reserved_total'] ?? 0),
+                    'available_stock' => ProductQuantityPolicy::canonical($breakdown['available_stock'] ?? 0),
                 ];
             })->values(),
         ]);
@@ -1344,15 +1363,15 @@ class RouteController extends Controller
             'collection_payment_method' => ['nullable', 'in:cash,card,transfer,check'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'integer'],
-            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
             'items.*.price_type_id' => ['nullable', 'integer'],
             'items.*.unit_price' => ['nullable', 'numeric', 'gt:0'],
             'items.*.manual_price' => ['nullable', 'boolean'],
             'items.*.discount' => ['nullable', 'numeric', 'min:0'],
             'items.*.notes' => ['nullable', 'string'],
         ], [
-            'items.*.quantity.integer' => 'La cantidad debe ser un número entero.',
-            'items.*.quantity.min' => 'La cantidad debe ser al menos 1.',
+            'items.*.quantity.decimal' => 'La cantidad puede tener como máximo cuatro decimales.',
+            'items.*.quantity.gt' => 'La cantidad debe ser mayor que cero.',
         ]);
 
         app(IdempotencyService::class)->run(
@@ -1367,7 +1386,13 @@ class RouteController extends Controller
                 'user_id' => $request->user()->id,
                 'operation_type' => 'route_pre_sale_save',
                 'visit_id' => $visit->id,
-                'data' => $data,
+                'data' => [
+                    ...$data,
+                    'items' => collect($data['items'])->map(fn (array $item) => [
+                        ...$item,
+                        'quantity' => ProductQuantityPolicy::canonicalForIdempotency($item['quantity']),
+                    ])->all(),
+                ],
             ],
             function () use ($request, $visit, $data, $reservations, $paymentMethodPolicy) {
                 $this->assertVisitEditable($visit);
@@ -1982,7 +2007,7 @@ class RouteController extends Controller
         $products = $query
             ->orderBy('name')
             ->limit(30)
-            ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'sale_price', 'image_url']);
+            ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'sale_price', 'image_url', 'allow_decimal_quantity']);
 
         $priceTypeId = $this->preSalePriceTypeId($businessId);
         $stockBreakdown = StockAvailability::getBreakdownForProducts(
@@ -1994,8 +2019,8 @@ class RouteController extends Controller
         return $products->map(function (Product $product) use ($businessId, $visit, $priceTypeId, $stockBreakdown) {
             BranchInventory::ensureProductInBranch($product, $visit->branch_id);
             $breakdown = $stockBreakdown->get((int) $product->id, []);
-            $stock = (float) ($breakdown['physical_stock'] ?? 0);
-            $reserved = (float) ($breakdown['reserved_total'] ?? 0);
+            $stock = ProductQuantityPolicy::canonical($breakdown['physical_stock'] ?? 0);
+            $reserved = ProductQuantityPolicy::canonical($breakdown['reserved_total'] ?? 0);
             $price = PriceLists::priceForProduct($product, $priceTypeId, $visit->branch_id);
 
             return [
@@ -2009,15 +2034,16 @@ class RouteController extends Controller
                 'code' => $product->code,
                 'barcode' => $product->barcode,
                 'sale_price' => $price['price'],
+                'allow_decimal_quantity' => (bool) $product->allow_decimal_quantity,
                 'price_type_id' => $price['price_type_id'],
                 'image_url' => $product->image_url,
                 'stock' => $stock,
                 'reserved_stock' => $reserved,
                 'reserved_total' => $reserved,
-                'reserved_pre_sales' => (float) ($breakdown['reserved_pre_sales'] ?? 0),
-                'reserved_credit_reservations' => (float) ($breakdown['reserved_credit_reservations'] ?? 0),
-                'reserved_other' => (float) ($breakdown['reserved_other'] ?? 0),
-                'available_stock' => (float) ($breakdown['available_stock'] ?? ($stock - $reserved)),
+                'reserved_pre_sales' => ProductQuantityPolicy::canonical($breakdown['reserved_pre_sales'] ?? 0),
+                'reserved_credit_reservations' => ProductQuantityPolicy::canonical($breakdown['reserved_credit_reservations'] ?? 0),
+                'reserved_other' => ProductQuantityPolicy::canonical($breakdown['reserved_other'] ?? 0),
+                'available_stock' => ProductQuantityPolicy::canonical($breakdown['available_stock'] ?? ProductQuantityPolicy::subtract($stock, $reserved)),
             ];
         });
     }
@@ -2060,7 +2086,7 @@ class RouteController extends Controller
         $subtotal = 0.0;
         $discountTotal = 0.0;
 
-        foreach ($rows as $row) {
+        foreach ($rows as $index => $row) {
             $productId = (int) $row['product_id'];
             if (isset($lines[$productId])) {
                 throw ValidationException::withMessages(['items' => 'Un producto solo puede aparecer una vez en la preventa.']);
@@ -2069,7 +2095,13 @@ class RouteController extends Controller
             /** @var Product $product */
             $product = $products->get($productId);
             $price = PriceLists::priceForProduct($product, $configuredPriceTypeId, (int) $visit->branch_id);
-            $quantity = (float) $row['quantity'];
+            try {
+                $quantity = ProductQuantityPolicy::positive($product, $row['quantity']);
+            } catch (ValidationException $exception) {
+                throw ValidationException::withMessages([
+                    "items.{$index}.quantity" => $exception->errors()['quantity'][0] ?? 'La cantidad no es válida para este producto.',
+                ]);
+            }
             $discount = round((float) ($row['discount'] ?? 0), 2);
             $manualPrice = (bool) ($row['manual_price'] ?? false);
             $unitPrice = round((float) ($price['price'] ?? $product->sale_price), 2);
@@ -2085,7 +2117,7 @@ class RouteController extends Controller
                 $this->validatePreSaleManualPrice($product, $unitPrice);
             }
 
-            $lineSubtotal = round($quantity * $unitPrice, 2);
+            $lineSubtotal = round((float) bcmul($quantity, number_format($unitPrice, 2, '.', ''), ProductQuantityPolicy::SCALE + 2), 2);
             $lineTotal = max(0, round($lineSubtotal - $discount, 2));
             $lines[$productId] = [
                 'product_id' => $productId,
@@ -2148,7 +2180,7 @@ class RouteController extends Controller
                 currentBusinessId(),
                 (int) $visit->branch_id,
                 $product,
-                (float) $line['quantity'],
+                $line['quantity'],
                 $existing?->id,
             );
         }

@@ -473,8 +473,6 @@ class SaleController extends Controller
         $hasCreditReservationLine = collect($data['items'])
             ->contains(fn (array $item): bool => filled($item['credit_line_id'] ?? null));
 
-        // Route/pre-sale persistence remains integer-only until D2.7.
-
         $idempotencyPayloads = $this->saleIdempotencyPayloadCandidates(
             $business,
             $data,

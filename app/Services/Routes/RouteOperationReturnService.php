@@ -19,6 +19,7 @@ use App\Models\User;
 use App\Services\SaleStockCancellationService;
 use App\Support\IdempotencyResult;
 use App\Support\IdempotencyService;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\Permissions;
 use App\Support\CashRegister;
 use Illuminate\Support\Facades\DB;
@@ -187,7 +188,7 @@ class RouteOperationReturnService
                 throw ValidationException::withMessages(['stock' => 'El descuento histórico de preparación no coincide con la venta.']);
             }
             foreach ($sold as $productId => $quantity) {
-                if (abs((float) $picked->get($productId) - (float) $quantity) > 0.0001) {
+                if (ProductQuantityPolicy::compare($picked->get($productId), $quantity) !== 0) {
                     throw ValidationException::withMessages(['stock' => 'El descuento histórico de preparación no coincide con la venta.']);
                 }
             }
