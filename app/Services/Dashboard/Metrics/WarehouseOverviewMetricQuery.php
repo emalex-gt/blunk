@@ -9,6 +9,7 @@ use App\Services\Dashboard\DashboardContext;
 use App\Services\Dashboard\DashboardMetricQuery;
 use App\Services\Dashboard\DashboardPeriod;
 use App\Support\Permissions;
+use App\Support\Inventory\ProductQuantityPolicy;
 use Illuminate\Support\Facades\DB;
 
 final class WarehouseOverviewMetricQuery implements DashboardMetricQuery
@@ -55,7 +56,7 @@ final class WarehouseOverviewMetricQuery implements DashboardMetricQuery
 
         return [
             'active_skus' => (int) $summary->active_skus,
-            'physical_units' => (float) $summary->physical_units,
+            'physical_units' => ProductQuantityPolicy::signed($summary->physical_units ?? 0),
             'negative_stock_count' => (int) $summary->negative_stock_count,
         ];
     }
@@ -77,9 +78,9 @@ final class WarehouseOverviewMetricQuery implements DashboardMetricQuery
             'count' => (int) $summary->count,
             'entries_count' => (int) $summary->entries_count,
             'exits_count' => (int) $summary->exits_count,
-            'entries_quantity' => (float) $summary->entries_quantity,
-            'exits_quantity' => (float) $summary->exits_quantity,
-            'net_quantity' => (float) $summary->net_quantity,
+            'entries_quantity' => ProductQuantityPolicy::canonical($summary->entries_quantity ?? 0),
+            'exits_quantity' => ProductQuantityPolicy::canonical($summary->exits_quantity ?? 0),
+            'net_quantity' => ProductQuantityPolicy::signed($summary->net_quantity ?? 0),
         ];
     }
 
@@ -103,8 +104,10 @@ final class WarehouseOverviewMetricQuery implements DashboardMetricQuery
             return [
                 'date' => $date->toDateString(),
                 'label' => $date->locale('es')->translatedFormat('j M'),
-                'entries' => (float) ($row->entries ?? 0),
-                'exits' => (float) ($row->exits ?? 0),
+                'entries' => ProductQuantityPolicy::canonical($row->entries ?? 0),
+                'exits' => ProductQuantityPolicy::canonical($row->exits ?? 0),
+                'entries_chart' => (float) ($row->entries ?? 0),
+                'exits_chart' => (float) ($row->exits ?? 0),
                 'movements' => (int) ($row->movements ?? 0),
             ];
         })->all();
@@ -132,9 +135,9 @@ final class WarehouseOverviewMetricQuery implements DashboardMetricQuery
                 'name' => $row->name,
                 'code' => $row->code,
                 'movements_count' => (int) $row->movements_count,
-                'entries_quantity' => (float) $row->entries_quantity,
-                'exits_quantity' => (float) $row->exits_quantity,
-                'total_moved' => (float) $row->total_moved,
+                'entries_quantity' => ProductQuantityPolicy::canonical($row->entries_quantity),
+                'exits_quantity' => ProductQuantityPolicy::canonical($row->exits_quantity),
+                'total_moved' => ProductQuantityPolicy::canonical($row->total_moved),
             ])
             ->all();
     }
@@ -162,7 +165,8 @@ final class WarehouseOverviewMetricQuery implements DashboardMetricQuery
             ->limit(8)
             ->get()
             ->map(function (Product $product) {
-                $stock = (float) $product->dashboard_stock;
+                $stock = ProductQuantityPolicy::signed($product->dashboard_stock);
+                $minimum = ProductQuantityPolicy::canonical($product->min_stock);
 
                 return [
                     'product_id' => $product->id,
@@ -170,8 +174,8 @@ final class WarehouseOverviewMetricQuery implements DashboardMetricQuery
                     'code' => $product->code,
                     'location' => $product->productLocation?->name ?? $product->location,
                     'stock' => $stock,
-                    'min_stock' => (float) $product->min_stock,
-                    'status' => $stock < 0 ? 'negative' : ($stock === 0.0 ? 'out_of_stock' : 'low_stock'),
+                    'min_stock' => $minimum,
+                    'status' => ProductQuantityPolicy::compare($stock, '0') < 0 ? 'negative' : (ProductQuantityPolicy::compare($stock, '0') === 0 ? 'out_of_stock' : 'low_stock'),
                 ];
             })
             ->all();
@@ -237,9 +241,9 @@ final class WarehouseOverviewMetricQuery implements DashboardMetricQuery
                 'product_name' => $movement->product?->name,
                 'product_code' => $movement->product?->code,
                 'type' => $movement->type,
-                'quantity' => $movement->quantity,
-                'previous_stock' => $movement->previous_stock,
-                'new_stock' => $movement->new_stock,
+                'quantity' => ProductQuantityPolicy::signed($movement->quantity),
+                'previous_stock' => $movement->previous_stock === null ? null : ProductQuantityPolicy::signed($movement->previous_stock),
+                'new_stock' => $movement->new_stock === null ? null : ProductQuantityPolicy::signed($movement->new_stock),
                 'note' => $movement->note,
                 'created_at' => $movement->created_at?->timezone($context->timezone)->toIso8601String(),
                 'time' => $movement->created_at?->timezone($context->timezone)->format('H:i'),

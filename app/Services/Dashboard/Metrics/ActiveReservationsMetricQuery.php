@@ -6,6 +6,7 @@ use App\Models\StockReservation;
 use App\Services\Dashboard\DashboardContext;
 use App\Services\Dashboard\DashboardMetricQuery;
 use App\Services\Dashboard\DashboardPeriod;
+use App\Support\Inventory\ProductQuantityPolicy;
 
 final class ActiveReservationsMetricQuery implements DashboardMetricQuery
 {
@@ -20,7 +21,7 @@ final class ActiveReservationsMetricQuery implements DashboardMetricQuery
 
         return [
             'count' => (int) ($summary->reservation_count ?? 0),
-            'detail' => number_format((float) ($summary->quantity ?? 0), 4, '.', ''),
+            'detail' => ProductQuantityPolicy::canonical($summary->quantity ?? 0),
         ];
     }
 }
