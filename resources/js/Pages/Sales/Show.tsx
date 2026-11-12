@@ -3,6 +3,7 @@ import Toast from '@/Components/Toast';
 import { useToast } from '@/hooks/useToast';
 import { makeOperationKey } from '@/lib/idempotency';
 import { formatCurrency } from '@/utils/currency';
+import { formatQuantity } from '@/utils/quantity';
 import { Head, Link, useForm, usePage } from '@inertiajs/react';
 import { FormEvent, useRef, useState } from 'react';
 
@@ -46,7 +47,7 @@ type SaleDetail = {
         id: number;
         product_name: string;
         code: string | null;
-        quantity: number;
+        quantity: string;
         unit_price: number;
         price_type_name: string | null;
         price_source: 'price_list' | 'last_customer_price' | 'manual' | null;
@@ -484,7 +485,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                                         <tr key={item.id} className="transition-colors hover:bg-orange-50/30">
                                             <td className="px-4 py-3 font-semibold text-slate-950">{item.product_name}</td>
                                             <td className="px-4 py-3 text-slate-600">{item.code ?? '-'}</td>
-                                            <td className="px-4 py-3 text-right text-slate-700">{item.quantity}</td>
+                                            <td className="px-4 py-3 text-right text-slate-700">{formatQuantity(item.quantity)}</td>
                                             <td className="whitespace-nowrap px-4 py-3 text-right text-slate-700">
                                                 {formatCurrency(item.unit_price, country)}
                                             </td>

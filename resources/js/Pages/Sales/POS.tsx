@@ -10,6 +10,7 @@ import { clearDraft, loadDraft, makeDraftKey, saveDraft } from '@/lib/draftStora
 import { discardOperationDraft, formatOperationDraftUpdatedAt, listOperationDrafts, OperationDraftRecord, saveOperationDraft } from '@/lib/operationDrafts';
 import { formatCurrency } from '@/utils/currency';
 import { limitDecimalPlaces } from '@/utils/decimalInput';
+import { addQuantity, canonicalQuantity, compareQuantity, formatQuantity, subtractQuantity } from '@/utils/quantity';
 import type { Errors } from '@inertiajs/core';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import {
@@ -35,11 +36,15 @@ type Product = {
     cost_price?: string;
     sale_price: string;
     allow_decimal_quantity?: boolean;
-    stock: number;
-    physical_stock?: number;
-    reserved_stock?: number;
-    available_stock?: number;
-    min_stock: number;
+    stock: string;
+    physical_stock?: string;
+    reserved_stock?: string;
+    reserved_total?: string;
+    reserved_pre_sales?: string;
+    reserved_credit_reservations?: string;
+    reserved_other?: string;
+    available_stock?: string;
+    min_stock: string | null;
     location: string | null;
     image_url: string | null;
     prices?: ProductPrice[];
@@ -50,9 +55,9 @@ type Product = {
 type OtherBranchAvailability = {
     branch_id: number;
     branch_name: string;
-    physical_stock: number;
-    reserved_total: number;
-    available_stock: number;
+    physical_stock: string;
+    reserved_total: string;
+    available_stock: string;
 };
 
 type ProductPrice = {
@@ -551,7 +556,7 @@ function quantityError(value: number | string | null | undefined, allowDecimal =
     const normalized = normalizeQuantity(value);
 
     if (allowDecimal) {
-        return /^(?:(?:0|[1-9]\d*)(?:\.\d{1,4})?|\.\d{1,4})$/.test(normalized) && Number(normalized) > 0
+        return /^(?:(?:0|[1-9]\d*)(?:\.\d{1,4})?|\.\d{1,4})$/.test(normalized) && compareQuantity(normalized, '0') === 1
             ? null
             : decimalQuantityMessage;
     }
@@ -559,18 +564,31 @@ function quantityError(value: number | string | null | undefined, allowDecimal =
     return /^[1-9]\d*$/.test(normalized) ? null : integerQuantityMessage;
 }
 
-function quantityNumber(value: number | string | null | undefined, allowDecimal = false) {
+function quantityForMoney(value: number | string | null | undefined, allowDecimal = false) {
     return quantityError(value, allowDecimal) ? 0 : Number(normalizeQuantity(value));
 }
 
+function validPhysicalQuantity(value: number | string | null | undefined) {
+    return canonicalQuantity(value) ?? '0';
+}
+
 function reservedCreditQuantity(item: Pick<CartItem, 'credit_reserved_quantity'>) {
-    return Math.max(0, Number(item.credit_reserved_quantity ?? 0));
+    const quantity = validPhysicalQuantity(item.credit_reserved_quantity);
+
+    return compareQuantity(quantity, '0') === -1 ? '0' : quantity;
 }
 
 function unreservedQuantityForProduct(items: CartItem[], productId: number) {
     return items
         .filter((item) => item.product.id === productId)
-        .reduce((total, item) => total + Math.max(0, quantityNumber(item.quantity, Boolean(item.product.allow_decimal_quantity)) - reservedCreditQuantity(item)), 0);
+        .reduce((total, item) => {
+            const requested = quantityError(item.quantity, Boolean(item.product.allow_decimal_quantity))
+                ? '0'
+                : validPhysicalQuantity(item.quantity);
+            const unreserved = subtractQuantity(requested, reservedCreditQuantity(item)) ?? '0';
+
+            return addQuantity(total, compareQuantity(unreserved, '0') === -1 ? '0' : unreserved) ?? total;
+        }, '0');
 }
 
 function fiscalCustomerPayload(customer: CustomerForm) {
@@ -587,13 +605,13 @@ function roundMoney(value: number) {
 
 function cartSubtotal(items: CartItem[]) {
     return roundMoney(items.reduce(
-        (sum, item) => sum + Number(item.unit_price || item.product.sale_price) * quantityNumber(item.quantity, Boolean(item.product.allow_decimal_quantity)),
+        (sum, item) => sum + Number(item.unit_price || item.product.sale_price) * quantityForMoney(item.quantity, Boolean(item.product.allow_decimal_quantity)),
         0,
     ));
 }
 
 function lineSubtotal(item: CartItem) {
-    return roundMoney(Number(item.unit_price || item.product.sale_price) * quantityNumber(item.quantity, Boolean(item.product.allow_decimal_quantity)));
+    return roundMoney(Number(item.unit_price || item.product.sale_price) * quantityForMoney(item.quantity, Boolean(item.product.allow_decimal_quantity)));
 }
 
 function lineDiscountAmount(item: CartItem) {
@@ -783,8 +801,8 @@ function isMeaningfulPosDraft(draft: PosDraft) {
 
 function otherBranchStockSummary(product: Product) {
     const branches = (product.other_branch_availability ?? [])
-        .filter((branch) => Number.isFinite(Number(branch.available_stock)))
-        .sort((a, b) => Number(b.available_stock) - Number(a.available_stock));
+        .filter((branch) => canonicalQuantity(branch.available_stock) !== null)
+        .sort((a, b) => compareQuantity(b.available_stock, a.available_stock) ?? 0);
 
     if (branches.length === 0) {
         return null;
@@ -793,7 +811,7 @@ function otherBranchStockSummary(product: Product) {
     const visible = branches.slice(0, 2);
     const extra = branches.length - visible.length;
     const summary = visible
-        .map((branch) => `${branch.branch_name} ${Number(branch.available_stock)}`)
+        .map((branch) => `${branch.branch_name} ${formatQuantity(branch.available_stock)}`)
         .join(', ');
 
     return extra > 0 ? `${summary}, +${extra} más` : summary;
@@ -1586,7 +1604,13 @@ export default function POS({
     );
 
     const cartItemsCount = useMemo(
-        () => cart.reduce((sum, item) => sum + quantityNumber(item.quantity, Boolean(item.product.allow_decimal_quantity)), 0),
+        () => cart.reduce((sum, item) => {
+            const quantity = quantityError(item.quantity, Boolean(item.product.allow_decimal_quantity))
+                ? '0'
+                : validPhysicalQuantity(item.quantity);
+
+            return addQuantity(sum, quantity) ?? sum;
+        }, '0'),
         [cart],
     );
 
@@ -1611,7 +1635,7 @@ export default function POS({
         }
 
         return cart.flatMap((item) => {
-            const quantity = quantityNumber(item.quantity, Boolean(item.product.allow_decimal_quantity));
+            const quantity = quantityForMoney(item.quantity, Boolean(item.product.allow_decimal_quantity));
             const unitPrice = Number(item.unit_price);
             const rawLineSubtotal = unitPrice * quantity;
             const discountedLineSubtotal = Math.max(0, rawLineSubtotal - lineDiscountAmount(item));
@@ -1690,9 +1714,10 @@ export default function POS({
     function validateDecimalOperationScope() {
         const fractionalLine = cart.find((item) => {
             const quantity = normalizeQuantity(item.quantity);
+            const canonical = canonicalQuantity(quantity);
 
             return !quantityError(quantity, Boolean(item.product.allow_decimal_quantity))
-                && Number(quantity) !== Math.trunc(Number(quantity));
+                && Boolean(canonical?.includes('.'));
         });
 
         if (!fractionalLine) {
@@ -1835,11 +1860,11 @@ export default function POS({
                 return items;
             }
 
-            const quantity = quantityNumber(item.quantity, Boolean(product.allow_decimal_quantity));
-            const availableStock = Number(product.available_stock ?? product.stock ?? 0);
+            const quantity = validPhysicalQuantity(item.quantity);
+            const availableStock = validPhysicalQuantity(product.available_stock ?? product.stock);
 
-            if (!allow_negative_stock && !item.credit_line_id && quantity > availableStock) {
-                issues.push(`Producto ${product.name}: cantidad guardada ${quantity}, disponible ${availableStock}.`);
+            if (!allow_negative_stock && !item.credit_line_id && compareQuantity(quantity, availableStock) === 1) {
+                issues.push(`Producto ${product.name}: cantidad guardada ${formatQuantity(quantity)}, disponible ${formatQuantity(availableStock)}.`);
                 return items;
             }
 
@@ -2583,9 +2608,9 @@ export default function POS({
     }
 
     function addProduct(product: Product): boolean {
-        const availableStock = Number(product.available_stock ?? product.stock);
+        const availableStock = validPhysicalQuantity(product.available_stock ?? product.stock);
 
-        if (!allow_negative_stock && availableStock <= 0) {
+        if (!allow_negative_stock && compareQuantity(availableStock, '0') !== 1) {
             showError(`${product.name}: ${t('pos.out_of_stock_for')}`);
             return false;
         }
@@ -2597,17 +2622,17 @@ export default function POS({
         const nextItems = existing
             ? items.map((item) => (
                 cartLineId(item) === cartLineId(existing)
-                    ? { ...item, quantity: String(quantityNumber(item.quantity, Boolean(item.product.allow_decimal_quantity)) + 1) }
+                    ? { ...item, quantity: addQuantity(validPhysicalQuantity(item.quantity), '1') ?? item.quantity }
                     : item
             ))
             : [buildCartItem(
                 product,
-                product.allow_decimal_quantity && availableStock < 1 ? String(availableStock) : '1',
+                product.allow_decimal_quantity && compareQuantity(availableStock, '1') === -1 ? availableStock : '1',
             ), ...items];
 
-        if (!allow_negative_stock && unreservedQuantityForProduct(nextItems, product.id) > availableStock) {
+        if (!allow_negative_stock && compareQuantity(unreservedQuantityForProduct(nextItems, product.id), availableStock) === 1) {
             showError(
-                `${product.name}: ${t('pos.stock_insufficient')} ${availableStock}.`,
+                `${product.name}: ${t('pos.stock_insufficient')} ${formatQuantity(availableStock)}.`,
             );
             return false;
         }
@@ -2672,18 +2697,18 @@ export default function POS({
                     ? { ...item, quantity: sanitizedQuantity }
                     : item
             ));
-            const reservationMaximum = Number(target.max_quantity ?? 0);
+            const reservationMaximum = validPhysicalQuantity(target.max_quantity);
 
-            if (target.credit_line_id && reservationMaximum > 0 && quantityNumber(sanitizedQuantity, allowDecimal) > reservationMaximum) {
-                showError(`Esta línea tiene un máximo de ${reservationMaximum} unidades pendientes en la reserva. Para vender unidades adicionales, busca y agrega el producto desde el POS.`);
+            if (target.credit_line_id && compareQuantity(reservationMaximum, '0') === 1 && compareQuantity(sanitizedQuantity, reservationMaximum) === 1) {
+                showError(`Esta línea tiene un máximo de ${formatQuantity(reservationMaximum)} unidades pendientes en la reserva. Para vender unidades adicionales, busca y agrega el producto desde el POS.`);
                 return items;
             }
 
-            const availableStock = Number(target.product.available_stock ?? target.product.stock);
+            const availableStock = validPhysicalQuantity(target.product.available_stock ?? target.product.stock);
 
-            if (!allow_negative_stock && unreservedQuantityForProduct(nextItems, target.product.id) > availableStock) {
+            if (!allow_negative_stock && compareQuantity(unreservedQuantityForProduct(nextItems, target.product.id), availableStock) === 1) {
                 showError(
-                    `${target.product.name}: ${t('pos.stock_insufficient')} ${availableStock}.`,
+                    `${target.product.name}: ${t('pos.stock_insufficient')} ${formatQuantity(availableStock)}.`,
                 );
                 return items;
             }
@@ -2843,10 +2868,12 @@ export default function POS({
         }
 
         const allowDecimal = Boolean(item.product.allow_decimal_quantity);
-        const step = allowDecimal ? 0.0001 : 1;
-        const currentQuantity = quantityNumber(item.quantity, allowDecimal) || step;
-        const nextQuantity = Math.max(step, currentQuantity + (difference * step));
-        updateQuantity(lineId, allowDecimal ? nextQuantity.toFixed(4) : String(nextQuantity));
+        const step = allowDecimal ? '0.0001' : '1';
+        const currentQuantity = quantityError(item.quantity, allowDecimal) ? step : validPhysicalQuantity(item.quantity);
+        const nextQuantity = difference > 0
+            ? addQuantity(currentQuantity, step)
+            : subtractQuantity(currentQuantity, step);
+        updateQuantity(lineId, !nextQuantity || compareQuantity(nextQuantity, step) === -1 ? step : nextQuantity);
     }
 
     function cancelSale(force = false) {
@@ -4685,21 +4712,23 @@ export default function POS({
                                 ? 'grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-3 min-[1700px]:grid-cols-4'
                                 : 'divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white'}>
                                 {productsToShow.map((product) => {
-                                    const availableStock = Number(product.available_stock ?? product.stock);
-                                    const reservedStock = Number(product.reserved_stock ?? 0);
-                                    const outOfStock = availableStock <= 0;
+                                    const availableStock = validPhysicalQuantity(product.available_stock ?? product.stock);
+                                    const reservedStock = validPhysicalQuantity(product.reserved_stock ?? '0');
+                                    const outOfStock = compareQuantity(availableStock, '0') !== 1;
                                     const disabledByStock = !allow_negative_stock && outOfStock;
                                     const lowStock =
-                                        availableStock > 0 && availableStock <= product.min_stock;
+                                        compareQuantity(availableStock, '0') === 1
+                                        && product.min_stock !== null
+                                        && compareQuantity(availableStock, product.min_stock) !== 1;
                                     const otherBranchesSummary = otherBranchStockSummary(product);
 
                                     const stockLabel = disabledByStock
                                         ? t('stock_warning.out_of_stock')
                                         : outOfStock
-                                          ? `Disponible ${availableStock}`
+                                          ? `Disponible ${formatQuantity(availableStock)}`
                                           : lowStock
-                                          ? `${t('stock_warning.low_stock')} (${availableStock})`
-                                          : `Disponible ${availableStock}`;
+                                          ? `${t('stock_warning.low_stock')} (${formatQuantity(availableStock)})`
+                                          : `Disponible ${formatQuantity(availableStock)}`;
                                     const stockClass = disabledByStock
                                         ? 'font-semibold text-red-600'
                                         : outOfStock
@@ -4741,7 +4770,7 @@ export default function POS({
 
                                                 <div className="flex items-center justify-between gap-2 text-xs">
                                                     <span className={stockClass}>{stockLabel}</span>
-                                                    {reservedStock > 0 && <span className="text-slate-500">Reservado {reservedStock}</span>}
+                                                    {compareQuantity(reservedStock, '0') === 1 && <span className="text-slate-500">Reservado {formatQuantity(reservedStock)}</span>}
                                                     {product.location && <span className="truncate text-slate-500">{product.location}</span>}
                                                 </div>
                                                 {otherBranchesSummary && (
@@ -4789,7 +4818,7 @@ export default function POS({
 
                                                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
                                                     <span className={stockClass}>{stockLabel}</span>
-                                                    {reservedStock > 0 && <span className="text-slate-500">Reservado {reservedStock}</span>}
+                                                    {compareQuantity(reservedStock, '0') === 1 && <span className="text-slate-500">Reservado {formatQuantity(reservedStock)}</span>}
                                                     {product.location && <span className="truncate text-slate-500">{product.location}</span>}
                                                 </div>
                                                 {otherBranchesSummary && (
@@ -4816,7 +4845,7 @@ export default function POS({
                                         {t('cart.title')}
                                     </h2>
                                     <p className="text-sm text-slate-400">
-                                        {cartItemsCount} {t('unit.units')} | {cart.length} {t('unit.products')}
+                                        {formatQuantity(cartItemsCount)} {t('unit.units')} | {cart.length} {t('unit.products')}
                                     </p>
                                     {pageProps.branches_enabled && pageProps.active_branch && (
                                         <p className="mt-1 text-xs font-semibold text-orange-400">
@@ -4888,7 +4917,10 @@ export default function POS({
                                                     <input
                                                         type="text"
                                                         min={item.product.allow_decimal_quantity ? '0.0001' : '1'}
-                                                        max={(item.product.available_stock ?? item.product.stock) + reservedCreditQuantity(item)}
+                                                        max={addQuantity(
+                                                            validPhysicalQuantity(item.product.available_stock ?? item.product.stock),
+                                                            reservedCreditQuantity(item),
+                                                        ) ?? undefined}
                                                         step={item.product.allow_decimal_quantity ? '0.0001' : '1'}
                                                         inputMode={item.product.allow_decimal_quantity ? 'decimal' : 'numeric'}
                                                         pattern={item.product.allow_decimal_quantity ? '[0-9]*[.,]?[0-9]*' : '[0-9]*'}
@@ -5826,7 +5858,7 @@ export default function POS({
 
                         <div className="mt-5 max-h-[60vh] space-y-3 overflow-y-auto">
                             {duplicateProductChoices.map((product) => {
-                                const availableStock = Number(product.available_stock ?? product.stock);
+                                const availableStock = validPhysicalQuantity(product.available_stock ?? product.stock);
 
                                 return (
                                     <button
@@ -5852,7 +5884,7 @@ export default function POS({
                                             <div className="mt-1 grid gap-1 text-xs text-slate-600 sm:grid-cols-3">
                                                 <span>Código: <strong>{product.code ?? '-'}</strong></span>
                                                 <span>Barras: <strong>{product.barcode ?? '-'}</strong></span>
-                                                <span>Disponible: <strong>{availableStock}</strong></span>
+                                                <span>Disponible: <strong>{formatQuantity(availableStock)}</strong></span>
                                             </div>
                                         </div>
                                         <div className="whitespace-nowrap text-sm font-bold text-slate-950">
