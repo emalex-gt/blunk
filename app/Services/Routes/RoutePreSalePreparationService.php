@@ -53,7 +53,9 @@ class RoutePreSalePreparationService
             ]);
         }
 
-        $rows = collect($rows)->keyBy(fn (array $row) => (int) ($row['id'] ?? 0));
+        $rows = collect($rows)
+            ->map(fn (array $row, int $index) => [...$row, '_input_index' => $index])
+            ->keyBy(fn (array $row) => (int) ($row['id'] ?? 0));
         if ($rows->isEmpty() || $rows->has(0)) {
             throw ValidationException::withMessages([
                 'items' => 'Debes indicar las cantidades preparadas.',
@@ -115,7 +117,13 @@ class RoutePreSalePreparationService
         foreach ($rows as $itemId => $row) {
             $item = $items->get($itemId);
             $product = $products->get($item->product_id);
-            $pickedQuantity = ProductQuantityPolicy::absolute($product, $row['picked_quantity'] ?? 0);
+            try {
+                $pickedQuantity = ProductQuantityPolicy::absolute($product, $row['picked_quantity'] ?? 0);
+            } catch (ValidationException $exception) {
+                throw ValidationException::withMessages([
+                    'items.'.($row['_input_index'] ?? 0).'.picked_quantity' => $exception->errors()['quantity'][0] ?? 'La cantidad preparada no es válida para este producto.',
+                ]);
+            }
             $requestedQuantity = ProductQuantityPolicy::canonical($item->quantity);
             $reservedQuantity = ProductQuantityPolicy::canonical($reservedByItem->get($itemId) ?? 0);
 
