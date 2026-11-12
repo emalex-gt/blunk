@@ -47,6 +47,7 @@ use App\Services\Fel\Providers\Digifact\DigifactNucJsonBuilder;
 use App\Services\Fiscal\FiscalDocumentIntentService;
 use App\Support\BranchInventory;
 use App\Support\Credits;
+use App\Support\GuatemalaLocations;
 use App\Support\FelPhraseRenderer;
 use App\Support\GuatemalaPostalCodes;
 use App\Support\IdempotencyService;
@@ -185,6 +186,168 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertDatabaseCount('stock_movements', 0);
         $this->assertDatabaseCount('fiscal_document_intents', 0);
         $this->assertSame(2, $line->fresh()->qty_pending);
+    }
+
+    public function test_direct_fel_sale_preserves_a_decimal_quantity_in_the_payload_snapshot_sale_and_stock(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'cash_register', 'fel_gt'], allowInvoices: true);
+        $this->felSettings($business);
+        $this->setConfirmedFelBranchLocation($business);
+        $product = $this->product($business, stock: 10, salePrice: 42.15);
+        $product->update(['allow_decimal_quantity' => true]);
+        $this->openCashRegister($business, $user);
+        $this->mockRealIntentPayload($this->successfulIntentCertification('UUID-DECIMAL-FEL'));
+
+        $payload = $this->salePayload($product, quantity: '1.1250', total: 47.42, documentType: 'invoice', customer: [
+            'name' => 'Consumidor Final',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+            'consumidor_final' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $payload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasNoErrors();
+
+        $intent = FiscalDocumentIntent::query()->where('business_id', $business->id)->sole();
+        $sale = Sale::query()->where('business_id', $business->id)->sole();
+        $line = SaleItem::query()->where('sale_id', $sale->id)->sole();
+
+        $this->assertSame(FiscalDocumentIntent::FINALIZED, $intent->status);
+        $this->assertSame('1.125', data_get($intent->operation_payload, 'items.0.quantity'));
+        $this->assertIsFloat(data_get($intent->fiscal_payload, 'Items.0.Qty'));
+        $this->assertSame(1.125, data_get($intent->fiscal_payload, 'Items.0.Qty'));
+        $this->assertSame('1.1250', $line->quantity);
+        $this->assertSame('8.8750', (string) ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+        $this->assertDatabaseHas('stock_movements', [
+            'business_id' => $business->id,
+            'product_id' => $product->id,
+            'type' => 'sale',
+            'quantity' => '-1.1250',
+        ]);
+        $this->assertDatabaseHas('sale_payments', ['sale_id' => $sale->id, 'amount' => 47.42]);
+        $this->assertDatabaseHas('stock_reservations', ['source_id' => $intent->id, 'quantity' => '1.1250', 'status' => 'consumed']);
+    }
+
+    public function test_direct_fel_sale_rejects_fractional_quantities_for_integer_products_and_precision_above_four_decimals(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'cash_register', 'fel_gt'], allowInvoices: true);
+        $this->felSettings($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+
+        foreach (['1.25', '1.00001'] as $quantity) {
+            $this->actingAs($user)
+                ->from(route('sales.create'))
+                ->post(route('sales.store'), $this->salePayload($product, quantity: $quantity, total: 100, documentType: 'invoice', customer: [
+                    'name' => 'Consumidor Final',
+                    'doc_type' => 'CF',
+                    'doc_number' => 'CF',
+                    'country' => 'GT',
+                    'consumidor_final' => true,
+                ]))
+                ->assertRedirect(route('sales.create'))
+                ->assertSessionHasErrors('items.0.quantity');
+        }
+
+        $this->assertDatabaseCount('fiscal_document_intents', 0);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('stock_reservations', 0);
+    }
+
+    public function test_decimal_fel_idempotency_canonicalizes_equivalent_quantities_and_rejects_a_different_quantity(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'cash_register', 'fel_gt'], allowInvoices: true);
+        $this->felSettings($business);
+        $this->setConfirmedFelBranchLocation($business);
+        $product = $this->product($business, stock: 10, salePrice: 42.15);
+        $product->update(['allow_decimal_quantity' => true]);
+        $this->openCashRegister($business, $user);
+        $this->mockRealIntentPayload($this->successfulIntentCertification('UUID-DECIMAL-IDEMPOTENCY'));
+
+        $payload = $this->salePayload($product, quantity: '1.0', total: 42.15, documentType: 'invoice', customer: [
+            'name' => 'Consumidor Final',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+            'consumidor_final' => true,
+        ]);
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $payload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasNoErrors();
+
+        $equivalent = $payload;
+        $equivalent['items'][0]['quantity'] = '1.0000';
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $equivalent)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasNoErrors();
+
+        $different = $payload;
+        $different['items'][0]['quantity'] = '1.125';
+        $different['payments'][0]['amount'] = 47.42;
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $different)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasErrors('idempotency_key');
+
+        $this->assertDatabaseCount('fiscal_document_intents', 1);
+        $this->assertDatabaseCount('sales', 1);
+        $this->assertDatabaseCount('sale_payments', 1);
+        $this->assertDatabaseCount('stock_movements', 1);
+        $this->assertSame('9.0000', (string) ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+    }
+
+    public function test_certified_decimal_fel_intent_keeps_its_hold_when_local_finalization_fails(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'cash_register', 'fel_gt'], allowInvoices: true);
+        $this->felSettings($business);
+        $this->setConfirmedFelBranchLocation($business);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $product->update(['allow_decimal_quantity' => true]);
+        $this->openCashRegister($business, $user);
+        $session = CashRegisterSession::query()->where('business_id', $business->id)->sole();
+        $this->mockRealIntentPayload(function () use ($session): array {
+            $session->update(['status' => 'closed']);
+
+            return [
+                'request_payload' => [],
+                'response_payload' => ['RESPONSE' => [['UUID' => 'UUID-DECIMAL-FINALIZATION', 'Serie' => 'A', 'Numero' => '1']]],
+                'identifiers' => ['uuid' => 'UUID-DECIMAL-FINALIZATION', 'series' => 'A', 'number' => '1', 'certification_date' => now()],
+                'issued_at' => now(),
+            ];
+        });
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload($product, quantity: '1.1250', total: 112.50, documentType: 'invoice', customer: [
+                'name' => 'Consumidor Final',
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
+                'country' => 'GT',
+                'consumidor_final' => true,
+            ]))
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasErrors('document_type');
+
+        $intent = FiscalDocumentIntent::query()->where('business_id', $business->id)->sole();
+        $this->assertSame(FiscalDocumentIntent::CERTIFIED, $intent->status);
+        $this->assertNotNull($intent->last_finalization_error);
+        $this->assertSame('1.125', data_get($intent->operation_payload, 'items.0.quantity'));
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('sale_items', 0);
+        $this->assertDatabaseCount('sale_payments', 0);
+        $this->assertDatabaseCount('cash_movements', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseHas('stock_reservations', ['source_id' => $intent->id, 'quantity' => '1.1250', 'status' => 'active']);
     }
 
     public function test_finalized_fel_sale_can_be_verified_before_a_local_pos_draft_is_restored(): void
@@ -7322,6 +7485,25 @@ class CriticalPosFelFlowTest extends TestCase
         ]);
 
         return $settings;
+    }
+
+    private function setConfirmedFelBranchLocation(Business $business): Branch
+    {
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $branch->update([
+            'department' => 'Huehuetenango',
+            'municipality' => 'Huehuetenango',
+            'fel_department' => 'Huehuetenango',
+            'fel_municipality' => 'Huehuetenango',
+            'fel_postal_code' => '13001',
+        ]);
+
+        $this->assertTrue(GuatemalaLocations::isValidDepartment($branch->fel_department));
+        $this->assertTrue(GuatemalaLocations::isValidMunicipality($branch->fel_department, $branch->fel_municipality));
+        $this->assertSame('13001', GuatemalaPostalCodes::confirmed()['Huehuetenango']['Huehuetenango']);
+        $this->assertSame('13001', GuatemalaPostalCodes::forLocation($branch->fel_department, $branch->fel_municipality));
+
+        return $branch->refresh();
     }
 
     private function salePayload(
