@@ -82,6 +82,34 @@ class RoutePreSaleInvoiceTest extends TestCase
         $this->assertNotNull($preSale->workDay->refresh()->completed_at);
     }
 
+    public function test_decimal_picked_pre_sale_converts_without_truncating_stock_or_sale_line(): void
+    {
+        [$business, $admin, $branch] = $this->tenant();
+        $product = $this->product($business, $branch, stock: 10, price: 100);
+        $product->update(['allow_decimal_quantity' => true]);
+        $preSale = $this->pickedPreSale($business, $branch, $admin, $product, quantity: 1.125, pickedQuantity: 1.125);
+        $this->openCashRegister($business, $branch, $admin);
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.invoice', $preSale), $this->invoicePayload('receipt', 'paid', 'cash'))
+            ->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->where('business_id', $business->id)->firstOrFail();
+        $line = SaleItem::query()->where('sale_id', $sale->id)->firstOrFail();
+
+        $this->assertSame('1.1250', (string) $line->quantity);
+        $this->assertSame('8.8750', (string) ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('branch_id', $branch->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+        $this->assertSame('-1.1250', (string) StockMovement::query()
+            ->where('business_id', $business->id)
+            ->where('product_id', $product->id)
+            ->where('type', 'sale')
+            ->value('quantity'));
+    }
+
     public function test_route_documentary_closure_always_creates_a_receipt_without_starting_fel(): void
     {
         [$business, $admin, $branch] = $this->tenant();
@@ -783,7 +811,7 @@ class RoutePreSaleInvoiceTest extends TestCase
         return $product;
     }
 
-    private function pickedPreSale(Business $business, Branch $branch, User $seller, Product $product, int $quantity = 1, int $pickedQuantity = 1, float $discount = 0): PreSale
+    private function pickedPreSale(Business $business, Branch $branch, User $seller, Product $product, float $quantity = 1, float $pickedQuantity = 1, float $discount = 0): PreSale
     {
         $customer = Customer::query()->create([
             'business_id' => $business->id,

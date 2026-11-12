@@ -2797,11 +2797,11 @@ class RoutesPreSalesTest extends TestCase
                 ->component('Routes/PreSales/Show')
                 ->where('preSale.id', $preSale->id)
                 ->where('preSale.items.0.product_name', $product->name)
-                ->where('preSale.items.0.quantity', 3)
-                ->where('preSale.items.0.reserved_quantity', 3)
-                ->where('preSale.items.0.physical_stock', 10)
-                ->where('preSale.items.0.reserved_total', 3)
-                ->where('preSale.items.0.available_stock', 7));
+                ->where('preSale.items.0.quantity', '3')
+                ->where('preSale.items.0.reserved_quantity', '3')
+                ->where('preSale.items.0.physical_stock', '10')
+                ->where('preSale.items.0.reserved_total', '3')
+                ->where('preSale.items.0.available_stock', '7'));
     }
 
     public function test_admin_can_mark_submitted_pre_sale_as_processing_without_mutating_stock_or_financial_rows(): void
@@ -2842,9 +2842,9 @@ class RoutesPreSalesTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Routes/PreSales/Pick')
                 ->where('preSale.id', $preSale->id)
-                ->where('preSale.items.0.quantity', 3)
-                ->where('preSale.items.0.reserved_quantity', 3)
-                ->where('preSale.items.0.picked_quantity', 3));
+                ->where('preSale.items.0.quantity', '3')
+                ->where('preSale.items.0.reserved_quantity', '3')
+                ->where('preSale.items.0.picked_quantity', '3'));
     }
 
     public function test_admin_can_pick_submitted_pre_sale_and_reduce_reservation_without_stock_or_financial_mutations(): void
@@ -2920,14 +2920,39 @@ class RoutesPreSalesTest extends TestCase
         $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->count());
     }
 
-    public function test_route_quantity_inputs_use_whole_unit_spinner_steps(): void
+    public function test_decimal_route_pre_sale_keeps_exact_reservation_and_preparation_quantity(): void
+    {
+        [$business, $admin, $branch] = $this->tenant(role: 'owner');
+        $seller = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 10.5);
+        $product->update(['allow_decimal_quantity' => true]);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 3.75);
+        $item = $preSale->items()->firstOrFail();
+
+        $this->actingAs($admin)
+            ->post(route('routes.pre-sales.pick.store', $preSale), [
+                'idempotency_key' => 'test-route-decimal-'.str_replace('.', '-', uniqid('', true)),
+                'items' => [['id' => $item->id, 'picked_quantity' => '1.1250']],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(PreSale::STATUS_PICKED, $preSale->refresh()->status);
+        $this->assertSame('1.1250', (string) $item->refresh()->picked_quantity);
+        $this->assertSame('1.1250', (string) StockReservation::query()
+            ->where('source_item_id', $item->id)
+            ->where('status', 'active')
+            ->value('quantity'));
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_route_quantity_inputs_use_product_aware_decimal_text_fields(): void
     {
         $visitSource = file_get_contents(resource_path('js/Pages/Routes/Mobile/Visit.tsx'));
         $pickSource = file_get_contents(resource_path('js/Pages/Routes/PreSales/Pick.tsx'));
 
-        $this->assertMatchesRegularExpression('/min="1"\s+(?:max=\{[\s\S]*?\}\s+)?step="1"\s+value=\{item\.quantity\}/', $visitSource);
-        $this->assertMatchesRegularExpression('/min="0"\s+max=\{Math\.min\(item\.quantity, item\.reserved_quantity\)\}\s+step="1"/', $pickSource);
-        $this->assertStringNotContainsString('step="0.0001"', $visitSource.$pickSource);
+        $this->assertStringContainsString("inputMode={item.allow_decimal_quantity ? 'decimal' : 'numeric'}", $visitSource);
+        $this->assertStringContainsString("inputMode={item.allow_decimal_quantity ? 'decimal' : 'numeric'}", $pickSource);
+        $this->assertStringContainsString('function quantityError', $visitSource.$pickSource);
     }
 
     public function test_admin_can_pick_processing_pre_sale(): void
@@ -3449,7 +3474,7 @@ class RoutesPreSalesTest extends TestCase
         $source = file_get_contents(resource_path('js/Pages/Routes/Mobile/Visit.tsx'));
 
         $this->assertStringContainsString('maximum_quantity', $source);
-        $this->assertStringContainsString('max={!allowNegativeStock ? item.maximum_quantity ?? undefined : undefined}', $source);
+        $this->assertStringContainsString('const quantityLimit', $source);
         $this->assertStringContainsString('Stock disponible:', $source);
         $this->assertStringContainsString('La cantidad máxima disponible es', $source);
         $this->assertStringContainsString('details={confirmationDetails}', $source);
@@ -3464,7 +3489,7 @@ class RoutesPreSalesTest extends TestCase
         $this->assertStringContainsString('>Cantidad</p>', $source);
         $this->assertStringContainsString('>Precio</p>', $source);
         $this->assertStringContainsString('>Subtotal</p>', $source);
-        $this->assertStringContainsString('formatCurrency(item.quantity * item.unit_price)', $source);
+        $this->assertStringContainsString('formatCurrency(Number(item.quantity || 0) * item.unit_price)', $source);
         $this->assertStringNotContainsString('Q {(item.quantity * item.unit_price).toFixed(2)}', $source);
     }
 
@@ -3480,7 +3505,7 @@ class RoutesPreSalesTest extends TestCase
         $this->assertStringContainsString('inputMode="decimal"', $visitSource);
         $this->assertStringContainsString('onBlur={() => commitUnitPrice(index)}', $visitSource);
         $this->assertStringContainsString('formatMoneyValue(item.unit_price)', $visitSource);
-        $this->assertStringContainsString('formatCurrency(item.quantity * item.unit_price)', $visitSource);
+        $this->assertStringContainsString('formatCurrency(Number(item.quantity || 0) * item.unit_price)', $visitSource);
     }
 
     public function test_stock_breakdown_is_branch_and_tenant_scoped(): void
