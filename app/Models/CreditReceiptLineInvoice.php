@@ -16,11 +16,13 @@ class CreditReceiptLineInvoice extends Model
         'sale_line_id',
         'quantity',
         'amount',
+        'reversed_at',
     ];
 
     protected $casts = [
         'quantity' => 'decimal:4',
         'amount' => 'decimal:2',
+        'reversed_at' => 'datetime',
     ];
 
     public function line(): BelongsTo

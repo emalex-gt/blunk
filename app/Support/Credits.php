@@ -4,6 +4,8 @@ namespace App\Support;
 
 use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
+use App\Models\CreditReceiptLineInvoice;
+use App\Models\Sale;
 use App\Models\StockReservation;
 use App\Models\TenantSetting;
 use App\Support\Inventory\ProductQuantityPolicy;
@@ -135,6 +137,55 @@ class Credits
         ]);
 
         return $receipt->refresh();
+    }
+
+    /**
+     * The caller owns the database transaction and Sale lock. Reversal rows
+     * remain as audit evidence, and the marker makes retries idempotent.
+     */
+    public static function restoreSaleReservationInvoices(Sale $sale): void
+    {
+        $invoices = CreditReceiptLineInvoice::query()
+            ->where('business_id', $sale->business_id)
+            ->where('sale_id', $sale->id)
+            ->whereNull('reversed_at')
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($invoices as $invoice) {
+            $line = CreditReceiptLine::query()
+                ->where('business_id', $sale->business_id)
+                ->lockForUpdate()
+                ->find($invoice->credit_receipt_line_id);
+            if (! $line) {
+                continue;
+            }
+
+            $restoredInvoiced = bcsub(
+                (string) $line->qty_invoiced,
+                (string) $invoice->quantity,
+                ProductQuantityPolicy::SCALE,
+            );
+            if (bccomp($restoredInvoiced, '0', ProductQuantityPolicy::SCALE) < 0) {
+                throw new \LogicException('La reversa de la reserva excede la cantidad facturada.');
+            }
+
+            $restoredPending = bcsub(
+                bcsub((string) $line->quantity, $restoredInvoiced, ProductQuantityPolicy::SCALE),
+                (string) $line->qty_cancelled,
+                ProductQuantityPolicy::SCALE,
+            );
+            $line->update([
+                'qty_invoiced' => $restoredInvoiced,
+                'qty_reserved' => ProductQuantityPolicy::minimum(
+                    $restoredPending,
+                    bcadd((string) $line->qty_reserved, (string) $invoice->quantity, ProductQuantityPolicy::SCALE),
+                ),
+            ]);
+            $line = self::refreshLine($line->refresh());
+            self::refreshReceipt($line->receipt);
+            $invoice->update(['reversed_at' => now()]);
+        }
     }
 
     private static function roundMoney(string $amount): string
