@@ -104,7 +104,7 @@ class CriticalPosFelFlowTest extends TestCase
         $line = SaleItem::query()->where('sale_id', $sale->id)->firstOrFail();
         $payment = SalePayment::query()->where('sale_id', $sale->id)->firstOrFail();
 
-        $this->assertSame(2, $line->quantity);
+        $this->assertSame('2.0000', $line->quantity);
         $this->assertSame('200.00', (string) $sale->total);
         $this->assertSame('cash', $payment->method);
         $this->assertSame('200.00', (string) $payment->amount);
@@ -130,6 +130,61 @@ class CriticalPosFelFlowTest extends TestCase
         $response->assertRedirect(route('sales.create'));
         $response->assertSessionHasErrors(['items.0.quantity']);
         $this->assertDatabaseCount('sales', 0);
+    }
+
+    public function test_pos_sale_persists_decimal_quantity_and_exact_stock_for_a_decimal_product(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);
+        $product = $this->product($business, stock: 10, salePrice: 42.15);
+        $product->update(['allow_decimal_quantity' => true]);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $this->salePayload($product, quantity: '1.2500', total: 52.69))
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->where('business_id', $business->id)->sole();
+        $line = SaleItem::query()->where('sale_id', $sale->id)->sole();
+
+        $this->assertSame('1.2500', $line->quantity);
+        $this->assertSame('52.69', (string) $sale->total);
+        $this->assertSame('8.7500', (string) ProductBranchStock::query()
+            ->where('business_id', $business->id)
+            ->where('product_id', $product->id)
+            ->value('stock'));
+        $this->assertDatabaseHas('stock_movements', [
+            'business_id' => $business->id,
+            'product_id' => $product->id,
+            'type' => 'sale',
+            'quantity' => '-1.2500',
+        ]);
+    }
+
+    public function test_fractional_quantity_linked_to_a_credit_reservation_is_rejected_before_commercial_effects(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits']);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $product->update(['allow_decimal_quantity' => true]);
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $line = $this->creditReservation($business, $branch, $product, 2);
+        $this->openCashRegister($business, $user);
+
+        $payload = $this->salePayload($product, quantity: '1.5', total: 150, itemOverrides: [
+            'credit_line_id' => $line->id,
+        ]);
+
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $payload)
+            ->assertRedirect(route('sales.create'))
+            ->assertSessionHasErrors(['items']);
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseCount('fiscal_document_intents', 0);
+        $this->assertSame(2, $line->fresh()->qty_pending);
     }
 
     public function test_finalized_fel_sale_can_be_verified_before_a_local_pos_draft_is_restored(): void
@@ -668,6 +723,34 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertSee('0.05')
             ->assertSee('295.00')
             ->assertDontSee('294.95');
+    }
+
+    public function test_decimal_sale_applies_line_and_general_discounts_without_reapplying_them(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'discounts'], role: 'owner');
+        $product = $this->product($business, name: 'Decimal discount', stock: 10, salePrice: 100);
+        $product->update(['allow_decimal_quantity' => true]);
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $product,
+            quantity: '1.25',
+            total: 110,
+            items: [[
+                'product' => $product,
+                'quantity' => '1.25',
+                'line_discount_amount' => 5,
+                'line_discount_reason' => 'Promoción decimal',
+            ]],
+            discount: ['type' => 'fixed', 'value' => 10, 'reason' => 'Descuento general'],
+        ))->assertSessionHasNoErrors();
+
+        $line = SaleItem::query()->sole();
+        $this->assertSame('125.00', (string) $line->total_before_discount);
+        $this->assertSame('5.00', (string) $line->line_discount_amount);
+        $this->assertSame('10.00', (string) $line->general_discount_amount);
+        $this->assertSame('110.00', (string) $line->total_after_discount);
+        $this->assertSame('110.00', (string) $line->sale->total);
     }
 
     public function test_zero_line_discount_is_treated_as_absent(): void

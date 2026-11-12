@@ -117,6 +117,39 @@ class SaleDuplicateIdempotencyTest extends TestCase
         $this->assertSame(4.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
     }
 
+    public function test_decimal_sale_idempotency_canonicalizes_equivalent_quantities_and_rejects_a_different_quantity(): void
+    {
+        [$business, $user] = $this->tenant();
+        $product = $this->product($business, stock: 5, salePrice: 100);
+        $product->update(['allow_decimal_quantity' => true]);
+        $this->openCashRegister($business, $user);
+
+        $payload = $this->salePayload($product, 'idem-sale-decimal');
+        $payload['items'][0]['quantity'] = '1.0';
+        $payload['payments'][0]['amount'] = 100;
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $payload)->assertSessionHasNoErrors();
+
+        $equivalent = $payload;
+        $equivalent['items'][0]['quantity'] = '1.0000';
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $equivalent)->assertSessionHasNoErrors();
+
+        $different = $payload;
+        $different['items'][0]['quantity'] = '1.25';
+        $different['payments'][0]['amount'] = 125;
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $different)
+            ->assertStatus(409);
+
+        $this->assertSame(1, Sale::query()->count());
+        $this->assertSame(1, SaleItem::query()->count());
+        $this->assertSame(1, SalePayment::query()->count());
+        $this->assertSame(1, CashMovement::query()->where('type', 'sale_cash')->count());
+        $this->assertSame(1, StockMovement::query()->where('type', 'sale')->count());
+        $this->assertSame('4.0000', (string) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+    }
+
     public function test_completed_sale_replay_rejects_changed_customer_product_quantity_or_payment_without_duplicate_effects(): void
     {
         [$business, $user] = $this->tenant();

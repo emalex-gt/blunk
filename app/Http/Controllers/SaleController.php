@@ -44,6 +44,7 @@ use App\Support\DocumentCompanyHeader;
 use App\Support\DocumentCustomerDisplay;
 use App\Support\FelPhraseRenderer;
 use App\Support\Inventory\StockPolicy;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\ManualPricePolicy;
 use App\Support\OperationDrafts;
 use App\Support\OperationsLog;
@@ -235,6 +236,7 @@ class SaleController extends Controller
                         'barcode',
                         'cost_price',
                         'sale_price',
+                        'allow_decimal_quantity',
                         'stock',
                         'min_stock',
                         'location',
@@ -254,6 +256,7 @@ class SaleController extends Controller
                         'barcode',
                         'cost_price',
                         'sale_price',
+                        'allow_decimal_quantity',
                         'stock',
                         'min_stock',
                         'location',
@@ -297,6 +300,7 @@ class SaleController extends Controller
             'barcode',
             'cost_price',
             'sale_price',
+            'allow_decimal_quantity',
             'stock',
             'min_stock',
             'location',
@@ -369,7 +373,7 @@ class SaleController extends Controller
             'customer.tax_lookup_verified_at' => ['nullable', 'date'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'exists:products,id'],
-            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
             'items.*.price_type_id' => ['nullable', 'integer', 'exists:price_types,id'],
             'items.*.unit_price' => ['nullable', 'numeric', 'decimal:0,2', 'gt:0'],
             // credit_reservation is a server-verified historical price, never a client supplied manual price.
@@ -384,9 +388,10 @@ class SaleController extends Controller
             'discount.value' => ['required_with:discount', 'numeric', 'decimal:0,2', 'gt:0'],
             'discount.reason' => ['required_with:discount', 'string', 'max:1000'],
         ], [
-            'items.*.quantity.required' => 'La cantidad debe ser un número entero.',
-            'items.*.quantity.integer' => 'La cantidad debe ser un número entero.',
-            'items.*.quantity.min' => 'La cantidad debe ser un número entero.',
+            'items.*.quantity.required' => 'La cantidad es obligatoria.',
+            'items.*.quantity.numeric' => 'La cantidad debe ser un número válido.',
+            'items.*.quantity.decimal' => 'La cantidad debe tener como máximo cuatro decimales.',
+            'items.*.quantity.gt' => 'La cantidad debe ser mayor que cero.',
             'discount.type.required_with' => 'Selecciona el tipo de descuento.',
             'discount.type.in' => 'Selecciona un tipo de descuento válido.',
             'discount.value.required_with' => 'Ingresa el valor del descuento.',
@@ -462,6 +467,25 @@ class SaleController extends Controller
 
             throw ValidationException::withMessages([
                 'document_type' => 'El tipo de documento seleccionado no está habilitado.',
+            ]);
+        }
+
+        $hasFractionalQuantity = $this->hasFractionalSaleQuantity($data['items']);
+        $hasCreditReservationLine = collect($data['items'])
+            ->contains(fn (array $item): bool => filled($item['credit_line_id'] ?? null));
+
+        // D2.3 supports decimal quantities only for direct, non-FEL sales. The
+        // related persistence and fiscal snapshots are intentionally completed
+        // in their own phases; reject these combinations before any commercial
+        // or fiscal side effect can start.
+        if ($hasFractionalQuantity && (
+            $isCreditSale
+            || filled($data['quotation_id'] ?? null)
+            || $hasCreditReservationLine
+            || ($country === 'GT' && $felModuleEnabled && $data['document_type'] === 'invoice')
+        )) {
+            throw ValidationException::withMessages([
+                'items' => 'Las cantidades fraccionarias aún no están habilitadas para esta operación.',
             ]);
         }
 
@@ -607,8 +631,7 @@ class SaleController extends Controller
             $requestedByCreditLine = [];
             $productNames = [];
 
-            foreach ($data['items'] as $item) {
-                $quantity = (int) $item['quantity'];
+            foreach ($data['items'] as $itemIndex => $item) {
                 $creditLine = null;
                 $product = Product::query()
                     ->where('business_id', $businessId)
@@ -623,9 +646,22 @@ class SaleController extends Controller
                 }
 
                 BranchInventory::ensureProductInBranch($product, $branch->id);
+                try {
+                    $quantity = ProductQuantityPolicy::positive($product, $item['quantity']);
+                } catch (ValidationException $exception) {
+                    $errors = $exception->errors();
+
+                    if (! array_key_exists('quantity', $errors)) {
+                        throw $exception;
+                    }
+
+                    throw ValidationException::withMessages([
+                        "items.{$itemIndex}.quantity" => $errors['quantity'],
+                    ]);
+                }
                 $productId = (int) $product->id;
-                $requestedByProduct[$productId] = ($requestedByProduct[$productId] ?? 0) + $quantity;
-                $availableByProduct[$productId] ??= StockAvailability::availableStock($product, null, $branch->id);
+                $requestedByProduct[$productId] = bcadd($requestedByProduct[$productId] ?? '0', $quantity, ProductQuantityPolicy::SCALE);
+                $availableByProduct[$productId] ??= StockAvailability::availableStockExact($product, null, $branch->id);
                 $productNames[$productId] = $product->name;
 
                 $creditQuantity = 0;
@@ -669,11 +705,11 @@ class SaleController extends Controller
                     : $this->resolveLinePrice($request, $product, $item, $customer, $branch->id, $creditLine);
 
                 $unitPrice = $resolvedPrice['unit_price'];
-                $lineTotal = round($unitPrice * $quantity, 2);
+                $lineTotal = $this->quantityLineAmount($unitPrice, $quantity);
                 $lineDiscount = $this->resolveLineDiscount($item, $lineTotal);
 
                 if ($resolvedPrice['manual_price'] && $lineDiscount['amount'] > 0) {
-                    $effectiveUnitPrice = round(($lineTotal - $lineDiscount['amount']) / $quantity, 2);
+                    $effectiveUnitPrice = round(($lineTotal - $lineDiscount['amount']) / (float) $quantity, 2);
                     ManualPricePolicy::validateUnitPrice(
                         TenantSetting::query()->where('business_id', $businessId)->first(),
                         $product,
@@ -701,9 +737,13 @@ class SaleController extends Controller
 
             if (! StockPolicy::allowsNegativeStock($business)) {
                 foreach ($requestedByProduct as $productId => $requestedQuantity) {
-                    $availableQuantity = ($availableByProduct[$productId] ?? 0) + ($reservedCreditByProduct[$productId] ?? 0);
+                    $availableQuantity = bcadd(
+                        (string) ($availableByProduct[$productId] ?? '0'),
+                        (string) ($reservedCreditByProduct[$productId] ?? '0'),
+                        ProductQuantityPolicy::SCALE,
+                    );
 
-                    if ($availableQuantity < $requestedQuantity) {
+                    if (bccomp($availableQuantity, $requestedQuantity, ProductQuantityPolicy::SCALE) < 0) {
                         throw ValidationException::withMessages([
                             'items' => ($productNames[$productId] ?? 'Producto').': no hay suficiente stock disponible para generar la venta.',
                         ]);
@@ -774,7 +814,7 @@ class SaleController extends Controller
                 $lineDiscount = round($line['line_discount']['amount'] + $generalLineDiscount, 2);
                 $lineTotalAfterDiscount = round($line['line_total'] - $lineDiscount, 2);
                 $unitCost = round((float) $product->cost_price, 4);
-                $totalCost = round($unitCost * (int) $line['quantity'], 2);
+                $totalCost = $this->quantityLineAmount($unitCost, $line['quantity']);
 
                 $saleItemAttributes = [
                     'business_id' => $businessId,
@@ -813,7 +853,7 @@ class SaleController extends Controller
                     'branch_id' => $branch->id,
                     'product_id' => $product->id,
                     'type' => 'sale',
-                    'quantity' => -1 * $line['quantity'],
+                    'quantity' => ProductQuantityPolicy::signed('-'.$line['quantity']),
                     'previous_stock' => $previousStock,
                     'new_stock' => $newStock,
                     'note' => stockMovementNote('sale', $sale->business_number ?: $sale->id),
@@ -1877,7 +1917,9 @@ class SaleController extends Controller
             'items' => collect($data['items'] ?? [])
                 ->map(fn (array $item) => [
                     'product_id' => (int) ($item['product_id'] ?? 0),
-                    'quantity' => (int) ($item['quantity'] ?? 0),
+                    // Keeps historical integer payload types for existing hashes,
+                    // while canonical decimal quantities remain distinguishable.
+                    'quantity' => ProductQuantityPolicy::canonicalForIdempotency($item['quantity'] ?? 0),
                     'price_type_id' => $item['price_type_id'] ?? null,
                     'unit_price' => isset($item['unit_price']) ? round((float) $item['unit_price'], 4) : null,
                     'price_source' => $item['price_source'] ?? null,
@@ -1903,6 +1945,23 @@ class SaleController extends Controller
             'quotation_id' => $data['quotation_id'] ?? null,
             'quotation_expired_confirmed' => (bool) ($data['quotation_expired_confirmed'] ?? false),
         ];
+    }
+
+    private function hasFractionalSaleQuantity(array $items): bool
+    {
+        return collect($items)->contains(function (array $item): bool {
+            return str_contains(ProductQuantityPolicy::canonical($item['quantity'] ?? 0), '.');
+        });
+    }
+
+    /**
+     * Applies monetary rounding only after multiplying the exact quantity.
+     */
+    private function quantityLineAmount(float|string $unitAmount, string $quantity): float
+    {
+        $amount = bcmul((string) $unitAmount, $quantity, 8);
+
+        return round((float) $amount, 2);
     }
 
     /**
@@ -2588,6 +2647,7 @@ class SaleController extends Controller
                 'code' => $product->code,
                 'barcode' => $product->barcode,
                 'sale_price' => (string) $salePrice,
+                'allow_decimal_quantity' => (bool) $product->allow_decimal_quantity,
                 'stock' => $stock,
                 'physical_stock' => $stock,
                 'reserved_stock' => $reserved,
