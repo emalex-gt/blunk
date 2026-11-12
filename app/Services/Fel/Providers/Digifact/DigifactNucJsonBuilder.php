@@ -13,6 +13,7 @@ use App\Support\CustomerIdentity;
 use App\Support\FelPhraseRenderer;
 use App\Support\GuatemalaLocations;
 use App\Support\GuatemalaPostalCodes;
+use App\Support\Inventory\ProductQuantityPolicy;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -86,32 +87,39 @@ class DigifactNucJsonBuilder
         }
 
         $items = [];
-        $grandTotal = 0.0;
-        $grandTax = 0.0;
+        $grandTotal = '0';
+        $grandTax = '0';
 
         foreach ($sale->items as $index => $item) {
-            $quantity = (float) $item->quantity;
-            $unitPrice = round((float) $item->unit_price, 2);
-            $lineSubtotal = round($quantity * $unitPrice, 2);
-            $lineDiscount = round((float) ($item->discount_amount ?? 0), 2);
-            $lineTotal = round($lineSubtotal - $lineDiscount, 2);
-            $taxable = round($lineTotal / 1.12, 4);
-            $tax = round($lineTotal - $taxable, 4);
-            $grandTotal += $lineTotal;
-            $grandTax += $tax;
+            $canonicalQuantity = ProductQuantityPolicy::canonical($item->quantity);
+            // Digifact's NUC contract uses JSON numbers for Qty. Keep the exact
+            // canonical value through snapshots and cross this boundary only here.
+            $quantity = (float) $canonicalQuantity;
+            $unitPrice = $this->roundDecimal((string) $item->unit_price, 2);
+            $lineSubtotal = $item->total_before_discount !== null
+                ? $this->roundDecimal((string) $item->total_before_discount, 2)
+                : $this->roundDecimal(bcmul($unitPrice, $canonicalQuantity, 8), 2);
+            $lineDiscount = $this->roundDecimal((string) ($item->discount_amount ?? 0), 2);
+            $lineTotal = $item->total_after_discount !== null
+                ? $this->roundDecimal((string) $item->total_after_discount, 2)
+                : $this->roundDecimal(bcsub($lineSubtotal, $lineDiscount, 8), 2);
+            $taxable = $this->roundDecimal(bcdiv($lineTotal, '1.12', 8), 4);
+            $tax = $this->roundDecimal(bcsub($lineTotal, $taxable, 8), 4);
+            $grandTotal = bcadd($grandTotal, $lineTotal, 2);
+            $grandTax = bcadd($grandTax, $tax, 4);
 
             if (config('app.debug') && app()->environment('local')) {
                 Log::debug('DIGIFACT FEL item payload values', [
                     'business_id' => $sale->business_id,
                     'sale_id' => $sale->id,
                     'product' => $item->product_name,
-                    'qty' => $quantity,
+                    'qty' => $canonicalQuantity,
                     'unit_price' => $unitPrice,
                     'line_subtotal' => $lineSubtotal,
                     'line_discount' => $lineDiscount,
                     'line_total' => $lineTotal,
-                    'payload_price' => $unitPrice,
-                    'payload_total_item' => $lineTotal,
+                    'payload_price' => (float) $unitPrice,
+                    'payload_total_item' => (float) $lineTotal,
                 ]);
             }
 
@@ -121,11 +129,11 @@ class DigifactNucJsonBuilder
                 'Description' => $item->product_name,
                 'Qty' => $quantity,
                 'UnitOfMeasure' => 'UNI',
-                'Price' => $unitPrice,
+                'Price' => (float) $unitPrice,
                 'Discounts' => [
                     'Discount' => [
                         [
-                            'Amount' => $lineDiscount,
+                            'Amount' => (float) $lineDiscount,
                         ],
                     ],
                 ],
@@ -134,13 +142,13 @@ class DigifactNucJsonBuilder
                         [
                             'Code' => '1',
                             'Description' => 'IVA',
-                            'TaxableAmount' => $taxable,
-                            'Amount' => $tax,
+                            'TaxableAmount' => (float) $taxable,
+                            'Amount' => (float) $tax,
                         ],
                     ],
                 ],
                 'Totals' => [
-                    'TotalItem' => $lineTotal,
+                    'TotalItem' => (float) $lineTotal,
                 ],
             ];
         }
@@ -187,12 +195,12 @@ class DigifactNucJsonBuilder
                     'TotalTax' => [
                         [
                             'Description' => 'IVA',
-                            'Amount' => round($grandTax, 2),
+                            'Amount' => (float) $this->roundDecimal($grandTax, 2),
                         ],
                     ],
                 ],
                 'GrandTotal' => [
-                    'InvoiceTotal' => round($grandTotal, 2),
+                    'InvoiceTotal' => (float) $this->roundDecimal($grandTotal, 2),
                 ],
             ],
             'AdditionalDocumentInfo' => [
@@ -223,6 +231,14 @@ class DigifactNucJsonBuilder
     public function internalReference(Sale $sale): string
     {
         return Str::uuid()->toString();
+    }
+
+    /** Rounds a non-negative fiscal amount without cumulative binary floats. */
+    private function roundDecimal(string $amount, int $scale): string
+    {
+        $increment = '0.'.str_repeat('0', max(0, $scale - 1)).'5';
+
+        return bcdiv(bcadd($amount, $increment, $scale + 6), '1', $scale);
     }
 
     public function isProviderInternalReference(string $reference): bool

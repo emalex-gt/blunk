@@ -22,6 +22,7 @@ use App\Support\BranchInventory;
 use App\Support\BusinessCounter;
 use App\Support\CashRegister;
 use App\Support\Credits;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\StockAvailability;
 use App\Support\Inventory\StockPolicy;
 use App\Support\OperationsLog;
@@ -600,33 +601,46 @@ class FiscalDocumentIntentService
 
         foreach ($items as $index => $item) {
             $productId = (int) ($item['product_id'] ?? 0);
-            $quantity = (float) ($item['quantity'] ?? 0);
-            if (! $productId || $quantity <= 0) {
+            $quantity = ProductQuantityPolicy::canonical($item['quantity'] ?? 0);
+            if (! $productId || bccomp($quantity, '0', ProductQuantityPolicy::SCALE) <= 0) {
                 continue;
             }
 
-            $alreadyReservedByCredit = 0.0;
+            // Credit-reservation associations remain strictly integral until D2.5.
+            // Direct FEL lines have no association and retain their exact quantity.
+            $alreadyReservedByCredit = '0';
             if (Credits::reserveStockOnCreditReservations($intent->business_id) && is_array($v3Associations)) {
                 $entry = $v3Associations[$index] ?? null;
                 if ($entry !== null) {
+                    $creditQuantity = is_array($entry) && is_numeric($entry['quantity'] ?? null)
+                        ? ProductQuantityPolicy::canonical($entry['quantity'])
+                        : null;
+                    $reservedCreditQuantity = is_array($entry) && is_numeric($entry['stock_reserved_quantity'] ?? null)
+                        ? ProductQuantityPolicy::canonical($entry['stock_reserved_quantity'])
+                        : null;
+
                     if (! is_array($entry)
                         || ! is_numeric($entry['credit_line_id'] ?? null)
                         || (int) $entry['credit_line_id'] <= 0
                         || ! is_numeric($entry['quantity'] ?? null)
-                        || (float) $entry['quantity'] < 0
-                        || (float) $entry['quantity'] > $quantity
+                        || (int) $entry['quantity'] < 0
+                        || $creditQuantity === null
+                        || str_contains($creditQuantity, '.')
+                        || bccomp($creditQuantity, $quantity, ProductQuantityPolicy::SCALE) > 0
                         || ! is_numeric($entry['stock_reserved_quantity'] ?? null)
-                        || (float) $entry['stock_reserved_quantity'] < 0
-                        || (float) $entry['stock_reserved_quantity'] > (float) $entry['quantity']) {
+                        || (int) $entry['stock_reserved_quantity'] < 0
+                        || $reservedCreditQuantity === null
+                        || str_contains($reservedCreditQuantity, '.')
+                        || bccomp($reservedCreditQuantity, $creditQuantity, ProductQuantityPolicy::SCALE) > 0) {
                         throw new \RuntimeException('La intención fiscal contiene una asociación de reserva inválida para apartar inventario.');
                     }
 
-                    $alreadyReservedByCredit = (float) $entry['stock_reserved_quantity'];
+                    $alreadyReservedByCredit = $reservedCreditQuantity;
                 }
             }
 
-            $quantityToReserve = $quantity - $alreadyReservedByCredit;
-            if ($quantityToReserve <= 0) {
+            $quantityToReserve = bcsub($quantity, $alreadyReservedByCredit, ProductQuantityPolicy::SCALE);
+            if (bccomp($quantityToReserve, '0', ProductQuantityPolicy::SCALE) <= 0) {
                 continue;
             }
 
@@ -779,15 +793,23 @@ class FiscalDocumentIntentService
             $product = Product::query()->where('business_id', $sale->business_id)->whereKey($saleItem->product_id)->lockForUpdate()->firstOrFail();
             $products[$itemIndex] = $product;
             $productId = (int) $product->id;
-            $requestedByProduct[$productId] = ($requestedByProduct[$productId] ?? 0) + (int) $saleItem->quantity;
-            $availableByProduct[$productId] ??= StockAvailability::availableStock($product, null, $sale->branch_id)
-                + (float) StockReservation::query()
+            $saleQuantity = ProductQuantityPolicy::canonical($saleItem->quantity);
+            $requestedByProduct[$productId] = bcadd(
+                $requestedByProduct[$productId] ?? '0',
+                $saleQuantity,
+                ProductQuantityPolicy::SCALE,
+            );
+            $availableByProduct[$productId] ??= bcadd(
+                StockAvailability::availableStockExact($product, null, $sale->branch_id),
+                ProductQuantityPolicy::canonical((string) StockReservation::query()
                     ->where('business_id', $intent->business_id)
                     ->where('source_type', 'fiscal_document_intent')
                     ->where('source_id', $intent->id)
                     ->where('product_id', $productId)
                     ->where('status', 'active')
-                    ->sum('quantity');
+                    ->sum('quantity')),
+                ProductQuantityPolicy::SCALE,
+            );
 
             $creditAssociation = $creditLineAssociations[$itemIndex] ?? ['credit_line_id' => null, 'quantity' => 0];
             $creditLineId = $creditAssociation['credit_line_id'];
@@ -819,7 +841,13 @@ class FiscalDocumentIntentService
 
         if (! StockPolicy::allowsNegativeStock($business)) {
             foreach ($requestedByProduct as $productId => $requestedQuantity) {
-                if (($availableByProduct[$productId] ?? 0) + ($reservedCreditByProduct[$productId] ?? 0) < $requestedQuantity) {
+                $availableQuantity = bcadd(
+                    $availableByProduct[$productId] ?? '0',
+                    (string) ($reservedCreditByProduct[$productId] ?? 0),
+                    ProductQuantityPolicy::SCALE,
+                );
+
+                if (bccomp($availableQuantity, $requestedQuantity, ProductQuantityPolicy::SCALE) < 0) {
                     throw \Illuminate\Validation\ValidationException::withMessages(['items' => 'No hay suficiente stock disponible para finalizar la venta.']);
                 }
             }
@@ -835,7 +863,7 @@ class FiscalDocumentIntentService
                 'branch_id' => $sale->branch_id,
                 'product_id' => $product->id,
                 'type' => 'sale',
-                'quantity' => -1 * $saleItem->quantity,
+                'quantity' => ProductQuantityPolicy::signed('-'.ProductQuantityPolicy::canonical($saleItem->quantity)),
                 'previous_stock' => $previousStock,
                 'new_stock' => $newStock,
                 'note' => stockMovementNote('sale', $sale->business_number ?: $sale->id),
