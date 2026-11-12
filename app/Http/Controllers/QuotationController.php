@@ -16,6 +16,7 @@ use App\Support\ManualPricePolicy;
 use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\PriceLists;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Services\BranchAccessService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -124,7 +125,7 @@ class QuotationController extends Controller
             'customer.phone' => ['nullable', 'string', 'max:50'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'integer'],
-            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
             'items.*.price_type_id' => ['nullable', 'integer'],
             'items.*.unit_price' => ['nullable', 'numeric', 'decimal:0,2', 'gt:0'],
             'items.*.line_discount_amount' => ['prohibited'],
@@ -159,19 +160,20 @@ class QuotationController extends Controller
 
         $lines = [];
         $subtotal = 0.0;
-        foreach ($data['items'] as $item) {
+        foreach ($data['items'] as $itemIndex => $item) {
             $product = Product::query()->where('business_id', $business->id)->find($item['product_id']);
             if (! $product) {
                 throw ValidationException::withMessages(['items' => 'Un producto no pertenece al negocio activo.']);
             }
 
+            $quantity = $this->validatedQuantity($product, $item['quantity'], $itemIndex);
             $resolvedPrice = $this->resolveLinePrice($request, $product, $item, $customer, $branch->id);
             $priceType = PriceType::query()
                 ->where('business_id', $business->id)
                 ->findOrFail($resolvedPrice['price_type_id']);
-            $lineTotal = round($resolvedPrice['unit_price'] * (int) $item['quantity'], 2);
+            $lineTotal = $this->quantityLineAmount($resolvedPrice['unit_price'], $quantity);
             $subtotal += $lineTotal;
-            $lines[] = compact('product', 'priceType', 'item', 'resolvedPrice', 'lineTotal');
+            $lines[] = compact('product', 'priceType', 'item', 'quantity', 'resolvedPrice', 'lineTotal');
         }
 
         $discount = $data['discount'] ?? null;
@@ -237,7 +239,7 @@ class QuotationController extends Controller
                     'product_code' => $line['product']->code,
                     'product_barcode' => $line['product']->barcode,
                     'price_type_name' => $line['priceType']?->name,
-                    'quantity' => (int) $line['item']['quantity'],
+                    'quantity' => $line['quantity'],
                     'unit_price' => $line['resolvedPrice']['unit_price'],
                     'original_price' => $line['resolvedPrice']['original_price'],
                     'price_source' => $line['resolvedPrice']['price_source'],
@@ -304,7 +306,7 @@ class QuotationController extends Controller
             'items' => ['required', 'array', 'min:1'],
             'items.*.quotation_item_id' => ['nullable', 'integer'],
             'items.*.product_id' => ['required', 'integer'],
-            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.quantity' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
             'items.*.price_type_id' => ['nullable', 'integer'],
             'items.*.unit_price' => ['nullable', 'numeric', 'decimal:0,2', 'gt:0'],
             'items.*.line_discount_amount' => ['prohibited'],
@@ -354,7 +356,7 @@ class QuotationController extends Controller
             $lines = [];
             $subtotal = 0.0;
 
-            foreach ($data['items'] as $item) {
+            foreach ($data['items'] as $itemIndex => $item) {
                 $lineId = (int) ($item['quotation_item_id'] ?? 0);
                 $existingLine = $lineId > 0 ? $existingLines->get($lineId) : null;
                 if ($lineId > 0 && (! $existingLine || in_array($lineId, $usedLineIds, true) || (int) $existingLine->product_id !== (int) $item['product_id'])) {
@@ -369,6 +371,7 @@ class QuotationController extends Controller
                     throw ValidationException::withMessages(['items' => 'Un producto no pertenece al negocio activo.']);
                 }
 
+                $quantity = $this->validatedQuantity($product, $item['quantity'], $itemIndex);
                 $preserveSnapshot = $existingLine && $this->isUnchangedQuotationLine($existingLine, $item);
                 $resolvedPrice = $preserveSnapshot
                     ? [
@@ -383,9 +386,9 @@ class QuotationController extends Controller
                 $priceType = $preserveSnapshot ? null : PriceType::query()
                     ->where('business_id', $business->id)
                     ->findOrFail($resolvedPrice['price_type_id']);
-                $lineTotal = round($resolvedPrice['unit_price'] * (int) $item['quantity'], 2);
+                $lineTotal = $this->quantityLineAmount($resolvedPrice['unit_price'], $quantity);
                 $subtotal += $lineTotal;
-                $lines[] = compact('existingLine', 'product', 'priceType', 'item', 'resolvedPrice', 'lineTotal');
+                $lines[] = compact('existingLine', 'product', 'priceType', 'item', 'quantity', 'resolvedPrice', 'lineTotal');
             }
 
             $discount = $data['discount'] ?? null;
@@ -440,7 +443,7 @@ class QuotationController extends Controller
                     'product_code' => $line['product']->code,
                     'product_barcode' => $line['product']->barcode,
                     'price_type_name' => $line['resolvedPrice']['price_type_name'] ?? $line['priceType']?->name,
-                    'quantity' => (int) $line['item']['quantity'],
+                    'quantity' => $line['quantity'],
                     'unit_price' => $line['resolvedPrice']['unit_price'],
                     'original_price' => $line['resolvedPrice']['original_price'],
                     'price_source' => $line['resolvedPrice']['price_source'],
@@ -589,6 +592,30 @@ class QuotationController extends Controller
             ]),
             'timezone' => tenantTimezone($business),
         ]);
+    }
+
+    private function validatedQuantity(Product $product, mixed $quantity, int $itemIndex): string
+    {
+        try {
+            return ProductQuantityPolicy::positive($product, $quantity);
+        } catch (ValidationException $exception) {
+            $errors = $exception->errors();
+            if (! array_key_exists('quantity', $errors)) {
+                throw $exception;
+            }
+
+            throw ValidationException::withMessages([
+                "items.{$itemIndex}.quantity" => $errors['quantity'],
+            ]);
+        }
+    }
+
+    /** Monetary rounding occurs only after multiplying the exact quantity. */
+    private function quantityLineAmount(float|string $unitPrice, string $quantity): float
+    {
+        $amount = bcmul((string) $unitPrice, $quantity, 8);
+
+        return (float) bcdiv(bcadd($amount, '0.005', 8), '1', 2);
     }
 
     /**

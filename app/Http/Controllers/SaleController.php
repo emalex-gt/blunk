@@ -470,18 +470,10 @@ class SaleController extends Controller
             ]);
         }
 
-        $hasFractionalQuantity = $this->hasFractionalSaleQuantity($data['items']);
         $hasCreditReservationLine = collect($data['items'])
             ->contains(fn (array $item): bool => filled($item['credit_line_id'] ?? null));
 
-        // Quotations and route/pre-sale persistence remain integer-only until
-        // their dedicated phases. Credit reservations use a versioned decimal
-        // association payload from D2.5.
-        if ($hasFractionalQuantity && filled($data['quotation_id'] ?? null)) {
-            throw ValidationException::withMessages([
-                'items' => 'Las cantidades fraccionarias aún no están habilitadas para esta operación.',
-            ]);
-        }
+        // Route/pre-sale persistence remains integer-only until D2.7.
 
         $idempotencyPayloads = $this->saleIdempotencyPayloadCandidates(
             $business,
@@ -1954,13 +1946,6 @@ class SaleController extends Controller
         ];
     }
 
-    private function hasFractionalSaleQuantity(array $items): bool
-    {
-        return collect($items)->contains(function (array $item): bool {
-            return str_contains(ProductQuantityPolicy::canonical($item['quantity'] ?? 0), '.');
-        });
-    }
-
     /**
      * Applies monetary rounding only after multiplying the exact quantity.
      */
@@ -2088,7 +2073,7 @@ class SaleController extends Controller
             'items' => $quotation->items->map(fn ($item) => [
                 'quotation_item_id' => $item->id,
                 'product_id' => $item->product_id,
-                'quantity' => (int) $item->quantity,
+                'quantity' => (string) $item->quantity,
                 'unit_price' => (float) $item->unit_price,
                 'original_price' => (float) ($item->original_price ?? $item->unit_price),
                 'price_type_id' => $item->price_type_id,
@@ -2141,7 +2126,7 @@ class SaleController extends Controller
             'items' => $quotation->items->map(fn ($item) => [
                 'quotation_item_id' => $item->id,
                 'product_id' => $item->product_id,
-                'quantity' => (int) $item->quantity,
+                'quantity' => (string) $item->quantity,
                 'unit_price' => (float) $item->unit_price,
                 'original_price' => (float) ($item->original_price ?? $item->unit_price),
                 'price_type_id' => $item->price_type_id,
@@ -2291,13 +2276,13 @@ class SaleController extends Controller
         }
 
         $productId = (int) ($item['product_id'] ?? 0);
-        $quantity = (int) ($item['quantity'] ?? 0);
+        $quantity = ProductQuantityPolicy::canonical($item['quantity'] ?? 0);
         $submittedUnitPrice = round((float) ($item['unit_price'] ?? 0), 2);
 
         $line = $quotation->items->firstWhere('id', $quotationItemId);
         if (! $line
             || (int) $line->product_id !== $productId
-            || (int) $line->quantity !== $quantity
+            || ProductQuantityPolicy::compare($line->quantity, $quantity) !== 0
             || round((float) $line->unit_price, 2) !== $submittedUnitPrice) {
             return null;
         }
@@ -2314,10 +2299,10 @@ class SaleController extends Controller
         }
 
         $snapshot = $quotation->items
-            ->map(fn ($item) => implode('|', [(int) $item->id, (int) $item->product_id, (int) $item->quantity, number_format((float) $item->unit_price, 2, '.', '')]))
+            ->map(fn ($item) => implode('|', [(int) $item->id, (int) $item->product_id, ProductQuantityPolicy::canonical($item->quantity), number_format((float) $item->unit_price, 2, '.', '')]))
             ->sort()->values()->all();
         $submitted = collect($submittedItems)
-            ->map(fn (array $item) => implode('|', [(int) ($item['quotation_item_id'] ?? 0), (int) ($item['product_id'] ?? 0), (int) ($item['quantity'] ?? 0), number_format((float) ($item['unit_price'] ?? 0), 2, '.', '')]))
+            ->map(fn (array $item) => implode('|', [(int) ($item['quotation_item_id'] ?? 0), (int) ($item['product_id'] ?? 0), ProductQuantityPolicy::canonical($item['quantity'] ?? 0), number_format((float) ($item['unit_price'] ?? 0), 2, '.', '')]))
             ->sort()->values()->all();
 
         return $snapshot === $submitted;
