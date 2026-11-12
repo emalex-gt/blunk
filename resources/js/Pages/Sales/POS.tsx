@@ -1694,7 +1694,7 @@ export default function POS({
         const unsupported = Boolean(fractionalLine.credit_line_id)
             || Boolean(quotation_source)
             || effectiveCheckoutType === 'credit'
-            || (country === 'GT' && Boolean(fel?.module_enabled) && effectiveDocumentType === 'invoice');
+            || (country === 'GT' && effectiveDocumentType === 'invoice');
 
         if (!unsupported) {
             return true;

@@ -481,7 +481,7 @@ class SaleController extends Controller
         if ($hasFractionalQuantity && (
             filled($data['quotation_id'] ?? null)
             || $hasCreditReservationLine
-            || ($country === 'GT' && $felModuleEnabled && $data['document_type'] === 'invoice')
+            || ($country === 'GT' && $data['document_type'] === 'invoice')
         )) {
             throw ValidationException::withMessages([
                 'items' => 'Las cantidades fraccionarias aún no están habilitadas para esta operación.',
