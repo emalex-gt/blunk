@@ -1355,7 +1355,7 @@ class SaleController extends Controller
                     'id' => $item->id,
                     'product_name' => $item->product_name,
                     'code' => $item->product?->barcode ?: $item->product?->code,
-                    'quantity' => (float) $item->quantity,
+                    'quantity' => ProductQuantityPolicy::canonical($item->quantity),
                     'unit_price' => (float) $item->unit_price,
                     'price_type_name' => $item->priceType?->name,
                     'price_source' => $item->price_source,
@@ -2616,8 +2616,8 @@ class SaleController extends Controller
         ) {
             $productId = (int) $product->id;
             $breakdown = $stockBreakdown->get($productId, []);
-            $stock = (float) ($breakdown['physical_stock'] ?? 0);
-            $reserved = (float) ($breakdown['reserved_total'] ?? 0);
+            $stock = ProductQuantityPolicy::signed($breakdown['physical_stock'] ?? 0);
+            $reserved = ProductQuantityPolicy::canonical($breakdown['reserved_total'] ?? 0);
             $globalByType = $globalPrices->get($productId, collect())->keyBy('price_type_id');
             $branchByType = $branchPrices->get($productId, collect())->keyBy('price_type_id');
             $prices = $priceTypes->map(function (PriceType $priceType) use ($globalByType, $branchByType, $product, $defaultPriceType) {
@@ -2661,11 +2661,13 @@ class SaleController extends Controller
                 'physical_stock' => $stock,
                 'reserved_stock' => $reserved,
                 'reserved_total' => $reserved,
-                'reserved_pre_sales' => (float) ($breakdown['reserved_pre_sales'] ?? 0),
-                'reserved_credit_reservations' => (float) ($breakdown['reserved_credit_reservations'] ?? 0),
-                'reserved_other' => (float) ($breakdown['reserved_other'] ?? 0),
-                'available_stock' => (float) ($breakdown['available_stock'] ?? ($stock - $reserved)),
-                'min_stock' => (float) $product->min_stock,
+                'reserved_pre_sales' => ProductQuantityPolicy::canonical($breakdown['reserved_pre_sales'] ?? 0),
+                'reserved_credit_reservations' => ProductQuantityPolicy::canonical($breakdown['reserved_credit_reservations'] ?? 0),
+                'reserved_other' => ProductQuantityPolicy::canonical($breakdown['reserved_other'] ?? 0),
+                'available_stock' => ProductQuantityPolicy::signed(
+                    $breakdown['available_stock'] ?? ProductQuantityPolicy::subtract($stock, $reserved),
+                ),
+                'min_stock' => $product->min_stock === null ? null : ProductQuantityPolicy::canonical($product->min_stock),
                 'location' => $product->location,
                 'image_url' => $product->image_url,
                 'prices' => $prices,
@@ -2708,9 +2710,9 @@ class SaleController extends Controller
                     [
                         'branch_id' => (int) $branch->id,
                         'branch_name' => $branch->name,
-                        'physical_stock' => (float) ($stock['physical_stock'] ?? 0),
-                        'reserved_total' => (float) ($stock['reserved_total'] ?? 0),
-                        'available_stock' => (float) ($stock['available_stock'] ?? 0),
+                        'physical_stock' => ProductQuantityPolicy::signed($stock['physical_stock'] ?? 0),
+                        'reserved_total' => ProductQuantityPolicy::canonical($stock['reserved_total'] ?? 0),
+                        'available_stock' => ProductQuantityPolicy::signed($stock['available_stock'] ?? 0),
                     ],
                 ]);
             }
