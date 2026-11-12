@@ -277,7 +277,7 @@ class StockAvailability
                 'customer_name' => $row->customer_name,
                 'customer_doc_number' => $row->customer_doc_number,
                 'status' => $row->status,
-                'quantity' => (float) min((int) $row->qty_reserved, (int) $row->qty_pending),
+                'quantity' => ProductQuantityPolicy::minimum($row->qty_reserved, $row->qty_pending),
                 'created_at' => (string) $row->created_at,
             ])
             ->all();

@@ -6,6 +6,7 @@ use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
 use App\Models\StockReservation;
 use App\Models\TenantSetting;
+use App\Support\Inventory\ProductQuantityPolicy;
 
 class Credits
 {
@@ -86,17 +87,23 @@ class Credits
 
     public static function refreshLine(CreditReceiptLine $line): CreditReceiptLine
     {
-        $pending = max(0, (int) $line->quantity - (int) $line->qty_invoiced - (int) $line->qty_cancelled);
-        $pendingTotal = round($pending * (float) $line->unit_price, 2);
+        $pending = bcsub(
+            bcsub((string) $line->quantity, (string) $line->qty_invoiced, ProductQuantityPolicy::SCALE),
+            (string) $line->qty_cancelled,
+            ProductQuantityPolicy::SCALE,
+        );
+        $pending = bccomp($pending, '0', ProductQuantityPolicy::SCALE) < 0 ? '0' : $pending;
+        $pendingTotal = self::roundMoney(bcmul((string) $line->unit_price, $pending, 8));
         $status = match (true) {
-            $pending === 0 && (int) $line->qty_invoiced > 0 => 'invoiced',
-            $pending === 0 => 'cancelled',
-            (int) $line->qty_invoiced > 0 => 'partially_invoiced',
+            bccomp($pending, '0', ProductQuantityPolicy::SCALE) === 0
+                && bccomp((string) $line->qty_invoiced, '0', ProductQuantityPolicy::SCALE) > 0 => 'invoiced',
+            bccomp($pending, '0', ProductQuantityPolicy::SCALE) === 0 => 'cancelled',
+            bccomp((string) $line->qty_invoiced, '0', ProductQuantityPolicy::SCALE) > 0 => 'partially_invoiced',
             default => 'pending',
         };
 
         $line->update([
-            'qty_reserved' => min((int) $line->qty_reserved, $pending),
+            'qty_reserved' => ProductQuantityPolicy::minimum($line->qty_reserved, $pending),
             'qty_pending' => $pending,
             'pending_total' => $pendingTotal,
             'status' => $status,
@@ -108,7 +115,9 @@ class Credits
     public static function refreshReceipt(CreditReceipt $receipt): CreditReceipt
     {
         $receipt->loadMissing('lines');
-        $pendingTotal = round((float) $receipt->lines()->sum('pending_total'), 2);
+        $pendingTotal = $receipt->lines()
+            ->pluck('pending_total')
+            ->reduce(fn (string $total, $amount): string => bcadd($total, (string) $amount, 2), '0');
         $hasPending = $receipt->lines()->where('qty_pending', '>', 0)->exists();
         $hasInvoiced = $receipt->lines()->where('qty_invoiced', '>', 0)->exists();
         $hasActiveLines = $receipt->lines()->where('status', '!=', 'cancelled')->exists();
@@ -126,5 +135,10 @@ class Credits
         ]);
 
         return $receipt->refresh();
+    }
+
+    private static function roundMoney(string $amount): string
+    {
+        return bcdiv(bcadd($amount, '0.005', 8), '1', 2);
     }
 }

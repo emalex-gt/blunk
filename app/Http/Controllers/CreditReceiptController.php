@@ -18,6 +18,7 @@ use App\Support\CustomerIdentity;
 use App\Support\CustomerPrintLocation;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\IdempotencyService;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\Inventory\StockPolicy;
 use App\Support\OperationDrafts;
 use App\Support\Permissions;
@@ -114,8 +115,8 @@ class CreditReceiptController extends Controller
             'note' => ['nullable', 'string', 'max:2000'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
-            'items.*.quantity' => ['required', 'integer', 'min:1'],
-            'items.*.unit_price' => ['nullable', 'numeric', 'gt:0'],
+            'items.*.quantity' => ['required', 'numeric', 'gt:0'],
+            'items.*.unit_price' => ['nullable', 'numeric', 'decimal:0,2', 'gt:0'],
         ]);
 
         $docType = CustomerIdentity::normalizeTaxId($data['customer']['doc_type']) ?? '';
@@ -155,12 +156,12 @@ class CreditReceiptController extends Controller
             $customer = $this->resolveCustomer($data['customer']);
             $customerDetails = $this->effectiveCustomerDetails($data['customer'], $customer);
             $shouldReserveStock = Credits::reserveStockOnCreditReservations($businessId);
-            $subtotal = 0.0;
+            $subtotal = '0';
             $preparedLines = [];
             $requestedByProduct = [];
             $availableByProduct = [];
 
-            foreach ($data['items'] as $item) {
+            foreach ($data['items'] as $itemIndex => $item) {
                 $product = Product::query()
                     ->where('business_id', $businessId)
                     ->where('is_active', true)
@@ -172,20 +173,36 @@ class CreditReceiptController extends Controller
                 }
 
                 BranchInventory::ensureProductInBranch($product, $branch->id);
-                $quantity = (int) $item['quantity'];
-                $productId = (int) $product->id;
-                $requestedByProduct[$productId] = ($requestedByProduct[$productId] ?? 0) + $quantity;
-                $availableByProduct[$productId] ??= StockAvailability::availableStock($product, null, $branch->id);
+                try {
+                    $quantity = ProductQuantityPolicy::positive($product, $item['quantity']);
+                } catch (ValidationException $exception) {
+                    $errors = $exception->errors();
 
-                $unitPrice = round((float) ($item['unit_price'] ?? $product->sale_price), 2);
-                $lineTotal = round($unitPrice * $quantity, 2);
-                $subtotal += $lineTotal;
+                    if (! array_key_exists('quantity', $errors)) {
+                        throw $exception;
+                    }
+
+                    throw ValidationException::withMessages([
+                        "items.{$itemIndex}.quantity" => $errors['quantity'],
+                    ]);
+                }
+                $productId = (int) $product->id;
+                $requestedByProduct[$productId] = bcadd(
+                    $requestedByProduct[$productId] ?? '0',
+                    $quantity,
+                    ProductQuantityPolicy::SCALE,
+                );
+                $availableByProduct[$productId] ??= StockAvailability::availableStockExact($product, null, $branch->id);
+
+                $unitPrice = $this->roundMoney((string) ($item['unit_price'] ?? $product->sale_price));
+                $lineTotal = $this->quantityLineAmount($unitPrice, $quantity);
+                $subtotal = bcadd($subtotal, $lineTotal, 2);
                 $preparedLines[] = compact('product', 'quantity', 'unitPrice', 'lineTotal');
             }
 
             if ($shouldReserveStock && ! StockPolicy::allowsNegativeStockForBusinessId($businessId)) {
                 foreach ($requestedByProduct as $productId => $requestedQuantity) {
-                    if (($availableByProduct[$productId] ?? 0) < $requestedQuantity) {
+                    if (bccomp($availableByProduct[$productId] ?? '0', $requestedQuantity, ProductQuantityPolicy::SCALE) < 0) {
                         throw ValidationException::withMessages([
                             'items' => 'No hay suficiente stock disponible.',
                         ]);
@@ -213,10 +230,10 @@ class CreditReceiptController extends Controller
                         ->max('receipt_number'),
                 ),
                 'status' => 'pending',
-                'subtotal' => round($subtotal, 2),
+                'subtotal' => $subtotal,
                 'discount_amount' => 0,
-                'total' => round($subtotal, 2),
-                'pending_total' => round($subtotal, 2),
+                'total' => $subtotal,
+                'pending_total' => $subtotal,
                 'notes' => $data['note'] ?? null,
                 'created_by' => $request->user()?->id,
             ]);
@@ -320,14 +337,14 @@ class CreditReceiptController extends Controller
                 ->lockForUpdate()
                 ->findOrFail($line->id);
 
-            if ((int) $line->qty_pending <= 0) {
+            if (bccomp((string) $line->qty_pending, '0', ProductQuantityPolicy::SCALE) <= 0) {
                 throw ValidationException::withMessages([
                     'line' => 'Esta línea de crédito ya no está pendiente.',
                 ]);
             }
 
             $line->update([
-                'qty_cancelled' => (int) $line->qty_cancelled + (int) $line->qty_pending,
+                'qty_cancelled' => bcadd((string) $line->qty_cancelled, (string) $line->qty_pending, ProductQuantityPolicy::SCALE),
             ]);
 
             $line = Credits::refreshLine($line);
@@ -537,13 +554,23 @@ class CreditReceiptController extends Controller
             'items' => collect($data['items'] ?? [])
                 ->map(fn (array $item) => [
                     'product_id' => (int) ($item['product_id'] ?? 0),
-                    'quantity' => (int) ($item['quantity'] ?? 0),
+                    'quantity' => ProductQuantityPolicy::canonicalForIdempotency($item['quantity'] ?? 0),
                     'unit_price' => isset($item['unit_price']) ? round((float) $item['unit_price'], 4) : null,
                 ])
                 ->sortBy(fn (array $item) => implode('|', [$item['product_id'], $item['quantity'], $item['unit_price'] ?? '']))
                 ->values()
                 ->all(),
         ];
+    }
+
+    private function quantityLineAmount(string $unitPrice, string $quantity): string
+    {
+        return $this->roundMoney(bcmul($unitPrice, $quantity, 8));
+    }
+
+    private function roundMoney(string $amount): string
+    {
+        return bcdiv(bcadd($amount, '0.005', 8), '1', 2);
     }
 
     private function resolveCustomer(array $data): Customer
