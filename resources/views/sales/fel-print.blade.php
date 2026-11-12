@@ -146,6 +146,13 @@
     </style>
 </head>
 <body>
+@php
+    $formatQuantity = static function ($quantity): string {
+        $value = rtrim(rtrim((string) ($quantity ?? '0'), '0'), '.');
+
+        return $value === '' || $value === '-0' ? '0' : $value;
+    };
+@endphp
     <div class="actions">
         <button type="button" onclick="window.print()">Imprimir</button>
         <button type="button" onclick="window.close()">Cerrar</button>
@@ -206,7 +213,7 @@
                 @foreach($items as $item)
                     <tr>
                         <td>{{ $item->product_name }}</td>
-                        <td class="right">{{ number_format((float) $item->quantity, 2) }}</td>
+                        <td class="right">{{ $formatQuantity($item->quantity) }}</td>
                         <td class="right">Q{{ number_format((float) $item->unit_price, 2) }}</td>
                         <td class="right">Q{{ number_format((float) $item->total, 2) }}</td>
                     </tr>

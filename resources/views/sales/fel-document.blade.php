@@ -44,6 +44,11 @@
 </head>
 <body>
 @php
+    $formatQuantity = static function ($quantity): string {
+        $value = rtrim(rtrim((string) ($quantity ?? '0'), '0'), '.');
+
+        return $value === '' || $value === '-0' ? '0' : $value;
+    };
     $paymentLabels = [
         'cash' => 'Efectivo',
         'card' => 'Tarjeta',
@@ -137,7 +142,7 @@
         <tbody>
         @foreach ($items as $item)
             <tr>
-                <td class="center">{{ (int) $item->quantity }}</td>
+                <td class="center">{{ $formatQuantity($item->quantity) }}</td>
                 <td>{{ $item->product_name }}</td>
                 <td class="right">{{ formatMoney($item->unit_price, 'GT') }}</td>
                 <td class="right">{{ formatMoney($item->discount_amount ?? 0, 'GT') }}</td>

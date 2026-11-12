@@ -8,6 +8,11 @@
 </head>
 <body>
 @php
+    $formatQuantity = static function ($quantity): string {
+        $value = rtrim(rtrim((string) ($quantity ?? '0'), '0'), '.');
+
+        return $value === '' || $value === '-0' ? '0' : $value;
+    };
     $paymentLabels = [
         'cash' => 'Efectivo',
         'card' => 'Tarjeta',
@@ -118,7 +123,7 @@
             <div class="item">
                 <div class="item-name">{{ $item->product_name }}</div>
                 <div class="row">
-                    <span>Cant: {{ number_format((float) $item->quantity, 2, '.', ',') }}</span>
+                    <span>Cant: {{ $formatQuantity($item->quantity) }}</span>
                     <span>Precio: {{ formatMoney($item->unit_price, $country) }}</span>
                 </div>
                 <div class="row muted">

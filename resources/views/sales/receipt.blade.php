@@ -13,6 +13,11 @@
 </head>
 <body>
 @php
+    $formatQuantity = static function ($quantity): string {
+        $value = rtrim(rtrim((string) ($quantity ?? '0'), '0'), '.');
+
+        return $value === '' || $value === '-0' ? '0' : $value;
+    };
     $paymentLabels = [
         'cash' => 'Efectivo',
         'card' => 'Tarjeta',
@@ -123,7 +128,7 @@
         <tbody>
         @forelse ($items as $item)
             <tr>
-                <td class="right">{{ number_format((float) $item->quantity, 2, '.', ',') }}</td>
+                <td class="right">{{ $formatQuantity($item->quantity) }}</td>
                 <td>{{ $item->product_name }}</td>
                 <td class="right">{{ formatMoney($item->unit_price, $country) }}</td>
                 <td class="right">{{ formatMoney($item->discount_amount ?? 0, $country) }}</td>
