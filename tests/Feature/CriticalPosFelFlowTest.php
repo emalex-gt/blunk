@@ -4632,6 +4632,97 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('2.6250', $line->fresh()->qty_pending);
     }
 
+    public function test_unknown_decimal_credit_reservation_fel_intent_keeps_the_reservation_pending(): void
+    {
+        [$business, $user] = $this->tenant(
+            country: 'GT',
+            modules: ['pos', 'cash_register', 'credits', 'fel_gt'],
+            role: 'owner',
+            allowInvoices: true,
+            enableCredits: true,
+        );
+        $this->felSettings($business);
+        $this->setConfirmedFelBranchLocation($business);
+        $product = $this->product($business, stock: 10, salePrice: 42.15);
+        $product->update(['allow_decimal_quantity' => true]);
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['items'][0]['quantity'] = '3.7500';
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+
+        $line = CreditReceiptLine::query()->sole();
+        $customer = CreditReceipt::query()->findOrFail($line->credit_receipt_id)->customer()->firstOrFail();
+        $this->openCashRegister($business, $user);
+        $digifact = Mockery::mock(DigifactInvoiceService::class);
+        $digifact->shouldReceive('buildIntentPayload')->once()->andReturn(['Header' => ['IssuedDateTime' => now('America/Guatemala')->format('Y-m-d\\TH:i:sP')]]);
+        $digifact->shouldReceive('certifyIntent')->once()->andThrow(new FelException('Tiempo de espera de Digifact.'));
+        $this->app->instance(DigifactInvoiceService::class, $digifact);
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $this->salePayload(
+            $product,
+            quantity: '1.1250',
+            total: 47.42,
+            documentType: 'invoice',
+            customer: [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'doc_type' => $customer->doc_type,
+                'doc_number' => $customer->doc_number,
+                'country' => $customer->country,
+            ],
+            itemOverrides: ['credit_line_id' => $line->id],
+        ))->assertSessionHasNoErrors()->assertSessionHas('warning');
+
+        $intent = FiscalDocumentIntent::query()->sole();
+        $this->assertSame(FiscalDocumentIntent::UNKNOWN, $intent->status);
+        $this->assertSame(4, $intent->operation_payload['credit_line_associations']['version']);
+        $this->assertSame('1.125', $intent->operation_payload['credit_line_associations']['by_item_index'][0]['quantity']);
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertSame('3.7500', $line->fresh()->qty_pending);
+        $this->assertSame('3.7500', $line->fresh()->qty_reserved);
+    }
+
+    public function test_cancelling_a_decimal_credit_reservation_sale_restores_the_exact_pending_quantity_once(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 42.15);
+        $product->update(['allow_decimal_quantity' => true]);
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['items'][0]['quantity'] = '3.7500';
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+
+        $line = CreditReceiptLine::query()->sole();
+        $customer = CreditReceipt::query()->findOrFail($line->credit_receipt_id)->customer()->firstOrFail();
+        $this->openCashRegister($business, $user);
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $product,
+            quantity: '1.1250',
+            total: 47.42,
+            customer: [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'doc_type' => $customer->doc_type,
+                'doc_number' => $customer->doc_number,
+                'country' => $customer->country,
+            ],
+            itemOverrides: ['credit_line_id' => $line->id],
+        ))->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->sole();
+        $this->actingAs($user)->post(route('sales.cancel', $sale), [
+            'idempotency_key' => 'decimal-credit-cancel-'.uniqid(),
+            'reason' => 'Corrección de prueba',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame('cancelled', $sale->fresh()->status);
+        $this->assertSame('0.0000', $line->fresh()->qty_invoiced);
+        $this->assertSame('3.7500', $line->fresh()->qty_pending);
+        $this->assertSame('3.7500', $line->fresh()->qty_reserved);
+        $this->assertDatabaseHas('credit_receipt_line_invoice', [
+            'credit_receipt_line_id' => $line->id,
+            'sale_id' => $sale->id,
+        ]);
+    }
+
     public function test_credit_reservation_checkout_rejects_a_different_customer_without_side_effects(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits'], role: 'owner', enableCredits: true);
