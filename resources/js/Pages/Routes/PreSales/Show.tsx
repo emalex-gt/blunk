@@ -1,5 +1,6 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { makeOperationKey } from '@/lib/idempotency';
+import { compareQuantity } from '@/utils/quantity';
 import { Head, Link, router, useForm } from '@inertiajs/react';
 import { FormEvent, ReactNode, useRef, useState } from 'react';
 
@@ -475,7 +476,7 @@ export default function Show({ preSale, canInvoice, canCertifyFel, canRegisterCo
                             <table className="min-w-full text-sm">
                                 <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Producto</th><th className="px-3 py-2 text-right">Preparado</th><th className="px-3 py-2 text-right">Precio</th><th className="px-3 py-2 text-right">Total</th></tr></thead>
                                 <tbody className="divide-y divide-slate-100">
-                                    {preSale.items.filter((item) => (item.picked_quantity ?? 0) > 0).map((item) => <tr key={item.id}><td className="px-3 py-2 font-medium text-slate-900">{item.product_name}</td><td className="px-3 py-2 text-right">{formatNumber(item.picked_quantity ?? 0)}</td><td className="px-3 py-2 text-right">Q {formatMoney(item.unit_price)}</td><td className="px-3 py-2 text-right">Q {formatMoney(preparedLineTotal(item))}</td></tr>)}
+                                    {preSale.items.filter((item) => compareQuantity(item.picked_quantity ?? '0', '0') === 1).map((item) => <tr key={item.id}><td className="px-3 py-2 font-medium text-slate-900">{item.product_name}</td><td className="px-3 py-2 text-right">{formatNumber(item.picked_quantity ?? 0)}</td><td className="px-3 py-2 text-right">Q {formatMoney(item.unit_price)}</td><td className="px-3 py-2 text-right">Q {formatMoney(preparedLineTotal(item))}</td></tr>)}
                                 </tbody>
                                 <tfoot className="bg-slate-50 font-semibold text-slate-900"><tr><td colSpan={3} className="px-3 py-2 text-right">Total</td><td className="px-3 py-2 text-right">Q {formatMoney(preSale.prepared_total)}</td></tr></tfoot>
                             </table>
