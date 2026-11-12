@@ -178,8 +178,8 @@ type CartItem = {
     manual_price: boolean;
     price_warning: string | null;
     credit_line_id?: number | null;
-    max_quantity?: number | null;
-    credit_reserved_quantity?: number | null;
+    max_quantity?: number | string | null;
+    credit_reserved_quantity?: number | string | null;
     credit_receipt_number?: string | null;
     locked_credit_line?: boolean;
     quotation_item_id?: number | null;
@@ -201,9 +201,9 @@ type CreditInvoicePayload = {
     lines: {
         credit_line_id: number;
         product_id: number;
-        quantity: number;
-        max_quantity: number;
-        reserved_quantity: number;
+        quantity: number | string;
+        max_quantity: number | string;
+        reserved_quantity: number | string;
         unit_price: number;
         receipt_number: string;
     }[];
@@ -277,8 +277,8 @@ type PosDraft = {
         price_source?: CartItem['price_source'];
         manual_price?: boolean;
         credit_line_id?: number | null;
-        max_quantity?: number | null;
-        credit_reserved_quantity?: number | null;
+        max_quantity?: number | string | null;
+        credit_reserved_quantity?: number | string | null;
         credit_receipt_number?: string | null;
         locked_credit_line?: boolean;
         quotation_item_id?: number | null;
@@ -1691,9 +1691,7 @@ export default function POS({
             return true;
         }
 
-        const unsupported = Boolean(fractionalLine.credit_line_id)
-            || Boolean(quotation_source)
-            || effectiveCheckoutType === 'credit';
+        const unsupported = Boolean(quotation_source);
 
         if (!unsupported) {
             return true;

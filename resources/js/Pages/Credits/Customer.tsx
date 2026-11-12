@@ -21,7 +21,7 @@ type CreditLine = {
     id: number;
     credit_receipt_id: number;
     product_name: string;
-    qty_pending: number;
+    qty_pending: number | string;
     unit_price: string | number;
     pending_total: string | number;
     status: string;

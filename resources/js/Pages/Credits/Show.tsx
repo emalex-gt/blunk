@@ -15,7 +15,7 @@ type CreditReceipt = {
         id: number;
         product_name: string;
         quantity: number;
-        qty_pending: number;
+        qty_pending: number | string;
         unit_price: string | number;
         line_total: string | number;
         status: string;
