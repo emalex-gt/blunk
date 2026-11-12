@@ -18,6 +18,7 @@ use App\Support\BranchInventory;
 use App\Services\BranchAccessService;
 use App\Support\Credits;
 use App\Support\Inventory\DraftReservationLease;
+use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\Exports\TableExporter;
 use App\Support\Permissions;
 use App\Support\PriceLists;
@@ -275,7 +276,7 @@ class ReportController extends Controller
                 'product_name' => $row->product_name,
                 'product_code' => $row->product_code,
                 'supplier_name' => $row->supplier_name,
-                'quantity' => (float) $row->quantity,
+                'quantity' => $this->physicalQuantity($row->quantity),
                 'unit_cost' => (float) $row->unit_cost,
                 'supplier_invoice_number' => $row->supplier_invoice_number,
                 'branch_name' => $row->branch_name,
@@ -287,7 +288,7 @@ class ReportController extends Controller
             ['key' => 'product_name', 'label' => 'Producto'],
             ['key' => 'product_code', 'label' => 'Código'],
             ['key' => 'supplier_name', 'label' => 'Proveedor'],
-            ['key' => 'quantity', 'label' => 'Cantidad', 'type' => 'number'],
+            ['key' => 'quantity', 'label' => 'Cantidad', 'type' => 'quantity'],
             ['key' => 'unit_cost', 'label' => 'Costo unitario', 'type' => 'money', 'decimals' => 5],
             ['key' => 'supplier_invoice_number', 'label' => 'Factura proveedor'],
             ['key' => 'branch_name', 'label' => 'Sucursal'],
@@ -414,16 +415,16 @@ class ReportController extends Controller
                 'product' => $row->product,
                 'code' => $row->code,
                 'category' => $row->category,
-                'minimum' => (float) $row->minimum,
-                'physical_stock' => (float) $row->stock,
-                'stock' => (float) $row->stock,
-                'reserved_pre_sales' => (float) $row->reserved_pre_sales,
-                'reserved_credit_reservations' => (float) $row->reserved_credit_reservations,
-                'reserved_other' => (float) $row->reserved_other,
-                'reserved_total' => (float) $row->reserved_total,
-                'reserved' => (float) $row->reserved_total,
-                'available' => (float) $row->available,
-                'suggested_missing' => (float) $row->suggested_missing,
+                'minimum' => $this->physicalQuantity($row->minimum),
+                'physical_stock' => $this->physicalQuantity($row->stock),
+                'stock' => $this->physicalQuantity($row->stock),
+                'reserved_pre_sales' => $this->physicalQuantity($row->reserved_pre_sales),
+                'reserved_credit_reservations' => $this->physicalQuantity($row->reserved_credit_reservations),
+                'reserved_other' => $this->physicalQuantity($row->reserved_other),
+                'reserved_total' => $this->physicalQuantity($row->reserved_total),
+                'reserved' => $this->physicalQuantity($row->reserved_total),
+                'available' => $this->physicalQuantity($row->available),
+                'suggested_missing' => $this->physicalQuantity($row->suggested_missing),
                 'last_in_at' => $row->last_in_at ? Carbon::parse($row->last_in_at)->timezone(tenantTimezone())->format('Y-m-d H:i') : '-',
                 'cardex_url' => route('products.stock-history', $row->id),
                 'reservations_url' => route('inventory.products.reservations', $row->id),
@@ -433,14 +434,14 @@ class ReportController extends Controller
             ['key' => 'product', 'label' => 'Producto'],
             ['key' => 'code', 'label' => 'Código/SKU'],
             ['key' => 'category', 'label' => 'Categoría'],
-            ['key' => 'minimum', 'label' => 'Mínimo', 'type' => 'number'],
-            ['key' => 'physical_stock', 'label' => 'Stock físico', 'type' => 'number'],
-            ['key' => 'reserved_pre_sales', 'label' => 'Reservado preventas', 'type' => 'number'],
-            ['key' => 'reserved_credit_reservations', 'label' => 'Reservado crédito', 'type' => 'number'],
-            ['key' => 'reserved_other', 'label' => 'Reservado otro', 'type' => 'number'],
+            ['key' => 'minimum', 'label' => 'Mínimo', 'type' => 'quantity'],
+            ['key' => 'physical_stock', 'label' => 'Stock físico', 'type' => 'quantity'],
+            ['key' => 'reserved_pre_sales', 'label' => 'Reservado preventas', 'type' => 'quantity'],
+            ['key' => 'reserved_credit_reservations', 'label' => 'Reservado crédito', 'type' => 'quantity'],
+            ['key' => 'reserved_other', 'label' => 'Reservado otro', 'type' => 'quantity'],
             ['key' => 'reserved_total', 'label' => 'Reservado total', 'type' => 'reservations'],
-            ['key' => 'available', 'label' => 'Disponible', 'type' => 'number'],
-            ['key' => 'suggested_missing', 'label' => 'Faltante sugerido', 'type' => 'number'],
+            ['key' => 'available', 'label' => 'Disponible', 'type' => 'quantity'],
+            ['key' => 'suggested_missing', 'label' => 'Faltante sugerido', 'type' => 'quantity'],
             ['key' => 'last_in_at', 'label' => 'Último ingreso'],
             ['key' => 'cardex_url', 'label' => 'Acción', 'type' => 'link', 'link_label' => 'Ver cardex'],
         ], $products, [
@@ -485,14 +486,14 @@ class ReportController extends Controller
             ->withQueryString()
             ->through(fn ($row) => [
                 'code' => $row->code ?: '-', 'product' => $row->product, 'category' => $row->category,
-                'cost_price' => $row->cost_price, 'sale_price' => $row->sale_price, 'physical_stock' => $row->physical_stock,
+                'cost_price' => $row->cost_price, 'sale_price' => $row->sale_price, 'physical_stock' => $this->physicalQuantity($row->physical_stock),
                 'status' => $row->cost_price === null ? 'Sin costo' : ((string) $row->cost_price === '0.00000' ? 'Costo cero' : 'Costo negativo'),
             ]);
 
         return $this->report('Productos sin costo', 'reports.products-without-cost', [
             ['key' => 'code', 'label' => 'Código/SKU'], ['key' => 'product', 'label' => 'Producto'], ['key' => 'category', 'label' => 'Categoría'],
             ['key' => 'cost_price', 'label' => 'Costo actual', 'type' => 'money', 'decimals' => 5], ['key' => 'sale_price', 'label' => 'Precio de venta', 'type' => 'money'],
-            ['key' => 'physical_stock', 'label' => 'Stock físico', 'type' => 'number'], ['key' => 'status', 'label' => 'Estado'],
+            ['key' => 'physical_stock', 'label' => 'Stock físico', 'type' => 'quantity'], ['key' => 'status', 'label' => 'Estado'],
         ], $rows, [
             'filters' => ['category_id' => $categoryId, 'product_search' => $productSearch, 'stock_state' => $stockState, 'price_type_id' => $priceType->id],
             'categories' => $this->reportCategories($businessId), 'priceTypes' => PriceLists::active($businessId), 'branch' => $scope->payload(),
@@ -596,7 +597,7 @@ class ReportController extends Controller
                 });
             });
 
-        $unitsSold = (float) (clone $base)->sum('sale_items.quantity');
+        $unitsSold = $this->physicalQuantity((clone $base)->sum('sale_items.quantity'));
         $totalSold = (float) (clone $base)->sum('sale_items.total');
         $topProduct = (clone $base)
             ->groupBy('sale_items.product_id', 'sale_items.product_name')
@@ -618,7 +619,7 @@ class ReportController extends Controller
             ['key' => 'product', 'label' => 'Producto'],
             ['key' => 'code', 'label' => 'Código/SKU'],
             ['key' => 'category', 'label' => 'Categoría'],
-            ['key' => 'quantity', 'label' => 'Cantidad vendida', 'type' => 'number'],
+            ['key' => 'quantity', 'label' => 'Cantidad vendida', 'type' => 'quantity'],
             ['key' => 'total', 'label' => 'Total vendido', 'type' => 'money'],
         ];
 
@@ -664,7 +665,7 @@ class ReportController extends Controller
                     'product' => $row->product,
                     'code' => $row->code,
                     'category' => $row->category,
-                    'quantity' => (float) $row->quantity_sold,
+                    'quantity' => $this->physicalQuantity($row->quantity_sold),
                     'total' => $total,
                 ];
 
@@ -786,7 +787,7 @@ class ReportController extends Controller
                     'code' => $product->code ?: $product->barcode ?: '-',
                     'product' => $product->name,
                     'category' => $product->category_name ?: '-',
-                    'stock' => (float) $product->stock,
+                    'stock' => $this->physicalQuantity($product->stock),
                     'first_entry_at' => $firstEntry?->format('Y-m-d H:i') ?? 'Sin registro',
                     'days_since_first_entry' => $firstEntry?->startOfDay()->diffInDays(now(tenantTimezone($business))->startOfDay()) ?? 'Sin registro',
                 ];
@@ -796,7 +797,7 @@ class ReportController extends Controller
             ['key' => 'code', 'label' => 'Código/SKU'],
             ['key' => 'product', 'label' => 'Producto'],
             ['key' => 'category', 'label' => 'Categoría'],
-            ['key' => 'stock', 'label' => 'Stock actual', 'type' => 'number'],
+            ['key' => 'stock', 'label' => 'Stock actual', 'type' => 'quantity'],
             ['key' => 'first_entry_at', 'label' => 'Primera entrada registrada'],
             ['key' => 'days_since_first_entry', 'label' => 'Días transcurridos', 'type' => 'number'],
         ], $products, [
@@ -856,14 +857,14 @@ class ReportController extends Controller
                 'name' => $product->name,
                 'code' => $product->code ?: $product->barcode,
                 'category' => $product->category?->name ?: '-',
-                'physical_stock' => (float) ($breakdown['physical_stock'] ?? 0),
-                'stock' => (float) ($breakdown['physical_stock'] ?? 0),
-                'reserved_pre_sales' => (float) ($breakdown['reserved_pre_sales'] ?? 0),
-                'reserved_credit_reservations' => (float) ($breakdown['reserved_credit_reservations'] ?? 0),
-                'reserved_other' => (float) ($breakdown['reserved_other'] ?? 0),
-                'reserved_total' => (float) ($breakdown['reserved_total'] ?? 0),
-                'reserved' => (float) ($breakdown['reserved_total'] ?? 0),
-                'available' => (float) ($breakdown['available_stock'] ?? 0),
+                'physical_stock' => $this->physicalQuantity($breakdown['physical_stock'] ?? 0),
+                'stock' => $this->physicalQuantity($breakdown['physical_stock'] ?? 0),
+                'reserved_pre_sales' => $this->physicalQuantity($breakdown['reserved_pre_sales'] ?? 0),
+                'reserved_credit_reservations' => $this->physicalQuantity($breakdown['reserved_credit_reservations'] ?? 0),
+                'reserved_other' => $this->physicalQuantity($breakdown['reserved_other'] ?? 0),
+                'reserved_total' => $this->physicalQuantity($breakdown['reserved_total'] ?? 0),
+                'reserved' => $this->physicalQuantity($breakdown['reserved_total'] ?? 0),
+                'available' => $this->physicalQuantity($breakdown['available_stock'] ?? 0),
                 'last_in_at' => $lastIn ? Carbon::parse($lastIn)->timezone(tenantTimezone())->format('Y-m-d H:i') : '-',
                 'cardex_url' => route('products.stock-history', $product->id),
                 'reservations_url' => route('inventory.products.reservations', $product->id),
@@ -874,11 +875,11 @@ class ReportController extends Controller
             ['key' => 'name', 'label' => 'Nombre del producto'],
             ['key' => 'code', 'label' => 'Código/SKU'],
             ['key' => 'category', 'label' => 'Categoría'],
-            ['key' => 'physical_stock', 'label' => 'Stock físico', 'type' => 'number'],
-            ['key' => 'reserved_pre_sales', 'label' => 'Reservado preventas', 'type' => 'number'],
-            ['key' => 'reserved_credit_reservations', 'label' => 'Reservado crédito', 'type' => 'number'],
+            ['key' => 'physical_stock', 'label' => 'Stock físico', 'type' => 'quantity'],
+            ['key' => 'reserved_pre_sales', 'label' => 'Reservado preventas', 'type' => 'quantity'],
+            ['key' => 'reserved_credit_reservations', 'label' => 'Reservado crédito', 'type' => 'quantity'],
             ['key' => 'reserved_total', 'label' => 'Reservado total', 'type' => 'reservations'],
-            ['key' => 'available', 'label' => 'Disponible', 'type' => 'number'],
+            ['key' => 'available', 'label' => 'Disponible', 'type' => 'quantity'],
             ['key' => 'last_in_at', 'label' => 'Fecha último ingreso'],
             ['key' => 'cardex_url', 'label' => 'Acción', 'type' => 'link', 'link_label' => 'Ver cardex'],
         ], $products, [
@@ -1038,8 +1039,8 @@ class ReportController extends Controller
 
         $defaultPriceType = PriceLists::getDefaultPriceType($businessId);
         $products->getCollection()->transform(function (Product $product) use ($scope, $businessId, $defaultPriceType) {
-            $stock = (float) DB::table('product_branch_stocks')->where('business_id', $businessId)->where('branch_id', $scope->branch->id)->where('product_id', $product->id)->value('stock');
-            $reserved = StockAvailability::reservedStock($product, null, $scope->branch->id);
+            $stock = $this->physicalQuantity(DB::table('product_branch_stocks')->where('business_id', $businessId)->where('branch_id', $scope->branch->id)->where('product_id', $product->id)->value('stock'));
+            $reserved = $this->physicalQuantity(StockAvailability::reservedStock($product, null, $scope->branch->id));
             $salePrice = $defaultPriceType
                 ? PriceLists::getProductPrice($product->id, $defaultPriceType->id, $businessId, $scope->branch->id)
                 : null;
@@ -1050,12 +1051,12 @@ class ReportController extends Controller
                 'product' => $product->name,
                 'stock' => $stock,
                 'reserved' => $reserved,
-                'available' => $stock - $reserved,
+                'available' => ProductQuantityPolicy::subtract($stock, $reserved),
                 'cost_price' => $cost,
                 'sale_price' => (float) $salePrice,
-                'total_cost' => round($stock * $cost, 2),
-                'total_sale' => round($stock * (float) $salePrice, 2),
-                'possible_profit' => round(($stock * (float) $salePrice) - ($stock * $cost), 2),
+                'total_cost' => $this->moneyForQuantity($cost, $stock),
+                'total_sale' => $this->moneyForQuantity($salePrice, $stock),
+                'possible_profit' => round($this->moneyForQuantity($salePrice, $stock) - $this->moneyForQuantity($cost, $stock), 2),
             ];
         });
 
@@ -1100,9 +1101,9 @@ class ReportController extends Controller
 
         return $this->report('Dinero en bodega', 'reports.warehouse-money', [
             ['key' => 'product', 'label' => 'Producto'],
-            ['key' => 'stock', 'label' => 'Existencia', 'type' => 'number'],
-            ['key' => 'reserved', 'label' => 'Reservado', 'type' => 'number'],
-            ['key' => 'available', 'label' => 'Disponible', 'type' => 'number'],
+            ['key' => 'stock', 'label' => 'Existencia', 'type' => 'quantity'],
+            ['key' => 'reserved', 'label' => 'Reservado', 'type' => 'quantity'],
+            ['key' => 'available', 'label' => 'Disponible', 'type' => 'quantity'],
             ['key' => 'cost_price', 'label' => 'Precio costo', 'type' => 'money'],
             ['key' => 'sale_price', 'label' => 'Precio venta predeterminado', 'type' => 'money'],
             ['key' => 'total_cost', 'label' => 'Total costo', 'type' => 'money'],
@@ -1279,7 +1280,7 @@ class ReportController extends Controller
             ['key' => 'nit', 'label' => 'NIT'],
             ['key' => 'number', 'label' => 'No. recibo / No. venta'],
             ['key' => 'product', 'label' => 'Producto'],
-            ['key' => 'quantity', 'label' => 'Cantidad vendida', 'type' => 'number'],
+            ['key' => 'quantity', 'label' => 'Cantidad vendida', 'type' => 'quantity'],
             ['key' => 'total_cost', 'label' => 'Total costo', 'type' => 'money'],
             ['key' => 'total', 'label' => 'Total venta', 'type' => 'money'],
             ['key' => 'profit', 'label' => 'Utilidad', 'type' => 'money'],
@@ -1292,7 +1293,7 @@ class ReportController extends Controller
             ['key' => 'date', 'label' => 'Fecha'],
             ['key' => 'seller', 'label' => 'Vendedor'],
             ['key' => 'customer', 'label' => 'Cliente'],
-            ['key' => 'quantity', 'label' => 'Cantidad', 'type' => 'number'],
+            ['key' => 'quantity', 'label' => 'Cantidad', 'type' => 'quantity'],
             ['key' => 'product', 'label' => 'Producto'],
             ['key' => 'unit_price', 'label' => 'Precio unitario', 'type' => 'money'],
             ['key' => 'total', 'label' => 'Total', 'type' => 'money'],
@@ -1313,7 +1314,7 @@ class ReportController extends Controller
             ->whereBetween('sales.created_at', [$range->start, $range->end])
             ->where(fn ($query) => $query->where('sales.status', 'completed')->orWhereNull('sales.status'));
         $distinctProducts = (int) (clone $base)->distinct('sale_items.product_id')->count('sale_items.product_id');
-        $unitsSold = (float) (clone $base)->sum('sale_items.quantity');
+        $unitsSold = $this->physicalQuantity((clone $base)->sum('sale_items.quantity'));
         $totalSold = (float) (clone $base)->sum('sale_items.total');
         $rows = $base
             ->select([
@@ -1328,7 +1329,7 @@ class ReportController extends Controller
 
         return $this->report('Productos vendidos resumido', 'reports.products-sold-summary', [
             ['key' => 'product', 'label' => 'Producto'],
-            ['key' => 'quantity', 'label' => 'Cantidad vendida', 'type' => 'number'],
+            ['key' => 'quantity', 'label' => 'Cantidad vendida', 'type' => 'quantity'],
             ['key' => 'total', 'label' => 'Total monetario vendido', 'type' => 'money'],
         ], $rows, [
             'filters' => ['date_from' => $range->dateFrom, 'date_to' => $range->dateTo],
@@ -1377,7 +1378,7 @@ class ReportController extends Controller
                 'nit' => $row->nit ?: 'CF',
                 'number' => 'V-'.$row->business_number,
                 'product' => $row->product,
-                'quantity' => (float) $row->quantity,
+                'quantity' => $this->physicalQuantity($row->quantity),
                 'unit_price' => (float) $row->unit_price,
                 'total' => (float) $row->total,
                 'total_cost' => $includeCost ? (float) $row->total_cost : null,
@@ -1424,6 +1425,17 @@ class ReportController extends Controller
             'notice' => $extra['notice'] ?? null,
             'maxRangeLabel' => $extra['maxRangeLabel'] ?? 'Rango máximo: 3 meses',
         ]);
+    }
+
+    /** Physical product quantities cross the report boundary as exact strings. */
+    private function physicalQuantity(mixed $quantity): string
+    {
+        return ProductQuantityPolicy::signed($quantity ?? 0);
+    }
+
+    private function moneyForQuantity(mixed $unitPrice, string $quantity): float
+    {
+        return round((float) bcmul(number_format((float) $unitPrice, 5, '.', ''), $quantity, 8), 2);
     }
 
     private function reportPriceType(Request $request, int $businessId): PriceType
