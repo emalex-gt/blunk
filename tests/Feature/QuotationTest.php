@@ -183,6 +183,83 @@ class QuotationTest extends TestCase
         $this->assertSame('9.25', $sale->total);
     }
 
+    public function test_decimal_quotation_rejects_tampered_line_discount_during_conversion(): void
+    {
+        [$business, $user, $product] = $this->tenant();
+        $product->update(['allow_decimal_quantity' => true]);
+
+        TenantModule::query()->create([
+            'business_id' => $business->id,
+            'module' => 'discounts',
+            'is_enabled' => true,
+            'enabled_at' => now(),
+        ]);
+
+        $payload = $this->payload($product, null, '1.125');
+        $payload['items'][0]['line_discount_amount'] = 1;
+        $payload['items'][0]['line_discount_reason'] = 'Descuento de línea';
+        $payload['discount'] = [
+            'type' => 'fixed',
+            'value' => 1,
+            'reason' => 'Descuento general',
+        ];
+
+        $this->actingAs($user)
+            ->post(route('quotations.store'), $payload)
+            ->assertRedirect();
+
+        $quotation = Quotation::query()->with('items')->sole();
+        $line = $quotation->items->sole();
+
+        $this->openCash($business, $user);
+
+        // Intento de aumentar el descuento original de Q 1.00 a Q 2.00.
+        $salePayload = $this->salePayload($quotation, [[
+            'product_id' => $product->id,
+            'quotation_item_id' => $line->id,
+            'quantity' => '1.125',
+            'unit_price' => 10,
+            'line_discount_amount' => 2,
+            'line_discount_reason' => 'Descuento de línea',
+        ]], 8.25);
+
+        $salePayload['discount'] = [
+            'type' => 'fixed',
+            'value' => 1,
+            'reason' => 'Descuento general',
+        ];
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $salePayload)
+            ->assertSessionHasErrors('items');
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertSame(Quotation::OPEN, $quotation->fresh()->status);
+        // Segundo intento: mantener el descuento de línea original,
+        // pero modificar el descuento general de Q 1.00 a Q 2.00.
+        $generalDiscountPayload = $this->salePayload($quotation, [[
+            'product_id' => $product->id,
+            'quotation_item_id' => $line->id,
+            'quantity' => '1.125',
+            'unit_price' => 10,
+            'line_discount_amount' => 1,
+            'line_discount_reason' => 'Descuento de línea',
+        ]], 8.25);
+
+        $generalDiscountPayload['discount'] = [
+            'type' => 'fixed',
+            'value' => 2,
+            'reason' => 'Descuento general',
+        ];
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $generalDiscountPayload)
+            ->assertSessionHasErrors('discount');
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertSame(Quotation::OPEN, $quotation->fresh()->status);
+    }
+
     public function test_decimal_quotation_rejects_precision_beyond_four_positions(): void
     {
         [, $user, $product] = $this->tenant();
@@ -890,7 +967,7 @@ class QuotationTest extends TestCase
             'all_branches_access' => true,
         ]);
         Permissions::assignRole($user, 'owner');
-        BranchInventory::defaultBranch($business->id);
+        $branch = BranchInventory::defaultBranch($business->id);
         $product = Product::query()->create([
             'business_id' => $business->id,
             'name' => 'Producto cotizable',
@@ -901,7 +978,7 @@ class QuotationTest extends TestCase
             'min_stock' => 0,
             'is_active' => true,
         ]);
-
+        BranchInventory::adjust($product, $branch->id, 5);
         return [$business, $user, $product];
     }
 }

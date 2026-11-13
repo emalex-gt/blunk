@@ -523,12 +523,6 @@ class SaleController extends Controller
             if (! Permissions::canApplyDiscounts($request->user())) {
                 abort(403, 'No tienes permiso para aplicar descuentos.');
             }
-
-            if (filled($data['quotation_id'] ?? null)) {
-                throw ValidationException::withMessages([
-                    'items' => 'Las cotizaciones aún no admiten descuentos de línea.',
-                ]);
-            }
         }
 
         if (collect($data['items'])->contains(fn (array $item) => filled($item['credit_line_id'] ?? null))
@@ -561,6 +555,25 @@ class SaleController extends Controller
             $quotation = filled($data['quotation_id'] ?? null)
                 ? $this->lockedQuotationForCheckout($request, $business, $branch, (int) $data['quotation_id'], (bool) ($data['quotation_expired_confirmed'] ?? false))
                 : null;
+            $quotationHasLineDiscounts = $quotation
+                ? $quotation->items->contains(
+                    fn ($line): bool => (float) ($line->line_discount_amount ?? 0) > 0
+                )
+                : false;
+
+            $submittedHasLineDiscounts = collect($data['items'])->contains(
+                fn (array $item): bool => (float) ($item['line_discount_amount'] ?? 0) > 0
+            );
+
+            if (
+                $quotation
+                && ($quotationHasLineDiscounts || $submittedHasLineDiscounts)
+                && ! $this->quotationCartIsExact($quotation, $data['items'])
+            ) {
+                throw ValidationException::withMessages([
+                    'items' => 'Los descuentos y las líneas deben coincidir con la cotización original.',
+                ]);
+            }
             $openSession = $isCreditSale ? null : CashRegister::requireOpenSession(
                 $businessId,
                 'Debes abrir caja antes de registrar ventas.',
@@ -744,8 +757,26 @@ class SaleController extends Controller
             }
 
             $subtotalAfterLineDiscount = round(collect($saleLines)->sum('line_total_after_line_discount'), 2);
-            $discount = $this->trustedQuotationDiscount($quotation, $data, $subtotalAfterLineDiscount)
-                ?? $this->resolveSaleDiscount($request, $data['discount'] ?? null, $subtotalAfterLineDiscount);
+
+            $trustedDiscount = $this->trustedQuotationDiscount(
+                $quotation,
+                $data,
+                $subtotalAfterLineDiscount
+            );
+
+            if ($quotationHasLineDiscounts && $trustedDiscount === null) {
+                throw ValidationException::withMessages([
+                    'discount' => 'El descuento general debe coincidir con la cotización original.',
+                ]);
+            }
+
+            $discount = $trustedDiscount
+                ?? $this->resolveSaleDiscount(
+                    $request,
+                    $data['discount'] ?? null,
+                    $subtotalAfterLineDiscount
+                );
+
             $generalLineDiscounts = $this->distributeDiscount($saleLines, $discount['amount'], $subtotalAfterLineDiscount);
             $total = round($subtotalAfterLineDiscount - $discount['amount'], 2);
             $isCfInvoice = $this->isFinalConsumerSaleData($data['customer'] ?? null, $customer, $customerSnapshot);
