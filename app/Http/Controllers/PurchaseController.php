@@ -592,9 +592,10 @@ class PurchaseController extends Controller
 
     private function roundDecimal(string $value, int $scale): string
     {
-        $halfUnit = '0.'.str_repeat('0', max(0, $scale - 1)).'5';
+        $halfUnit = '0.'.str_repeat('0', $scale).'5';
+        $offset = str_starts_with($value, '-') ? '-'.$halfUnit : $halfUnit;
 
-        return bcadd(bcadd($value, $halfUnit, $scale + 1), '0', $scale);
+        return bcadd(bcadd($value, $offset, $scale + 1), '0', $scale);
     }
 
     private function normalizeProductSearchTerm(string $value): string
