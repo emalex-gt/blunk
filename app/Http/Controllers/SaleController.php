@@ -3256,7 +3256,7 @@ class SaleController extends Controller
             ->all();
 
         $lines = CreditReceiptLine::query()
-            ->with('receipt:id,business_id,branch_id,customer_id,customer_doc_type,customer_doc_number')
+            ->with('receipt:id,business_id,branch_id,customer_id,customer_name,customer_doc_type,customer_doc_number')
             ->where('business_id', $business->id)
             ->where('branch_id', $branch->id)
             ->whereIn('id', $lineIds)
