@@ -92,9 +92,10 @@ class OperationalMonitorController extends Controller
         $overdueAt = $lastRun->finished_at->copy()->addMinutes($overdueMinutes);
         $checksFailed = $lastRun->status === 'failed'
             || collect($lastRun->checks)->contains(fn (array $check) => ($check['status'] ?? null) === 'failed');
+        $checksPartial = collect($lastRun->checks)->contains(fn (array $check) => ($check['status'] ?? null) === 'partial');
         $state = now()->gt($overdueAt)
             ? 'overdue'
-            : ($checksFailed ? 'checks_failed' : ($lastRun->status === 'degraded' ? 'incidents' : 'healthy'));
+            : ($checksFailed ? 'checks_failed' : ($checksPartial && (int) $lastRun->active_incident_count === 0 ? 'partial' : ($lastRun->status === 'degraded' ? 'incidents' : 'healthy')));
 
         return [
             'state' => $state,
@@ -102,6 +103,7 @@ class OperationalMonitorController extends Controller
             'message' => match ($state) {
                 'overdue' => 'La última ejecución superó el umbral configurado; el scheduler podría estar detenido o retrasado.',
                 'checks_failed' => 'La última ejecución terminó, pero una o más comprobaciones fallaron.',
+                'partial' => 'La última ejecución fue parcial; no hay incidencias confirmadas en las comprobaciones incompletas.',
                 'incidents' => 'La última ejecución terminó con incidencias activas.',
                 default => 'La última ejecución terminó correctamente. Esto no confirma por sí solo que el scheduler siga activo.',
             },
