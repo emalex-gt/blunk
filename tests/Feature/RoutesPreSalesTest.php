@@ -2926,7 +2926,7 @@ class RoutesPreSalesTest extends TestCase
         $seller = $this->user($business, $branch, 'pre_seller');
         $product = $this->product($business, $branch, stock: 10.5);
         $product->update(['allow_decimal_quantity' => true]);
-        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: 3.75);
+        $preSale = $this->submittedPreSale($business, $branch, $seller, $product, quantity: '3.7500');
         $item = $preSale->items()->firstOrFail();
 
         $this->actingAs($admin)
@@ -3878,7 +3878,7 @@ class RoutesPreSalesTest extends TestCase
         Branch $branch,
         User $seller,
         Product $product,
-        float $quantity = 1,
+        int|float|string $quantity = 1,
         string $customerName = 'Cliente enviado',
     ): PreSale {
         $visit = $this->startedVisit($business, $branch, $seller, $customerName);
