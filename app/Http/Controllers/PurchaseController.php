@@ -339,7 +339,7 @@ class PurchaseController extends Controller
             $purchaseTotal = $this->roundDecimal(bcadd($total, $this->decimal($data['transport_cost'] ?? 0, 2), 5), 5);
             $purchase->update(['total' => $purchaseTotal]);
 
-            if ($paidFromCash && $cashSession && ProductQuantityPolicy::compare($purchaseTotal, '0') > 0) {
+            if ($paidFromCash && $cashSession && bccomp($purchaseTotal, '0', 5) > 0) {
                 $cashPurchaseAmount = (float) $this->roundDecimal($purchaseTotal, 2);
                 CashRegister::recordMovement(
                     $cashSession,
