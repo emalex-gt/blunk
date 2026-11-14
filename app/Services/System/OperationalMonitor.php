@@ -12,6 +12,11 @@ use Illuminate\Support\Facades\Schema;
 
 class OperationalMonitor
 {
+    private const FISCAL_SAMPLE_LIMIT = 100;
+
+    private array $checkDetails = [];
+    private array $activeFingerprintAliases = [];
+
     public function __construct(private readonly OperationalIncidentManager $incidents) {}
 
     public function run(): array
@@ -29,21 +34,29 @@ class OperationalMonitor
         $startedNs = hrtime(true);
         $active = [];
         $checks = [];
+        $this->checkDetails = [];
+        $this->activeFingerprintAliases = [];
 
         try {
             foreach (['database', 'queue', 'fiscal', 'host'] as $check) {
+                $checkStartedAt = now();
+                $checkStartedNs = hrtime(true);
                 try {
                     $detected = $this->{$check}();
                     $active = array_merge($active, $detected);
-                    $checks[$check] = ['status' => 'ok', 'active_incidents' => count($detected)];
+                    $checks[$check] = $this->checkResult($check, $checkStartedAt, $checkStartedNs, 'ok', count($detected));
                 } catch (\Throwable $exception) {
                     $active[] = $this->report('monitor:'.$check.'_check_failed', 'monitor_check_failed', 'P1', 'La comprobación '.$check.' no pudo completarse.', ['check' => $check]);
-                    $checks[$check] = ['status' => 'failed', 'active_incidents' => 1];
+                    $checks[$check] = $this->checkResult($check, $checkStartedAt, $checkStartedNs, 'failed', 1);
                 }
             }
 
-            $fingerprints = array_column($active, 'fingerprint');
-            $completedChecks = collect($checks)->filter(fn (array $result) => $result['status'] === 'ok')->keys()->all();
+            $fingerprints = array_merge(array_column($active, 'fingerprint'), $this->activeFingerprintAliases);
+            $completedChecks = collect($checks)
+                ->flatMap(fn (array $result) => $result['recovery_scopes'] ?? [])
+                ->unique()
+                ->values()
+                ->all();
             try {
                 $this->incidents->recoverAbsent($fingerprints, $completedChecks);
             } catch (\Throwable $exception) {
@@ -51,7 +64,8 @@ class OperationalMonitor
             }
 
             $failedChecks = collect($checks)->where('status', 'failed')->count();
-            $status = $failedChecks > 0 ? 'failed' : (count($active) > 0 ? 'degraded' : 'healthy');
+            $partialChecks = collect($checks)->where('status', 'partial')->count();
+            $status = $failedChecks > 0 ? 'failed' : (count($active) > 0 || $partialChecks > 0 ? 'degraded' : 'healthy');
             $durationMs = (int) floor((hrtime(true) - $startedNs) / 1_000_000);
 
             try {
@@ -83,8 +97,27 @@ class OperationalMonitor
     {
         $active = [];
         if (Schema::hasTable('failed_jobs')) {
-            $count = DB::table('failed_jobs')->orderByDesc('id')->limit((int) config('operational_monitor.failed_jobs_threshold') + 1)->pluck('id')->count();
-            if ($count >= config('operational_monitor.failed_jobs_threshold')) $active[] = $this->report('monitor:failed_jobs', 'queue_failed_jobs', 'P1', 'Se detectaron trabajos fallidos en la cola.', ['count_sample' => $count]);
+            $windowHours = (int) config('operational_monitor.failed_jobs_window_hours');
+            $recentCutoff = now()->subHours($windowHours);
+            $threshold = (int) config('operational_monitor.failed_jobs_threshold');
+            // The current alert deliberately inspects only the configured window.
+            // Historical failed jobs remain available as a bounded summary below.
+            $recentCount = DB::table('failed_jobs')->where('failed_at', '>=', $recentCutoff)->orderByDesc('id')->limit($threshold + 1)->pluck('id')->count();
+            $historicalSample = DB::table('failed_jobs')->where('failed_at', '<', $recentCutoff)->orderByDesc('id')->limit(101)->pluck('id')->count();
+            $this->checkDetails['queue'] = [
+                'failed_jobs' => [
+                    'window_hours' => $windowHours,
+                    'recent_count_sample' => $recentCount,
+                    'historical_count_sample' => $historicalSample,
+                    'historical_is_bounded' => $historicalSample === 101,
+                ],
+            ];
+            if ($recentCount >= $threshold) $active[] = $this->report('monitor:failed_jobs', 'queue_failed_jobs', 'P1', 'Se detectaron trabajos fallidos recientes en la cola.', [
+                'recent_count_sample' => $recentCount,
+                'window_hours' => $windowHours,
+                'historical_count_sample' => $historicalSample,
+                'historical_is_bounded' => $historicalSample === 101,
+            ]);
         }
         if (config('queue.default') === 'database' && Schema::hasTable(config('queue.connections.database.table', 'jobs'))) {
             $oldest = DB::table(config('queue.connections.database.table', 'jobs'))->where('available_at', '<=', now()->timestamp)->orderBy('available_at')->value('available_at');
@@ -97,11 +130,116 @@ class OperationalMonitor
     {
         $active = [];
         $cutoff = now()->subMinutes((int) config('operational_monitor.fel_stale_minutes'));
-        $intents = FiscalDocumentIntent::query()->whereIn('status', [FiscalDocumentIntent::PENDING, FiscalDocumentIntent::UNKNOWN, FiscalDocumentIntent::CERTIFIED, FiscalDocumentIntent::RETRYABLE])->where('updated_at', '<=', $cutoff)->orderBy('id')->limit(101)->get(['id', 'business_id']);
-        foreach ($intents->groupBy('business_id') as $businessId => $group) $active[] = $this->report('monitor:fel_stale:'.$businessId, 'fel_stale_intents', 'P0', 'Existen intenciones fiscales pendientes de verificación fuera del umbral.', ['count_sample' => $group->count()], (int) $businessId);
-        $critical = FelIncident::query()->whereIn('status', ['open', 'review'])->whereIn('severity', ['critical', 'P0'])->orderBy('id')->limit(101)->get(['id', 'business_id']);
-        foreach ($critical->groupBy('business_id') as $businessId => $group) $active[] = $this->report('monitor:fel_critical:'.$businessId, 'fel_critical_incidents', 'P0', 'Existen incidencias FEL críticas pendientes de revisión.', ['count_sample' => $group->count()], (int) $businessId);
+        $intentRows = FiscalDocumentIntent::query()
+            ->whereIn('status', [FiscalDocumentIntent::PENDING, FiscalDocumentIntent::UNKNOWN, FiscalDocumentIntent::CERTIFIED, FiscalDocumentIntent::RETRYABLE])
+            ->where('updated_at', '<=', $cutoff)
+            ->orderBy('updated_at')
+            ->limit(self::FISCAL_SAMPLE_LIMIT + 1)
+            ->get(['id', 'business_id', 'environment', 'internal_reference', 'updated_at']);
+        $staleComplete = $intentRows->count() <= self::FISCAL_SAMPLE_LIMIT;
+        $intents = $intentRows->take(self::FISCAL_SAMPLE_LIMIT);
+        foreach ($intents->groupBy(fn (FiscalDocumentIntent $intent) => $intent->business_id.':'.$this->fiscalEnvironment($intent->environment)) as $group) {
+            $first = $group->first();
+            $environment = $this->fiscalEnvironment($first->environment);
+            $active[] = $this->report('monitor:fel_stale:'.$first->business_id.':'.$environment, 'fel_stale_intents', 'P0', 'Existen intenciones fiscales pendientes de verificación fuera del umbral.', $this->fiscalMetadata($group, $environment, ! $staleComplete), (int) $first->business_id);
+            $this->activeFingerprintAliases[] = 'monitor:fel_stale:'.$first->business_id;
+        }
+
+        $criticalRows = FelIncident::query()
+            ->with(['sale.fiscalDocumentIntent:id,business_id,finalized_sale_id,environment'])
+            ->whereIn('status', ['open', 'review'])
+            ->whereIn('severity', ['critical', 'P0'])
+            ->orderBy('id')
+            ->limit(self::FISCAL_SAMPLE_LIMIT + 1)
+            ->get(['id', 'business_id', 'sale_id', 'internal_reference', 'metadata', 'created_at']);
+        $criticalComplete = $criticalRows->count() <= self::FISCAL_SAMPLE_LIMIT;
+        $critical = $criticalRows->take(self::FISCAL_SAMPLE_LIMIT);
+        $intentIds = $critical->pluck('metadata.intent_id')->filter(fn ($id) => filter_var($id, FILTER_VALIDATE_INT) !== false)->unique()->values();
+        $linkedIntents = FiscalDocumentIntent::query()->whereIn('id', $intentIds)->get(['id', 'business_id', 'finalized_sale_id', 'environment'])->keyBy('id');
+        foreach ($critical->groupBy(function (FelIncident $incident) use ($linkedIntents): string {
+            $environment = $this->fiscalEnvironmentForIncident($incident, $linkedIntents);
+            return $incident->business_id.':'.$environment;
+        }) as $group) {
+            $first = $group->first();
+            $environment = $this->fiscalEnvironmentForIncident($first, $linkedIntents);
+            $active[] = $this->report('monitor:fel_critical:'.$first->business_id.':'.$environment, 'fel_critical_incidents', 'P0', 'Existen incidencias FEL críticas pendientes de revisión.', $this->felIncidentMetadata($group, $environment, ! $criticalComplete), (int) $first->business_id);
+            $this->activeFingerprintAliases[] = 'monitor:fel_critical:'.$first->business_id;
+        }
+
+        $recoveryScopes = ['fiscal_check'];
+        if ($staleComplete) $recoveryScopes[] = 'fiscal_stale';
+        if ($criticalComplete) $recoveryScopes[] = 'fiscal_critical';
+        $this->checkDetails['fiscal'] = [
+            'complete' => $staleComplete && $criticalComplete,
+            'recovery_scopes' => $recoveryScopes,
+            'sources' => [
+                'stale_intents' => ['complete' => $staleComplete, 'sample_limit' => self::FISCAL_SAMPLE_LIMIT],
+                'critical_incidents' => ['complete' => $criticalComplete, 'sample_limit' => self::FISCAL_SAMPLE_LIMIT],
+            ],
+        ];
         return $active;
+    }
+
+    private function checkResult(string $check, \Carbon\CarbonInterface $startedAt, int $startedNs, string $status, int $activeIncidents): array
+    {
+        $finishedAt = now();
+        $details = $this->checkDetails[$check] ?? [];
+        $complete = (bool) ($details['complete'] ?? true);
+        return [
+            'status' => $status === 'failed' ? 'failed' : ($complete ? 'ok' : 'partial'),
+            'result' => $status === 'failed' ? 'failed' : ($complete ? ($activeIncidents > 0 ? 'incidents' : 'healthy') : 'partial'),
+            'active_incidents' => $activeIncidents,
+            'started_at' => $startedAt->copy()->utc()->toIso8601String(),
+            'finished_at' => $finishedAt->copy()->utc()->toIso8601String(),
+            'duration_ms' => (int) floor((hrtime(true) - $startedNs) / 1_000_000),
+            'details' => $details,
+            'recovery_scopes' => $status === 'failed' ? [] : ($details['recovery_scopes'] ?? [$check]),
+        ];
+    }
+
+    private function fiscalEnvironment(mixed $environment): string
+    {
+        return in_array($environment, ['test', 'production'], true) ? $environment : 'unknown';
+    }
+
+    private function fiscalEnvironmentForIncident(FelIncident $incident, $linkedIntents): string
+    {
+        $intent = $incident->sale?->fiscalDocumentIntent;
+        if ($intent && (int) $intent->business_id === (int) $incident->business_id) {
+            return $this->fiscalEnvironment($intent->environment);
+        }
+
+        $intentId = data_get($incident->metadata, 'intent_id');
+        $intent = filter_var($intentId, FILTER_VALIDATE_INT) !== false ? $linkedIntents->get((int) $intentId) : null;
+        if ($intent && (int) $intent->business_id === (int) $incident->business_id && (! $incident->sale_id || (int) $intent->finalized_sale_id === (int) $incident->sale_id)) {
+            return $this->fiscalEnvironment($intent->environment);
+        }
+
+        return 'unknown';
+    }
+
+    private function fiscalMetadata($group, string $environment, bool $partial): array
+    {
+        $oldest = $group->min('updated_at');
+        return [
+            'environment' => $environment,
+            'count_sample' => $group->count(),
+            'sample_is_partial' => $partial,
+            'oldest_age_seconds' => $oldest ? (int) now()->diffInSeconds($oldest, true) : null,
+            'operations' => $group->take(10)->map(fn (FiscalDocumentIntent $intent) => ['intent_id' => $intent->id, 'internal_reference' => $intent->internal_reference])->values()->all(),
+        ];
+    }
+
+    private function felIncidentMetadata($group, string $environment, bool $partial): array
+    {
+        $oldest = $group->min('created_at');
+        return [
+            'environment' => $environment,
+            'count_sample' => $group->count(),
+            'sample_is_partial' => $partial,
+            'oldest_age_seconds' => $oldest ? (int) now()->diffInSeconds($oldest, true) : null,
+            'operations' => $group->take(10)->map(fn (FelIncident $incident) => ['fel_incident_id' => $incident->id, 'sale_id' => $incident->sale_id, 'internal_reference' => $incident->internal_reference])->values()->all(),
+        ];
     }
 
     private function host(): array

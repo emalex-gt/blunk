@@ -11,7 +11,12 @@ return [
     'cpu_load_max' => max(0.1, (float) env('OPERATIONAL_MONITOR_CPU_LOAD_MAX', 2.0)),
     'queue_lag_seconds' => max(30, (int) env('OPERATIONAL_MONITOR_QUEUE_LAG_SECONDS', 300)),
     'failed_jobs_threshold' => max(1, (int) env('OPERATIONAL_MONITOR_FAILED_JOBS_THRESHOLD', 1)),
+    'failed_jobs_window_hours' => max(1, (int) env('OPERATIONAL_MONITOR_FAILED_JOBS_WINDOW_HOURS', 24)),
     'fel_stale_minutes' => max(5, (int) env('OPERATIONAL_MONITOR_FEL_STALE_MINUTES', 30)),
+    // The console scheduler is configured every five minutes below. These values
+    // only describe when the UI should regard a persisted run as overdue.
+    'schedule_interval_minutes' => 5,
+    'run_overdue_minutes' => max(6, (int) env('OPERATIONAL_MONITOR_RUN_OVERDUE_MINUTES', 15)),
     'telegram' => [
         'token' => env('OPERATIONAL_MONITOR_TELEGRAM_BOT_TOKEN'),
         'chat_id' => env('OPERATIONAL_MONITOR_TELEGRAM_CHAT_ID'),

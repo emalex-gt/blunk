@@ -40,14 +40,9 @@ class RoutePreSaleInvoiceFiscalFinalizer
             ->findOrFail($preSaleId);
 
         if ($preSale->converted_sale_id) {
-            $intent->update([
-                'finalized_sale_id' => $preSale->converted_sale_id,
-                'status' => FiscalDocumentIntent::FINALIZED,
-                'finalized_at' => now(),
-                'last_finalization_error' => null,
+            throw ValidationException::withMessages([
+                'pre_sale' => 'La preventa ya está convertida. La certificación requiere conciliación manual sin duplicar la venta.',
             ]);
-
-            return $intent->refresh();
         }
 
         if ($preSale->status !== PreSale::STATUS_PICKED) {

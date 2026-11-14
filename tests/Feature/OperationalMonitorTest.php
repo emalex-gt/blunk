@@ -4,8 +4,11 @@ namespace Tests\Feature;
 
 use App\Models\OperationalIncident;
 use App\Models\OperationalMonitorRun;
+use App\Models\Business;
+use App\Models\FiscalDocumentIntent;
 use App\Models\User;
 use App\Services\System\OperationalIncidentManager;
+use App\Services\System\OperationalMonitor;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
@@ -66,5 +69,85 @@ class OperationalMonitorTest extends TestCase
                 ->where('lastRun.status', 'healthy')
                 ->where('lastRun.active_incident_count', 0)
             );
+    }
+
+    public function test_a_truncated_fiscal_intent_sample_never_resolves_existing_fiscal_incidents(): void
+    {
+        config(['operational_monitor.enabled' => true]);
+        $firstBusiness = $this->business('Monitor sample one');
+        $secondBusiness = $this->business('Monitor sample two');
+        $legacy = OperationalIncident::query()->create([
+            'fingerprint' => 'monitor:fel_stale:'.$firstBusiness->id,
+            'business_id' => $firstBusiness->id,
+            'type' => 'fel_stale_intents',
+            'severity' => 'P0',
+            'status' => OperationalIncident::OPEN,
+            'message' => 'FEL.',
+            'detected_at' => now(),
+            'last_occurred_at' => now(),
+        ]);
+
+        foreach (range(1, 101) as $index) {
+            $business = $index % 2 === 0 ? $firstBusiness : $secondBusiness;
+            FiscalDocumentIntent::query()->create([
+                'business_id' => $business->id,
+                'country' => 'GT',
+                'provider' => 'digifact',
+                'environment' => $index % 3 === 0 ? 'production' : 'test',
+                'document_type' => 'invoice',
+                'operation_type' => 'sale',
+                'internal_reference' => 'MON-SAMPLE-'.$index,
+                'idempotency_key' => 'mon-sample-'.$index,
+                'status' => FiscalDocumentIntent::UNKNOWN,
+                'operation_payload' => [],
+                'fiscal_payload' => [],
+                'updated_at' => now()->subHour(),
+            ]);
+        }
+
+        app(OperationalMonitor::class)->run();
+
+        $this->assertSame(OperationalIncident::OPEN, $legacy->fresh()->status);
+        $this->assertSame('partial', OperationalMonitorRun::query()->latest('id')->firstOrFail()->checks['fiscal']['status']);
+    }
+
+    public function test_a_successful_partial_fiscal_check_recovers_only_its_technical_failure(): void
+    {
+        config(['operational_monitor.enabled' => true]);
+        $business = $this->business('Monitor technical recovery');
+        $technical = OperationalIncident::query()->create([
+            'fingerprint' => 'monitor:fiscal_check_failed', 'type' => 'monitor_check_failed', 'severity' => 'P1',
+            'status' => OperationalIncident::OPEN, 'message' => 'Comprobación fiscal.', 'detected_at' => now(), 'last_occurred_at' => now(),
+        ]);
+        $stale = OperationalIncident::query()->create([
+            'fingerprint' => 'monitor:fel_stale:'.$business->id, 'business_id' => $business->id,
+            'type' => 'fel_stale_intents', 'severity' => 'P0', 'status' => OperationalIncident::OPEN,
+            'message' => 'FEL.', 'detected_at' => now(), 'last_occurred_at' => now(),
+        ]);
+
+        foreach (range(1, 101) as $index) {
+            FiscalDocumentIntent::query()->create([
+                'business_id' => $business->id, 'country' => 'GT', 'provider' => 'digifact', 'environment' => 'test',
+                'document_type' => 'invoice', 'operation_type' => 'sale', 'internal_reference' => 'MON-TECH-'.$index,
+                'idempotency_key' => 'mon-tech-'.$index, 'status' => FiscalDocumentIntent::UNKNOWN,
+                'operation_payload' => [], 'fiscal_payload' => [], 'updated_at' => now()->subHour(),
+            ]);
+        }
+
+        app(OperationalMonitor::class)->run();
+
+        $this->assertSame(OperationalIncident::RESOLVED, $technical->fresh()->status);
+        $this->assertSame(OperationalIncident::OPEN, $stale->fresh()->status);
+    }
+
+    private function business(string $name): Business
+    {
+        return Business::query()->create([
+            'name' => $name,
+            'slug' => str($name)->slug(),
+            'currency' => 'GTQ',
+            'country' => 'GT',
+            'is_active' => true,
+        ]);
     }
 }

@@ -32,6 +32,15 @@ final class CashRegisterClosingSales
             ->where('business_id', $session->business_id)
             ->where('branch_id', $session->branch_id)
             ->where('created_at', '<=', $to)
+            ->where(function ($query) use ($to) {
+                $query->where('status', 'completed')
+                    ->orWhereNull('status')
+                    ->orWhere(function ($query) use ($to) {
+                        $query->where('status', 'cancelled')
+                            ->whereNotNull('cancelled_at')
+                            ->where('cancelled_at', '>', $to);
+                    });
+            })
             ->where(function ($query) use ($session, $from, $to) {
                 $query->whereHas('capturedPayments', fn ($payments) => $payments
                     ->where('cash_register_session_id', $session->id))

@@ -41,11 +41,29 @@ class OperationalIncidentNotifier
 
     private function telegramText(OperationalIncident $incident, bool $recovered): string
     {
-        return implode("\n", [
+        return implode("\n", array_merge([
             $recovered ? 'Blunk: condición recuperada' : 'Blunk: alerta operativa '.$incident->severity,
             'Tipo: '.$incident->type,
             'Mensaje: '.$incident->message,
             'Incidente: '.$incident->uuid,
-        ]);
+        ], $this->fiscalContext($incident)));
+    }
+
+    private function fiscalContext(OperationalIncident $incident): array
+    {
+        if (! in_array($incident->type, ['fel_stale_intents', 'fel_critical_incidents'], true)) {
+            return [];
+        }
+
+        $context = [];
+        if ($incident->business?->name) {
+            $context[] = 'Empresa: '.$incident->business->name;
+        }
+        $environment = data_get($incident->metadata, 'environment');
+        if (in_array($environment, ['test', 'production', 'unknown'], true)) {
+            $context[] = 'Ambiente: '.$environment;
+        }
+
+        return $context;
     }
 }
