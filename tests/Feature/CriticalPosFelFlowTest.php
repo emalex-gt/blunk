@@ -292,8 +292,7 @@ class CriticalPosFelFlowTest extends TestCase
         $different['items'][0]['quantity'] = '1.125';
         $different['payments'][0]['amount'] = 47.42;
         $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $different)
-            ->assertRedirect(route('sales.create'))
-            ->assertSessionHasErrors('idempotency_key');
+            ->assertStatus(409);
 
         $this->assertDatabaseCount('fiscal_document_intents', 1);
         $this->assertDatabaseCount('sales', 1);
