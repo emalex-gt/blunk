@@ -48,7 +48,11 @@ class OperationalIncidentManager
             ->flatMap(fn (string $check) => match ($check) {
                 'database' => ['monitor:database_check_failed'],
                 'queue' => ['monitor:queue_check_failed', 'monitor:failed_jobs', 'monitor:queue_lag'],
-                'fiscal' => ['monitor:fiscal_check_failed', 'monitor:fel_stale:', 'monitor:fel_critical:'],
+                // The generic scope can originate from older callers. It must
+                // never treat a partial fiscal sample as evidence that either
+                // fiscal source is absent; those recoveries require the
+                // explicit fiscal_stale or fiscal_critical scopes.
+                'fiscal' => ['monitor:fiscal_check_failed'],
                 'fiscal_check' => ['monitor:fiscal_check_failed'],
                 'fiscal_stale' => ['monitor:fel_stale:'],
                 'fiscal_critical' => ['monitor:fel_critical:'],
