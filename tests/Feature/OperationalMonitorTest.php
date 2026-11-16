@@ -73,7 +73,7 @@ class OperationalMonitorTest extends TestCase
 
     public function test_a_truncated_fiscal_intent_sample_never_resolves_existing_fiscal_incidents(): void
     {
-        config(['operational_monitor.enabled' => true]);
+        config(['operational_monitor.enabled' => true, 'operational_monitor.fel_stale_minutes' => 5]);
         $firstBusiness = $this->business('Monitor sample one');
         $secondBusiness = $this->business('Monitor sample two');
         $legacy = OperationalIncident::query()->create([
@@ -89,7 +89,7 @@ class OperationalMonitorTest extends TestCase
 
         foreach (range(1, 101) as $index) {
             $business = $index % 2 === 0 ? $firstBusiness : $secondBusiness;
-            FiscalDocumentIntent::query()->create([
+            $intent = FiscalDocumentIntent::query()->create([
                 'business_id' => $business->id,
                 'country' => 'GT',
                 'provider' => 'digifact',
@@ -101,8 +101,10 @@ class OperationalMonitorTest extends TestCase
                 'status' => FiscalDocumentIntent::UNKNOWN,
                 'operation_payload' => [],
                 'fiscal_payload' => [],
-                'updated_at' => now()->subHour(),
             ]);
+            // updated_at is guarded on FiscalDocumentIntent, so persist the
+            // intended stale timestamp without invoking Eloquent timestamps.
+            FiscalDocumentIntent::query()->whereKey($intent->id)->update(['updated_at' => now()->subHour()]);
         }
 
         app(OperationalMonitor::class)->run();
@@ -113,7 +115,7 @@ class OperationalMonitorTest extends TestCase
 
     public function test_a_successful_partial_fiscal_check_recovers_only_its_technical_failure(): void
     {
-        config(['operational_monitor.enabled' => true]);
+        config(['operational_monitor.enabled' => true, 'operational_monitor.fel_stale_minutes' => 5]);
         $business = $this->business('Monitor technical recovery');
         $technical = OperationalIncident::query()->create([
             'fingerprint' => 'monitor:fiscal_check_failed', 'type' => 'monitor_check_failed', 'severity' => 'P1',
@@ -126,12 +128,14 @@ class OperationalMonitorTest extends TestCase
         ]);
 
         foreach (range(1, 101) as $index) {
-            FiscalDocumentIntent::query()->create([
+            $intent = FiscalDocumentIntent::query()->create([
                 'business_id' => $business->id, 'country' => 'GT', 'provider' => 'digifact', 'environment' => 'test',
                 'document_type' => 'invoice', 'operation_type' => 'sale', 'internal_reference' => 'MON-TECH-'.$index,
                 'idempotency_key' => 'mon-tech-'.$index, 'status' => FiscalDocumentIntent::UNKNOWN,
-                'operation_payload' => [], 'fiscal_payload' => [], 'updated_at' => now()->subHour(),
+                'operation_payload' => [], 'fiscal_payload' => [],
             ]);
+            // Keep this source genuinely truncated even though updated_at is guarded.
+            FiscalDocumentIntent::query()->whereKey($intent->id)->update(['updated_at' => now()->subHour()]);
         }
 
         app(OperationalMonitor::class)->run();
