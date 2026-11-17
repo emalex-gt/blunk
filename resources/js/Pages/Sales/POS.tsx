@@ -542,6 +542,12 @@ function normalizeQuantity(value: number | string | null | undefined) {
     return String(value ?? '').trim().replace(',', '.');
 }
 
+function normalizedQuantityForSubmission(value: number | string | null | undefined) {
+    const normalized = normalizeQuantity(value);
+
+    return canonicalQuantity(normalized) ?? normalized;
+}
+
 function sanitizeQuantityInput(value: number | string | null | undefined, allowDecimal = false): string | null {
     const raw = String(value ?? '');
 
@@ -2718,6 +2724,24 @@ export default function POS({
         });
     }
 
+    function normalizeQuantityOnBlur(lineId: string) {
+        setCart((items) => items.map((item) => {
+            if (cartLineId(item) !== lineId || !item.product.allow_decimal_quantity) {
+                return item;
+            }
+
+            if (quantityError(item.quantity, true)) {
+                return item;
+            }
+
+            const canonical = canonicalQuantity(item.quantity);
+
+            return canonical === null || canonical === item.quantity
+                ? item
+                : { ...item, quantity: canonical };
+        }));
+    }
+
     function changeLinePriceType(lineId: string, priceTypeId: number) {
         renewOperationKeyAfterFailedMutation();
         setCart((items) => items.map((item) => {
@@ -3192,7 +3216,7 @@ export default function POS({
             items: cart.map((item) => ({
                 quotation_item_id: item.quotation_item_id ?? null,
                 product_id: item.product.id,
-                quantity: normalizeQuantity(item.quantity),
+                quantity: normalizedQuantityForSubmission(item.quantity),
                 price_type_id: item.price_type_id,
                 unit_price: Number(item.unit_price),
                 line_discount_amount: lineDiscountAmount(item),
@@ -3287,7 +3311,7 @@ export default function POS({
                 customer: fiscalCustomerPayload(data.customer),
                 items: cart.map((item) => ({
                     product_id: item.product.id,
-                    quantity: normalizeQuantity(item.quantity),
+                    quantity: normalizedQuantityForSubmission(item.quantity),
                     unit_price: Number(item.unit_price),
                 })),
             }, {
@@ -3406,7 +3430,7 @@ export default function POS({
             })),
             items: cart.map((item) => ({
                 product_id: item.product.id,
-                quantity: normalizeQuantity(item.quantity),
+                quantity: normalizedQuantityForSubmission(item.quantity),
                 price_type_id: item.price_type_id,
                 unit_price: Number(item.unit_price),
                 price_source: item.price_source,
@@ -4931,6 +4955,7 @@ export default function POS({
                                                                 event.target.value,
                                                             )
                                                         }
+                                                        onBlur={() => normalizeQuantityOnBlur(cartLineId(item))}
                                                         onWheel={(event) => event.currentTarget.blur()}
                                                         className={`h-9 w-20 border-y bg-white text-center text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-orange-500 ${
                                                             quantityError(item.quantity, Boolean(item.product.allow_decimal_quantity)) ? 'border-red-300 text-red-700' : 'border-slate-300'
