@@ -2680,21 +2680,19 @@ export default function POS({
                 return items;
             }
 
-            if (sanitizedQuantity === '') {
+            const isTransientQuantityInput = sanitizedQuantity === '0'
+                || (allowDecimal && (sanitizedQuantity.endsWith('.') || sanitizedQuantity.endsWith(',')));
+
+            if (sanitizedQuantity === '' || isTransientQuantityInput) {
                 setErrorMessage('');
                 return items.map((item) => (
                     cartLineId(item) === lineId
-                        ? { ...item, quantity: '' }
+                        ? { ...item, quantity: sanitizedQuantity }
                         : item
                 ));
             }
 
             if (quantityError(sanitizedQuantity, allowDecimal)) {
-                if (sanitizedQuantity.endsWith('.') || sanitizedQuantity.endsWith(',')) {
-                    return items.map((item) => (
-                        cartLineId(item) === lineId ? { ...item, quantity: sanitizedQuantity } : item
-                    ));
-                }
                 showError(allowDecimal ? decimalQuantityMessage : integerQuantityMessage);
                 return items;
             }
