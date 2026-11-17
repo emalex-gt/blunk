@@ -2908,6 +2908,10 @@ export default function POS({
     }
 
     async function holdSale() {
+        if (!validateCartQuantities()) {
+            return;
+        }
+
         const draft = buildDraft();
 
         if (!isMeaningfulPosDraft(draft)) {
@@ -3692,6 +3696,10 @@ export default function POS({
             return;
         }
 
+        if (hasInvalidCartQuantities) {
+            return;
+        }
+
         const draft = buildDraft();
         latestDraftRef.current = draft;
         const timer = window.setTimeout(() => {
@@ -3714,6 +3722,7 @@ export default function POS({
         documentType,
         draftKey,
         draftReady,
+        hasInvalidCartQuantities,
         idempotencyKey,
         mainPaymentMethod,
         paymentCondition,
