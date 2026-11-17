@@ -578,6 +578,12 @@ function validPhysicalQuantity(value: number | string | null | undefined) {
     return canonicalQuantity(value) ?? '0';
 }
 
+function canonicalQuantityForProduct(value: number | string | null | undefined, allowDecimal = false): string | null {
+    const canonical = canonicalQuantity(normalizeQuantity(value));
+
+    return canonical !== null && !quantityError(canonical, allowDecimal) ? canonical : null;
+}
+
 function reservedCreditQuantity(item: Pick<CartItem, 'credit_reserved_quantity'>) {
     const quantity = validPhysicalQuantity(item.credit_reserved_quantity);
 
@@ -1358,6 +1364,20 @@ export default function POS({
             return;
         }
 
+        const invalidQuantityLine = credit_invoice.lines.find((line) => {
+            const product = productsById.get(line.product_id);
+            const allowDecimal = Boolean(product?.allow_decimal_quantity);
+
+            return !canonicalQuantityForProduct(line.quantity, allowDecimal)
+                || !canonicalQuantityForProduct(line.max_quantity, allowDecimal);
+        });
+
+        if (invalidQuantityLine) {
+            creditInvoiceLoadedRef.current = true;
+            showError('La reserva contiene una cantidad incompatible con el producto y no se cargó al POS.');
+            return;
+        }
+
         const usedCartLineIds = new Set<string>();
         const creditItems = credit_invoice.lines
             .map((line) => {
@@ -1370,7 +1390,7 @@ export default function POS({
                 return {
                     cart_line_id: uniqueCartLineId(product.id, line.credit_line_id, usedCartLineIds),
                     product,
-                    quantity: String(line.quantity),
+                    quantity: canonicalQuantityForProduct(line.quantity, Boolean(product.allow_decimal_quantity))!,
                     unit_price: String(line.unit_price),
                     original_price: String(line.unit_price),
                     price_type_id: null,
@@ -1378,7 +1398,7 @@ export default function POS({
                     manual_price: false,
                     price_warning: null,
                     credit_line_id: line.credit_line_id,
-                    max_quantity: line.max_quantity,
+                    max_quantity: canonicalQuantityForProduct(line.max_quantity, Boolean(product.allow_decimal_quantity))!,
                     credit_reserved_quantity: line.reserved_quantity,
                     credit_receipt_number: line.receipt_number,
                     locked_credit_line: false,
@@ -1861,12 +1881,13 @@ export default function POS({
                 return items;
             }
 
-            if (quantityError(item.quantity, Boolean(product.allow_decimal_quantity))) {
+            const quantity = canonicalQuantityForProduct(item.quantity, Boolean(product.allow_decimal_quantity));
+
+            if (quantity === null) {
                 issues.push(`Producto ${product.name} tiene una cantidad inválida en el borrador.`);
                 return items;
             }
 
-            const quantity = validPhysicalQuantity(item.quantity);
             const availableStock = validPhysicalQuantity(product.available_stock ?? product.stock);
 
             if (!allow_negative_stock && !item.credit_line_id && compareQuantity(quantity, availableStock) === 1) {
@@ -1885,7 +1906,7 @@ export default function POS({
             items.push({
                 cart_line_id: restoredCartLineId,
                 product,
-                quantity: normalizeQuantity(item.quantity),
+                quantity,
                 unit_price: (manualPrice || inheritedCreditPrice) ? (item.unit_price ?? price.price) : price.price,
                 original_price: (manualPrice || inheritedCreditPrice) ? (item.original_price ?? item.unit_price ?? price.price) : price.price,
                 price_type_id: item.price_type_id ?? price.priceTypeId ?? null,
@@ -2891,7 +2912,13 @@ export default function POS({
 
         const allowDecimal = Boolean(item.product.allow_decimal_quantity);
         const step = allowDecimal ? '0.0001' : '1';
-        const currentQuantity = quantityError(item.quantity, allowDecimal) ? step : validPhysicalQuantity(item.quantity);
+        const currentQuantity = canonicalQuantityForProduct(item.quantity, allowDecimal);
+
+        if (currentQuantity === null) {
+            showError(allowDecimal ? decimalQuantityMessage : integerQuantityMessage);
+            return;
+        }
+
         const nextQuantity = difference > 0
             ? addQuantity(currentQuantity, step)
             : subtractQuantity(currentQuantity, step);
