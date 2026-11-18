@@ -417,6 +417,8 @@ class SaleController extends Controller
             $this->assertQuotationCanBeUsed($request, $business, $activeBranch, (int) $data['quotation_id'], (bool) ($data['quotation_expired_confirmed'] ?? false));
         }
 
+        $creditCustomerId = 0;
+
         if ($isCreditSale) {
             if (! Credits::salesEnabled($business->id)) {
                 throw ValidationException::withMessages([
@@ -426,12 +428,12 @@ class SaleController extends Controller
             abort_unless(Permissions::userHas($request->user(), Permissions::CREDITS_SALES_CREATE), 403);
 
             $creditCustomerId = (int) ($data['customer']['id'] ?? 0);
-            if ($creditCustomerId <= 0 || ! Customer::query()
+            if ($creditCustomerId > 0 && ! Customer::query()
                 ->where('business_id', $business->id)
                 ->whereKey($creditCustomerId)
                 ->exists()) {
                 throw ValidationException::withMessages([
-                    'customer.id' => 'Para una venta al crédito debes seleccionar un cliente registrado.',
+                    'customer.id' => 'El cliente seleccionado no pertenece a este negocio.',
                 ]);
             }
         } elseif (empty($data['payments'])) {
@@ -558,8 +560,8 @@ class SaleController extends Controller
                 'pos_sale',
                 $data['idempotency_key'],
                 $idempotencyPayload,
-                function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
-            return DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
+                function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $creditCustomerId, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
+            return DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $creditCustomerId, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
             $businessId = currentBusinessId();
             $branch = $activeBranch;
             $quotation = filled($data['quotation_id'] ?? null)
@@ -611,9 +613,9 @@ class SaleController extends Controller
                         ]),
                     );
 
-                if (! $customer || (int) $customer->id !== (int) ($data['customer']['id'] ?? 0) || $isGenericFinalConsumer) {
+                if (! $customer || ($creditCustomerId > 0 && (int) $customer->id !== $creditCustomerId) || $isGenericFinalConsumer) {
                     throw ValidationException::withMessages([
-                        'customer.id' => 'Para una venta al crédito debes seleccionar un cliente registrado distinto de Consumidor Final.',
+                        'customer.id' => 'Para una venta al crédito debes identificar un cliente distinto de Consumidor Final.',
                     ]);
                 }
             }

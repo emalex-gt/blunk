@@ -1728,7 +1728,8 @@ export default function POS({
     );
     const cashReceivedAmount = Number(cashReceived || 0);
     const cashReceivedIsValid = cashPaymentAmount <= 0
-        || (cashReceived.trim() !== '' && Number.isFinite(cashReceivedAmount) && roundMoney(cashReceivedAmount) >= cashPaymentAmount);
+        || cashReceived.trim() === ''
+        || (Number.isFinite(cashReceivedAmount) && roundMoney(cashReceivedAmount) >= cashPaymentAmount);
     const cashChange = cashReceivedIsValid && cashPaymentAmount > 0
         ? roundMoney(cashReceivedAmount - cashPaymentAmount)
         : 0;
@@ -3465,8 +3466,8 @@ export default function POS({
                 && data.customer.name.trim().toLocaleLowerCase() === 'consumidor final'
                 && data.customer.commercial_name.trim() === '';
 
-            if (!data.customer.id || isGenericFinalConsumer) {
-                const message = 'Para una venta al crédito debes seleccionar un cliente registrado distinto de Consumidor Final.';
+            if (isGenericFinalConsumer) {
+                const message = 'Para una venta al crédito debes identificar un cliente distinto de Consumidor Final.';
                 showError(message);
                 toast.error(message);
                 return;
@@ -3484,10 +3485,8 @@ export default function POS({
             return;
         }
 
-        if (paymentCondition === 'paid' && cashPaymentAmount > 0 && !cashReceivedIsValid) {
-            const message = cashReceived.trim() === ''
-                ? 'Ingresa el efectivo recibido.'
-                : 'El efectivo recibido no cubre el monto en efectivo.';
+        if (paymentCondition === 'paid' && cashPaymentAmount > 0 && cashReceived.trim() !== '' && !cashReceivedIsValid) {
+            const message = 'El efectivo recibido no cubre el monto en efectivo.';
             showError(message);
             toast.error(message);
             return;
@@ -3504,6 +3503,12 @@ export default function POS({
             : [payments[0] ?? paymentLine(mainPaymentMethod, total.toFixed(2))];
 
         const submittedBranchId = activeBranchId;
+        const autoRegisteredCreditCustomer = paymentCondition === 'credit'
+            && !data.customer.id
+            && data.customer.consumidor_final
+            && data.customer.doc_type.trim().toUpperCase() === 'CF'
+            && data.customer.doc_number.trim().toUpperCase() === 'CF'
+            && data.customer.name.trim().toLocaleLowerCase() !== 'consumidor final';
 
         if (effectiveDocumentType === 'invoice') {
             setFelSubmissionBranchId(submittedBranchId);
@@ -3596,6 +3601,9 @@ export default function POS({
                 const successMessage = effectiveDocumentType === 'invoice'
                     ? (flash?.fel_success_message ?? 'Factura FEL certificada correctamente.')
                     : 'Venta guardada correctamente.';
+                const completionMessage = autoRegisteredCreditCustomer
+                    ? `${successMessage} Cliente registrado automáticamente.`
+                    : successMessage;
                 reset();
                 setData('branch_id', activeBranchId);
                 setData('customer', defaultCustomer);
@@ -3607,8 +3615,8 @@ export default function POS({
                 focusSearch();
 
                 if (effectiveDocumentType === 'receipt' && receiptSaleId) {
-                    showMessage(successMessage);
-                    toast.success(successMessage, { persistent: true });
+                    showMessage(completionMessage);
+                    toast.success(completionMessage, { persistent: true });
                     window.open(route('sales.receipt', receiptSaleId), '_blank');
                     return;
                 }
@@ -3620,14 +3628,14 @@ export default function POS({
                     window.setTimeout(() => {
                         window.open(flash?.fel_print_url ?? route('sales.fel-document', felPrintSaleId), '_blank');
                         setOpeningFelPrint(false);
-                        showMessage(successMessage);
-                        toast.success(successMessage, { persistent: true });
+                        showMessage(completionMessage);
+                        toast.success(completionMessage, { persistent: true });
                     }, 50);
                     return;
                 }
 
-                showMessage(successMessage);
-                toast.success(successMessage, { persistent: true });
+                showMessage(completionMessage);
+                toast.success(completionMessage, { persistent: true });
             },
             onError: (errors) => {
                 handleOperationSubmitError(errors as Record<string, string>, 'No se pudo completar la venta. Revisa los datos.');
@@ -4114,10 +4122,8 @@ export default function POS({
             reasons.push('El total pagado debe coincidir con el total de la venta.');
         }
 
-        if (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && !cashReceivedIsValid) {
-            reasons.push(cashReceived.trim() === ''
-                ? 'Ingresa el efectivo recibido.'
-                : 'El efectivo recibido no cubre el monto en efectivo.');
+        if (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && cashReceived.trim() !== '' && !cashReceivedIsValid) {
+            reasons.push('El efectivo recibido no cubre el monto en efectivo.');
         }
 
         if (invoiceIdentityBlocksCheckout) {
@@ -5678,7 +5684,7 @@ export default function POS({
                                         <div className="mt-1 text-lg font-bold text-emerald-950">{formatCurrency(cashPaymentAmount, country)}</div>
                                     </div>
                                     <label className="block">
-                                        <span className="text-xs font-semibold uppercase text-emerald-700">Efectivo recibido</span>
+                                        <span className="text-xs font-semibold uppercase text-emerald-700">Efectivo recibido (opcional)</span>
                                         <input
                                             type="number"
                                             min="0"
