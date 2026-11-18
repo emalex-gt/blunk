@@ -979,6 +979,8 @@ export default function POS({
     const [nitLookupLoading, setNitLookupLoading] = useState(false);
     const [nitLookupMessage, setNitLookupMessage] = useState('');
     const [customerSearchResults, setCustomerSearchResults] = useState<Customer[]>([]);
+    const [customerSuggestionsOpen, setCustomerSuggestionsOpen] = useState(false);
+    const [activeCustomerSuggestion, setActiveCustomerSuggestion] = useState(0);
     const [customerEditing, setCustomerEditing] = useState(false);
     const [loadedProducts, setLoadedProducts] = useState<Product[]>(products);
     const [productSearchResults, setProductSearchResults] = useState<Product[]>([]);
@@ -1042,6 +1044,7 @@ export default function POS({
     const quotationLoadedRef = useRef(false);
     const quotationEditLoadedRef = useRef(false);
     const identityLookupRequestRef = useRef(0);
+    const customerSearchRequestRef = useRef(0);
     const draftLoadInitializedRef = useRef(false);
     const fiscalStatusRequestRef = useRef(0);
     const draftRecoveryRequestRef = useRef(0);
@@ -1580,11 +1583,14 @@ export default function POS({
 
     useEffect(() => {
         if (!customerSearchTerm || isPristineGenericFinalConsumer || data.customer.id) {
+            customerSearchRequestRef.current += 1;
             setCustomerSearchResults([]);
             return;
         }
 
         const controller = new AbortController();
+        const requestId = customerSearchRequestRef.current + 1;
+        customerSearchRequestRef.current = requestId;
         const timer = window.setTimeout(async () => {
             try {
                 const response = await fetch(`${route('customers.search')}?search=${encodeURIComponent(customerSearchTerm)}`, {
@@ -1593,11 +1599,11 @@ export default function POS({
                 });
                 const result = await readJsonResponse(response);
 
-                if (response.ok && Array.isArray(result?.customers)) {
+                if (customerSearchRequestRef.current === requestId && response.ok && Array.isArray(result?.customers)) {
                     setCustomerSearchResults(result.customers);
                 }
             } catch (error) {
-                if (!(error instanceof DOMException && error.name === 'AbortError')) {
+                if (customerSearchRequestRef.current === requestId && !(error instanceof DOMException && error.name === 'AbortError')) {
                     setCustomerSearchResults([]);
                 }
             }
@@ -2408,13 +2414,19 @@ export default function POS({
     function setCustomerField<K extends keyof CustomerForm>(field: K, value: CustomerForm[K]) {
         if (creditReservationCustomerLocked) return;
         renewOperationKeyAfterFailedMutation();
+        const invalidatesSelectedCustomer = ['name', 'commercial_name', 'doc_type', 'doc_number', 'consumidor_final', 'country'].includes(field);
         if (field === 'doc_type' || field === 'doc_number' || field === 'consumidor_final') {
             identityLookupRequestRef.current += 1;
         }
         setData('customer', {
             ...data.customer,
+            id: invalidatesSelectedCustomer ? null : data.customer.id,
             [field]: value,
         });
+        if (invalidatesSelectedCustomer) {
+            setCustomerSuggestionsOpen(true);
+            setActiveCustomerSuggestion(0);
+        }
     }
 
     function setCustomerLocation(department: string, municipality: string) {
@@ -2463,12 +2475,17 @@ export default function POS({
 
         setData('customer', {
             ...data.customer,
+            id: documentChanged ? null : data.customer.id,
             doc_number: cleanValue,
             name: documentChanged ? '' : data.customer.name,
             name_locked: keepValidation ? data.customer.name_locked : false,
             tax_lookup_verified_at: keepValidation ? data.customer.tax_lookup_verified_at : null,
             tax_lookup_verified_doc_number: keepValidation ? data.customer.tax_lookup_verified_doc_number : null,
         });
+        if (documentChanged) {
+            setCustomerSuggestionsOpen(true);
+            setActiveCustomerSuggestion(0);
+        }
     }
 
     function selectCustomer(customer: Customer) {
@@ -2496,21 +2513,60 @@ export default function POS({
             tax_lookup_verified_doc_number: customer.tax_lookup_verified_doc_number ?? null,
         }, country, true));
         setCustomerSearchResults([]);
+        setCustomerSuggestionsOpen(false);
+        setActiveCustomerSuggestion(0);
         setNitLookupMessage('');
         setCustomerEditing(false);
     }
 
     function handleCustomerKeyDown(event: KeyboardEvent<HTMLInputElement | HTMLSelectElement>) {
-        if (event.key !== 'Enter') {
+        if (event.key === 'Escape') {
+            setCustomerSuggestionsOpen(false);
             return;
         }
 
-        if (customerMatches.length === 0) {
+        if (customerMatches.length === 0 || !customerSuggestionsOpen) {
             return;
         }
+
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            setActiveCustomerSuggestion((current) => {
+                const direction = event.key === 'ArrowDown' ? 1 : -1;
+                return (current + direction + customerMatches.length) % customerMatches.length;
+            });
+            return;
+        }
+
+        if (event.key !== 'Enter') return;
 
         event.preventDefault();
-        selectCustomer(customerMatches[0]);
+        selectCustomer(customerMatches[activeCustomerSuggestion] ?? customerMatches[0]);
+    }
+
+    function renderCustomerSuggestions() {
+        if (creditReservationCustomerLocked || !customerSuggestionsOpen || customerMatches.length === 0) {
+            return null;
+        }
+
+        return (
+            <div role="listbox" className="absolute z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                {customerMatches.map((customer, index) => (
+                    <button
+                        key={customer.id}
+                        type="button"
+                        role="option"
+                        aria-selected={index === activeCustomerSuggestion}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => selectCustomer(customer)}
+                        className={`block w-full rounded-lg px-3 py-2 text-left text-sm ${index === activeCustomerSuggestion ? 'bg-orange-50 text-orange-800' : 'text-slate-700 hover:bg-slate-50'}`}
+                    >
+                        <span className="block font-semibold">{customer.commercial_name || customer.name}</span>
+                        <span className="block text-xs text-slate-500">{customer.doc_type ?? 'Cliente'}{customer.doc_number ? ` · ${customer.doc_number}` : ''}</span>
+                    </button>
+                ))}
+            </div>
+        );
     }
 
     async function lookupGuatemalaIdentity() {
@@ -3403,9 +3459,14 @@ export default function POS({
         if (paymentCondition === 'credit') {
             const docType = data.customer.doc_type.trim().toUpperCase();
             const docNumber = data.customer.doc_number.trim().toUpperCase();
+            const isGenericFinalConsumer = data.customer.consumidor_final
+                && docType === 'CF'
+                && docNumber === 'CF'
+                && data.customer.name.trim().toLocaleLowerCase() === 'consumidor final'
+                && data.customer.commercial_name.trim() === '';
 
-            if (data.customer.consumidor_final || docType === 'CF' || docNumber === 'CF' || docType !== 'NIT' || !docNumber) {
-                const message = 'Para una venta al crédito debes seleccionar un cliente con NIT válido.';
+            if (!data.customer.id || isGenericFinalConsumer) {
+                const message = 'Para una venta al crédito debes seleccionar un cliente registrado distinto de Consumidor Final.';
                 showError(message);
                 toast.error(message);
                 return;
@@ -4373,12 +4434,18 @@ export default function POS({
                                         {data.customer.consumidor_final ? (
                                             <>
                                             <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
-                                                <input
-                                                    value={data.customer.name}
-                                                    onChange={(event) => setCustomerField('name', event.target.value)}
-                                                    placeholder="Nombre"
-                                                    className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
-                                                />
+                                                <div className="relative">
+                                                    <input
+                                                        value={data.customer.name}
+                                                        onChange={(event) => setCustomerField('name', event.target.value)}
+                                                        onFocus={() => setCustomerSuggestionsOpen(true)}
+                                                        onBlur={() => window.setTimeout(() => setCustomerSuggestionsOpen(false), 150)}
+                                                        onKeyDown={handleCustomerKeyDown}
+                                                        placeholder="Nombre"
+                                                        className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+                                                    />
+                                                    {renderCustomerSuggestions()}
+                                                </div>
                                                 <input
                                                     value={data.customer.address}
                                                     onChange={(event) => setCustomerField('address', event.target.value)}
@@ -4414,7 +4481,7 @@ export default function POS({
                                         ) : (
                                             <>
                                                 <div className="grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)] 2xl:grid-cols-[180px_auto_1fr]">
-                                                    <div>
+                                                    <div className="relative">
                                                         <label className="block text-xs font-medium text-slate-600">
                                                             {guatemalaDocumentLabel}
                                                         </label>
@@ -4423,10 +4490,13 @@ export default function POS({
                                                             onChange={(event) => {
                                                                 setCustomerDocument(event.target.value);
                                                             }}
+                                                            onFocus={() => setCustomerSuggestionsOpen(true)}
+                                                            onBlur={() => window.setTimeout(() => setCustomerSuggestionsOpen(false), 150)}
                                                             onKeyDown={handleCustomerKeyDown}
                                                             placeholder={guatemalaDocumentLabel}
                                                             className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
                                                         />
+                                                        {renderCustomerSuggestions()}
                                                     </div>
                                                     <div className="flex items-end">
                                                         <button
@@ -4588,22 +4658,6 @@ export default function POS({
                                             </button>
                                         </div>
                                     </>
-                                )}
-
-                                {!creditReservationCustomerLocked && customerMatches.length > 0 && (
-                                    <div className="mt-2 flex gap-2 overflow-x-auto whitespace-nowrap">
-                                        {customerMatches.map((customer) => (
-                                            <button
-                                                key={customer.id}
-                                                type="button"
-                                                onClick={() => selectCustomer(customer)}
-                                                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700"
-                                            >
-                                                {customer.commercial_name || customer.name}
-                                                {customer.doc_number ? ` · ${customer.doc_number}` : ''}
-                                            </button>
-                                        ))}
-                                    </div>
                                 )}
 
                                 {customerError && (

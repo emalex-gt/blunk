@@ -424,6 +424,16 @@ class SaleController extends Controller
                 ]);
             }
             abort_unless(Permissions::userHas($request->user(), Permissions::CREDITS_SALES_CREATE), 403);
+
+            $creditCustomerId = (int) ($data['customer']['id'] ?? 0);
+            if ($creditCustomerId <= 0 || ! Customer::query()
+                ->where('business_id', $business->id)
+                ->whereKey($creditCustomerId)
+                ->exists()) {
+                throw ValidationException::withMessages([
+                    'customer.id' => 'Para una venta al crédito debes seleccionar un cliente registrado.',
+                ]);
+            }
         } elseif (empty($data['payments'])) {
             throw ValidationException::withMessages([
                 'payments' => 'Debes registrar al menos una forma de pago.',
@@ -585,12 +595,25 @@ class SaleController extends Controller
             $customerSnapshot = $this->saleCustomerSnapshot($customer, $data['customer'] ?? null, $usesResilientFiscalIntent);
 
             if ($isCreditSale) {
-                $docType = strtoupper(trim((string) ($customerSnapshot['customer_doc_type'] ?? '')));
-                $docNumber = strtoupper(trim((string) ($customerSnapshot['customer_doc_number'] ?? '')));
+                $isGenericFinalConsumer = $customer?->is_final_consumer
+                    && CustomerIdentity::isGenericFinalConsumer(
+                        $customer->normalized_tax_id,
+                        $customer->name,
+                        $customer->only([
+                            'commercial_name',
+                            'contact_name',
+                            'address',
+                            'address_reference',
+                            'phone',
+                            'postal_code',
+                            'department',
+                            'municipality',
+                        ]),
+                    );
 
-                if (! $customer || $docType !== 'NIT' || $docNumber === '' || $docNumber === 'CF') {
+                if (! $customer || (int) $customer->id !== (int) ($data['customer']['id'] ?? 0) || $isGenericFinalConsumer) {
                     throw ValidationException::withMessages([
-                        'customer.doc_number' => 'Para una venta al crédito debes seleccionar un cliente con NIT válido.',
+                        'customer.id' => 'Para una venta al crédito debes seleccionar un cliente registrado distinto de Consumidor Final.',
                     ]);
                 }
             }
