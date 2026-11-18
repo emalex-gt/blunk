@@ -1441,10 +1441,15 @@ export default function POS({
                 return items;
             }
 
+            const quantity = canonicalQuantityForProduct(line.quantity, Boolean(product.allow_decimal_quantity));
+            if (quantity === null) {
+                return items;
+            }
+
             items.push({
                 cart_line_id: `quotation-${line.quotation_item_id}`,
                 product,
-                quantity: String(line.quantity),
+                quantity,
                 unit_price: Number(line.unit_price).toFixed(2),
                 original_price: Number(line.original_price).toFixed(2),
                 price_type_id: line.price_type_id,
@@ -1460,7 +1465,7 @@ export default function POS({
         }, []);
 
         if (quotationItems.length !== quotation_source.items.length) {
-            showError('Uno o más productos de la cotización ya no están disponibles para la venta.');
+            showError('Uno o más productos de la cotización ya no están disponibles o tienen una cantidad incompatible.');
             return;
         }
 
@@ -1500,10 +1505,15 @@ export default function POS({
                 return items;
             }
 
+            const quantity = canonicalQuantityForProduct(line.quantity, Boolean(product.allow_decimal_quantity));
+            if (quantity === null) {
+                return items;
+            }
+
             items.push({
                 cart_line_id: `quotation-${line.quotation_item_id}`,
                 product,
-                quantity: String(line.quantity),
+                quantity,
                 unit_price: Number(line.unit_price).toFixed(2),
                 original_price: Number(line.original_price).toFixed(2),
                 price_type_id: line.price_type_id,
@@ -1519,7 +1529,7 @@ export default function POS({
         }, []);
 
         if (quotationItems.length !== quotation_edit_source.items.length) {
-            showError('No se puede editar la cotización porque uno o más productos ya no están disponibles.');
+            showError('No se puede editar la cotización porque uno o más productos no están disponibles o tienen una cantidad incompatible.');
             return;
         }
 
