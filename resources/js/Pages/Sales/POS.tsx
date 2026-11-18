@@ -1730,7 +1730,7 @@ export default function POS({
     const cashReceivedIsValid = cashPaymentAmount <= 0
         || cashReceived.trim() === ''
         || (Number.isFinite(cashReceivedAmount) && roundMoney(cashReceivedAmount) >= cashPaymentAmount);
-    const cashChange = cashReceivedIsValid && cashPaymentAmount > 0
+    const cashChange = cashReceived.trim() !== '' && cashReceivedIsValid && cashPaymentAmount > 0
         ? roundMoney(cashReceivedAmount - cashPaymentAmount)
         : 0;
     const pendingAmount = Number((total - paidTotal).toFixed(2));
