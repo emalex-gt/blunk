@@ -152,6 +152,7 @@ class Permissions
     public const BRANCHES_SWITCH = 'branches.switch';
     public const INVENTORY_TRANSFERS_VIEW = 'inventory.transfers.view';
     public const INVENTORY_TRANSFERS_CREATE = 'inventory.transfers.create';
+    public const INVENTORY_TRANSFERS_CANCEL = 'inventory.transfers.cancel';
     public const INVENTORY_TRANSFERS_EXPORT = 'inventory.transfers.export';
 
     public const TENANT_SETTINGS_VIEW = 'tenant.settings.view';
@@ -299,6 +300,7 @@ class Permissions
             self::BRANCHES_SWITCH => ['name' => 'Cambiar sucursal activa', 'group' => 'Sucursales'],
             self::INVENTORY_TRANSFERS_VIEW => ['name' => 'Ver traslados', 'group' => 'Sucursales'],
             self::INVENTORY_TRANSFERS_CREATE => ['name' => 'Crear traslados', 'group' => 'Sucursales'],
+            self::INVENTORY_TRANSFERS_CANCEL => ['name' => 'Anular traslados', 'group' => 'Sucursales'],
             self::INVENTORY_TRANSFERS_EXPORT => ['name' => 'Exportar traslados', 'group' => 'Sucursales'],
             self::TENANT_SETTINGS_VIEW => ['name' => 'Ver configuración tenant', 'group' => 'Configuración'],
             self::TENANT_SETTINGS_MANAGE => ['name' => 'Gestionar configuración tenant', 'group' => 'Configuración'],
@@ -370,6 +372,7 @@ class Permissions
                 self::INVENTORY_TRANSFER,
                 self::INVENTORY_TRANSFERS_VIEW,
                 self::INVENTORY_TRANSFERS_CREATE,
+                self::INVENTORY_TRANSFERS_CANCEL,
                 self::INVENTORY_TRANSFERS_EXPORT,
                 self::REPORTS_LOW_STOCK_VIEW,
             ],

@@ -572,6 +572,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/inventory/transfers/products/search', [InventoryTransferController::class, 'productSearch'])->middleware('permission:inventory.transfers.create')->name('inventory.transfers.products.search');
             Route::get('/inventory/transfers/create', [InventoryTransferController::class, 'create'])->middleware('permission:inventory.transfers.create')->name('inventory.transfers.create');
             Route::post('/inventory/transfers', [InventoryTransferController::class, 'store'])->middleware('permission:inventory.transfers.create')->name('inventory.transfers.store');
+            Route::post('/inventory/transfers/{transfer}/cancel', [InventoryTransferController::class, 'cancel'])->middleware('permission:inventory.transfers.cancel')->name('inventory.transfers.cancel');
             Route::get('/inventory/transfers/{transfer}/print', [InventoryTransferController::class, 'print'])->middleware('permission:inventory.transfers.view')->name('inventory.transfers.print');
             Route::get('/inventory/transfers/{transfer}', [InventoryTransferController::class, 'show'])->middleware('permission:inventory.transfers.view')->name('inventory.transfers.show');
         });

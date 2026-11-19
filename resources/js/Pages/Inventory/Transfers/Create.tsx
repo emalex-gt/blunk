@@ -80,6 +80,8 @@ export default function Create({
     const previousDraftKeyRef = useRef<string | null>(null);
     const productsById = useMemo(() => new Map(loadedProducts.map((product) => [product.id, product])), [loadedProducts]);
     const filteredProducts = productResults;
+    const fromBranch = branches.find((branch) => branch.id === fromBranchId) ?? null;
+    const toBranch = branches.find((branch) => branch.id === toBranchId) ?? null;
 
     function productAvailable(product: Product | undefined): number {
         if (!product) {
@@ -618,12 +620,12 @@ export default function Create({
             {confirmTransferOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
                     <section className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-                        <h2 className="text-lg font-semibold text-slate-950">
-                            ¿Has revisado la información de este traslado?
-                        </h2>
+                        <h2 className="text-lg font-semibold text-slate-950">Confirmar traslado de inventario</h2>
                         <p className="mt-2 text-sm text-slate-600">
-                            Confirma que sucursal origen, sucursal destino, productos y cantidades fueron comparados antes de guardar.
+                            Los productos saldrán de: <strong>{fromBranch?.name ?? '-'}</strong>
                         </p>
+                        <p className="mt-1 text-sm text-slate-600">Los productos llegarán a: <strong>{toBranch?.name ?? '-'}</strong></p>
+                        <p className="mt-4 text-sm text-slate-600">¿Confirmas que deseas realizar este traslado?</p>
                         <div className="mt-5 flex justify-end gap-2">
                             <button
                                 type="button"
@@ -631,7 +633,7 @@ export default function Create({
                                 onClick={() => setConfirmTransferOpen(false)}
                                 className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                             >
-                                Cancelar
+                                Volver y revisar
                             </button>
                             <button
                                 type="button"
@@ -639,7 +641,7 @@ export default function Create({
                                 onClick={submit}
                                 className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50"
                             >
-                                Sí, guardar traslado
+                                Confirmar traslado
                             </button>
                         </div>
                     </section>

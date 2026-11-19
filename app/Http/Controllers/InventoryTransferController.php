@@ -266,9 +266,84 @@ class InventoryTransferController extends Controller
         $this->authorizeTransferBranches($request, $transfer);
 
         return Inertia::render('Inventory/Transfers/Show', [
-            'transfer' => $transfer->load(['fromBranch:id,name', 'toBranch:id,name', 'createdBy:id,name', 'lines.product:id,name,code,barcode']),
+            'transfer' => $transfer->load(['fromBranch:id,name', 'toBranch:id,name', 'createdBy:id,name', 'cancelledBy:id,name', 'lines.product:id,name,code,barcode']),
+            'canCancel' => $transfer->status === 'completed'
+                && Permissions::userHas($request->user(), Permissions::INVENTORY_TRANSFERS_CANCEL),
             'timezone' => tenantTimezone($transfer->business_id),
         ]);
+    }
+
+    public function cancel(Request $request, InventoryTransfer $transfer): RedirectResponse
+    {
+        $this->authorizePermission($request, Permissions::INVENTORY_TRANSFERS_CANCEL);
+        abort_unless((int) $transfer->business_id === (int) currentBusinessId(), 403);
+        $this->authorizeTransferBranches($request, $transfer);
+        $data = $request->validate(['reason' => ['required', 'string', 'max:2000']], ['reason.required' => 'Debes indicar el motivo de la anulación.']);
+
+        DB::transaction(function () use ($transfer, $request, $data) {
+            $lockedTransfer = InventoryTransfer::query()
+                ->where('business_id', currentBusinessId())
+                ->with('lines')
+                ->lockForUpdate()
+                ->findOrFail($transfer->id);
+
+            if ($lockedTransfer->status !== 'completed' || $lockedTransfer->cancelled_at !== null) {
+                throw ValidationException::withMessages(['transfer' => 'El traslado ya fue anulado o no puede anularse en su estado actual.']);
+            }
+
+            $productIds = $lockedTransfer->lines->pluck('product_id')->unique()->sort()->values();
+            $products = Product::query()
+                ->where('business_id', $lockedTransfer->business_id)
+                ->whereIn('id', $productIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+
+            foreach ($lockedTransfer->lines as $line) {
+                $product = $products->get($line->product_id);
+                if (! $product) {
+                    throw ValidationException::withMessages(['transfer' => 'No se puede anular: uno de los productos originales ya no existe.']);
+                }
+
+                $quantity = ProductQuantityPolicy::positive($product, $line->quantity);
+                StockPolicy::assertCanDecreaseStock(
+                    (int) $lockedTransfer->business_id,
+                    (int) $lockedTransfer->to_branch_id,
+                    $product,
+                    null,
+                    $quantity,
+                    'transfer',
+                );
+            }
+
+            foreach ($lockedTransfer->lines as $line) {
+                $product = $products->get($line->product_id);
+                $quantity = ProductQuantityPolicy::positive($product, $line->quantity);
+                [$previousDestination, $newDestination] = BranchInventory::decrease($product, (int) $lockedTransfer->to_branch_id, $quantity);
+                [$previousOrigin, $newOrigin] = BranchInventory::increase($product, (int) $lockedTransfer->from_branch_id, $quantity);
+
+                StockMovement::query()->create([
+                    'business_id' => $lockedTransfer->business_id, 'branch_id' => $lockedTransfer->to_branch_id, 'product_id' => $product->id,
+                    'type' => 'transfer_cancellation_out', 'quantity' => ProductQuantityPolicy::signed('-'.$quantity),
+                    'previous_stock' => $previousDestination, 'new_stock' => $newDestination,
+                    'note' => "Anulación de traslado #{$lockedTransfer->id} hacia origen", 'created_by' => $request->user()->id, 'user_id' => $request->user()->id,
+                ]);
+                StockMovement::query()->create([
+                    'business_id' => $lockedTransfer->business_id, 'branch_id' => $lockedTransfer->from_branch_id, 'product_id' => $product->id,
+                    'type' => 'transfer_cancellation_in', 'quantity' => $quantity,
+                    'previous_stock' => $previousOrigin, 'new_stock' => $newOrigin,
+                    'note' => "Anulación de traslado #{$lockedTransfer->id} desde destino", 'created_by' => $request->user()->id, 'user_id' => $request->user()->id,
+                ]);
+            }
+
+            $lockedTransfer->update([
+                'status' => 'cancelled', 'cancelled_at' => now(), 'cancelled_by' => $request->user()->id,
+                'cancellation_reason' => trim($data['reason']),
+            ]);
+        });
+
+        return back()->with('success', 'Traslado anulado e inventario revertido correctamente.');
     }
 
     public function print(Request $request, InventoryTransfer $transfer): View

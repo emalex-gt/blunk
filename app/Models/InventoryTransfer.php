@@ -15,6 +15,9 @@ class InventoryTransfer extends Model
         'status',
         'notes',
         'created_by',
+        'cancelled_at',
+        'cancelled_by',
+        'cancellation_reason',
     ];
 
     public function business(): BelongsTo
@@ -35,6 +38,11 @@ class InventoryTransfer extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function cancelledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cancelled_by');
     }
 
     public function lines(): HasMany
