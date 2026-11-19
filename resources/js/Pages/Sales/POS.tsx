@@ -3403,6 +3403,16 @@ export default function POS({
                 return;
             }
 
+            if (!isFinalConsumer && (!hasCurrentVerifiedGuatemalaIdentity(data.customer) || data.customer.name.trim() === '')) {
+                const documentLabel = docType === 'CUI' ? 'CUI/DPI' : 'NIT';
+                const message = data.customer.name.trim() === ''
+                    ? 'La reserva de crédito requiere el nombre del cliente validado.'
+                    : `Valida el ${documentLabel} antes de registrar la reserva de crédito.`;
+                showError(message);
+                toast.error(message);
+                return;
+            }
+
             saleSubmitLockedRef.current = true;
             beginOperationSubmit();
             setCreditProcessing(true);

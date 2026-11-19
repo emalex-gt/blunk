@@ -16,6 +16,7 @@ use App\Support\BusinessLogo;
 use App\Support\Credits;
 use App\Support\CustomerIdentity;
 use App\Support\CustomerPrintLocation;
+use App\Support\GuatemalaCustomerIdentityPolicy;
 use App\Support\GuatemalaNitCustomerResolver;
 use App\Support\IdempotencyService;
 use App\Support\Inventory\ProductQuantityPolicy;
@@ -627,12 +628,32 @@ class CreditReceiptController extends Controller
             return $customer;
         }
 
-        if (($docType === CustomerIdentity::CUI && ! CustomerIdentity::isValidCui($docNumber))
-            || ($docType !== CustomerIdentity::CUI && ! CustomerIdentity::isRealTaxId($docNumber))) {
+        $existing = isset($data['id'])
+            ? Customer::query()->where('business_id', $businessId)->whereNull('merged_into_customer_id')->find($data['id'])
+            : null;
+
+        try {
+            $identity = app(GuatemalaCustomerIdentityPolicy::class)->resolve(
+                Business::query()->findOrFail($businessId),
+                $docType,
+                $docNumber,
+                $existing,
+            );
+        } catch (ValidationException $exception) {
+            $message = $exception->errors()['doc_number'][0]
+                ?? $exception->errors()['doc_type'][0]
+                ?? 'No se pudo validar la identidad fiscal.';
+
+            throw ValidationException::withMessages(['customer.doc_number' => $message]);
+        }
+
+        $docType = $identity['doc_type'];
+        $docNumber = $identity['doc_number'];
+        $name = trim((string) ($identity['name'] ?? ''));
+
+        if ($name === '') {
             throw ValidationException::withMessages([
-                'customer.doc_number' => $docType === CustomerIdentity::CUI
-                    ? 'El CUI/DPI debe tener 13 dígitos.'
-                    : 'Debes ingresar un NIT válido.',
+                'customer.name' => 'La identidad fiscal debe incluir el nombre del cliente.',
             ]);
         }
 
@@ -643,9 +664,15 @@ class CreditReceiptController extends Controller
             'doc_number' => $docNumber,
             'country' => 'GT',
             'is_final_consumer' => false,
+            'name_locked' => true,
+            'tax_lookup_verified_at' => $identity['tax_lookup_verified_at'],
+            'tax_lookup_payload' => $identity['tax_lookup_payload'],
         ] + $this->effectiveCustomerDetails($data, null);
 
-        return Customer::findOrCreateByNormalizedTaxId($businessId, $payload)->refresh();
+        $customer = Customer::findOrCreateByNormalizedTaxId($businessId, $payload);
+        $customer->update($payload);
+
+        return $customer->refresh();
     }
 
     /** @return array{address: ?string, address_reference: ?string, municipality: ?string, department: ?string, phone: ?string} */
