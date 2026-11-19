@@ -23,6 +23,9 @@ class Purchase extends Model
         'paid_from_cash',
         'cash_register_session_id',
         'created_by',
+        'cancelled_at',
+        'cancelled_by',
+        'cancellation_reason',
     ];
 
     protected $casts = [
@@ -30,6 +33,7 @@ class Purchase extends Model
         'transport_cost' => 'decimal:2',
         'paid_from_cash' => 'boolean',
         'business_number' => 'integer',
+        'cancelled_at' => 'datetime',
     ];
 
     public function business(): BelongsTo
@@ -60,5 +64,10 @@ class Purchase extends Model
     public function cashRegisterSession(): BelongsTo
     {
         return $this->belongsTo(CashRegisterSession::class);
+    }
+
+    public function cancelledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cancelled_by');
     }
 }

@@ -1,6 +1,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { formatCurrency } from '@/utils/currency';
-import { Head, Link, usePage } from '@inertiajs/react';
+import { Head, Link, useForm, usePage } from '@inertiajs/react';
+import { FormEvent, useState } from 'react';
 
 type PurchaseItem = {
     id: number;
@@ -27,14 +28,28 @@ type Purchase = {
     supplier: { id: number; name: string } | null;
     branch: { id: number; name: string } | null;
     created_by: { id: number; name: string } | null;
+    status: string;
+    cancelled_at?: string | null;
+    cancellation_reason?: string | null;
+    cancelled_by?: { id: number; name: string } | null;
     items: PurchaseItem[];
 };
 
-export default function Show({ purchase }: { purchase: Purchase }) {
+export default function Show({ purchase, canCancel }: { purchase: Purchase; canCancel: boolean }) {
     const business = usePage().props.business as { country?: string | null } | null;
     const country = business?.country ?? 'GT';
     const purchaseNumber = `C-${purchase.business_number ?? purchase.id}`;
     const productsSubtotal = Number(purchase.total) - Number(purchase.transport_cost ?? 0);
+    const [cancelOpen, setCancelOpen] = useState(false);
+    const cancellation = useForm({ reason: '' });
+
+    function submitCancellation(event: FormEvent) {
+        event.preventDefault();
+        cancellation.post(route('purchases.cancel', purchase.id), {
+            preserveScroll: true,
+            onSuccess: () => setCancelOpen(false),
+        });
+    }
 
     return (
         <AuthenticatedLayout
@@ -50,6 +65,11 @@ export default function Show({ purchase }: { purchase: Purchase }) {
                         >
                             Imprimir
                         </a>
+                        {canCancel && (
+                            <button type="button" onClick={() => setCancelOpen(true)} className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-100">
+                                Anular compra
+                            </button>
+                        )}
                         <Link
                             href={route('purchases.index')}
                             className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
@@ -80,6 +100,13 @@ export default function Show({ purchase }: { purchase: Purchase }) {
                             <div className="mt-5 rounded-2xl border border-orange-100 bg-orange-50 p-4 text-sm font-semibold text-orange-700">
                                 Compra pagada desde caja
                                 {purchase.cash_register_session?.id ? ` #${purchase.cash_register_session.id}` : ''}
+                            </div>
+                        )}
+                        {purchase.status === 'cancelled' && (
+                            <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                                <div className="font-semibold">Compra anulada</div>
+                                <div className="mt-1">{purchase.cancellation_reason ?? 'Sin motivo registrado.'}</div>
+                                <div className="mt-1 text-xs">{purchase.cancelled_by?.name ?? '-'} · {purchase.cancelled_at ?? '-'}</div>
                             </div>
                         )}
                         {purchase.note && (
@@ -134,6 +161,19 @@ export default function Show({ purchase }: { purchase: Purchase }) {
                     </section>
                 </div>
             </div>
+            {cancelOpen && (
+                <div className="fixed inset-0 z-50 flex items-end bg-slate-950/40 p-4 sm:items-center sm:justify-center">
+                    <form onSubmit={submitCancellation} className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+                        <h3 className="text-lg font-bold text-slate-950">Anular compra {purchaseNumber}</h3>
+                        <p className="mt-2 text-sm text-slate-600">Proveedor: {purchase.supplier?.name ?? 'Sin proveedor'}. Esta acción revierte el inventario únicamente si sigue disponible.</p>
+                        <label className="mt-4 block text-sm font-semibold text-slate-700">Motivo de anulación
+                            <textarea autoFocus value={cancellation.data.reason} onChange={(event) => cancellation.setData('reason', event.target.value)} className="mt-1 w-full rounded-xl border-slate-300" rows={3} />
+                        </label>
+                        {(cancellation.errors.reason || cancellation.errors.purchase) && <p className="mt-2 text-sm font-semibold text-red-700">{cancellation.errors.reason || cancellation.errors.purchase}</p>}
+                        <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setCancelOpen(false)} className="rounded-xl border px-4 py-2 text-sm font-semibold">Cancelar</button><button disabled={cancellation.processing || cancellation.data.reason.trim() === ''} className="rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Confirmar anulación</button></div>
+                    </form>
+                </div>
+            )}
         </AuthenticatedLayout>
     );
 }

@@ -15,6 +15,7 @@ use App\Support\DocumentCompanyHeader;
 use App\Support\Exports\TableExporter;
 use App\Support\IdempotencyService;
 use App\Support\Inventory\ProductQuantityPolicy;
+use App\Support\Inventory\StockPolicy;
 use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\ProductSupplierCostHistory;
@@ -382,10 +383,82 @@ class PurchaseController extends Controller
                 'supplier:id,name',
                 'branch:id,name',
                 'createdBy:id,name',
+                'cancelledBy:id,name',
                 'cashRegisterSession:id',
                 'items.product:id,code,barcode',
             ]),
+            'canCancel' => $purchase->status === 'completed'
+                && Permissions::userHas($request->user(), Permissions::PURCHASES_CANCEL),
         ]);
+    }
+
+    public function cancel(Request $request, Purchase $purchase): RedirectResponse
+    {
+        abort_unless(Permissions::userHas($request->user(), Permissions::PURCHASES_CANCEL), 403);
+        abort_unless((int) $purchase->business_id === (int) currentBusinessId(), 403);
+        $this->authorizePurchaseBranch($request, $purchase);
+
+        $data = $request->validate([
+            'reason' => ['required', 'string', 'max:2000'],
+        ], ['reason.required' => 'Debes indicar el motivo de la anulación.']);
+
+        DB::transaction(function () use ($purchase, $request, $data) {
+            $lockedPurchase = Purchase::query()
+                ->where('business_id', currentBusinessId())
+                ->with('items')
+                ->lockForUpdate()
+                ->findOrFail($purchase->id);
+
+            if ($lockedPurchase->status !== 'completed' || $lockedPurchase->cancelled_at !== null) {
+                throw ValidationException::withMessages([
+                    'purchase' => 'La compra ya fue anulada o no puede anularse en su estado actual.',
+                ]);
+            }
+
+            foreach ($lockedPurchase->items as $item) {
+                $product = Product::query()
+                    ->where('business_id', $lockedPurchase->business_id)
+                    ->lockForUpdate()
+                    ->find($item->product_id);
+
+                if (! $product) {
+                    throw ValidationException::withMessages(['purchase' => 'No se puede anular: uno de los productos originales ya no existe.']);
+                }
+
+                $quantity = ProductQuantityPolicy::positive($product, $item->quantity);
+                StockPolicy::assertCanDecreaseStock(
+                    (int) $lockedPurchase->business_id,
+                    (int) $lockedPurchase->branch_id,
+                    $product,
+                    null,
+                    $quantity,
+                    'purchase_cancellation',
+                );
+
+                [$previousStock, $newStock] = BranchInventory::decrease($product, (int) $lockedPurchase->branch_id, $quantity);
+                StockMovement::query()->create([
+                    'business_id' => $lockedPurchase->business_id,
+                    'branch_id' => $lockedPurchase->branch_id,
+                    'product_id' => $product->id,
+                    'type' => 'purchase_cancellation',
+                    'quantity' => ProductQuantityPolicy::signed('-'.$quantity),
+                    'previous_stock' => $previousStock,
+                    'new_stock' => $newStock,
+                    'note' => 'Anulación de '.stockMovementNote('purchase', $lockedPurchase->business_number ?: $lockedPurchase->id),
+                    'created_by' => $request->user()->id,
+                    'user_id' => $request->user()->id,
+                ]);
+            }
+
+            $lockedPurchase->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancelled_by' => $request->user()->id,
+                'cancellation_reason' => trim($data['reason']),
+            ]);
+        });
+
+        return back()->with('success', 'Compra anulada e inventario revertido correctamente.');
     }
 
     public function print(Request $request, Purchase $purchase): View

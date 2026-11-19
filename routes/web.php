@@ -595,6 +595,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/purchases/suppliers/search', [PurchaseController::class, 'supplierSearch'])->middleware('permission:purchases.create')->name('purchases.suppliers.search');
             Route::get('/purchases/create', [PurchaseController::class, 'create'])->middleware('permission:purchases.create')->name('purchases.create');
             Route::post('/purchases', [PurchaseController::class, 'store'])->middleware('permission:purchases.create')->name('purchases.store');
+            Route::post('/purchases/{purchase}/cancel', [PurchaseController::class, 'cancel'])->middleware('permission:purchases.cancel')->name('purchases.cancel');
             Route::get('/purchases/{purchase}/print', [PurchaseController::class, 'print'])->middleware('permission:purchases.view')->name('purchases.print');
             Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->middleware('permission:purchases.view')->name('purchases.show');
         });
