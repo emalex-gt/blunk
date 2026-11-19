@@ -149,6 +149,8 @@ export default function Visit({
     const [quantityMessages, setQuantityMessages] = useState<Record<number, string>>({});
     const [draftSyncing, setDraftSyncing] = useState(false);
     const [draftSyncError, setDraftSyncError] = useState<string | null>(null);
+    const [draftSyncRequiresReauthentication, setDraftSyncRequiresReauthentication] = useState(false);
+    const [draftSyncCanRetry, setDraftSyncCanRetry] = useState(false);
     const [priceTexts, setPriceTexts] = useState<Record<number, string>>(() => Object.fromEntries(
         initialItems.map((item) => [item.product_id, formatMoneyValue(item.unit_price)]),
     ));
@@ -157,6 +159,7 @@ export default function Visit({
     const draftSyncTimerRef = useRef<number | null>(null);
     const draftSyncControllerRef = useRef<AbortController | null>(null);
     const draftSyncInFlightRef = useRef(false);
+    const draftSyncRetryRequiredRef = useRef(false);
     const confirmedItemsRef = useRef<Item[]>(initialItems);
     const customerForm = useForm({
         commercial_name: visit.customer.commercial_name ?? '',
@@ -200,7 +203,7 @@ export default function Visit({
             return;
         }
 
-        if (silent && (draftSyncInFlightRef.current || draftSyncTimerRef.current !== null)) {
+        if (silent && (draftSyncInFlightRef.current || draftSyncTimerRef.current !== null || draftSyncRetryRequiredRef.current)) {
             return;
         }
 
@@ -217,6 +220,9 @@ export default function Visit({
 
             setDraftSyncing(true);
             setDraftSyncError(null);
+            setDraftSyncRequiresReauthentication(false);
+            setDraftSyncCanRetry(false);
+            draftSyncRetryRequiredRef.current = false;
         }
 
         const synchronize = async () => {
@@ -230,7 +236,7 @@ export default function Visit({
                     headers: {
                         Accept: 'application/json',
                         'Content-Type': 'application/json',
-                        'X-CSRF-TOKEN': document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '',
+                        ...csrfHeaders(),
                     },
                     body: JSON.stringify({
                         items: items.map((item) => ({
@@ -257,18 +263,23 @@ export default function Visit({
                 }
 
                 if (!response.ok) {
-                    if (response.status === 422 || response.status === 403) {
+                    if (response.status === 419) {
+                        draftSyncRetryRequiredRef.current = true;
+                        setDraftSyncRequiresReauthentication(true);
+                        setDraftSyncCanRetry(true);
+                        setDraftSyncError('No pudimos confirmar la reserva porque la sesión de seguridad venció. El carrito se conserva localmente y no hay stock reservado. Inicia sesión en otra pestaña y luego reintenta la reserva.');
+                    } else if (response.status === 422 || response.status === 403) {
+                        draftSyncRetryRequiredRef.current = false;
+                        setDraftSyncRequiresReauthentication(false);
+                        setDraftSyncCanRetry(false);
                         const message = payload?.errors?.items?.[0] ?? payload?.message ?? 'No se pudo reservar el stock. Inténtalo nuevamente.';
                         setDraftSyncError(message);
                         form.setData('items', confirmedItemsRef.current);
-                    } else if (!silent) {
-                        setDraftSyncError('No pudimos confirmar la reserva. Actualizando el carrito desde el servidor…');
-                        router.visit(window.location.href, {
-                            method: 'get',
-                            only: ['visit', 'preSale', 'products'],
-                            preserveScroll: true,
-                            preserveState: false,
-                        });
+                    } else {
+                        draftSyncRetryRequiredRef.current = true;
+                        setDraftSyncRequiresReauthentication(false);
+                        setDraftSyncCanRetry(true);
+                        setDraftSyncError('No pudimos confirmar la reserva. El carrito se conserva localmente; verifica la conexión y vuelve a intentarlo antes de guardar.');
                     }
                     return;
                 }
@@ -281,6 +292,8 @@ export default function Visit({
                     maximum_quantity: allowNegativeStock ? null : maximumByProduct.get(item.product_id) ?? item.maximum_quantity,
                 }));
                 confirmedItemsRef.current = confirmed;
+                draftSyncRetryRequiredRef.current = false;
+                setDraftSyncCanRetry(false);
                 form.setData('items', confirmed);
                 const stockByProduct = new Map<number, Pick<Product, 'stock' | 'reserved_stock' | 'available_stock'>>(
                     (payload?.products ?? []).map((product: Product) => [product.id, product]),
@@ -291,15 +304,10 @@ export default function Visit({
                 })));
             } catch {
                 if (!controller.signal.aborted && draftSyncRequestRef.current === requestId) {
-                    if (!silent) {
-                        setDraftSyncError('No pudimos confirmar la reserva. Actualizando el carrito desde el servidor…');
-                        router.visit(window.location.href, {
-                            method: 'get',
-                            only: ['visit', 'preSale', 'products'],
-                            preserveScroll: true,
-                            preserveState: false,
-                        });
-                    }
+                    draftSyncRetryRequiredRef.current = true;
+                    setDraftSyncRequiresReauthentication(false);
+                    setDraftSyncCanRetry(true);
+                    setDraftSyncError('No pudimos confirmar la reserva. El carrito se conserva localmente; verifica la conexión y vuelve a intentarlo antes de guardar.');
                 }
             } finally {
                 if (draftSyncRequestRef.current === requestId) {
@@ -841,6 +849,16 @@ export default function Visit({
                     </div>
                     {form.errors.items && <p className="mt-3 text-sm font-medium text-red-600">{form.errors.items}</p>}
                     {draftSyncError && <p className="mt-3 text-sm font-medium text-red-600">{draftSyncError}</p>}
+                    {draftSyncCanRetry && (
+                        <button
+                            type="button"
+                            onClick={() => syncDraftCart(form.data.items, true)}
+                            disabled={draftSyncing}
+                            className="mt-2 text-sm font-semibold text-orange-700 underline disabled:opacity-50"
+                        >
+                            {draftSyncRequiresReauthentication ? 'Ya inicié sesión: reintentar reserva' : 'Reintentar reserva'}
+                        </button>
+                    )}
                     {draftSyncing && <p className="mt-3 text-sm font-medium text-slate-500">Reservando stock…</p>}
                     {(form.errors as Record<string, string>).pre_sale && <p className="mt-3 text-sm font-medium text-red-600">{(form.errors as Record<string, string>).pre_sale}</p>}
                 </div>
@@ -877,6 +895,24 @@ export default function Visit({
 
 function normalizeQuantity(value: string | number | null | undefined): string {
     return String(value ?? '').trim().replace(',', '.');
+}
+
+function csrfHeaders(): Record<string, string> {
+    const cookie = document.cookie.split('; ').find((value) => value.startsWith('XSRF-TOKEN='));
+
+    if (cookie) {
+        const token = cookie.slice('XSRF-TOKEN='.length);
+
+        try {
+            return { 'X-XSRF-TOKEN': decodeURIComponent(token) };
+        } catch {
+            return { 'X-XSRF-TOKEN': token };
+        }
+    }
+
+    const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content;
+
+    return token ? { 'X-CSRF-TOKEN': token } : {};
 }
 
 function quantityError(value: string | number, allowDecimal: boolean): string | null {
