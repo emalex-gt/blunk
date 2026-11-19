@@ -119,8 +119,8 @@ class CreditReceiptController extends Controller
             'items.*.unit_price' => ['nullable', 'numeric', 'decimal:0,2', 'gt:0'],
         ]);
 
-        $docType = CustomerIdentity::normalizeTaxId($data['customer']['doc_type']) ?? '';
-        $docNumber = CustomerIdentity::normalizeTaxId($data['customer']['doc_number']) ?? '';
+        $docType = CustomerIdentity::normalizeGuatemalaDocType($data['customer']['doc_type']) ?? '';
+        $docNumber = CustomerIdentity::normalizeDocument($docType, $data['customer']['doc_number']) ?? '';
 
         if ($docType === CustomerIdentity::CF || $docNumber === CustomerIdentity::CF) {
             $docType = CustomerIdentity::CF;
@@ -576,8 +576,8 @@ class CreditReceiptController extends Controller
     private function resolveCustomer(array $data): Customer
     {
         $businessId = currentBusinessId();
-        $docNumber = CustomerIdentity::normalizeTaxId($data['doc_number'] ?? null);
-        $docType = CustomerIdentity::normalizeTaxId($data['doc_type'] ?? null) ?? '';
+        $docType = CustomerIdentity::normalizeGuatemalaDocType($data['doc_type'] ?? null) ?? '';
+        $docNumber = CustomerIdentity::normalizeDocument($docType, $data['doc_number'] ?? null);
         $name = trim((string) ($data['name'] ?? ''));
         $isFinalConsumer = $docNumber === 'CF' || $docType === 'CF';
 
@@ -627,16 +627,19 @@ class CreditReceiptController extends Controller
             return $customer;
         }
 
-        if (! CustomerIdentity::isRealTaxId($docNumber)) {
+        if (($docType === CustomerIdentity::CUI && ! CustomerIdentity::isValidCui($docNumber))
+            || ($docType !== CustomerIdentity::CUI && ! CustomerIdentity::isRealTaxId($docNumber))) {
             throw ValidationException::withMessages([
-                'customer.doc_number' => 'Debes ingresar un NIT válido.',
+                'customer.doc_number' => $docType === CustomerIdentity::CUI
+                    ? 'El CUI/DPI debe tener 13 dígitos.'
+                    : 'Debes ingresar un NIT válido.',
             ]);
         }
 
         $payload = [
             'business_id' => $businessId,
             'name' => $name,
-            'doc_type' => 'NIT',
+            'doc_type' => $docType,
             'doc_number' => $docNumber,
             'country' => 'GT',
             'is_final_consumer' => false,
