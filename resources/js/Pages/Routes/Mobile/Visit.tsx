@@ -91,7 +91,7 @@ export default function Visit({
     allowNegativeStock: boolean;
     allowManualPrice: boolean;
     routeCash: { is_open: boolean };
-    payment_policy: { active: boolean; allowed_methods: ('cash' | 'card' | 'transfer' | 'check')[]; primary_method: 'cash' | 'card' | 'transfer' | 'check' | null };
+    payment_policy: { active: boolean; allowed_methods: ('cash' | 'card' | 'transfer' | 'check')[]; primary_method: 'cash' | 'card' | 'transfer' | 'check' | null; default_method: 'cash' | 'card' | 'transfer' | 'check' | null };
     canCollectNow: boolean;
 }) {
     const initialItems = (preSale?.items ?? []).map((item) => ({
@@ -120,8 +120,8 @@ export default function Visit({
         && existingPaymentMethod !== null
         && !payment_policy.allowed_methods.includes(existingPaymentMethod);
     const initialPaymentMethod = payment_policy.active
-        ? (existingMethodIsInvalid ? '' : existingPaymentMethod ?? '')
-        : existingPaymentMethod ?? '';
+        ? (existingMethodIsInvalid ? '' : existingPaymentMethod ?? payment_policy.default_method ?? '')
+        : existingPaymentMethod ?? payment_policy.default_method ?? '';
     const allowedPaymentOptions = payment_policy.active
         ? paymentOptions.filter(([value]) => payment_policy.allowed_methods.includes(value))
         : paymentOptions;

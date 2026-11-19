@@ -6,7 +6,7 @@ use Illuminate\Validation\ValidationException;
 
 class RoutePreSalePaymentMethodPolicy
 {
-    /** @return array{active:bool,allowed_methods:array<int,string>,primary_method:?string} */
+    /** @return array{active:bool,allowed_methods:array<int,string>,primary_method:?string,default_method:?string} */
     public function forBranch(int $businessId, int $branchId): array
     {
         $setting = app(RouteBranchCollectionSettingsService::class)->forBranch($businessId, $branchId);
@@ -16,6 +16,7 @@ class RoutePreSalePaymentMethodPolicy
                 'active' => false,
                 'allowed_methods' => [],
                 'primary_method' => null,
+                'default_method' => RouteBranchCollectionSettingsService::PAYMENT_METHOD_CASH,
             ];
         }
 
@@ -23,6 +24,9 @@ class RoutePreSalePaymentMethodPolicy
             'active' => true,
             'allowed_methods' => $setting->allowed_payment_methods,
             'primary_method' => $setting->primary_payment_method,
+            'default_method' => in_array(RouteBranchCollectionSettingsService::PAYMENT_METHOD_CASH, $setting->allowed_payment_methods, true)
+                ? RouteBranchCollectionSettingsService::PAYMENT_METHOD_CASH
+                : null,
         ];
     }
 
