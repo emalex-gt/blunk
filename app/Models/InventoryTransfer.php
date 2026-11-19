@@ -8,6 +8,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class InventoryTransfer extends Model
 {
+    protected $casts = [
+        'cancelled_at' => 'datetime',
+    ];
+
     protected $fillable = [
         'business_id',
         'from_branch_id',
