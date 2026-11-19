@@ -109,6 +109,7 @@ export default function Visit({
     }));
     const [preSaleKey, setPreSaleKey] = useState(() => makeOperationKey('route-pre-sale'));
     const submitLockedRef = useRef(false);
+    const paymentMethodRef = useRef<HTMLSelectElement>(null);
     const paymentOptions = [
         ['cash', 'Efectivo'],
         ['card', 'Tarjeta'],
@@ -538,6 +539,10 @@ export default function Visit({
                     preserveState: false,
                 });
             },
+            onError: () => {
+                setConfirmation(null);
+                window.setTimeout(() => paymentMethodRef.current?.focus(), 0);
+            },
             onFinish: () => {
                 submitLockedRef.current = false;
             },
@@ -545,6 +550,12 @@ export default function Visit({
     };
 
     const requestSavePreSale = () => {
+        if (!allowedPaymentOptions.some(([method]) => method === form.data.payment_method)) {
+            form.setError('payment_method', 'Selecciona una forma de pago antes de guardar la preventa.');
+            paymentMethodRef.current?.focus();
+            return;
+        }
+
         const invalidItem = form.data.items.find((item) => {
             const maximumQuantity = quantityLimit(item);
 
@@ -769,7 +780,7 @@ export default function Visit({
                     <h2 className="font-semibold text-slate-950">Preventa</h2>
                     <label className="mt-3 block text-sm font-medium text-slate-700">
                         Forma de pago acordada
-                        <select value={form.data.payment_method} disabled={!canModifyPreSale} onChange={(event) => form.setData('payment_method', event.target.value as 'cash' | 'card' | 'transfer' | 'check' | '')} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm disabled:bg-slate-100">
+                        <select ref={paymentMethodRef} value={form.data.payment_method} disabled={!canModifyPreSale} onChange={(event) => { form.setData('payment_method', event.target.value as 'cash' | 'card' | 'transfer' | 'check' | ''); form.clearErrors('payment_method'); }} className={`mt-1 h-10 w-full rounded-lg text-sm disabled:bg-slate-100 ${form.errors.payment_method ? 'border-red-500 ring-1 ring-red-500' : 'border-slate-200'}`}>
                                 <option value="">Selecciona una forma de pago</option>
                                 {allowedPaymentOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
                             </select>
