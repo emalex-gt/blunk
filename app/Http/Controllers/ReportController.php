@@ -988,7 +988,14 @@ class ReportController extends Controller
 
         $salesTotal = (float) (clone $query)->sum('total');
         $costTotal = (float) (clone $summaryBase)->sum('sale_items.total_cost');
-        $profitTotal = (float) (clone $summaryBase)->sum('sale_items.profit_amount');
+        $profitBeforeExpenses = (float) (clone $summaryBase)->sum('sale_items.profit_amount');
+        $operatingExpenses = (float) CashExpense::query()
+            ->where('business_id', $businessId)
+            ->where('branch_id', $scope->branch->id)
+            ->where('status', CashExpense::STATUS_ACTIVE)
+            ->whereBetween('created_at', [$range->start, $range->end])
+            ->sum('amount');
+        $profitAfterExpenses = $profitBeforeExpenses - $operatingExpenses;
 
         $rows = $query->latest()
             ->paginate($this->reportPerPage($request))
@@ -1012,10 +1019,13 @@ class ReportController extends Controller
         ], $rows, [
             'filters' => ['date_from' => $range->dateFrom, 'date_to' => $range->dateTo],
             'summary' => [
-                ['label' => 'Total ventas', 'value' => $salesTotal, 'money' => true],
-                ['label' => 'Total costo', 'value' => $costTotal, 'money' => true],
-                ['label' => 'Total utilidad', 'value' => $profitTotal, 'money' => true],
-                ['label' => 'Margen %', 'value' => $salesTotal > 0 ? round(($profitTotal / $salesTotal) * 100, 2) : 0],
+                ['label' => 'Ventas netas', 'value' => $salesTotal, 'money' => true],
+                ['label' => 'Costo de ventas', 'value' => $costTotal, 'money' => true],
+                ['label' => 'Utilidad antes de gastos', 'value' => $profitBeforeExpenses, 'money' => true],
+                ['label' => 'Margen antes de gastos %', 'value' => $salesTotal > 0 ? round(($profitBeforeExpenses / $salesTotal) * 100, 2) : 0],
+                ['label' => 'Gastos operativos', 'value' => $operatingExpenses, 'money' => true],
+                ['label' => 'Utilidad después de gastos', 'value' => $profitAfterExpenses, 'money' => true],
+                ['label' => 'Margen después de gastos %', 'value' => $salesTotal > 0 ? round(($profitAfterExpenses / $salesTotal) * 100, 2) : 0],
             ],
             'branch' => $scope->payload(),
         ]);
