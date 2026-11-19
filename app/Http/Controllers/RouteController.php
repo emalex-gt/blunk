@@ -1002,6 +1002,13 @@ class RouteController extends Controller
             ->first();
 
         $workDay = DB::transaction(function () use ($request, $zone, $today, $openWorkDay) {
+            if (! $openWorkDay) {
+                app(RouteBranchCollectionSettingsService::class)->requireValidatedPolicyForNewOperations(
+                    currentBusinessId(),
+                    (int) $zone->branch_id,
+                );
+            }
+
             $workDay = $openWorkDay ?: RouteWorkDay::query()->create([
                 'business_id' => currentBusinessId(),
                 'branch_id' => $zone->branch_id,
@@ -1282,6 +1289,11 @@ class RouteController extends Controller
                 ->lockForUpdate()
                 ->first();
 
+            app(RouteBranchCollectionSettingsService::class)->requireValidatedPolicyForNewOperations(
+                (int) currentBusinessId(),
+                (int) $visit->branch_id,
+            );
+
             if (! $preSale) {
                 abort_unless(Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_CREATE), 403);
                 $preSale = PreSale::query()->create([
@@ -1409,6 +1421,11 @@ class RouteController extends Controller
                     'pre_sale' => 'La jornada está cerrada. La preventa ya no se puede editar.',
                 ]);
             }
+
+            app(RouteBranchCollectionSettingsService::class)->requireValidatedPolicyForNewOperations(
+                (int) currentBusinessId(),
+                (int) $visit->branch_id,
+            );
 
             if (PreSale::query()->where('business_id', currentBusinessId())
                 ->where('route_visit_id', $visit->id)

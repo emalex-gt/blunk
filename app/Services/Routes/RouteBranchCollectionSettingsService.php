@@ -68,6 +68,20 @@ class RouteBranchCollectionSettingsService
         return $this->validatedStoredPolicy($setting);
     }
 
+    /** @return array{collection_workflow_mode:string,allowed_payment_methods:array<int,string>,primary_payment_method:string} */
+    public function requireValidatedPolicyForNewOperations(int $businessId, int $branchId): array
+    {
+        $policy = $this->lockValidatedPolicyForExecution($businessId, $branchId);
+
+        if ($policy === null) {
+            throw ValidationException::withMessages([
+                'route_collection_policy' => 'Configura los cobros de esta sucursal antes de operar rutas.',
+            ]);
+        }
+
+        return $policy;
+    }
+
     /** @return array{collection_workflow_mode:string,allowed_payment_methods:array<int,string>,primary_payment_method:string}|null */
     public function validatedStoredPolicy(?RouteBranchCollectionSetting $setting): ?array
     {

@@ -44,9 +44,9 @@ export default function Zones({ zones, branch, routeCash, canPostConversionColle
                         No tienes zonas asignadas para esta sucursal.
                     </div>
                 )}
-                {(errors.work_day || errors.branch_id) && (
+                {(errors.work_day || errors.branch_id || errors.route_collection_policy) && (
                     <div className="rounded-lg bg-red-50 p-4 text-sm font-medium text-red-700 ring-1 ring-red-200">
-                        {errors.work_day ?? errors.branch_id}
+                        {errors.work_day ?? errors.branch_id ?? errors.route_collection_policy}
                     </div>
                 )}
                 {zones.map((zone) => (
