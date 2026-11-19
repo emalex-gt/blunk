@@ -2831,17 +2831,5 @@ class RouteController extends Controller
                 'pre_sale' => 'La jornada está cerrada. La preventa ya no se puede editar.',
             ]);
         }
-
-        $submittedExists = PreSale::query()
-            ->where('business_id', currentBusinessId())
-            ->where('route_visit_id', $visit->id)
-            ->whereIn('status', [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING, PreSale::STATUS_PICKED])
-            ->exists();
-
-        if ($submittedExists) {
-            throw ValidationException::withMessages([
-                'pre_sale' => 'La preventa ya fue enviada y no se puede editar.',
-            ]);
-        }
     }
 }
