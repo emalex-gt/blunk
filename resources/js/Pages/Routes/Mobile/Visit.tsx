@@ -43,7 +43,7 @@ type ExistingItem = {
     manual_price?: boolean;
     discount?: string | number;
     notes?: string | null;
-    product?: { name: string; code: string | null; barcode: string | null };
+    product?: { name: string; code: string | null; barcode: string | null; allow_decimal_quantity?: boolean };
 };
 
 type Confirmation = {
@@ -99,9 +99,9 @@ export default function Visit({
         name: item.product?.name ?? 'Producto',
         code: item.product?.code ?? null,
         barcode: item.product?.barcode ?? null,
-        quantity: String(item.quantity),
+        quantity: canonicalStoredQuantity(item.quantity),
         maximum_quantity: item.maximum_quantity === null || item.maximum_quantity === undefined ? null : String(item.maximum_quantity),
-        allow_decimal_quantity: Boolean(item.allow_decimal_quantity),
+        allow_decimal_quantity: Boolean(item.product?.allow_decimal_quantity ?? item.allow_decimal_quantity),
         unit_price: Number(item.unit_price ?? 0),
         manual_price: Boolean(item.manual_price),
         discount: Number(item['discount'] ?? 0),
@@ -895,6 +895,14 @@ export default function Visit({
 
 function normalizeQuantity(value: string | number | null | undefined): string {
     return String(value ?? '').trim().replace(',', '.');
+}
+
+function canonicalStoredQuantity(value: string | number | null | undefined): string {
+    const quantity = normalizeQuantity(value);
+
+    return /^\d+(?:\.\d{1,4})?$/.test(quantity)
+        ? quantityFromScaled(scaledQuantity(quantity))
+        : quantity;
 }
 
 function csrfHeaders(): Record<string, string> {
