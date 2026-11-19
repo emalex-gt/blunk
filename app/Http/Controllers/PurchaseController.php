@@ -411,7 +411,7 @@ class PurchaseController extends Controller
 
             if ($lockedPurchase->status !== 'completed' || $lockedPurchase->cancelled_at !== null) {
                 throw ValidationException::withMessages([
-                    'purchase' => 'La compra ya fue anulada o no puede anularse en su estado actual.',
+                    'reason' => 'La compra ya fue anulada o no puede anularse en su estado actual.',
                 ]);
             }
 
@@ -422,7 +422,7 @@ class PurchaseController extends Controller
                     ->find($item->product_id);
 
                 if (! $product) {
-                    throw ValidationException::withMessages(['purchase' => 'No se puede anular: uno de los productos originales ya no existe.']);
+                    throw ValidationException::withMessages(['reason' => 'No se puede anular: uno de los productos originales ya no existe.']);
                 }
 
                 $quantity = ProductQuantityPolicy::positive($product, $item->quantity);

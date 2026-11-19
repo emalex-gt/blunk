@@ -24,6 +24,7 @@ type Transfer = {
 export default function Show({ transfer, timezone, canCancel }: { transfer: Transfer; timezone: string; canCancel: boolean }) {
     const [cancelOpen, setCancelOpen] = useState(false);
     const cancellation = useForm({ reason: '' });
+    const cancellationError = Object.values(cancellation.errors)[0];
 
     function submitCancellation(event: FormEvent) {
         event.preventDefault();
@@ -88,7 +89,7 @@ export default function Show({ transfer, timezone, canCancel }: { transfer: Tran
                     </table>
                 </div>
             </div>
-            {cancelOpen && <div className="fixed inset-0 z-50 flex items-end bg-slate-950/40 p-4 sm:items-center sm:justify-center"><form onSubmit={submitCancellation} className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl"><h2 className="text-lg font-bold">Anular traslado #{transfer.id}</h2><p className="mt-2 text-sm text-slate-600">Las cantidades volverán desde {transfer.to_branch?.name ?? '-'} hacia {transfer.from_branch?.name ?? '-'} sólo si permanecen disponibles.</p><label className="mt-4 block text-sm font-semibold">Motivo<textarea autoFocus value={cancellation.data.reason} onChange={(event) => cancellation.setData('reason', event.target.value)} className="mt-1 w-full rounded-xl border-slate-300" rows={3} /></label>{(cancellation.errors.reason || cancellation.errors.transfer) && <p className="mt-2 text-sm font-semibold text-red-700">{cancellation.errors.reason || cancellation.errors.transfer}</p>}<div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setCancelOpen(false)} className="rounded-xl border px-4 py-2 text-sm font-semibold">Cancelar</button><button disabled={cancellation.processing || cancellation.data.reason.trim() === ''} className="rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Confirmar anulación</button></div></form></div>}
+            {cancelOpen && <div className="fixed inset-0 z-50 flex items-end bg-slate-950/40 p-4 sm:items-center sm:justify-center"><form onSubmit={submitCancellation} className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl"><h2 className="text-lg font-bold">Anular traslado #{transfer.id}</h2><p className="mt-2 text-sm text-slate-600">Las cantidades volverán desde {transfer.to_branch?.name ?? '-'} hacia {transfer.from_branch?.name ?? '-'} sólo si permanecen disponibles.</p><label className="mt-4 block text-sm font-semibold">Motivo<textarea autoFocus value={cancellation.data.reason} onChange={(event) => cancellation.setData('reason', event.target.value)} className="mt-1 w-full rounded-xl border-slate-300" rows={3} /></label>{cancellationError && <p className="mt-2 text-sm font-semibold text-red-700">{cancellationError}</p>}<div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setCancelOpen(false)} className="rounded-xl border px-4 py-2 text-sm font-semibold">Cancelar</button><button disabled={cancellation.processing || cancellation.data.reason.trim() === ''} className="rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Confirmar anulación</button></div></form></div>}
         </AuthenticatedLayout>
     );
 }

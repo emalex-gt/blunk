@@ -42,6 +42,7 @@ export default function Show({ purchase, canCancel }: { purchase: Purchase; canC
     const productsSubtotal = Number(purchase.total) - Number(purchase.transport_cost ?? 0);
     const [cancelOpen, setCancelOpen] = useState(false);
     const cancellation = useForm({ reason: '' });
+    const cancellationError = Object.values(cancellation.errors)[0];
 
     function submitCancellation(event: FormEvent) {
         event.preventDefault();
@@ -169,7 +170,7 @@ export default function Show({ purchase, canCancel }: { purchase: Purchase; canC
                         <label className="mt-4 block text-sm font-semibold text-slate-700">Motivo de anulación
                             <textarea autoFocus value={cancellation.data.reason} onChange={(event) => cancellation.setData('reason', event.target.value)} className="mt-1 w-full rounded-xl border-slate-300" rows={3} />
                         </label>
-                        {(cancellation.errors.reason || cancellation.errors.purchase) && <p className="mt-2 text-sm font-semibold text-red-700">{cancellation.errors.reason || cancellation.errors.purchase}</p>}
+                        {cancellationError && <p className="mt-2 text-sm font-semibold text-red-700">{cancellationError}</p>}
                         <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setCancelOpen(false)} className="rounded-xl border px-4 py-2 text-sm font-semibold">Cancelar</button><button disabled={cancellation.processing || cancellation.data.reason.trim() === ''} className="rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Confirmar anulación</button></div>
                     </form>
                 </div>

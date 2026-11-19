@@ -288,7 +288,7 @@ class InventoryTransferController extends Controller
                 ->findOrFail($transfer->id);
 
             if ($lockedTransfer->status !== 'completed' || $lockedTransfer->cancelled_at !== null) {
-                throw ValidationException::withMessages(['transfer' => 'El traslado ya fue anulado o no puede anularse en su estado actual.']);
+                throw ValidationException::withMessages(['reason' => 'El traslado ya fue anulado o no puede anularse en su estado actual.']);
             }
 
             $productIds = $lockedTransfer->lines->pluck('product_id')->unique()->sort()->values();
@@ -303,7 +303,7 @@ class InventoryTransferController extends Controller
             foreach ($lockedTransfer->lines as $line) {
                 $product = $products->get($line->product_id);
                 if (! $product) {
-                    throw ValidationException::withMessages(['transfer' => 'No se puede anular: uno de los productos originales ya no existe.']);
+                    throw ValidationException::withMessages(['reason' => 'No se puede anular: uno de los productos originales ya no existe.']);
                 }
 
                 $quantity = ProductQuantityPolicy::positive($product, $line->quantity);
