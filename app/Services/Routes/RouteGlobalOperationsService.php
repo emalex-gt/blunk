@@ -42,7 +42,6 @@ class RouteGlobalOperationsService
             ->where('business_id', $businessId)
             ->where('branch_id', $branchId)
             ->where('status', 'closed')
-            ->whereNotNull('completed_at')
             ->with(['seller:id,name', 'preSales' => fn ($query) => $query->where('business_id', $businessId)->where('branch_id', $branchId)->orderBy('id')])
             ->orderBy('seller_id')->orderBy('id')->get();
         $sellerGroups = [];
@@ -166,7 +165,6 @@ class RouteGlobalOperationsService
             ->where('business_id', $businessId)
             ->where('branch_id', $branchId)
             ->where('status', 'closed')
-            ->whereNotNull('completed_at')
             ->with('seller:id,name')
             ->orderBy('seller_id')
             ->orderBy('id')

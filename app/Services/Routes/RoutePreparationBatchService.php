@@ -57,9 +57,9 @@ class RoutePreparationBatchService
                         ->lockForUpdate()
                         ->firstOrFail();
 
-                    if ($lockedWorkDay->status !== 'closed' || $lockedWorkDay->completed_at === null) {
+                    if ($lockedWorkDay->status !== 'closed') {
                         throw ValidationException::withMessages([
-                            'work_day' => 'La jornada debe estar finalizada antes de preparar sus preventas.',
+                            'work_day' => 'La jornada debe estar cerrada antes de preparar sus preventas.',
                         ]);
                     }
 
