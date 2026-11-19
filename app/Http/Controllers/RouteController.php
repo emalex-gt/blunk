@@ -225,6 +225,7 @@ class RouteController extends Controller
     public function closedWorkDays(Request $request): Response
     {
         $businessId = currentBusinessId();
+        $activeBranchId = (int) BranchInventory::activeBranch($businessId)->id;
         $dateFrom = $request->date('date_from')?->startOfDay();
         $dateTo = $request->date('date_to')?->endOfDay();
         $status = $request->string('status')->toString();
@@ -242,7 +243,7 @@ class RouteController extends Controller
 
         $query = RouteWorkDay::query()
             ->where('business_id', $businessId)
-            ->whereIn('branch_id', $this->authorizedBranchIds($request, $businessId))
+            ->where('branch_id', $activeBranchId)
             ->where('status', 'closed')
             ->with(['branch:id,name', 'zone:id,name', 'seller:id,name'])
             ->select('route_work_days.*')
@@ -265,7 +266,7 @@ class RouteController extends Controller
             ->latest('closed_at')
             ->latest('id');
 
-        $query->when($request->filled('branch_id'), fn ($query) => $branchId ? $query->where('branch_id', $branchId) : $query->whereRaw('1 = 0'));
+        $query->when($request->filled('branch_id') && $branchId !== $activeBranchId, fn ($query) => $query->whereRaw('1 = 0'));
         $query->when($request->filled('seller_id'), fn ($query) => $sellerId ? $query->where('seller_id', $sellerId) : $query->whereRaw('1 = 0'));
         $query->when($request->filled('zone_id'), fn ($query) => $zoneId ? $query->where('route_zone_id', $zoneId) : $query->whereRaw('1 = 0'));
         $query->when($dateFrom, fn ($query) => $query->where('work_date', '>=', $dateFrom->toDateString()));
@@ -318,6 +319,8 @@ class RouteController extends Controller
     {
         abort_unless((int) $workDay->business_id === currentBusinessId(), 403);
         $this->authorizeBranch($request, (int) $workDay->branch_id);
+
+        abort_unless((int) $workDay->branch_id === (int) BranchInventory::activeBranch(currentBusinessId())->id, 403);
 
         $businessId = currentBusinessId();
         $invoiceOptions = $this->routePreSaleInvoiceOptions($businessId, $request->user());
@@ -525,10 +528,10 @@ class RouteController extends Controller
         $felEligibility = $request->string('fel_eligibility')->toString();
         $felEligibility = in_array($felEligibility, ['eligible', 'not_eligible'], true) ? $felEligibility : null;
 
-        $authorizedBranchIds = $this->authorizedBranchIds($request, $businessId);
+        $activeBranchId = (int) BranchInventory::activeBranch($businessId)->id;
         $query = PreSale::query()
             ->where('business_id', $businessId)
-            ->whereIn('branch_id', $authorizedBranchIds)
+            ->where('branch_id', $activeBranchId)
             ->with([
                 'customer:id,name,commercial_name,contact_name,doc_number',
                 'seller:id,name',
@@ -559,7 +562,7 @@ class RouteController extends Controller
 
         $query->when($status, fn ($query) => $query->where('status', $status));
         $query->when(! $status, fn ($query) => $query->whereIn('status', ['submitted', 'processing', 'picked']));
-        $query->when($request->filled('branch_id'), fn ($query) => $branchId ? $query->where('branch_id', $branchId) : $query->whereRaw('1 = 0'));
+        $query->when($request->filled('branch_id') && $branchId !== $activeBranchId, fn ($query) => $query->whereRaw('1 = 0'));
         $query->when($request->filled('seller_id'), fn ($query) => $sellerId ? $query->where('seller_id', $sellerId) : $query->whereRaw('1 = 0'));
         $query->when($request->filled('zone_id'), fn ($query) => $zoneId ? $query->where('route_zone_id', $zoneId) : $query->whereRaw('1 = 0'));
         $query->when($dateFrom, fn ($query) => $query->where('created_at', '>=', $dateFrom));
@@ -601,7 +604,6 @@ class RouteController extends Controller
                 return $payload;
             });
 
-        $activeBranchId = BranchInventory::activeBranch($businessId)->id;
         $routeCash = app(RouteCashOperationGuard::class)->status($businessId, (int) $activeBranchId);
         return Inertia::render('Routes/PreSales/Index', [
             'preSales' => $preSales,
@@ -630,6 +632,7 @@ class RouteController extends Controller
     {
         abort_unless((int) $preSale->business_id === currentBusinessId(), 403);
         $this->authorizeBranch(request(), (int) $preSale->branch_id);
+        abort_unless((int) $preSale->branch_id === (int) BranchInventory::activeBranch(currentBusinessId())->id, 403);
         abort_unless(Permissions::userHas(request()->user(), Permissions::ROUTES_PRE_SALES_ADMIN_VIEW), 403);
 
         $preSale->load([
