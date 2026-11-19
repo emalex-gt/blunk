@@ -415,7 +415,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                             <p className="mt-2 line-clamp-2 text-sm text-slate-600" title={visit.customer.address ?? 'Sin dirección'}>{visit.customer.address ?? 'Sin dirección'}</p>
                             {visit.pre_sale && (
                                 <p className="mt-2 rounded-lg bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-700">
-                                    Preventa: Q {Number(visit.pre_sale.total).toFixed(2)} · {visit.pre_sale.status}
+                                    {visit.pre_sale.status === 'draft' ? 'Borrador sin confirmar' : 'Preventa'}: Q {Number(visit.pre_sale.total).toFixed(2)} · {visit.pre_sale.status}
                                 </p>
                             )}
                             {visit.status === 'without_sale' && (visit.no_sale_reason || visit.no_sale_note) && (

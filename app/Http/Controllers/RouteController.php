@@ -1487,8 +1487,10 @@ class RouteController extends Controller
                 'subtotal' => $resolved['subtotal'],
                 'discount_total' => $resolved['discount_total'],
                 'total' => $resolved['total'],
-                'status' => $collectNow ? PreSale::STATUS_SUBMITTED : PreSale::STATUS_DRAFT,
-                'submitted_at' => $collectNow ? now() : null,
+                // The explicit save is the commercial confirmation. PATCH draft
+                // synchronization remains the only path that leaves a draft.
+                'status' => PreSale::STATUS_SUBMITTED,
+                'submitted_at' => now(),
             ]);
 
             if ($collectNow) {
@@ -1901,10 +1903,15 @@ class RouteController extends Controller
                         throw ValidationException::withMessages(['work_day' => 'La jornada no está abierta.']);
                     }
 
+                    // Before explicit confirmation was introduced, saving a
+                    // visit marked it with_pre_sale while leaving its pre-sale
+                    // in draft. That visit state is the durable evidence needed
+                    // to promote only those legacy confirmed records.
                     PreSale::query()
                         ->where('business_id', currentBusinessId())
                         ->where('route_work_day_id', $lockedWorkDay->id)
                         ->where('status', 'draft')
+                        ->whereHas('visit', fn ($query) => $query->where('status', 'with_pre_sale'))
                         ->update([
                             'status' => 'submitted',
                             'submitted_at' => now(),
@@ -1913,7 +1920,7 @@ class RouteController extends Controller
                     RouteVisit::query()
                         ->where('business_id', currentBusinessId())
                         ->where('route_work_day_id', $lockedWorkDay->id)
-                        ->whereHas('preSale', fn ($query) => $query->whereIn('status', ['draft', 'submitted']))
+                        ->whereHas('preSale', fn ($query) => $query->where('status', 'submitted'))
                         ->update(['status' => 'with_pre_sale', 'finished_at' => now()]);
 
                     $hasUnresolvedVisits = RouteVisit::query()
