@@ -120,7 +120,7 @@ export default function Visit({
         && existingPaymentMethod !== null
         && !payment_policy.allowed_methods.includes(existingPaymentMethod);
     const initialPaymentMethod = payment_policy.active
-        ? (existingMethodIsInvalid ? '' : existingPaymentMethod ?? payment_policy.primary_method ?? '')
+        ? (existingMethodIsInvalid ? '' : existingPaymentMethod ?? '')
         : existingPaymentMethod ?? '';
     const allowedPaymentOptions = payment_policy.active
         ? paymentOptions.filter(([value]) => payment_policy.allowed_methods.includes(value))
@@ -769,12 +769,10 @@ export default function Visit({
                     <h2 className="font-semibold text-slate-950">Preventa</h2>
                     <label className="mt-3 block text-sm font-medium text-slate-700">
                         Forma de pago acordada
-                        {payment_policy.active && allowedPaymentOptions.length === 1
-                            ? <div className="mt-1 h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{allowedPaymentOptions[0][1]}</div>
-                            : <select value={form.data.payment_method} disabled={!canModifyPreSale} onChange={(event) => form.setData('payment_method', event.target.value as 'cash' | 'card' | 'transfer' | 'check' | '')} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm disabled:bg-slate-100">
+                        <select value={form.data.payment_method} disabled={!canModifyPreSale} onChange={(event) => form.setData('payment_method', event.target.value as 'cash' | 'card' | 'transfer' | 'check' | '')} className="mt-1 h-10 w-full rounded-lg border-slate-200 text-sm disabled:bg-slate-100">
                                 <option value="">Selecciona una forma de pago</option>
                                 {allowedPaymentOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
-                            </select>}
+                            </select>
                         {existingMethodIsInvalid && <p className="mt-1 text-xs font-semibold text-amber-700">El método acordado actualmente ya no está disponible para esta sucursal. Selecciona una forma de pago válida.</p>}
                         {form.errors.payment_method && <p className="mt-1 text-xs font-semibold text-red-600">{form.errors.payment_method}</p>}
                     </label>

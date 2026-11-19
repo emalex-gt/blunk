@@ -36,16 +36,12 @@ class RoutePreSalePaymentMethodPolicy
     ): ?string {
         $policy = $this->forBranch($businessId, $branchId);
 
-        if (! $policy['active']) {
-            return $methodProvided ? $requestedMethod : $existingMethod;
-        }
+        $allowedMethods = $policy['active']
+            ? $policy['allowed_methods']
+            : ['cash', 'card', 'transfer', 'check'];
 
         if (! $methodProvided) {
-            if ($creating) {
-                return $policy['primary_method'];
-            }
-
-            if (is_string($existingMethod) && in_array($existingMethod, $policy['allowed_methods'], true)) {
+            if (! $creating && is_string($existingMethod) && in_array($existingMethod, $allowedMethods, true)) {
                 return $existingMethod;
             }
 
@@ -54,7 +50,7 @@ class RoutePreSalePaymentMethodPolicy
             ]);
         }
 
-        if (! is_string($requestedMethod) || ! in_array($requestedMethod, $policy['allowed_methods'], true)) {
+        if (! is_string($requestedMethod) || ! in_array($requestedMethod, $allowedMethods, true)) {
             throw ValidationException::withMessages([
                 'payment_method' => 'La forma de pago no está permitida para esta sucursal.',
             ]);

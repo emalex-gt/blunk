@@ -41,6 +41,8 @@ class RouteGlobalOperationsService
         $workDays = RouteWorkDay::query()
             ->where('business_id', $businessId)
             ->where('branch_id', $branchId)
+            ->where('status', 'closed')
+            ->whereNotNull('completed_at')
             ->with(['seller:id,name', 'preSales' => fn ($query) => $query->where('business_id', $businessId)->where('branch_id', $branchId)->orderBy('id')])
             ->orderBy('seller_id')->orderBy('id')->get();
         $sellerGroups = [];
@@ -160,7 +162,15 @@ class RouteGlobalOperationsService
         $branchId = (int) $actor->current_branch_id;
         $preview = $this->preview($businessId, $branchId, $statuses, $requireUnconverted);
         $eligibleWorkDayIds = collect($preview['sellers'])->flatMap(fn (array $seller) => $seller['operation_work_day_ids'])->unique()->flip();
-        $workDays = RouteWorkDay::query()->where('business_id', $businessId)->where('branch_id', $branchId)->with('seller:id,name')->orderBy('seller_id')->orderBy('id')->get();
+        $workDays = RouteWorkDay::query()
+            ->where('business_id', $businessId)
+            ->where('branch_id', $branchId)
+            ->where('status', 'closed')
+            ->whereNotNull('completed_at')
+            ->with('seller:id,name')
+            ->orderBy('seller_id')
+            ->orderBy('id')
+            ->get();
         $result = ['processed' => [], 'blocked' => $preview['blocked'], 'failed' => []];
         foreach ($workDays as $workDay) {
             $childKey = 'route-global:'.$operation.':'.$globalKey.':'.$workDay->id;
@@ -192,6 +202,14 @@ class RouteGlobalOperationsService
                     'total_pre_sales' => (int) ($childResult->responsePayload['total_pre_sales'] ?? $this->batchPreSales($operation, $childResult->resultId)),
                     'replayed' => $childResult->replayed,
                 ];
+                foreach (($childResult->responsePayload['blocked_pre_sales'] ?? []) as $block) {
+                    $result['blocked'][] = [
+                        'work_day_id' => $workDay->id,
+                        'seller_id' => $workDay->seller_id,
+                        'seller_name' => $workDay->seller?->name,
+                        ...$block,
+                    ];
+                }
             } catch (ValidationException $exception) {
                 $reasonCode = array_key_first($exception->errors()) ?? 'child_validation_blocked';
                 $result['blocked'][] = [

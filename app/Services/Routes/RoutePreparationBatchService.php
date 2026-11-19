@@ -57,6 +57,12 @@ class RoutePreparationBatchService
                         ->lockForUpdate()
                         ->firstOrFail();
 
+                    if ($lockedWorkDay->status !== 'closed' || $lockedWorkDay->completed_at === null) {
+                        throw ValidationException::withMessages([
+                            'work_day' => 'La jornada debe estar finalizada antes de preparar sus preventas.',
+                        ]);
+                    }
+
                     $activeBranch = BranchInventory::activeBranch($businessId);
                     if ((int) $activeBranch->id !== $branchId) {
                         abort(403);
@@ -79,12 +85,27 @@ class RoutePreparationBatchService
                     }
 
                     $preparedRows = [];
+                    $blocked = [];
 
                     // Validate every target before creating the batch or changing a single pre-sale.
                     foreach ($preSales as $preSale) {
                         $rows = $this->preparation->fullPreparationRows($preSale);
-                        $this->preparation->validate($preSale, $rows, $timing);
-                        $preparedRows[$preSale->id] = $rows;
+                        try {
+                            $this->preparation->validate($preSale, $rows, $timing);
+                            $preparedRows[$preSale->id] = $rows;
+                        } catch (ValidationException $exception) {
+                            $blocked[] = [
+                                'pre_sale_id' => $preSale->id,
+                                'reason_code' => array_key_first($exception->errors()) ?? 'pre_sale_validation_failed',
+                                'message' => collect($exception->errors())->flatten()->first() ?? $exception->getMessage(),
+                            ];
+                        }
+                    }
+
+                    if ($preparedRows === []) {
+                        throw ValidationException::withMessages([
+                            'pre_sales' => $blocked[0]['message'] ?? 'No hay preventas que puedan prepararse en esta jornada.',
+                        ]);
                     }
 
                     $batch = RoutePreparationBatch::query()->create([
@@ -102,6 +123,9 @@ class RoutePreparationBatchService
                     $totalAmount = 0.0;
 
                     foreach ($preSales as $preSale) {
+                        if (! isset($preparedRows[$preSale->id])) {
+                            continue;
+                        }
                         $result = $this->preparation->prepare($preSale, $preparedRows[$preSale->id], $user, $timing, $batch);
 
                         RoutePreparationBatchPreSale::query()->create([
@@ -119,7 +143,7 @@ class RoutePreparationBatchService
                     $preparedAt = now();
                     $batch->fill([
                         'prepared_at' => $preparedAt,
-                        'total_pre_sales' => $preSales->count(),
+                        'total_pre_sales' => count($preparedRows),
                         'total_items' => $totalItems,
                         'total_amount' => round($totalAmount, 2),
                     ]);
@@ -135,7 +159,8 @@ class RoutePreparationBatchService
                         'response_payload' => [
                             'batch_id' => $batch->id,
                             'route_work_day_id' => $lockedWorkDay->id,
-                            'total_pre_sales' => $preSales->count(),
+                            'total_pre_sales' => count($preparedRows),
+                            'blocked_pre_sales' => $blocked,
                         ],
                     ];
                 });
