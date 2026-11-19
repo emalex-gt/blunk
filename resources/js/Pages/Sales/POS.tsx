@@ -3378,6 +3378,7 @@ export default function POS({
 
             const docType = data.customer.doc_type.trim().toUpperCase();
             const docNumber = data.customer.doc_number.trim().toUpperCase();
+            const normalizedCui = docNumber.replace(/[\s\-/]+/g, '');
 
             const isFinalConsumer = data.customer.consumidor_final || docType === 'CF' || docNumber === 'CF';
             const normalizedCustomerName = data.customer.name.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
@@ -3389,8 +3390,14 @@ export default function POS({
                 return;
             }
 
-            if (!isFinalConsumer && (docType !== 'NIT' || !docNumber)) {
-                const message = 'Para crédito debes ingresar un NIT válido.';
+            const hasValidCreditIdentity = docType === 'CUI'
+                ? /^\d{13}$/.test(normalizedCui)
+                : docType === 'NIT' && docNumber !== '';
+
+            if (!isFinalConsumer && !hasValidCreditIdentity) {
+                const message = docType === 'CUI'
+                    ? 'Para crédito debes ingresar un CUI/DPI válido de 13 dígitos.'
+                    : 'Para crédito debes ingresar un NIT válido.';
                 showError(message);
                 toast.error(message);
                 return;
