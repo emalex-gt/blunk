@@ -119,26 +119,57 @@ class CashRegisterClosingOperations
 
     private static function salePayments(CashRegisterSession $session, CarbonInterface $from, CarbonInterface $to): Collection
     {
+        // Route immediate-paid sales deliberately do not persist the cash-session
+        // on SalePayment: the physical cash ledger is the sale_cash movement.
+        // Use that durable movement only when it matches the payment exactly;
+        // never infer its session from timestamps.
+        $immediateRouteCashMovement = CashMovement::query()
+            ->where('business_id', $session->business_id)
+            ->where('branch_id', $session->branch_id)
+            ->where('type', 'sale_cash')
+            ->where('reference_type', 'sale')
+            ->whereColumn('reference_id', 'sale_payments.sale_id')
+            ->whereColumn('amount', 'sale_payments.amount');
+
         return SalePayment::query()
+            ->select('sale_payments.*')
             ->where('business_id', $session->business_id)
             ->where('status', 'captured')
-            ->whereNull('route_pre_sale_collection_id')->whereNull('route_delivery_collection_id')
-            ->whereNull('route_post_conversion_collection_id')->whereNull('route_immediate_paid_entry_id')
-            ->where(function ($query) use ($session, $from, $to) {
-                $query->where('cash_register_session_id', $session->id)
-                    ->orWhereBetween('collected_at', [$from, $to])
-                    ->orWhere(fn ($query) => $query->whereNull('collected_at')->whereBetween('created_at', [$from, $to]))
-                    ->orWhereHas('sale', fn ($query) => $query->whereBetween('cancelled_at', [$from, $to]));
+            ->addSelect([
+                'route_immediate_cash_register_session_id' => (clone $immediateRouteCashMovement)
+                    ->select('cash_register_session_id')
+                    ->limit(1),
+            ])
+            ->where(function ($query) use ($session, $from, $to, $immediateRouteCashMovement) {
+                $query->where(function ($query) use ($session, $from, $to) {
+                    $query->whereNull('route_pre_sale_collection_id')->whereNull('route_delivery_collection_id')
+                        ->whereNull('route_post_conversion_collection_id')->whereNull('route_immediate_paid_entry_id')
+                        ->where(function ($query) use ($session, $from, $to) {
+                            $query->where('cash_register_session_id', $session->id)
+                                ->orWhereBetween('collected_at', [$from, $to])
+                                ->orWhere(fn ($query) => $query->whereNull('collected_at')->whereBetween('created_at', [$from, $to]))
+                                ->orWhereHas('sale', fn ($query) => $query->whereBetween('cancelled_at', [$from, $to]));
+                        });
+                })->orWhere(function ($query) use ($session, $from, $to, $immediateRouteCashMovement) {
+                    $query->whereNotNull('route_immediate_paid_entry_id')
+                        ->where(function ($query) use ($session, $from, $to, $immediateRouteCashMovement) {
+                            $query->whereExists((clone $immediateRouteCashMovement)
+                                ->where('cash_register_session_id', $session->id))
+                                ->orWhereHas('sale', fn ($query) => $query->whereBetween('cancelled_at', [$from, $to]));
+                        });
+                });
             })
             ->with(['sale:id,business_id,branch_id,business_number,customer_name,status,cancelled_at'])
             ->get()
             ->filter(fn (SalePayment $payment) => $payment->sale && (int) $payment->sale->branch_id === (int) $session->branch_id)
             ->flatMap(function (SalePayment $payment) use ($session, $from, $to) {
                 $at = $payment->collected_at ?? $payment->created_at;
+                $cashRegisterSessionId = $payment->cash_register_session_id
+                    ?? $payment->route_immediate_cash_register_session_id;
                 $rows = [[
                     'id' => 'sale-payment-'.$payment->id, 'kind' => 'sale', 'label' => 'Venta cobrada', 'method' => $payment->method,
                     'signed_amount' => (float) $payment->amount, 'amount' => (float) $payment->amount, 'occurred_at' => $at,
-                    'cash_register_session_id' => $payment->cash_register_session_id, 'original_cash_register_session_id' => $payment->cash_register_session_id, 'reference' => 'Venta '.format_sale_number($payment->sale),
+                    'cash_register_session_id' => $cashRegisterSessionId, 'original_cash_register_session_id' => $cashRegisterSessionId, 'reference' => 'Venta '.format_sale_number($payment->sale),
                     'party' => $payment->sale->customer_name, 'attribution' => null,
                 ]];
 
@@ -146,7 +177,7 @@ class CashRegisterClosingOperations
                     $rows[] = [
                         'id' => 'sale-cancellation-'.$payment->id, 'kind' => 'sale_cancellation', 'label' => 'Anulación de venta', 'method' => $payment->method,
                         'signed_amount' => -1 * (float) $payment->amount, 'amount' => (float) $payment->amount, 'occurred_at' => $payment->sale->cancelled_at,
-                        'cash_register_session_id' => null, 'original_cash_register_session_id' => $payment->cash_register_session_id, 'reference' => 'Venta '.format_sale_number($payment->sale),
+                        'cash_register_session_id' => null, 'original_cash_register_session_id' => $cashRegisterSessionId, 'reference' => 'Venta '.format_sale_number($payment->sale),
                         'party' => $payment->sale->customer_name, 'attribution' => null,
                     ];
                 }
