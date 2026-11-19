@@ -11,6 +11,8 @@ type CompanySettings = {
     receipt_format: 'ticket' | 'document' | null;
     allow_manual_price: boolean;
     remember_last_customer_product_price: boolean;
+    show_product_code_on_receipts: boolean;
+    show_product_barcode_on_receipts: boolean;
 };
 
 type FelSettings = {
@@ -49,6 +51,8 @@ export default function Company({
         receipt_format: 'ticket' | 'document';
         allow_manual_price: boolean;
         remember_last_customer_product_price: boolean;
+        show_product_code_on_receipts: boolean;
+        show_product_barcode_on_receipts: boolean;
         logo: File | null;
         fel: {
             enabled: boolean;
@@ -75,6 +79,8 @@ export default function Company({
         receipt_format: settings.receipt_format ?? 'ticket',
         allow_manual_price: Boolean(settings.allow_manual_price),
         remember_last_customer_product_price: Boolean(settings.remember_last_customer_product_price),
+        show_product_code_on_receipts: Boolean(settings.show_product_code_on_receipts),
+        show_product_barcode_on_receipts: Boolean(settings.show_product_barcode_on_receipts),
         logo: null,
         fel: {
             enabled: Boolean(felSettings?.enabled),
@@ -145,6 +151,14 @@ export default function Company({
                             <TextField label="Identificación fiscal (NIT/CUIT)" value={form.data.company_tax_id} onChange={(value) => form.setData('company_tax_id', value)} error={form.errors.company_tax_id} />
                             <TextField label="Dirección" value={form.data.company_address} onChange={(value) => form.setData('company_address', value)} error={form.errors.company_address} />
                             <TextField label="Teléfono" value={form.data.company_phone} onChange={(value) => form.setData('company_phone', value)} error={form.errors.company_phone} />
+                        </div>
+
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="text-sm font-medium text-slate-700">Identificadores de productos en comprobantes</div>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                <Toggle label="Mostrar código del producto" description="Muestra el código interno cuando el producto lo tenga." checked={form.data.show_product_code_on_receipts} onChange={(value) => form.setData('show_product_code_on_receipts', value)} />
+                                <Toggle label="Mostrar código de barras" description="Muestra el valor del código de barras cuando exista." checked={form.data.show_product_barcode_on_receipts} onChange={(value) => form.setData('show_product_barcode_on_receipts', value)} />
+                            </div>
                         </div>
 
                         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -349,6 +363,23 @@ function TextField({
                 className="mt-1 w-full rounded-xl border-slate-200 bg-white text-slate-900 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
             />
             {error && <span className="mt-1 block text-sm text-red-600">{error}</span>}
+        </label>
+    );
+}
+
+function Toggle({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: (value: boolean) => void }) {
+    return (
+        <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm">
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={(event) => onChange(event.target.checked)}
+                className="mt-1 rounded border-slate-300 text-orange-600 focus:ring-orange-500"
+            />
+            <span>
+                <span className="block font-semibold text-slate-800">{label}</span>
+                <span className="mt-1 block text-xs text-slate-500">{description}</span>
+            </span>
         </label>
     );
 }

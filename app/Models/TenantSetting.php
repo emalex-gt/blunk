@@ -44,6 +44,8 @@ class TenantSetting extends Model
         'show_other_branches_stock_in_pos',
         'allow_duplicate_product_codes',
         'allow_duplicate_product_barcodes',
+        'show_product_code_on_receipts',
+        'show_product_barcode_on_receipts',
     ];
 
     protected $casts = [
@@ -66,6 +68,8 @@ class TenantSetting extends Model
         'show_other_branches_stock_in_pos' => 'boolean',
         'allow_duplicate_product_codes' => 'boolean',
         'allow_duplicate_product_barcodes' => 'boolean',
+        'show_product_code_on_receipts' => 'boolean',
+        'show_product_barcode_on_receipts' => 'boolean',
         'max_users' => 'integer',
     ];
 

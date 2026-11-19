@@ -143,7 +143,7 @@
         @foreach ($items as $item)
             <tr>
                 <td class="center">{{ $formatQuantity($item->quantity) }}</td>
-                <td>{{ $item->product_name }}</td>
+                <td>{{ $item->product_name }}@include('print.partials.product-identifiers', ['item' => $item, 'settings' => $settings])</td>
                 <td class="right">{{ formatMoney($item->unit_price, 'GT') }}</td>
                 <td class="right">{{ formatMoney($item->discount_amount ?? 0, 'GT') }}</td>
                 <td class="right">{{ formatMoney($item->total, 'GT') }}</td>
