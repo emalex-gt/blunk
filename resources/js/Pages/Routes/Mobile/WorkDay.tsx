@@ -171,7 +171,6 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
     };
 
     const submittedPreSaleMessage = 'La preventa ya fue enviada y no se puede cambiar a sin venta.';
-    const visitHasDraftPreSaleItems = (visit: Visit | null) => Boolean(visit?.pre_sale?.status === 'draft' && (visit.pre_sale.items_count ?? 0) > 0);
     const visitHasSubmittedPreSale = (visit: Visit) => Boolean(visit.pre_sale && visit.pre_sale.status !== 'draft');
 
     const openNoSaleModal = (visit: Visit) => {
@@ -413,9 +412,9 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                                 <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{visit.status}</span>
                             </div>
                             <p className="mt-2 line-clamp-2 text-sm text-slate-600" title={visit.customer.address ?? 'Sin dirección'}>{visit.customer.address ?? 'Sin dirección'}</p>
-                            {visit.pre_sale && (
+                            {visit.pre_sale && visit.pre_sale.status !== 'draft' && (
                                 <p className="mt-2 rounded-lg bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-700">
-                                    {visit.pre_sale.status === 'draft' ? 'Borrador sin confirmar' : 'Preventa'}: Q {Number(visit.pre_sale.total).toFixed(2)} · {visit.pre_sale.status}
+                                    Preventa: Q {Number(visit.pre_sale.total).toFixed(2)} · {visit.pre_sale.status}
                                 </p>
                             )}
                             {visit.status === 'without_sale' && (visit.no_sale_reason || visit.no_sale_note) && (
@@ -478,12 +477,6 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
                             <h2 className="text-lg font-semibold text-slate-950">Sin venta</h2>
                             <p className="mt-1 text-sm text-slate-500">{noSaleVisit.customer.commercial_name || noSaleVisit.customer.name}</p>
                         </div>
-
-                        {visitHasDraftPreSaleItems(noSaleVisit) && (
-                            <div className="mt-4 rounded-xl bg-amber-50 px-3 py-3 text-sm font-semibold text-amber-800">
-                                Este cliente ya tiene productos agregados. Si marcas la visita como sin venta, se eliminará la preventa actual y se liberará el stock reservado. ¿Deseas continuar?
-                            </div>
-                        )}
 
                         {noSaleForm.errors.pre_sale && (
                             <div className="mt-4 rounded-xl bg-red-50 px-3 py-3 text-sm font-semibold text-red-700">{noSaleForm.errors.pre_sale}</div>

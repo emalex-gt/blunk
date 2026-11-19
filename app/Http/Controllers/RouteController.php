@@ -1060,7 +1060,7 @@ class RouteController extends Controller
                     'customer:id,name,commercial_name,contact_name,doc_number,address,address_reference,department,municipality,phone',
                     'preSale' => fn ($query) => $query
                         ->select('id', 'route_visit_id', 'status', 'total')
-                        ->where('status', '!=', 'cancelled')
+                        ->whereNotIn('status', ['draft', 'cancelled'])
                         ->withCount('items'),
                 ])
                 ->orderByRaw('visit_order IS NULL, visit_order')
@@ -1412,7 +1412,7 @@ class RouteController extends Controller
 
             if (PreSale::query()->where('business_id', currentBusinessId())
                 ->where('route_visit_id', $visit->id)
-                ->whereIn('status', [PreSale::STATUS_SUBMITTED, PreSale::STATUS_PROCESSING, PreSale::STATUS_PICKED, PreSale::STATUS_CONVERTED])
+                ->whereIn('status', [PreSale::STATUS_PROCESSING, PreSale::STATUS_PICKED, PreSale::STATUS_CONVERTED])
                 ->exists()) {
                 throw ValidationException::withMessages(['pre_sale' => 'La preventa ya fue enviada y no se puede editar.']);
             }
@@ -1439,7 +1439,7 @@ class RouteController extends Controller
             $preSale = PreSale::query()
                 ->where('business_id', currentBusinessId())
                 ->where('route_visit_id', $visit->id)
-                ->where('status', 'draft')
+                ->whereIn('status', [PreSale::STATUS_DRAFT, PreSale::STATUS_SUBMITTED])
                 ->lockForUpdate()
                 ->first();
 
@@ -1463,6 +1463,17 @@ class RouteController extends Controller
                         && Permissions::userHas($request->user(), Permissions::ROUTES_PRE_SALES_CREATE)),
                     403,
                 );
+
+                if ($preSale->status === PreSale::STATUS_SUBMITTED
+                    && RoutePreSaleCollection::query()
+                        ->where('pre_sale_id', $preSale->id)
+                        ->whereIn('status', ['captured', 'linked'])
+                        ->lockForUpdate()
+                        ->exists()) {
+                    throw ValidationException::withMessages([
+                        'pre_sale' => 'La preventa ya tiene un cobro vinculado y no se puede editar.',
+                    ]);
+                }
             }
 
             $products = $this->activePreSaleProducts($data['items']);

@@ -136,10 +136,11 @@ export default function Visit({
     const customerDisplayName = visit.customer.commercial_name || visit.customer.name || 'cliente';
     const workDayIsOpen = visit.work_day?.status === 'open';
     const visitIsWithoutSale = visit.status === 'without_sale';
-    const existingDraftCanBeEdited = Boolean(preSale && preSale.status === 'draft' && visit.work_day?.status === 'open');
-    const [editingPreSale, setEditingPreSale] = useState(!preSale);
-    const canModifyPreSale = workDayIsOpen && routeCash.is_open && (!preSale || (existingDraftCanBeEdited && editingPreSale));
-    const preSaleIsFrozen = Boolean(preSale && (preSale.status !== 'draft' || visit.work_day?.status !== 'open'));
+    const preSaleCanBeEdited = Boolean(preSale && ['draft', 'submitted'].includes(preSale.status) && visit.work_day?.status === 'open');
+    const preSaleIsDraft = preSale?.status === 'draft';
+    const [editingPreSale, setEditingPreSale] = useState(!preSale || preSaleIsDraft);
+    const canModifyPreSale = workDayIsOpen && routeCash.is_open && (!preSale || (preSaleCanBeEdited && editingPreSale));
+    const preSaleIsFrozen = Boolean(preSale && !preSaleCanBeEdited);
     const [confirmation, setConfirmation] = useState<Confirmation>(null);
     const [editingCustomer, setEditingCustomer] = useState(false);
     const [searchTerm, setSearchTerm] = useState(filters.search ?? '');
@@ -213,7 +214,7 @@ export default function Visit({
     };
 
     const syncDraftCart = (items: Item[], immediate = false, silent = false) => {
-        if (!canModifyPreSale) {
+        if (!canModifyPreSale || preSale?.status === 'submitted') {
             return;
         }
 
@@ -584,7 +585,7 @@ export default function Visit({
         : confirmation?.details;
 
     const requestEditPreSale = () => {
-        if (!existingDraftCanBeEdited) {
+        if (!preSaleCanBeEdited) {
             return;
         }
 
@@ -638,7 +639,7 @@ export default function Visit({
                     <button type="button" onClick={() => setEditingCustomer((value) => !value)} className="mt-3 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-200">
                         Editar cliente
                     </button>
-                    {existingDraftCanBeEdited && !editingPreSale && (
+                    {preSaleCanBeEdited && !editingPreSale && (
                         <button type="button" onClick={requestEditPreSale} className="ml-2 mt-3 rounded-xl bg-orange-600 px-3 py-2 text-sm font-semibold text-white shadow-sm">
                             Editar orden
                         </button>
@@ -648,7 +649,7 @@ export default function Visit({
                             Preventa enviada. Ya no se puede editar.
                         </p>
                     )}
-                    {existingDraftCanBeEdited && (
+                    {preSaleIsDraft && (
                         <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
                             Borrador pendiente: no se incluirá en la ruta hasta pulsar Guardar preventa.
                         </p>
