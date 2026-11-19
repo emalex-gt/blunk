@@ -329,7 +329,7 @@ class SaleController extends Controller
             ? TenantFelSetting::query()->where('business_id', $business->id)->first()
             : null;
         $felModuleEnabled = $country === 'GT' && module_enabled('fel_gt', $business->id);
-        $paymentMethods = ['cash', 'card', 'transfer', 'check'];
+        $paymentMethods = ['cash', 'card', 'transfer', 'deposit', 'check'];
 
         if ($country === 'AR') {
             $paymentMethods[] = 'mercadopago';

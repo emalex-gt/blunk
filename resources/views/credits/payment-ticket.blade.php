@@ -23,7 +23,7 @@
     <div class="line"></div>
     <div><strong>Cliente:</strong> {{ $payment->customer->name }}</div>
     <div><strong>NIT:</strong> {{ $payment->customer->doc_number }}</div>
-    <div><strong>Método:</strong> {{ $payment->payment_method }}</div>
+    <div><strong>Método:</strong> {{ match($payment->payment_method) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'bank_transfer' => 'Transferencia bancaria', 'deposit' => 'Depósito', 'check' => 'Cheque', 'other' => 'Otro', default => $payment->payment_method } }}</div>
     @if($payment->reference)<div><strong>Referencia:</strong> {{ $payment->reference }}</div>@endif
     <div class="line"></div>
     <table>

@@ -88,6 +88,7 @@ export default function Index({ purchases, filters = {}, timezone }: { purchases
                                 <option value="cash">Efectivo</option>
                                 <option value="card">Tarjeta</option>
                                 <option value="bank_transfer">Transferencia</option>
+                                <option value="deposit">Depósito</option>
                                 <option value="check">Cheque</option>
                                 <option value="credit">Crédito</option>
                                 <option value="other">Otro</option>
@@ -236,6 +237,7 @@ function paymentMethodLabel(method?: string | null) {
         cash: 'Efectivo',
         card: 'Tarjeta',
         bank_transfer: 'Transferencia',
+        deposit: 'Depósito',
         check: 'Cheque',
         credit: 'Crédito',
         other: 'Otro',

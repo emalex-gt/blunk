@@ -139,7 +139,7 @@ class AccountReceivableController extends Controller
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
             'customer_id' => ['required', 'integer'],
             'amount' => ['required', 'numeric', 'gt:0'],
-            'payment_method' => ['required', Rule::in(['cash', 'card', 'bank_transfer', 'check', 'other'])],
+            'payment_method' => ['required', Rule::in(['cash', 'card', 'bank_transfer', 'deposit', 'check', 'other'])],
             'reference' => ['nullable', 'string', 'max:255'],
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);

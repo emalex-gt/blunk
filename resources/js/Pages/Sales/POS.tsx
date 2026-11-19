@@ -339,6 +339,7 @@ const basePaymentMethods = [
     { value: 'cash', label: 'Efectivo' },
     { value: 'card', label: 'Tarjeta' },
     { value: 'transfer', label: 'Transferencia' },
+    { value: 'deposit', label: 'Depósito' },
     { value: 'check', label: 'Cheque' },
 ];
 
@@ -502,6 +503,7 @@ function cleanPaymentDetails(method: string, details: PaymentDetails): Partial<P
     const allowed: Record<string, (keyof PaymentDetails)[]> = {
         card: ['authorization'],
         transfer: ['bank', 'transfer_reference'],
+        deposit: ['bank', 'transfer_reference'],
         check: ['bank', 'check_number'],
         mercadopago: ['mercadopago_reference'],
     };
@@ -6274,6 +6276,10 @@ function paymentDetailFields(method: string): { key: keyof PaymentDetails; label
         transfer: [
             { key: 'bank', label: 'Banco' },
             { key: 'transfer_reference', label: 'Referencia / número de operación' },
+        ],
+        deposit: [
+            { key: 'bank', label: 'Banco' },
+            { key: 'transfer_reference', label: 'Referencia de depósito' },
         ],
         check: [
             { key: 'bank', label: 'Banco' },

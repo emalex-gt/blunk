@@ -96,6 +96,7 @@
             'cash' => 'Efectivo',
             'card' => 'Tarjeta',
             'transfer' => 'Transferencia',
+            'deposit' => 'Depósito',
             'check' => 'Cheque',
             'credit_pending' => 'Crédito pendiente',
             'other' => 'Otros',
@@ -206,7 +207,7 @@
             @forelse ($ticketPaymentMethods as $method)
                 <div style="padding:5px 0; border-bottom:1px solid #e2e8f0;">
                     <div style="display:flex; justify-content:space-between; gap:8px;">
-                        <strong>{{ match($method['method']) { 'cash' => 'EFECTIVO', 'card' => 'TARJETA', 'check' => 'CHEQUE', 'transfer' => 'TRANSFERENCIA', default => 'OTROS' } }}</strong>
+                        <strong>{{ match($method['method']) { 'cash' => 'EFECTIVO', 'card' => 'TARJETA', 'check' => 'CHEQUE', 'transfer' => 'TRANSFERENCIA', 'deposit' => 'DEPÓSITO', default => 'OTROS' } }}</strong>
                         <strong class="{{ $method['net'] < 0 ? 'negative' : 'positive' }}">{{ formatMoney($method['net'], $business?->country) }}</strong>
                     </div>
                     <div class="muted">
@@ -233,7 +234,7 @@
             <tbody>
                 @foreach ($paymentOperations['by_method'] as $method)
                     <tr>
-                        <td>{{ match($method['method']) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'check' => 'Cheque', 'transfer' => 'Transferencia', default => 'Otros' } }}</td>
+                        <td>{{ match($method['method']) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'check' => 'Cheque', 'transfer' => 'Transferencia', 'deposit' => 'Depósito', default => 'Otros' } }}</td>
                         <td class="right">{{ formatMoney($method['sales'], $business?->country) }}</td>
                         <td class="right">{{ formatMoney($method['same_turn_cancellations'] ?? 0, $business?->country) }}</td>
                         <td class="right">{{ formatMoney($method['prior_period_corrections'] ?? 0, $business?->country) }}</td>
@@ -310,7 +311,7 @@
                 @endphp
                 <div style="padding: 5px 0; border-bottom: 1px solid #e2e8f0;">
                     <div style="display:flex; justify-content:space-between; gap:8px;"><strong>{{ $operation['label'] }}</strong><strong class="{{ $operation['signed_amount'] < 0 ? 'negative' : 'positive' }}">{{ formatMoney($operation['signed_amount'], $business?->country) }}</strong></div>
-                    <div class="muted">{{ $operationAt?->timezone($timezone)->format('d/m/Y H:i') }} · {{ match($operation['method']) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'check' => 'Cheque', 'transfer', 'bank_transfer' => 'Transferencia', default => 'Otro' } }} · {{ $operation['attribution'] === 'direct' ? 'Directo' : 'Reconstruido' }}</div>
+                    <div class="muted">{{ $operationAt?->timezone($timezone)->format('d/m/Y H:i') }} · {{ match($operation['method']) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'check' => 'Cheque', 'transfer', 'bank_transfer' => 'Transferencia', 'deposit' => 'Depósito', default => 'Otro' } }} · {{ $operation['attribution'] === 'direct' ? 'Directo' : 'Reconstruido' }}</div>
                     @if ($operation['reference'] || $operation['party'])<div style="overflow-wrap:anywhere;">{{ $operation['reference'] }}{{ $operation['party'] ? ' · '.$operation['party'] : '' }}</div>@endif
                 </div>
             @empty

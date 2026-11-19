@@ -607,7 +607,7 @@ function PaymentOperationsOverview({ paymentOperations, country, onFiltersChange
                     <div className="mt-4 flex flex-wrap items-end gap-3">
                         <label className="text-sm font-medium text-slate-700">Medio de pago
                             <select className="mt-1 block rounded-lg border border-slate-300 px-3 py-2" value={operations.filters.method} disabled={refreshing} onChange={(e) => onFiltersChange(e.target.value, operations.filters.operation)}>
-                                <option value="all">Todos</option><option value="cash">Efectivo</option><option value="card">Tarjeta</option><option value="check">Cheque</option><option value="transfer">Transferencia</option><option value="other">Otros</option>
+                                <option value="all">Todos</option><option value="cash">Efectivo</option><option value="card">Tarjeta</option><option value="check">Cheque</option><option value="transfer">Transferencia</option><option value="deposit">Depósito</option><option value="other">Otros</option>
                             </select>
                         </label>
                         <label className="text-sm font-medium text-slate-700">Operación
@@ -662,7 +662,7 @@ function PaymentAmount({ value, country, strong = false }: { value: number; coun
 }
 
 function paymentMethodLabel(method: string) {
-    return ({ cash: 'Efectivo', card: 'Tarjeta', check: 'Cheque', transfer: 'Transferencia', other: 'Otros' } as Record<string, string>)[method] ?? method;
+    return ({ cash: 'Efectivo', card: 'Tarjeta', check: 'Cheque', transfer: 'Transferencia', deposit: 'Depósito', other: 'Otros' } as Record<string, string>)[method] ?? method;
 }
 
 function attributionLabel(attribution: PaymentOperation['attribution']) {

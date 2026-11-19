@@ -53,6 +53,7 @@
         'cash' => 'Efectivo',
         'card' => 'Tarjeta',
         'transfer' => 'Transferencia',
+        'deposit' => 'Depósito',
         'check' => 'Cheque',
         'mercadopago' => 'MercadoPago',
     ];
@@ -61,7 +62,7 @@
 
         return collect(match ($payment->method) {
             'card' => ['Autorización' => $details['authorization'] ?? null],
-            'transfer' => ['Banco' => $details['bank'] ?? null, 'Referencia' => $details['transfer_reference'] ?? null],
+            'transfer', 'deposit' => ['Banco' => $details['bank'] ?? null, 'Referencia' => $details['transfer_reference'] ?? null],
             'check' => ['Banco' => $details['bank'] ?? null, 'Cheque' => $details['check_number'] ?? null],
             'mercadopago' => ['Referencia' => $details['mercadopago_reference'] ?? null],
             default => [],

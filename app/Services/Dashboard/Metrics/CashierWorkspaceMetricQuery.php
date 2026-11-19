@@ -117,8 +117,8 @@ final class CashierWorkspaceMetricQuery implements DashboardMetricQuery
         return $items;
     }
 
-    private function paymentMethodKey(string $method): string { return match ($method) { 'cash' => 'cash', 'card' => 'card', 'bank_transfer', 'transfer' => 'transfer', 'check' => 'check', default => 'other' }; }
-    private function paymentMethodLabel(string $method): string { return match ($method) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'transfer' => 'Transferencia', 'check' => 'Cheque', default => 'Otro' }; }
+    private function paymentMethodKey(string $method): string { return match ($method) { 'cash' => 'cash', 'card' => 'card', 'bank_transfer', 'transfer' => 'transfer', 'deposit' => 'deposit', 'check' => 'check', default => 'other' }; }
+    private function paymentMethodLabel(string $method): string { return match ($method) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'transfer' => 'Transferencia', 'deposit' => 'Depósito', 'check' => 'Cheque', default => 'Otro' }; }
     private function cashMovementLabel(string $type): string { return match ($type) { 'opening' => 'Apertura de caja', 'sale_cash' => 'Venta en efectivo', 'credit_payment_cash' => 'Cobro de crédito', 'expense' => 'Gasto de caja', default => 'Movimiento de caja' }; }
     private function money(float $amount): string { return number_format($amount, 2, '.', ''); }
 }

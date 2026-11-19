@@ -255,7 +255,7 @@ final class ExecutiveOverviewMetricQuery implements DashboardMetricQuery
     private function paymentMethodKey(string $method): string
     {
         return match ($method) {
-            'cash', 'card', 'check', 'credit' => $method,
+            'cash', 'card', 'check', 'credit', 'deposit' => $method,
             'bank_transfer', 'transfer' => 'transfer',
             default => 'other',
         };
@@ -267,6 +267,7 @@ final class ExecutiveOverviewMetricQuery implements DashboardMetricQuery
             'cash' => 'Efectivo',
             'card' => 'Tarjeta',
             'transfer' => 'Transferencia',
+            'deposit' => 'Depósito',
             'check' => 'Cheque',
             'credit' => 'Crédito',
             default => 'Otro',

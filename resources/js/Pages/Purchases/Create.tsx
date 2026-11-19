@@ -241,6 +241,7 @@ export default function Create({
         cash: 'Efectivo',
         card: 'Tarjeta',
         bank_transfer: 'Transferencia',
+        deposit: 'Depósito',
         check: 'Cheque',
         credit: 'Crédito',
         other: 'Otro',
@@ -1037,6 +1038,7 @@ export default function Create({
                                                 <option value="cash">Efectivo</option>
                                                 <option value="card">Tarjeta</option>
                                                 <option value="bank_transfer">Transferencia</option>
+                                                <option value="deposit">Depósito</option>
                                                 <option value="check">Cheque</option>
                                                 <option value="credit">Crédito</option>
                                                 <option value="other">Otro</option>

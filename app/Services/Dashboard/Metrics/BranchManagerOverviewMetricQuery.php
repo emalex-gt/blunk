@@ -199,8 +199,8 @@ final class BranchManagerOverviewMetricQuery implements DashboardMetricQuery
     }
 
     private function previousDay(DashboardContext $context): DashboardPeriod { return DashboardPeriod::for(DashboardPeriod::TODAY, $context->timezone, now()->subDay()); }
-    private function paymentMethodKey(string $method): string { return match ($method) { 'cash', 'card', 'check' => $method, 'bank_transfer', 'transfer' => 'transfer', default => 'other' }; }
-    private function paymentMethodLabel(string $method): string { return match ($method) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'transfer' => 'Transferencia', 'check' => 'Cheque', default => 'Otro' }; }
+    private function paymentMethodKey(string $method): string { return match ($method) { 'cash', 'card', 'check', 'deposit' => $method, 'bank_transfer', 'transfer' => 'transfer', default => 'other' }; }
+    private function paymentMethodLabel(string $method): string { return match ($method) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'transfer' => 'Transferencia', 'deposit' => 'Depósito', 'check' => 'Cheque', default => 'Otro' }; }
     private function change(string $current, string $previous): ?float { return (float) $previous > 0 ? round((((float) $current - (float) $previous) / (float) $previous) * 100, 2) : null; }
     private function money(float $value): string { return number_format($value, 2, '.', ''); }
     private function item(string $key, string $severity, string $title, string $detail, ?string $href): array { return compact('key', 'severity', 'title', 'detail', 'href'); }

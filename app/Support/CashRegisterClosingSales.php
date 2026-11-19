@@ -100,7 +100,7 @@ final class CashRegisterClosingSales
         $net = round($gross - $samePeriodCancellations, 2);
 
         $breakdownCents = array_fill_keys(
-            ['cash', 'card', 'check', 'transfer', 'other', 'credit_pending', 'unclassified'],
+            ['cash', 'card', 'check', 'transfer', 'deposit', 'other', 'credit_pending', 'unclassified'],
             0
         );
         $overallocatedCount = 0;
@@ -110,6 +110,7 @@ final class CashRegisterClosingSales
             'card', 'credit_card', 'debit_card', 'tarjeta' => 'card',
             'check', 'cheque' => 'check',
             'transfer', 'bank_transfer', 'transferencia' => 'transfer',
+            'deposit', 'deposito', 'depósito' => 'deposit',
             '', 'credit', 'credito', 'crédito', 'mixed', 'multiple' => 'unclassified',
             default => 'other',
         };

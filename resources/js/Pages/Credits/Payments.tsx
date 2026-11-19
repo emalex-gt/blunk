@@ -145,6 +145,7 @@ export default function Payments({
                             <option value="cash">Efectivo</option>
                             <option value="card">Tarjeta</option>
                             <option value="bank_transfer">Transferencia bancaria</option>
+                            <option value="deposit">Depósito</option>
                             <option value="check">Cheque</option>
                             <option value="other">Otro</option>
                         </select>
@@ -166,6 +167,7 @@ export default function Payments({
                                 <option value="cash">Efectivo</option>
                                 <option value="card">Tarjeta</option>
                                 <option value="bank_transfer">Transferencia</option>
+                                <option value="deposit">Depósito</option>
                                 <option value="check">Cheque</option>
                                 <option value="other">Otro</option>
                             </select>

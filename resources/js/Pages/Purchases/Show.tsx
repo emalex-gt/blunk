@@ -192,6 +192,7 @@ function paymentMethodLabel(method?: string | null) {
         cash: 'Efectivo',
         card: 'Tarjeta',
         bank_transfer: 'Transferencia',
+        deposit: 'Depósito',
         check: 'Cheque',
         credit: 'Crédito',
         other: 'Otro',

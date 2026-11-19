@@ -365,7 +365,7 @@ final class FinanceOverviewMetricQuery implements DashboardMetricQuery
     private function paymentMethodKey(string $method): string
     {
         return match ($method) {
-            'cash', 'card', 'check' => $method,
+            'cash', 'card', 'check', 'deposit' => $method,
             'bank_transfer', 'transfer' => 'transfer',
             default => 'other',
         };
@@ -377,6 +377,7 @@ final class FinanceOverviewMetricQuery implements DashboardMetricQuery
             'cash' => 'Efectivo',
             'card' => 'Tarjeta',
             'transfer' => 'Transferencia',
+            'deposit' => 'Depósito',
             'check' => 'Cheque',
             default => 'Otro',
         };

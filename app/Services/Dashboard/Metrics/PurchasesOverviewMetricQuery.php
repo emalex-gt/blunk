@@ -275,8 +275,8 @@ final class PurchasesOverviewMetricQuery implements DashboardMetricQuery
         return DashboardPeriod::range(DashboardPeriod::THIS_MONTH, $now->copy()->startOfMonth(), $now->copy()->endOfDay());
     }
 
-    private function paymentMethodKey(string $method): string { return match ($method) { 'cash', 'card', 'check', 'credit' => $method, 'bank_transfer', 'transfer' => 'transfer', default => 'other' }; }
-    private function paymentMethodLabel(string $method): string { return match ($method) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'transfer' => 'Transferencia', 'check' => 'Cheque', 'credit' => 'Crédito', default => 'Otro' }; }
+    private function paymentMethodKey(string $method): string { return match ($method) { 'cash', 'card', 'check', 'credit', 'deposit' => $method, 'bank_transfer', 'transfer' => 'transfer', default => 'other' }; }
+    private function paymentMethodLabel(string $method): string { return match ($method) { 'cash' => 'Efectivo', 'card' => 'Tarjeta', 'transfer' => 'Transferencia', 'deposit' => 'Depósito', 'check' => 'Cheque', 'credit' => 'Crédito', default => 'Otro' }; }
     private function change(float $current, float $previous): ?float { return $previous > 0 ? round((($current - $previous) / $previous) * 100, 2) : null; }
     private function money(float $value): string { return number_format($value, 2, '.', ''); }
 }

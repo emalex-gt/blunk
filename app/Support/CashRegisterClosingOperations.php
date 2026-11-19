@@ -95,7 +95,7 @@ class CashRegisterClosingOperations
             $summary[$method]['net'] = round($summary[$method]['net'] + $operation['signed_amount'], 2);
         }
 
-        $validMethods = ['all', 'cash', 'card', 'check', 'transfer', 'other'];
+        $validMethods = ['all', 'cash', 'card', 'check', 'transfer', 'deposit', 'other'];
         $validOperations = ['all', 'sale', 'sale_cancellation', 'refund', 'credit_payment', 'credit_payment_cancellation', 'purchase', 'expense', 'expense_cancel'];
         $methodFilter = in_array($methodFilter, $validMethods, true) ? $methodFilter : 'all';
         $operationFilter = in_array($operationFilter, $validOperations, true) ? $operationFilter : 'all';
@@ -275,7 +275,7 @@ class CashRegisterClosingOperations
 
     private static function emptySummary(): array
     {
-        return collect(['cash', 'card', 'check', 'transfer', 'other'])->mapWithKeys(fn ($method) => [$method => [
+        return collect(['cash', 'card', 'check', 'transfer', 'deposit', 'other'])->mapWithKeys(fn ($method) => [$method => [
             'sales' => 0.0, 'same_turn_cancellations' => 0.0, 'prior_period_corrections' => 0.0, 'historical_unattributed' => 0.0, 'credit_payments' => 0.0, 'purchases' => 0.0, 'purchases_outside_cash' => 0.0, 'expenses' => 0.0, 'net' => 0.0,
         ]])->all();
     }
@@ -284,7 +284,7 @@ class CashRegisterClosingOperations
     {
         return match (strtolower((string) $method)) {
             'cash', 'efectivo' => 'cash', 'card', 'credit_card', 'debit_card', 'tarjeta' => 'card',
-            'check', 'cheque' => 'check', 'transfer', 'bank_transfer', 'transferencia' => 'transfer', default => 'other',
+            'check', 'cheque' => 'check', 'transfer', 'bank_transfer', 'transferencia' => 'transfer', 'deposit', 'deposito', 'depósito' => 'deposit', default => 'other',
         };
     }
 }

@@ -200,7 +200,7 @@ class PurchaseController extends Controller
             'supplier_invoice_number' => ['nullable', 'string', 'max:100'],
             'transport_cost' => ['nullable', 'numeric', 'decimal:0,2', 'min:0'],
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
-            'payment_method' => ['required', 'string', 'in:cash,card,bank_transfer,check,credit,other'],
+            'payment_method' => ['required', 'string', 'in:cash,card,bank_transfer,deposit,check,credit,other'],
             'paid_from_cash' => ['nullable', 'boolean'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
@@ -514,7 +514,7 @@ class PurchaseController extends Controller
                 }));
             })
             ->when($supplierInvoiceNumber !== '', fn ($query) => $query->where('supplier_invoice_number', 'ilike', "%{$supplierInvoiceNumber}%"))
-            ->when(in_array($paymentMethod, ['cash', 'card', 'bank_transfer', 'check', 'credit', 'other'], true), fn ($query) => $query->where('payment_method', $paymentMethod))
+            ->when(in_array($paymentMethod, ['cash', 'card', 'bank_transfer', 'deposit', 'check', 'credit', 'other'], true), fn ($query) => $query->where('payment_method', $paymentMethod))
             ->when($paidFromCash === 'yes', fn ($query) => $query->where('paid_from_cash', true))
             ->when($paidFromCash === 'no', fn ($query) => $query->where('paid_from_cash', false))
             ->when(in_array($status, ['pending', 'completed', 'cancelled'], true), fn ($query) => $query->where('status', $status))
@@ -578,6 +578,7 @@ class PurchaseController extends Controller
             'cash' => 'Efectivo',
             'card' => 'Tarjeta',
             'bank_transfer' => 'Transferencia',
+            'deposit' => 'Depósito',
             'check' => 'Cheque',
             'credit' => 'Crédito',
             'other' => 'Otro',

@@ -17,6 +17,7 @@
         'cash' => 'Efectivo',
         'card' => 'Tarjeta',
         'transfer' => 'Transferencia',
+        'deposit' => 'Depósito',
         'check' => 'Cheque',
         'mercadopago' => 'MercadoPago',
         'bizum' => 'Bizum',
@@ -30,7 +31,7 @@
             'card' => [
                 'Autorización' => $details['authorization'] ?? null,
             ],
-            'transfer' => [
+            'transfer', 'deposit' => [
                 'Banco' => $details['bank'] ?? null,
                 'Referencia' => $details['transfer_reference'] ?? null,
             ],
