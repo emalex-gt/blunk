@@ -1391,6 +1391,11 @@ class RoutesPreSalesTest extends TestCase
     public function test_without_sale_accepts_an_empty_observation_and_remains_resolved_for_work_day_close(): void
     {
         [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
         $visit = $this->startedVisit($business, $branch, $seller);
 
         $this->actingAs($seller)->post(route('routes.mobile.visits.without-sale', $visit), [
@@ -1406,6 +1411,7 @@ class RoutesPreSalesTest extends TestCase
         ])->assertSessionHasNoErrors();
         $this->assertSame('closed', $visit->workDay->fresh()->status);
         $this->assertNotNull($visit->workDay->fresh()->completed_at);
+        $this->assertSame('Tienda cerrada', $visit->fresh()->no_sale_reason);
     }
 
     public function test_collect_now_submits_only_the_current_pre_sale_and_blocks_cancellation_of_received_money(): void
@@ -2620,9 +2626,14 @@ class RoutesPreSalesTest extends TestCase
         $this->assertNotNull($visit->workDay->refresh()->completed_at);
     }
 
-    public function test_closing_a_work_day_with_pending_visits_is_rejected_without_freezing_the_unresolved_visits(): void
+    public function test_closing_a_work_day_auto_resolves_pending_visits_without_pre_sale(): void
     {
         [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
         $product = $this->product($business, $branch);
         $visit = $this->startedVisit($business, $branch, $seller);
 
@@ -2646,18 +2657,102 @@ class RoutesPreSalesTest extends TestCase
             ]);
         }
 
+        $this->actingAs($seller)
+            ->get(route('routes.mobile.work-days.show', $workDay))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('autoClosePendingVisitsCount', 2));
+
+        $closeKey = 'test-route-close-'.str_replace('.', '-', uniqid('', true));
         $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $workDay), [
-            'idempotency_key' => 'test-route-close-'.str_replace('.', '-', uniqid('', true)),
+            'idempotency_key' => $closeKey,
+        ])->assertRedirect(route('routes.mobile.zones'));
+
+        $this->assertSame('closed', $workDay->refresh()->status);
+        $this->assertSame('submitted', PreSale::query()->where('route_visit_id', $visit->id)->sole()->status);
+        $this->assertSame('with_pre_sale', $visit->fresh()->status);
+        $this->assertSame(0, RouteVisit::query()->where('route_work_day_id', $workDay->id)->where('status', 'pending')->count());
+        $this->assertSame(2, RouteVisit::query()
+            ->where('route_work_day_id', $workDay->id)
+            ->where('status', 'without_sale')
+            ->where('no_sale_reason', 'Cierre automático de jornada: visita sin venta registrada')
+            ->count());
+
+        $firstAutomaticVisit = RouteVisit::query()
+            ->where('route_work_day_id', $workDay->id)
+            ->where('no_sale_reason', 'Cierre automático de jornada: visita sin venta registrada')
+            ->firstOrFail();
+        $finishedAt = $firstAutomaticVisit->finished_at?->toIso8601String();
+
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $workDay), [
+            'idempotency_key' => $closeKey,
+        ])->assertRedirect(route('routes.mobile.zones'));
+
+        $this->assertSame($finishedAt, $firstAutomaticVisit->fresh()->finished_at?->toIso8601String());
+    }
+
+    public function test_closing_a_work_day_only_auto_resolves_visits_from_its_own_tenant_and_work_day(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $visit = $this->startedVisit($business, $branch, $seller);
+
+        [$otherBusiness, $otherSeller, $otherBranch] = $this->tenant(role: 'pre_seller');
+        app(RouteBranchCollectionSettingsService::class)->save($otherBusiness->id, $otherBranch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $otherVisit = $this->startedVisit($otherBusiness, $otherBranch, $otherSeller, 'Cliente de otro tenant');
+
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay), [
+            'idempotency_key' => 'close-tenant-isolation-0001',
+        ])->assertRedirect(route('routes.mobile.zones'));
+
+        $this->assertSame('without_sale', $visit->fresh()->status);
+        $this->assertSame('pending', $otherVisit->fresh()->status);
+        $this->assertSame('open', $otherVisit->workDay->fresh()->status);
+    }
+
+    public function test_closing_a_work_day_keeps_a_persisted_draft_pre_sale_blocked_and_intact(): void
+    {
+        [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $visit = $this->startedVisit($business, $branch, $seller);
+        $product = $this->product($business, $branch, stock: 5);
+
+        $this->actingAs($seller)->patchJson(route('routes.mobile.visits.pre-sale.draft', $visit), [
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ])->assertOk()->assertJsonPath('pre_sale.status', PreSale::STATUS_DRAFT);
+
+        $draft = PreSale::query()->where('route_visit_id', $visit->id)->sole();
+
+        $this->actingAs($seller)->post(route('routes.mobile.work-days.close', $visit->workDay), [
+            'idempotency_key' => 'close-with-draft-pre-sale-0001',
         ])->assertSessionHasErrors('work_day');
 
-        $this->assertSame('open', $workDay->refresh()->status);
-        $this->assertNull($workDay->closed_at);
-        $this->assertSame(2, RouteVisit::query()->where('route_work_day_id', $workDay->id)->where('status', 'pending')->count());
+        $this->assertSame('open', $visit->workDay->fresh()->status);
+        $this->assertSame(PreSale::STATUS_DRAFT, $draft->fresh()->status);
+        $this->assertSame('pending', $visit->fresh()->status);
+        $this->assertSame('active', StockReservation::query()->where('source_id', $draft->id)->sole()->status);
     }
 
     public function test_closing_a_work_day_with_all_visit_outcomes_leaves_it_closed_until_its_pre_sale_is_final(): void
     {
         [$business, $seller, $branch] = $this->tenant(role: 'pre_seller');
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
         $product = $this->product($business, $branch);
         $visit = $this->startedVisit($business, $branch, $seller);
 

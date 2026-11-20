@@ -37,6 +37,7 @@ use App\Services\Routes\RoutePreSalePreparationService;
 use App\Services\Routes\RoutePreSaleFelEligibilityService;
 use App\Services\Routes\RoutePreSaleFelAvailabilityService;
 use App\Services\Routes\RoutePreSalePaymentMethodPolicy;
+use App\Services\Routes\RouteWorkDayVisitClosureService;
 use App\Services\Routes\RouteCashOperationGuard;
 use App\Services\Routes\RoutePostConversionCollectionReader;
 use App\Services\Routes\RouteBranchCollectionSettingsService;
@@ -1056,7 +1057,7 @@ class RouteController extends Controller
             ->with('success', 'Jornada iniciada.');
     }
 
-    public function workDay(Request $request, RouteWorkDay $workDay): Response
+    public function workDay(Request $request, RouteWorkDay $workDay, RouteWorkDayVisitClosureService $visitClosure): Response
     {
         $this->authorizeSellerWorkDay($request, $workDay);
         app(RouteCashOperationGuard::class)->requireOpen((int) $workDay->business_id, (int) $workDay->branch_id);
@@ -1064,6 +1065,7 @@ class RouteController extends Controller
         return Inertia::render('Routes/Mobile/WorkDay', [
             'workDay' => $workDay->load(['zone:id,name', 'branch:id,name,department,municipality']),
             'routeCash' => app(RouteCashOperationGuard::class)->status((int) $workDay->business_id, (int) $workDay->branch_id),
+            'autoClosePendingVisitsCount' => $visitClosure->eligiblePendingVisitsCount($workDay),
             'visits' => RouteVisit::query()
                 ->where('route_work_day_id', $workDay->id)
                 ->with([
@@ -1902,7 +1904,7 @@ class RouteController extends Controller
         return back()->with('success', 'Visita marcada sin venta.');
     }
 
-    public function closeWorkDay(Request $request, RouteWorkDay $workDay): RedirectResponse
+    public function closeWorkDay(Request $request, RouteWorkDay $workDay, RouteWorkDayVisitClosureService $visitClosure): RedirectResponse
     {
         $this->authorizeSellerWorkDay($request, $workDay);
         $data = $request->validate([
@@ -1922,8 +1924,8 @@ class RouteController extends Controller
                 'operation_type' => 'route_work_day_close',
                 'work_day_id' => $workDay->id,
             ],
-            function () use ($request, $workDay) {
-                DB::transaction(function () use ($request, $workDay) {
+            function () use ($request, $workDay, $visitClosure) {
+                DB::transaction(function () use ($request, $workDay, $visitClosure) {
                     $lockedWorkDay = RouteWorkDay::query()
                         ->where('business_id', currentBusinessId())
                         ->whereKey($workDay->id)
@@ -1953,6 +1955,20 @@ class RouteController extends Controller
                         ->where('route_work_day_id', $lockedWorkDay->id)
                         ->whereHas('preSale', fn ($query) => $query->where('status', 'submitted'))
                         ->update(['status' => 'with_pre_sale', 'finished_at' => now()]);
+
+                    $visitClosure->resolveEligiblePendingVisits($lockedWorkDay);
+
+                    $hasDraftPreSales = PreSale::query()
+                        ->where('business_id', currentBusinessId())
+                        ->where('route_work_day_id', $lockedWorkDay->id)
+                        ->where('status', PreSale::STATUS_DRAFT)
+                        ->exists();
+
+                    if ($hasDraftPreSales) {
+                        throw ValidationException::withMessages([
+                            'work_day' => 'Hay preventas en borrador pendientes. Guárdalas o resuélvelas explícitamente antes de cerrar la jornada.',
+                        ]);
+                    }
 
                     $hasUnresolvedVisits = RouteVisit::query()
                         ->where('business_id', currentBusinessId())

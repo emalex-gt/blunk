@@ -45,7 +45,7 @@ export function filterWorkDayVisits(visits: Visit[], query: string): Visit[] {
     ].some((value) => normalizeCustomerSearch(value).includes(normalizedQuery)));
 }
 
-export default function WorkDay({ workDay, visits, routeCash, canPostConversionCollect }: { workDay: { id: number; status: string; zone?: { name: string }; branch?: { name: string; department: string | null; municipality: string | null } }; visits: Visit[]; routeCash: { is_open: boolean }; canPostConversionCollect: boolean }) {
+export default function WorkDay({ workDay, visits, routeCash, canPostConversionCollect, autoClosePendingVisitsCount }: { workDay: { id: number; status: string; zone?: { name: string }; branch?: { name: string; department: string | null; municipality: string | null } }; visits: Visit[]; routeCash: { is_open: boolean }; canPostConversionCollect: boolean; autoClosePendingVisitsCount: number }) {
     const mapHref = (visit: Visit) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(visit.customer.address || visit.customer.name)}`;
     const branchDepartment = workDay.branch?.department ?? '';
     const branchMunicipality = workDay.branch?.municipality ?? '';
@@ -172,6 +172,9 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
 
     const submittedPreSaleMessage = 'La preventa ya fue enviada y no se puede cambiar a sin venta.';
     const visitHasSubmittedPreSale = (visit: Visit) => Boolean(visit.pre_sale && visit.pre_sale.status !== 'draft');
+    const closeWorkDayMessage = autoClosePendingVisitsCount > 0
+        ? `Hay ${autoClosePendingVisitsCount} visita${autoClosePendingVisitsCount === 1 ? '' : 's'} pendiente${autoClosePendingVisitsCount === 1 ? '' : 's'} sin venta registrada. Al cerrar la jornada quedarán marcadas automáticamente como Sin venta, con motivo de cierre de jornada.`
+        : 'Antes de cerrar, registra una preventa o marca sin venta cada visita. Las preventas quedarán enviadas y ya no se podrán editar.';
 
     const openNoSaleModal = (visit: Visit) => {
         if (visitHasSubmittedPreSale(visit)) {
@@ -464,7 +467,7 @@ export default function WorkDay({ workDay, visits, routeCash, canPostConversionC
             <ConfirmDialog
                 open={showCloseConfirm}
                 title="¿Cerrar la jornada?"
-                message="Antes de cerrar, registra una preventa o marca sin venta cada visita. Las preventas quedarán enviadas y ya no se podrán editar."
+                message={closeWorkDayMessage}
                 confirmLabel="Sí, cerrar jornada"
                 processing={closeForm.processing}
                 onCancel={() => setShowCloseConfirm(false)}
