@@ -142,8 +142,14 @@ class PurchaseTransferAsyncSearchTest extends TestCase
         $this->assertStringContainsString('Sí, guardar compra', $purchaseSource);
         $this->assertStringContainsString('onSubmit={(event) => event.preventDefault()}', $purchaseSource);
         $this->assertStringContainsString('onClick={() => submit()}', $purchaseSource);
-        $this->assertStringContainsString('¿Has revisado la información de este traslado?', $transferSource);
-        $this->assertStringContainsString('Sí, guardar traslado', $transferSource);
+        $this->assertStringContainsString('Los productos saldrán de:', $transferSource);
+        $this->assertStringContainsString('Los productos llegarán a:', $transferSource);
+        $this->assertStringContainsString('fromBranch?.name', $transferSource);
+        $this->assertStringContainsString('toBranch?.name', $transferSource);
+        $this->assertStringContainsString('¿Confirmas que deseas realizar este traslado?', $transferSource);
+        $this->assertStringContainsString('Confirmar traslado', $transferSource);
+        $this->assertStringContainsString('onClick={requestTransferConfirmation}', $transferSource);
+        $this->assertStringContainsString('onClick={submit}', $transferSource);
         $this->assertStringContainsString('onClick={requestTransferConfirmation}', $transferSource);
     }
 
@@ -193,7 +199,7 @@ class PurchaseTransferAsyncSearchTest extends TestCase
         $this->assertStringContainsString('type ManualPriceDraft = {', $source);
         $this->assertStringContainsString('const [manualPriceDraft, setManualPriceDraft]', $source);
         $this->assertStringContainsString('function closeManualPriceModal()', $source);
-        $this->assertStringContainsString('function resetLinePrice(productId: number)', $source);
+        $this->assertStringContainsString('function resetLinePrice(lineId: string)', $source);
         $this->assertStringContainsString('onClick={applyManualPriceDraft}', $source);
     }
 
@@ -216,7 +222,7 @@ class PurchaseTransferAsyncSearchTest extends TestCase
             ]))
             ->assertOk()
             ->assertJsonPath('products.0.id', $product->id)
-            ->assertJsonPath('products.0.available_stock', 5);
+            ->assertJsonPath('products.0.available_stock', '5');
     }
 
     public function test_transfer_moves_a_decimal_quantity_once_between_the_authorized_branches(): void
@@ -429,7 +435,7 @@ class PurchaseTransferAsyncSearchTest extends TestCase
                 'note' => 'Merma por daño',
             ])
             ->assertOk()
-            ->assertJsonPath('product.physical_stock', 5);
+            ->assertJsonPath('product.physical_stock', '5');
 
         $this->assertDatabaseHas('stock_movements', [
             'business_id' => $business->id,
