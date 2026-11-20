@@ -237,7 +237,7 @@ class StockAvailability
                 'seller_name' => $row->seller_name,
                 'pre_sale_status' => $row->pre_sale_status,
                 'visit_status' => $row->visit_status,
-                'quantity' => (float) $row->quantity,
+                'quantity' => ProductQuantityPolicy::canonical($row->quantity),
                 'created_at' => (string) $row->created_at,
             ])
             ->all();
@@ -304,7 +304,7 @@ class StockAvailability
                 'reservation_id' => (int) $row->reservation_id,
                 'source_type' => $row->source_type,
                 'source_id' => $row->source_id ? (int) $row->source_id : null,
-                'quantity' => (float) $row->quantity,
+                'quantity' => ProductQuantityPolicy::canonical($row->quantity),
                 'created_at' => (string) $row->created_at,
             ])
             ->all();
@@ -369,7 +369,7 @@ class StockAvailability
                 'visit_id' => $row->visit_id ? (int) $row->visit_id : null,
                 'pre_sale_status' => $row->pre_sale_status,
                 'visit_status' => $row->visit_status,
-                'quantity' => (float) $row->quantity,
+                'quantity' => ProductQuantityPolicy::canonical($row->quantity),
                 'created_at' => (string) $row->created_at,
                 'reason' => self::ignoredPreSaleReservationReason($row),
             ])

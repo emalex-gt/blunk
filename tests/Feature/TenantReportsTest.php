@@ -223,6 +223,131 @@ class TenantReportsTest extends TestCase
                 ->where('rows.data.0.available', '5'));
     }
 
+    public function test_stock_history_preserves_decimal_stock_and_active_branch_reservations(): void
+    {
+        [$business, $user, $main, $other] = $this->tenant(role: 'owner');
+        TenantModule::query()->create(['business_id' => $business->id, 'module' => 'inventory', 'is_enabled' => true, 'enabled_at' => now()]);
+        TenantModule::query()->create(['business_id' => $business->id, 'module' => 'credits', 'is_enabled' => true, 'enabled_at' => now()]);
+        TenantSetting::query()->where('business_id', $business->id)->update([
+            'enable_credit_reservations' => true,
+            'reserve_stock_on_credit_reservations' => true,
+        ]);
+
+        $product = $this->product($business, $main, 'Kardex decimal', stock: 12);
+        $product->update(['allow_decimal_quantity' => true]);
+        ProductBranchStock::query()->updateOrCreate(
+            ['business_id' => $business->id, 'branch_id' => $main->id, 'product_id' => $product->id],
+            ['stock' => '12.5000'],
+        );
+
+        $customer = $this->customer($business, 'Cliente preventa decimal');
+        $preSale = PreSale::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $main->id,
+            'customer_id' => $customer->id,
+            'seller_id' => $user->id,
+            'status' => 'draft',
+            'subtotal' => 150,
+            'discount_total' => 0,
+            'total' => 150,
+        ]);
+        $preSaleItem = PreSaleItem::query()->create([
+            'business_id' => $business->id,
+            'pre_sale_id' => $preSale->id,
+            'product_id' => $product->id,
+            'quantity' => '1.5000',
+            'unit_price' => 100,
+            'discount' => 0,
+            'total' => 150,
+        ]);
+        StockReservation::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $main->id,
+            'product_id' => $product->id,
+            'source_type' => 'pre_sale',
+            'source_id' => $preSale->id,
+            'source_item_id' => $preSaleItem->id,
+            'quantity' => '1.5000',
+            'status' => 'active',
+            'created_by' => $user->id,
+        ]);
+        $this->creditReservation($business, $main, $product, 4);
+
+        StockMovement::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $main->id,
+            'product_id' => $product->id,
+            'type' => 'purchase',
+            'quantity' => '12.5000',
+            'previous_stock' => '0.0000',
+            'new_stock' => '12.5000',
+            'note' => 'Movimiento sucursal activa',
+            'created_by' => $user->id,
+        ]);
+        StockMovement::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $other->id,
+            'product_id' => $product->id,
+            'type' => 'purchase',
+            'quantity' => '9.0000',
+            'previous_stock' => '0.0000',
+            'new_stock' => '9.0000',
+            'note' => 'Movimiento otra sucursal',
+            'created_by' => $user->id,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('products.stock-history', $product))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Products/StockHistory')
+                ->where('product.stock', '12.5')
+                ->where('product.reserved_stock', '5.5')
+                ->where('product.available_stock', '7')
+                ->where('product.branch.id', $main->id)
+                ->where('movements.data.0.note', 'Movimiento sucursal activa'));
+
+        $this->actingAs($user)
+            ->getJson(route('inventory.products.reservations', $product))
+            ->assertOk()
+            ->assertJsonPath('physical_stock', '12.5')
+            ->assertJsonPath('reserved_pre_sales', '1.5')
+            ->assertJsonPath('reserved_credit_reservations', '4')
+            ->assertJsonPath('reserved_total', '5.5')
+            ->assertJsonPath('available_stock', '7')
+            ->assertJsonPath('pre_sale_reservations.0.quantity', '1.5')
+            ->assertJsonPath('credit_reservations.0.quantity', '4');
+
+        $foreignBusiness = Business::query()->create(['name' => 'Tenant ajeno', 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true]);
+        $foreignProduct = Product::query()->create([
+            'business_id' => $foreignBusiness->id,
+            'name' => 'Producto ajeno',
+            'cost_price' => 10,
+            'sale_price' => 20,
+            'stock' => 1,
+            'min_stock' => 0,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($user)->get(route('products.stock-history', $foreignProduct))->assertForbidden();
+    }
+
+    public function test_stock_history_keeps_integer_product_quantities_working(): void
+    {
+        [$business, $user, $main] = $this->tenant(role: 'owner');
+        TenantModule::query()->create(['business_id' => $business->id, 'module' => 'inventory', 'is_enabled' => true, 'enabled_at' => now()]);
+        $product = $this->product($business, $main, 'Kardex entero', stock: 8);
+
+        $this->actingAs($user)
+            ->get(route('products.stock-history', $product))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Products/StockHistory')
+                ->where('product.stock', '8')
+                ->where('product.reserved_stock', '0')
+                ->where('product.available_stock', '8'));
+    }
+
     public function test_daily_report_cash_summary_uses_branch_cash_movements(): void
     {
         [$business, $user, $main] = $this->tenant();

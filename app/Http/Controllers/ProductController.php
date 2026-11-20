@@ -371,8 +371,13 @@ class ProductController extends Controller
         abort_unless($product->business_id === currentBusinessId(), 403);
         $businessId = currentBusinessId();
         $activeBranch = BranchInventory::activeBranch($businessId);
-        $stock = ProductQuantityPolicy::signed(BranchInventory::stockMap($businessId, [$product->id], $activeBranch->id)[$product->id] ?? 0);
-        $reserved = StockAvailability::reservedStock($product, null, $activeBranch->id);
+        $stockBreakdown = StockAvailability::getBreakdownForProducts(
+            $businessId,
+            $activeBranch->id,
+            [$product->id],
+        )->get($product->id, []);
+        $stock = ProductQuantityPolicy::signed($stockBreakdown['physical_stock'] ?? 0);
+        $reserved = ProductQuantityPolicy::canonical($stockBreakdown['reserved_total'] ?? 0);
 
         $movements = StockMovement::query()
             ->where('business_id', $businessId)
@@ -395,7 +400,7 @@ class ProductController extends Controller
                 ]),
                 'stock' => $stock,
                 'reserved_stock' => $reserved,
-                'available_stock' => ProductQuantityPolicy::subtract($stock, $reserved),
+                'available_stock' => ProductQuantityPolicy::signed($stockBreakdown['available_stock'] ?? 0),
                 'branch' => [
                     'id' => $activeBranch->id,
                     'name' => $activeBranch->name,

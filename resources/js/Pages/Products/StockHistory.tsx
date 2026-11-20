@@ -1,5 +1,6 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { getProductImageUrl } from '@/lib/cloudinary';
+import { formatQuantity } from '@/utils/quantity';
 import { Head, Link } from '@inertiajs/react';
 import { type ReactNode, useState } from 'react';
 
@@ -8,9 +9,9 @@ type Product = {
     name: string;
     code: string | null;
     barcode: string | null;
-    stock: number;
-    reserved_stock?: number;
-    available_stock?: number;
+    stock: string;
+    reserved_stock?: string;
+    available_stock?: string;
     branch?: { id: number; name: string } | null;
     location: string | null;
     image_url: string | null;
@@ -25,9 +26,9 @@ type Movement = {
     id: number;
     created_at: string;
     type: string;
-    quantity: number;
-    previous_stock: number | null;
-    new_stock: number | null;
+    quantity: string;
+    previous_stock: string | null;
+    new_stock: string | null;
     note: string | null;
     created_by: User | null;
     user: User | null;
@@ -45,12 +46,12 @@ type PaginatedMovements = {
 };
 
 type ReservationDetails = {
-    physical_stock: number;
-    reserved_pre_sales: number;
-    reserved_credit_reservations: number;
-    reserved_other: number;
-    reserved_total: number;
-    available_stock: number;
+    physical_stock: string;
+    reserved_pre_sales: string;
+    reserved_credit_reservations: string;
+    reserved_other: string;
+    reserved_total: string;
+    available_stock: string;
     pre_sale_reservations: {
         reservation_id: number;
         customer_name: string | null;
@@ -59,26 +60,26 @@ type ReservationDetails = {
         seller_name: string | null;
         pre_sale_status: string;
         visit_status: string | null;
-        quantity: number;
+        quantity: string;
         created_at: string;
     }[];
     credit_reservations: {
         customer_name: string | null;
         status: string;
-        quantity: number;
+        quantity: string;
         created_at: string;
     }[];
     other_reservations: {
         reservation_id: number;
         source_type: string | null;
         source_id: number | null;
-        quantity: number;
+        quantity: string;
         created_at: string;
     }[];
     orphan_or_ignored_reservations: {
         reservation_id: number;
         reason: string;
-        quantity: number;
+        quantity: string;
         created_at: string;
     }[];
 };
@@ -194,9 +195,9 @@ export default function StockHistory({
                                 {product.branch ? `Sucursal: ${product.branch.name}` : 'Stock actual'}
                             </div>
                             <div className="mt-1 space-y-1 text-sm font-semibold text-gray-700">
-                                <div>Existencia: {product.stock}</div>
-                                <div>Reservado: {product.reserved_stock ?? 0}</div>
-                                <div>Disponible: {product.available_stock ?? product.stock}</div>
+                                <div>Existencia: {formatQuantity(product.stock)}</div>
+                                <div>Reservado: {formatQuantity(product.reserved_stock)}</div>
+                                <div>Disponible: {formatQuantity(product.available_stock ?? product.stock)}</div>
                             </div>
                             {can_view_reservations && Number(product.reserved_stock ?? 0) > 0 && (
                                 <button
@@ -250,7 +251,7 @@ export default function StockHistory({
                                 {reservationDetails.pre_sale_reservations.map((reservation) => (
                                     <ReservationRow
                                         key={'pre-sale-' + reservation.reservation_id}
-                                        title={reservation.quantity + ' unidades · ' + (reservation.customer_commercial_name || reservation.customer_name || 'Sin cliente')}
+                                        title={formatQuantity(reservation.quantity) + ' unidades · ' + (reservation.customer_commercial_name || reservation.customer_name || 'Sin cliente')}
                                         detail={'Preventista: ' + (reservation.seller_name ?? 'Sin asignar') + ' · Zona: ' + (reservation.route_zone_name ?? 'Sin zona') + ' · Preventa: ' + reservation.pre_sale_status + (reservation.visit_status ? ' · Visita: ' + reservation.visit_status : '')}
                                         createdAt={reservation.created_at}
                                     />
@@ -263,7 +264,7 @@ export default function StockHistory({
                                 {reservationDetails.credit_reservations.map((reservation, index) => (
                                     <ReservationRow
                                         key={'credit-' + index + '-' + reservation.created_at}
-                                        title={reservation.quantity + ' unidades · ' + (reservation.customer_name ?? 'Sin cliente')}
+                                        title={formatQuantity(reservation.quantity) + ' unidades · ' + (reservation.customer_name ?? 'Sin cliente')}
                                         detail={'Estado: ' + reservation.status}
                                         createdAt={reservation.created_at}
                                     />
@@ -276,7 +277,7 @@ export default function StockHistory({
                                 {reservationDetails.other_reservations.map((reservation) => (
                                     <ReservationRow
                                         key={'other-' + reservation.reservation_id}
-                                        title={reservation.quantity + ' unidades · ' + (reservation.source_type ?? 'Origen no especificado')}
+                                        title={formatQuantity(reservation.quantity) + ' unidades · ' + (reservation.source_type ?? 'Origen no especificado')}
                                         detail={'Origen técnico: ' + (reservation.source_type ?? '-') + (reservation.source_id ? ' #' + reservation.source_id : '')}
                                         createdAt={reservation.created_at}
                                     />
@@ -289,7 +290,7 @@ export default function StockHistory({
                                 {reservationDetails.orphan_or_ignored_reservations.map((reservation) => (
                                     <ReservationRow
                                         key={'ignored-' + reservation.reservation_id}
-                                        title={reservation.quantity + ' unidades · Registro ignorado/no efectivo'}
+                                        title={formatQuantity(reservation.quantity) + ' unidades · Registro ignorado/no efectivo'}
                                         detail={'Motivo: ' + reservation.reason}
                                         createdAt={reservation.created_at}
                                         warning
@@ -324,13 +325,13 @@ export default function StockHistory({
                                             {typeLabels[movement.type] ?? movement.type}
                                         </td>
                                         <td className="px-3 py-3 text-right text-gray-700">
-                                            {movement.previous_stock ?? '-'}
+                                            {movement.previous_stock === null ? '-' : formatQuantity(movement.previous_stock)}
                                         </td>
                                         <td className="px-3 py-3 text-right font-semibold text-gray-900">
-                                            {movement.quantity}
+                                            {formatQuantity(movement.quantity)}
                                         </td>
                                         <td className="px-3 py-3 text-right text-gray-700">
-                                            {movement.new_stock ?? '-'}
+                                            {movement.new_stock === null ? '-' : formatQuantity(movement.new_stock)}
                                         </td>
                                         <td className="max-w-xs truncate px-3 py-3 text-gray-600">
                                             {movement.note ?? '-'}
@@ -383,11 +384,11 @@ export default function StockHistory({
     );
 }
 
-function Summary({ label, value }: { label: string; value: number }) {
+function Summary({ label, value }: { label: string; value: string }) {
     return (
         <div className="rounded-md bg-gray-50 px-4 py-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</div>
-            <div className="mt-1 text-lg font-bold text-gray-900">{value}</div>
+            <div className="mt-1 text-lg font-bold text-gray-900">{formatQuantity(value)}</div>
         </div>
     );
 }
