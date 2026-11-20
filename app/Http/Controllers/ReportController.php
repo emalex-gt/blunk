@@ -1335,7 +1335,12 @@ class ReportController extends Controller
             ->groupBy('sale_items.product_id', 'sale_items.product_name')
             ->orderByDesc(DB::raw('SUM(sale_items.quantity)'))
             ->paginate($this->reportPerPage($request))
-            ->withQueryString();
+            ->withQueryString()
+            ->through(function ($row) {
+                $row->quantity = $this->physicalQuantity($row->quantity);
+
+                return $row;
+            });
 
         return $this->report('Productos vendidos resumido', 'reports.products-sold-summary', [
             ['key' => 'product', 'label' => 'Producto'],

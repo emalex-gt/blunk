@@ -436,7 +436,9 @@ class CashRegisterClosingOperationsTest extends TestCase
         $otherSale = $this->sale($business, $otherBranch, $user, 500);
         SalePayment::query()->create(['business_id' => $business->id, 'sale_id' => $otherSale->id, 'method' => 'transfer', 'amount' => 500, 'cash_register_session_id' => $otherSession->id, 'status' => 'captured']);
 
-        $summary = CashRegisterClosingSales::forSession($session);
+        $session->update(['status' => 'closed', 'closed_at' => now()->addMinute()]);
+
+        $summary = CashRegisterClosingSales::forSession($session->fresh());
 
         $this->assertSame(450.0, $summary['gross_total']);
         $this->assertSame(250.0, $summary['same_period_cancellations']);

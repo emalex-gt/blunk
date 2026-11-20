@@ -79,8 +79,8 @@ class TenantReportsTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Reports/Generic')
-                ->where('rows.data.0.stock', 5)
-                ->where('rows.data.0.available', 5)
+                ->where('rows.data.0.stock', '5')
+                ->where('rows.data.0.available', '5')
                 ->where('branch.id', $main->id));
     }
 
@@ -104,7 +104,7 @@ class TenantReportsTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Reports/Generic')
                 ->where('rows.data.0.product', 'Sin costo')
-                ->where('rows.data.0.physical_stock', '4.00')
+                ->where('rows.data.0.physical_stock', '4')
                 ->where('rows.data.0.status', 'Costo cero'));
 
         $this->assertNotSame($withoutCost->id, $withCost->id);
@@ -145,7 +145,7 @@ class TenantReportsTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->where('rows.data.0.product', 'Negativo')
-                ->where('rows.data.0.physical_stock', -2));
+                ->where('rows.data.0.physical_stock', '-2'));
 
         $this->assertNotSame($negative->id, $positive->id);
     }
@@ -216,11 +216,11 @@ class TenantReportsTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Reports/Generic')
-                ->where('rows.data.0.physical_stock', 10)
-                ->where('rows.data.0.reserved_pre_sales', 4)
-                ->where('rows.data.0.reserved_credit_reservations', 1)
-                ->where('rows.data.0.reserved_total', 5)
-                ->where('rows.data.0.available', 5));
+                ->where('rows.data.0.physical_stock', '10')
+                ->where('rows.data.0.reserved_pre_sales', '4')
+                ->where('rows.data.0.reserved_credit_reservations', '1')
+                ->where('rows.data.0.reserved_total', '5')
+                ->where('rows.data.0.available', '5'));
     }
 
     public function test_daily_report_cash_summary_uses_branch_cash_movements(): void
@@ -324,7 +324,7 @@ class TenantReportsTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Reports/Generic')
-                ->where('rows.data.0.stock', 4)
+                ->where('rows.data.0.stock', '4')
                 ->where('rows.data.0.sale_price', 25)
                 ->where('rows.data.0.total_sale', 100));
     }
@@ -420,7 +420,7 @@ class TenantReportsTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Reports/Generic')
                 ->where('rows.data.0.product', 'Resumen A')
-                ->where('rows.data.0.quantity', 2)
+                ->where('rows.data.0.quantity', '2')
                 ->where('rows.data.0.total', '250.00')
                 ->where('rows.total', 1));
     }
@@ -574,8 +574,8 @@ class TenantReportsTest extends TestCase
                 ->component('Reports/Generic')
                 ->where('rows.total', 1)
                 ->where('rows.data.0.product', 'Producto bajo')
-                ->where('rows.data.0.available', 2)
-                ->where('rows.data.0.minimum', 3));
+                ->where('rows.data.0.available', '2')
+                ->where('rows.data.0.minimum', '3'));
     }
 
     public function test_top_products_report_groups_products_and_is_branch_scoped(): void
@@ -594,7 +594,7 @@ class TenantReportsTest extends TestCase
                 ->component('Reports/Generic')
                 ->where('rows.total', 1)
                 ->where('rows.data.0.product', 'Top A')
-                ->where('rows.data.0.quantity', 2)
+                ->where('rows.data.0.quantity', '2')
                 ->where('rows.data.0.total', 250)
                 ->where('rows.data.0.cost', 100)
                 ->where('rows.data.0.profit', 150)
@@ -666,7 +666,7 @@ class TenantReportsTest extends TestCase
                 ->where('filters.sort_by', 'profit')
                 ->where('rows.total', 3)
                 ->where('rows.data.0.product', 'Histórico completo')
-                ->where('rows.data.0.quantity', 2)
+                ->where('rows.data.0.quantity', '2')
                 ->where('rows.data.0.total', 300)
                 ->where('rows.data.0.cost', 150)
                 ->where('rows.data.0.profit', 150)
