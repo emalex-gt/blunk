@@ -6,10 +6,12 @@ use App\Models\Branch;
 use App\Models\Business;
 use App\Models\CashMovement;
 use App\Models\CashRegisterSession;
+use App\Models\Permission;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
 use App\Models\Purchase;
 use App\Models\PurchaseItem;
+use App\Models\Role;
 use App\Models\StockMovement;
 use App\Models\StockReservation;
 use App\Models\Supplier;
@@ -62,6 +64,25 @@ class PurchaseTransferAsyncSearchTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Inventory/Transfers/Create')
                 ->where('products', []));
+    }
+
+    public function test_transfer_cancellation_permission_is_backfilled_for_existing_system_roles(): void
+    {
+        $permission = Permission::query()->where('key', Permissions::INVENTORY_TRANSFERS_CANCEL)->firstOrFail();
+        $roles = Role::query()
+            ->whereNull('business_id')
+            ->whereIn('key', ['owner', 'admin', 'stock_manager'])
+            ->get();
+
+        $this->assertCount(3, $roles);
+        $roles->each(fn (Role $role) => $role->permissions()->detach($permission->id));
+
+        $migration = require database_path('migrations/2026_11_21_000001_grant_inventory_transfer_cancellation_permission_to_system_roles.php');
+        $migration->up();
+
+        foreach ($roles as $role) {
+            $this->assertTrue($role->fresh()->permissions()->whereKey($permission->id)->exists());
+        }
     }
 
     public function test_purchase_product_search_is_limited_and_tenant_scoped(): void
