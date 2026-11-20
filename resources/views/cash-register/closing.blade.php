@@ -174,6 +174,10 @@
                 <tr><td>Abonos netos en efectivo</td><td class="right">{{ formatMoney($summary['credit_payments'] - $summary['credit_payment_cancellations'], $business?->country) }}</td></tr>
                 <tr><td>Gastos netos</td><td class="right negative">-{{ formatMoney($summary['expenses'] - $summary['expense_cancellations'], $business?->country) }}</td></tr>
                 <tr><td>Compras pagadas de caja</td><td class="right negative">-{{ formatMoney($summary['cash_purchases'], $business?->country) }}</td></tr>
+                @if (($summary['cash_purchase_cancellations'] ?? 0) > 0)
+                    <tr><td>Devoluciones de compras</td><td class="right positive">{{ formatMoney($summary['cash_purchase_cancellations'], $business?->country) }}</td></tr>
+                @endif
+                <tr><td>Compras netas de caja</td><td class="right negative">-{{ formatMoney(max(0, $summary['cash_purchases'] - ($summary['cash_purchase_cancellations'] ?? 0)), $business?->country) }}</td></tr>
                 <tr><td class="total">Efectivo esperado</td><td class="right total">{{ formatMoney($sessionValue('expected_cash', $session->expected_cash), $business?->country) }}</td></tr>
                 <tr><td class="total">Efectivo contado</td><td class="right total">{{ formatMoney($sessionValue('counted_cash', $session->counted_cash), $business?->country) }}</td></tr>
                 <tr>

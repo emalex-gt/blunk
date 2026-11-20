@@ -789,7 +789,7 @@ class SystemIntegrityAuditor
 
         foreach (DB::table('cash_movements')
             ->where('business_id', $businessId)
-            ->whereIn('type', ['sale_cash', 'sale_refund_cash', 'purchase_cash', 'credit_payment_cash', 'route_cash_settlement', 'route_delivery_collection_reversal_current_session', 'route_cash_settlement_reversal_current_session'])
+            ->whereIn('type', ['sale_cash', 'sale_refund_cash', 'purchase_cash', 'purchase_cash_cancel', 'credit_payment_cash', 'route_cash_settlement', 'route_delivery_collection_reversal_current_session', 'route_cash_settlement_reversal_current_session'])
             ->whereNotNull('reference_type')
             ->whereNotNull('reference_id')
             ->when($context['branch_id'], fn (Builder $q, $branch) => $q->where('branch_id', $branch))

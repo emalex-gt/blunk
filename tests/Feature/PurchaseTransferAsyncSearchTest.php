@@ -4,8 +4,12 @@ namespace Tests\Feature;
 
 use App\Models\Branch;
 use App\Models\Business;
+use App\Models\CashMovement;
+use App\Models\CashRegisterSession;
 use App\Models\Product;
 use App\Models\ProductBranchStock;
+use App\Models\Purchase;
+use App\Models\PurchaseItem;
 use App\Models\StockMovement;
 use App\Models\StockReservation;
 use App\Models\Supplier;
@@ -13,6 +17,7 @@ use App\Models\TenantModule;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\BranchInventory;
+use App\Support\CashRegister;
 use App\Support\Permissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -605,6 +610,117 @@ class PurchaseTransferAsyncSearchTest extends TestCase
             ->where('product_id', $product->id)
             ->value('stock'));
         $this->assertSame(1, StockMovement::query()->where('product_id', $product->id)->count());
+    }
+
+    public function test_purchase_cancellation_records_a_cash_refund_only_when_explicitly_declared(): void
+    {
+        [$business, $user, $branch] = $this->tenant('owner', ['purchases', 'cash_register']);
+        $product = $this->product($business, 'Compra anulable', 'PURCHASE-CANCEL');
+        ProductBranchStock::query()->updateOrCreate(
+            ['business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id],
+            ['stock' => 2],
+        );
+        $session = CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'opened_by' => $user->id,
+            'status' => 'open',
+            'opening_amount' => 0,
+            'expected_cash' => 0,
+            'opened_at' => now(),
+        ]);
+        $purchase = Purchase::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'business_number' => 401,
+            'status' => 'completed',
+            'total' => 45,
+            'payment_method' => 'cash',
+            'paid_from_cash' => true,
+            'cash_register_session_id' => $session->id,
+            'created_by' => $user->id,
+        ]);
+        PurchaseItem::query()->create([
+            'business_id' => $business->id,
+            'purchase_id' => $purchase->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_cost' => 45,
+            'previous_cost' => 10,
+            'new_average_cost' => 45,
+            'total' => 45,
+        ]);
+        CashRegister::recordMovement($session, 'purchase_cash', -45, 'purchase', $purchase->id, 'Compra desde caja', $user->id);
+
+        $this->actingAs($user)
+            ->post(route('purchases.cancel', $purchase), ['reason' => 'Proveedor devolvió el efectivo', 'cash_refunded' => true])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('cash_movements', [
+            'cash_register_session_id' => $session->id,
+            'reference_type' => 'purchase',
+            'reference_id' => $purchase->id,
+            'type' => 'purchase_cash_cancel',
+            'amount' => '45.00',
+        ]);
+        $this->assertSame(0.0, CashRegister::expectedCash($session->id));
+        $this->assertSame('cancelled', $purchase->fresh()->status);
+        $this->assertSame(1, CashMovement::query()->where('type', 'purchase_cash_cancel')->count());
+    }
+
+    public function test_purchase_cancellation_without_cash_refund_does_not_create_cash_inflow(): void
+    {
+        [$business, $user, $branch] = $this->tenant('owner', ['purchases', 'cash_register']);
+        $product = $this->product($business, 'Compra sin devolución', 'PURCHASE-NO-REFUND');
+        ProductBranchStock::query()->updateOrCreate(
+            ['business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id],
+            ['stock' => 1],
+        );
+        $session = CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'opened_by' => $user->id,
+            'status' => 'open',
+            'opening_amount' => 0,
+            'expected_cash' => 0,
+            'opened_at' => now(),
+        ]);
+        $purchase = Purchase::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'business_number' => 402,
+            'status' => 'completed',
+            'total' => 45,
+            'payment_method' => 'cash',
+            'paid_from_cash' => true,
+            'cash_register_session_id' => $session->id,
+            'created_by' => $user->id,
+        ]);
+        PurchaseItem::query()->create([
+            'business_id' => $business->id,
+            'purchase_id' => $purchase->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => 1,
+            'unit_cost' => 45,
+            'previous_cost' => 10,
+            'new_average_cost' => 45,
+            'total' => 45,
+        ]);
+        CashRegister::recordMovement($session, 'purchase_cash', -45, 'purchase', $purchase->id, 'Compra desde caja', $user->id);
+
+        $this->actingAs($user)
+            ->post(route('purchases.cancel', $purchase), ['reason' => 'Inventario revertido sin devolución de efectivo'])
+            ->assertRedirect();
+
+        $this->assertDatabaseMissing('cash_movements', [
+            'reference_type' => 'purchase',
+            'reference_id' => $purchase->id,
+            'type' => 'purchase_cash_cancel',
+        ]);
+        $this->assertSame(-45.0, CashRegister::expectedCash($session->id));
+        $this->assertSame('cancelled', $purchase->fresh()->status);
     }
 
     private function tenant(string $role, array $modules, string $name = 'Tenant async'): array

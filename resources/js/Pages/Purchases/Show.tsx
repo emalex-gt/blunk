@@ -41,7 +41,7 @@ export default function Show({ purchase, canCancel }: { purchase: Purchase; canC
     const purchaseNumber = `C-${purchase.business_number ?? purchase.id}`;
     const productsSubtotal = Number(purchase.total) - Number(purchase.transport_cost ?? 0);
     const [cancelOpen, setCancelOpen] = useState(false);
-    const cancellation = useForm({ reason: '' });
+    const cancellation = useForm({ reason: '', cash_refunded: false });
     const cancellationError = Object.values(cancellation.errors)[0];
 
     function submitCancellation(event: FormEvent) {
@@ -170,6 +170,12 @@ export default function Show({ purchase, canCancel }: { purchase: Purchase; canC
                         <label className="mt-4 block text-sm font-semibold text-slate-700">Motivo de anulación
                             <textarea autoFocus value={cancellation.data.reason} onChange={(event) => cancellation.setData('reason', event.target.value)} className="mt-1 w-full rounded-xl border-slate-300" rows={3} />
                         </label>
+                        {purchase.paid_from_cash && (
+                            <label className="mt-4 flex items-start gap-2 text-sm text-slate-700">
+                                <input type="checkbox" checked={cancellation.data.cash_refunded} onChange={(event) => cancellation.setData('cash_refunded', event.target.checked)} className="mt-0.5 rounded border-slate-300" />
+                                <span><strong>El proveedor devolvió el efectivo a caja.</strong><br />Marca esta opción solo si el dinero fue recibido físicamente.</span>
+                            </label>
+                        )}
                         {cancellationError && <p className="mt-2 text-sm font-semibold text-red-700">{cancellationError}</p>}
                         <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setCancelOpen(false)} className="rounded-xl border px-4 py-2 text-sm font-semibold">Cancelar</button><button disabled={cancellation.processing || cancellation.data.reason.trim() === ''} className="rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Confirmar anulación</button></div>
                     </form>

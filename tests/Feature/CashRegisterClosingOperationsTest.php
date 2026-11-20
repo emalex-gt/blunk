@@ -218,6 +218,149 @@ class CashRegisterClosingOperationsTest extends TestCase
         $this->assertSame(2, CashRegisterClosingOperations::forSession($session, 'cash', 'purchase')['detail_total']);
     }
 
+    public function test_cancelled_cash_purchase_with_persisted_refund_nets_the_closing_and_print(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        $purchase = Purchase::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'business_number' => 90,
+            'status' => 'cancelled',
+            'total' => 45,
+            'payment_method' => 'cash',
+            'paid_from_cash' => true,
+            'cash_register_session_id' => $session->id,
+            'cancelled_at' => now(),
+            'created_by' => $user->id,
+        ]);
+        CashRegister::recordMovement($session, 'purchase_cash', -45, 'purchase', $purchase->id, 'Compra desde caja', $user->id);
+        CashRegister::recordMovement($session, 'purchase_cash_cancel', 45, 'purchase', $purchase->id, 'Devolución de compra', $user->id);
+
+        $operations = CashRegisterClosingOperations::forSession($session);
+        $cash = collect($operations['by_method'])->keyBy('method')['cash'];
+
+        $this->assertSame(0.0, $cash['purchases']);
+        $this->assertSame(0.0, CashRegister::expectedCash($session->id));
+        $this->assertSame(45.0, CashRegister::summary($session)['cash_purchases']);
+        $this->assertSame(45.0, CashRegister::summary($session)['cash_purchase_cancellations']);
+
+        $session->update(['status' => 'closed', 'closed_by' => $user->id, 'closed_at' => now(), 'expected_cash' => 0, 'counted_cash' => 0, 'difference' => 0]);
+        CashRegisterClosingSnapshot::capture($session->fresh());
+        $contract = CashRegisterClosingSnapshot::forSession($session->fresh()->load('closingSnapshot'));
+
+        $this->assertSame(45.0, (float) $contract['cash_summary']['cash_purchases']);
+        $this->assertSame(45.0, (float) $contract['cash_summary']['cash_purchase_cancellations']);
+        $this->assertSame(0.0, (float) $contract['cash_summary']['expected_cash']);
+
+        $html = view('cash-register.closing', [
+            'paperSize' => 'Letter',
+            'receiptFormat' => 'ticket',
+            'company' => ['logo_url' => null, 'name' => $business->name, 'tax_id' => null, 'address' => null, 'phone' => null],
+            'business' => $business,
+            'session' => $session->fresh(),
+            'summary' => $contract['cash_summary'],
+            'movements' => $contract['movements'],
+            'paymentOperations' => $contract['payment_operations'],
+            'salesSummary' => $contract['commercial'],
+            'closingContract' => $contract,
+            'timezone' => 'America/Guatemala',
+        ])->render();
+
+        $this->assertStringContainsString('Devoluciones de compras', $html);
+        $this->assertStringContainsString('Compras netas de caja', $html);
+        $this->assertStringContainsString('Efectivo esperado', $html);
+    }
+
+    public function test_purchase_refund_in_a_later_session_does_not_rewrite_the_original_closing(): void
+    {
+        [$business, $branch, $user, $original] = $this->context();
+        $purchase = Purchase::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'business_number' => 91,
+            'status' => 'completed',
+            'total' => 45,
+            'payment_method' => 'cash',
+            'paid_from_cash' => true,
+            'cash_register_session_id' => $original->id,
+            'created_by' => $user->id,
+        ]);
+        CashRegister::recordMovement($original, 'purchase_cash', -45, 'purchase', $purchase->id, 'Compra desde caja', $user->id);
+        $original->update(['status' => 'closed', 'closed_by' => $user->id, 'closed_at' => now(), 'expected_cash' => -45, 'counted_cash' => -45, 'difference' => 0]);
+        CashRegisterClosingSnapshot::capture($original->fresh());
+
+        $later = CashRegisterSession::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'opened_by' => $user->id,
+            'status' => 'open',
+            'opening_amount' => 0,
+            'expected_cash' => 0,
+            'opened_at' => now()->addMinute(),
+        ]);
+        $purchase->update(['status' => 'cancelled', 'cancelled_at' => now()->addMinute()]);
+        CashRegister::recordMovement($later, 'purchase_cash_cancel', 45, 'purchase', $purchase->id, 'Devolución de compra', $user->id);
+
+        $originalContract = CashRegisterClosingSnapshot::forSession($original->fresh()->load('closingSnapshot'));
+        $laterOperations = CashRegisterClosingOperations::forSession($later);
+        $laterCash = collect($laterOperations['by_method'])->keyBy('method')['cash'];
+
+        $this->assertSame(-45.0, (float) $originalContract['cash_summary']['expected_cash']);
+        $this->assertSame(45.0, CashRegister::expectedCash($later->id));
+        $this->assertSame(45.0, $laterCash['purchases']);
+    }
+
+    public function test_cancelled_cash_purchase_without_persisted_refund_keeps_the_original_cash_outflow(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        $purchase = Purchase::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'business_number' => 92,
+            'status' => 'cancelled',
+            'total' => 45,
+            'payment_method' => 'cash',
+            'paid_from_cash' => true,
+            'cash_register_session_id' => $session->id,
+            'cancelled_at' => now(),
+            'created_by' => $user->id,
+        ]);
+        CashRegister::recordMovement($session, 'purchase_cash', -45, 'purchase', $purchase->id, 'Compra desde caja', $user->id);
+
+        $operations = CashRegisterClosingOperations::forSession($session);
+        $cash = collect($operations['by_method'])->keyBy('method')['cash'];
+
+        $this->assertSame(-45.0, $cash['purchases']);
+        $this->assertSame(-45.0, CashRegister::expectedCash($session->id));
+        $this->assertSame(0.0, CashRegister::summary($session)['cash_purchase_cancellations']);
+    }
+
+    public function test_cancelled_transfer_and_deposit_purchases_do_not_change_physical_cash(): void
+    {
+        [$business, $branch, $user, $session] = $this->context();
+        foreach (['transfer', 'deposit'] as $number => $method) {
+            Purchase::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'business_number' => 100 + $number,
+                'status' => 'cancelled',
+                'total' => 45,
+                'payment_method' => $method,
+                'paid_from_cash' => false,
+                'cash_register_session_id' => $session->id,
+                'cancelled_at' => now(),
+                'created_by' => $user->id,
+            ]);
+        }
+
+        $operations = CashRegisterClosingOperations::forSession($session);
+
+        $this->assertSame(0.0, CashRegister::expectedCash($session->id));
+        $this->assertSame(0, $operations['detail_total']);
+        $this->assertSame(0.0, collect($operations['by_method'])->keyBy('method')['transfer']['purchases']);
+        $this->assertSame(0.0, collect($operations['by_method'])->keyBy('method')['deposit']['purchases']);
+    }
+
     public function test_closing_snapshot_preserves_the_original_commercial_total_after_a_later_cancellation(): void
     {
         [$business, $branch, $user, $original] = $this->context();

@@ -78,6 +78,7 @@ type CashSession = {
         expenses: number;
         expense_cancellations: number;
         cash_purchases: number;
+        cash_purchase_cancellations: number;
         expected_cash: number;
     };
     movements?: Movement[];
@@ -360,11 +361,12 @@ export default function Index({
                             </section>
 
                             <section className="rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
-                                <div className="grid gap-4 md:grid-cols-4">
+                                <div className="grid gap-4 md:grid-cols-5">
                                     <Summary label="Efectivo neto de ventas" value={formatCurrency(openSession.summary.cash_sales - openSession.summary.cash_refunds - openSession.summary.cash_sale_cancellations, country)} />
                                     <Summary label="Abonos netos en efectivo" value={formatCurrency(openSession.summary.credit_payments - openSession.summary.credit_payment_cancellations, country)} />
                                     <Summary label="Gastos netos de caja" value={formatCurrency(openSession.summary.expenses - openSession.summary.expense_cancellations, country)} />
-                                    <Summary label="Compras pagadas desde caja" value={formatCurrency(openSession.summary.cash_purchases, country)} />
+                                    <Summary label="Compras netas desde caja" value={formatCurrency(openSession.summary.cash_purchases - (openSession.summary.cash_purchase_cancellations ?? 0), country)} />
+                                    <Summary label="Devoluciones de compras" value={formatCurrency(openSession.summary.cash_purchase_cancellations ?? 0, country)} />
                                 </div>
 
                                 <div className="mt-5 flex flex-wrap gap-2">
@@ -612,7 +614,7 @@ function PaymentOperationsOverview({ paymentOperations, country, onFiltersChange
                         </label>
                         <label className="text-sm font-medium text-slate-700">Operación
                             <select className="mt-1 block rounded-lg border border-slate-300 px-3 py-2" value={operations.filters.operation} disabled={refreshing} onChange={(e) => onFiltersChange(operations.filters.method, e.target.value)}>
-                                <option value="all">Todas</option><option value="sale">Ventas cobradas</option><option value="sale_cancellation">Anulaciones de ventas</option><option value="refund">Reembolsos</option><option value="credit_payment">Abonos</option><option value="credit_payment_cancellation">Anulaciones de abonos</option><option value="purchase">Compras pagadas</option><option value="expense">Gastos</option><option value="expense_cancel">Anulaciones de gastos</option>
+                                <option value="all">Todas</option><option value="sale">Ventas cobradas</option><option value="sale_cancellation">Anulaciones de ventas</option><option value="refund">Reembolsos</option><option value="credit_payment">Abonos</option><option value="credit_payment_cancellation">Anulaciones de abonos</option><option value="purchase">Compras pagadas</option><option value="purchase_cancellation">Devoluciones de compras</option><option value="expense">Gastos</option><option value="expense_cancel">Anulaciones de gastos</option>
                             </select>
                         </label>
                         <button type="button" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50" disabled={refreshing || (operations.filters.method === 'all' && operations.filters.operation === 'all')} onClick={() => onFiltersChange('all', 'all')}>Limpiar filtros</button>

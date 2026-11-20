@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Business;
+use App\Models\CashMovement;
 use App\Models\Product;
 use App\Models\Purchase;
 use App\Models\StockMovement;
@@ -400,6 +401,7 @@ class PurchaseController extends Controller
 
         $data = $request->validate([
             'reason' => ['required', 'string', 'max:2000'],
+            'cash_refunded' => ['sometimes', 'boolean'],
         ], ['reason.required' => 'Debes indicar el motivo de la anulación.']);
 
         DB::transaction(function () use ($purchase, $request, $data) {
@@ -456,6 +458,40 @@ class PurchaseController extends Controller
                 'cancelled_by' => $request->user()->id,
                 'cancellation_reason' => trim($data['reason']),
             ]);
+
+            if ((bool) ($data['cash_refunded'] ?? false)) {
+                $originalCashMovement = CashMovement::query()
+                    ->where('business_id', $lockedPurchase->business_id)
+                    ->where('branch_id', $lockedPurchase->branch_id)
+                    ->where('reference_type', 'purchase')
+                    ->where('reference_id', $lockedPurchase->id)
+                    ->where('type', 'purchase_cash')
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $originalCashMovement) {
+                    throw ValidationException::withMessages([
+                        'cash_refunded' => 'No existe un pago en efectivo desde caja que pueda devolverse.',
+                    ]);
+                }
+
+                $refundSession = CashRegister::requireOpenSession(
+                    (int) $lockedPurchase->business_id,
+                    'Abre una caja para registrar la devolución efectiva de la compra.',
+                    true,
+                    (int) $lockedPurchase->branch_id,
+                );
+
+                CashRegister::recordMovement(
+                    $refundSession,
+                    'purchase_cash_cancel',
+                    abs((float) $originalCashMovement->amount),
+                    'purchase',
+                    $lockedPurchase->id,
+                    'Devolución de '.stockMovementNote('purchase', $lockedPurchase->business_number ?: $lockedPurchase->id),
+                    $request->user()->id,
+                );
+            }
         });
 
         return back()->with('success', 'Compra anulada e inventario revertido correctamente.');

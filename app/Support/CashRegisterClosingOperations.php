@@ -39,6 +39,7 @@ class CashRegisterClosingOperations
             ->merge(self::salePayments($session, $from, $to))
             ->merge(self::creditPayments($session, $from, $to))
             ->merge(self::purchases($session, $from, $to))
+            ->merge(self::purchaseCancellations($session))
             ->merge(self::refunds($session, $from, $to))
             ->merge(self::expenses($session));
 
@@ -88,7 +89,7 @@ class CashRegisterClosingOperations
                         ? 'same_turn_cancellations'
                         : 'prior_period_corrections'),
                 'credit_payment', 'credit_payment_cancellation' => 'credit_payments',
-                'purchase' => 'purchases',
+                'purchase', 'purchase_cancellation' => 'purchases',
                 'expense', 'expense_cancel' => 'expenses',
             };
             $summary[$method][$bucket] = round($summary[$method][$bucket] + $operation['signed_amount'], 2);
@@ -96,7 +97,7 @@ class CashRegisterClosingOperations
         }
 
         $validMethods = ['all', 'cash', 'card', 'check', 'transfer', 'deposit', 'other'];
-        $validOperations = ['all', 'sale', 'sale_cancellation', 'refund', 'credit_payment', 'credit_payment_cancellation', 'purchase', 'expense', 'expense_cancel'];
+        $validOperations = ['all', 'sale', 'sale_cancellation', 'refund', 'credit_payment', 'credit_payment_cancellation', 'purchase', 'purchase_cancellation', 'expense', 'expense_cancel'];
         $methodFilter = in_array($methodFilter, $validMethods, true) ? $methodFilter : 'all';
         $operationFilter = in_array($operationFilter, $validOperations, true) ? $operationFilter : 'all';
 
@@ -218,13 +219,40 @@ class CashRegisterClosingOperations
     private static function purchases(CashRegisterSession $session, CarbonInterface $from, CarbonInterface $to): Collection
     {
         return Purchase::query()->where('business_id', $session->business_id)->where('branch_id', $session->branch_id)
-            ->where('status', 'completed')
+            ->where(fn ($query) => $query->where('status', 'completed')->orWhere(fn ($query) => $query
+                ->where('status', 'cancelled')
+                ->where('paid_from_cash', true)
+                ->whereNotNull('cancelled_at')))
             ->where(fn ($query) => $query->where('cash_register_session_id', $session->id)->orWhereBetween('created_at', [$from, $to]))
             ->with('supplier:id,name')->get()
             ->filter(fn (Purchase $purchase) => ! in_array(strtolower((string) $purchase->payment_method), ['credit', 'on_credit', 'account'], true))
             ->map(fn (Purchase $purchase) => ['id' => 'purchase-'.$purchase->id, 'kind' => 'purchase', 'label' => $purchase->paid_from_cash ? 'Compra pagada desde caja' : 'Compra pagada (fuera de caja)', 'method' => $purchase->payment_method ?: 'other',
                 'signed_amount' => -1 * (float) $purchase->total, 'amount' => (float) $purchase->total, 'occurred_at' => $purchase->created_at,
                 'paid_from_cash' => (bool) $purchase->paid_from_cash, 'cash_register_session_id' => $purchase->cash_register_session_id, 'reference' => 'Compra '.format_purchase_number($purchase), 'party' => $purchase->supplier?->name, 'attribution' => null]);
+    }
+
+    /** Devoluciones físicas declaradas al anular compras; no se infieren del estado de la compra. */
+    private static function purchaseCancellations(CashRegisterSession $session): Collection
+    {
+        return CashMovement::query()
+            ->where('business_id', $session->business_id)
+            ->where('branch_id', $session->branch_id)
+            ->where('cash_register_session_id', $session->id)
+            ->where('type', 'purchase_cash_cancel')
+            ->get()
+            ->map(fn (CashMovement $movement) => [
+                'id' => 'purchase-cancellation-'.$movement->id,
+                'kind' => 'purchase_cancellation',
+                'label' => 'Devolución de compra',
+                'method' => 'cash',
+                'signed_amount' => (float) $movement->amount,
+                'amount' => abs((float) $movement->amount),
+                'occurred_at' => $movement->created_at,
+                'cash_register_session_id' => $movement->cash_register_session_id,
+                'reference' => $movement->reference_type === 'purchase' ? 'Compra #'.$movement->reference_id : 'Devolución de compra',
+                'party' => null,
+                'attribution' => null,
+            ]);
     }
 
     /** Gastos reales y anulaciones: eventos firmados del libro físico de caja. */

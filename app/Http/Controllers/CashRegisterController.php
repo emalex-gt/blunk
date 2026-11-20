@@ -536,6 +536,7 @@ class CashRegisterController extends Controller
             'expense' => 'Gasto',
             'expense_cancel' => 'Anulación de gasto',
             'purchase_cash' => 'Compra desde caja',
+            'purchase_cash_cancel' => 'Devolución de compra',
             'closing_adjustment' => 'Ajuste de cierre',
             default => 'Movimiento',
         };
