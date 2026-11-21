@@ -72,6 +72,8 @@ class CustomerController extends Controller
         $customers = Customer::query()
             ->where('business_id', $businessId)
             ->whereNull('merged_into_customer_id')
+            ->whereNotNull('name')
+            ->whereRaw("BTRIM(name) <> ''")
             ->where(function ($query) use ($search) {
                 $query->where('name', 'ilike', "%{$search}%")
                     ->orWhere('commercial_name', 'ilike', "%{$search}%")

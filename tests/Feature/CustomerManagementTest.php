@@ -111,6 +111,73 @@ class CustomerManagementTest extends TestCase
             ->assertJsonPath('customers.0.id', $generic->id);
     }
 
+    public function test_customer_search_excludes_blank_names_but_keeps_named_customers_and_tenant_isolation(): void
+    {
+        [$business, $user] = $this->tenantUser('owner');
+        [$otherBusiness] = $this->tenantUser('owner');
+
+        Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => '',
+            'doc_type' => 'NIT',
+            'doc_number' => '99880001',
+            'country' => 'GT',
+        ]);
+        Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => '',
+            'doc_type' => 'CUI',
+            'doc_number' => '9988000000001',
+            'country' => 'GT',
+        ]);
+        Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => '   ',
+            'doc_type' => 'NIT',
+            'doc_number' => '99880002',
+            'country' => 'GT',
+        ]);
+        $namedNit = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente NIT visible',
+            'doc_type' => 'NIT',
+            'doc_number' => '99880003',
+            'country' => 'GT',
+        ]);
+        $namedCui = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente CUI visible',
+            'doc_type' => 'CUI',
+            'doc_number' => '9988000000002',
+            'country' => 'GT',
+        ]);
+        Customer::query()->create([
+            'business_id' => $otherBusiness->id,
+            'name' => 'Cliente de otro tenant',
+            'doc_type' => 'NIT',
+            'doc_number' => '99880004',
+            'country' => 'GT',
+        ]);
+        $withoutDocument = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente visible sin documento',
+            'country' => 'GT',
+        ]);
+
+        $this->actingAs($user)
+            ->getJson(route('customers.search', ['search' => '9988']))
+            ->assertOk()
+            ->assertJsonCount(2, 'customers')
+            ->assertJsonFragment(['id' => $namedNit->id])
+            ->assertJsonFragment(['id' => $namedCui->id]);
+
+        $this->actingAs($user)
+            ->getJson(route('customers.search', ['search' => 'sin documento']))
+            ->assertOk()
+            ->assertJsonCount(1, 'customers')
+            ->assertJsonPath('customers.0.id', $withoutDocument->id);
+    }
+
     public function test_generic_final_consumer_cannot_be_edited_or_updated_from_administration(): void
     {
         [$business, $user] = $this->tenantUser('owner');

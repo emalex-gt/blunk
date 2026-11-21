@@ -1635,6 +1635,7 @@ export default function POS({
         });
 
         return sourceCustomers
+            .filter((customer) => customer.name.trim() !== '')
             .filter((customer) =>
                 [customer.commercial_name, customer.name, customer.doc_number, customer.phone, customer.address, customer.address_reference, customer.department, customer.municipality]
                     .filter(Boolean)
