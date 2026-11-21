@@ -847,6 +847,7 @@ export default function POS({
     credit_invoice = null,
     quotation_source = null,
     quotation_edit_source = null,
+    diagnostics = { pos_trace_enabled: false, pos_trace_id: null },
     use_product_images = true,
 }: {
     products?: Product[];
@@ -873,6 +874,10 @@ export default function POS({
     credit_invoice?: CreditInvoicePayload | null;
     quotation_source?: QuotationSource | null;
     quotation_edit_source?: QuotationEditSource | null;
+    diagnostics?: {
+        pos_trace_enabled?: boolean;
+        pos_trace_id?: string | null;
+    };
     fel?: {
         module_enabled: boolean;
         enabled: boolean;
@@ -3523,6 +3528,21 @@ export default function POS({
             : [payments[0] ?? paymentLine(mainPaymentMethod, total.toFixed(2))];
 
         const submittedBranchId = activeBranchId;
+        const posTrace = diagnostics.pos_trace_enabled
+            ? { id: makeOperationKey(), startedAt: performance.now() }
+            : null;
+        const tracePosSale = (phase: string, traceId = posTrace?.id) => {
+            if (!traceId || !posTrace) {
+                return;
+            }
+
+            console.info('POS timing', {
+                trace_id: traceId,
+                phase,
+                duration_ms: Number((performance.now() - posTrace.startedAt).toFixed(2)),
+            });
+        };
+        tracePosSale('submit_clicked');
         const autoRegisteredCreditCustomer = paymentCondition === 'credit'
             && !data.customer.id
             && data.customer.consumidor_final
@@ -3539,6 +3559,7 @@ export default function POS({
         beginOperationSubmit();
         transform(() => ({
             idempotency_key: idempotencyKey,
+            trace_id: posTrace?.id ?? null,
             note: data.note,
             branch_id: activeBranchId,
             draft_id: activeOperationDraftId,
@@ -3575,6 +3596,10 @@ export default function POS({
         post(route('sales.store'), {
             preserveScroll: true,
             onSuccess: (page) => {
+                const traceId = (page.props.diagnostics as { pos_trace_id?: string | null } | undefined)?.pos_trace_id
+                    ?? posTrace?.id;
+                tracePosSale('inertia_on_success', traceId);
+                requestAnimationFrame(() => tracePosSale('destination_first_frame', traceId));
                 const flash = page.props.flash as {
                     receipt_sale_id?: number | null;
                     fel_print_sale_id?: number | null;
@@ -3637,6 +3662,7 @@ export default function POS({
                 if (effectiveDocumentType === 'receipt' && receiptSaleId) {
                     showMessage(completionMessage);
                     toast.success(completionMessage, { persistent: true });
+                    tracePosSale('print_open_started', traceId);
                     window.open(route('sales.receipt', receiptSaleId), '_blank');
                     return;
                 }
@@ -3646,6 +3672,7 @@ export default function POS({
                     showMessage('Factura certificada. Abriendo impresión...');
 
                     window.setTimeout(() => {
+                        tracePosSale('print_open_started', traceId);
                         window.open(flash?.fel_print_url ?? route('sales.fel-document', felPrintSaleId), '_blank');
                         setOpeningFelPrint(false);
                         showMessage(completionMessage);
@@ -3661,6 +3688,7 @@ export default function POS({
                 handleOperationSubmitError(errors as Record<string, string>, 'No se pudo completar la venta. Revisa los datos.');
             },
             onFinish: () => {
+                tracePosSale('inertia_on_finish');
                 finalizeOperationSubmit();
                 saleSubmitLockedRef.current = false;
             },

@@ -7344,6 +7344,22 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringContainsString("if (effectiveDocumentType === 'invoice' && felPrintSaleId)", $source);
     }
 
+    public function test_pos_emits_opt_in_timing_marks_without_changing_fel_completion_guards(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+        $controller = file_get_contents(app_path('Http/Controllers/SaleController.php'));
+        $invoiceService = file_get_contents(app_path('Services/Fel/Providers/Digifact/DigifactInvoiceService.php'));
+
+        $this->assertStringContainsString('performance.now()', $source);
+        $this->assertStringContainsString('requestAnimationFrame', $source);
+        $this->assertStringContainsString('pos_trace_id', $source);
+        $this->assertStringContainsString('trace_id: posTrace?.id ?? null', $source);
+        $this->assertStringContainsString("'trace_id' => ['nullable', 'uuid']", $controller);
+        $this->assertStringContainsString('destination_get_finished', $controller);
+        $this->assertStringContainsString("'pos_trace_id' => \$posTraceId", $invoiceService);
+        $this->assertStringContainsString("if (effectiveDocumentType === 'invoice' && !felPrintSaleId)", $source);
+    }
+
     private function realDigifactInvoiceContext(): array
     {
         [$business, $user] = $this->tenant(

@@ -1159,7 +1159,7 @@ class DigifactInvoiceService
         ];
     }
 
-    public function recordSaleRequestTiming(Sale $sale, float $totalSaleRequestMs): void
+    public function recordSaleRequestTiming(Sale $sale, float $totalSaleRequestMs, ?string $posTraceId = null): void
     {
         $attempt = $sale->felCertificationAttempts()->latest('id')->first();
 
@@ -1167,9 +1167,10 @@ class DigifactInvoiceService
             return;
         }
 
-        $timings = array_merge($attempt->timings ?? [], [
+        $timings = array_merge($attempt->timings ?? [], array_filter([
             'total_sale_request_ms' => round($totalSaleRequestMs, 2),
-        ]);
+            'pos_trace_id' => $posTraceId,
+        ], static fn (mixed $value): bool => $value !== null));
 
         $attempt->update(['timings' => $timings]);
 

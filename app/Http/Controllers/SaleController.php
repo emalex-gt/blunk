@@ -68,8 +68,20 @@ class SaleController extends Controller
 {
     public function create(Request $request): Response
     {
+        $posDestinationStarted = microtime(true);
         $businessId = currentBusinessId();
         $business = Business::query()->select('id', 'country')->findOrFail($businessId);
+        $posTraceId = $request->session()->get('pos_trace_id');
+
+        if (is_string($posTraceId) && OperationsLog::enabledForBusiness($businessId)) {
+            app()->terminating(function () use ($businessId, $posTraceId, $posDestinationStarted): void {
+                OperationsLog::event('pos.sale.trace', $businessId, [
+                    'trace_id' => $posTraceId,
+                    'phase' => 'destination_get_finished',
+                    'duration_ms' => round((microtime(true) - $posDestinationStarted) * 1000, 2),
+                ]);
+            });
+        }
         $felSettings = $business->country === 'GT'
             ? TenantFelSetting::query()->where('business_id', $businessId)->first()
             : null;
@@ -134,6 +146,10 @@ class SaleController extends Controller
             'credit_invoice' => $creditInvoice,
             'quotation_source' => $quotationSource,
             'quotation_edit_source' => $quotationEditSource,
+            'diagnostics' => [
+                'pos_trace_enabled' => OperationsLog::enabledForBusiness($businessId),
+                'pos_trace_id' => is_string($posTraceId) ? $posTraceId : null,
+            ],
             'products' => [],
             'categories' => Category::query()
                 ->where('business_id', $businessId)
@@ -338,6 +354,7 @@ class SaleController extends Controller
         $data = $request->validate([
             'note' => ['nullable', 'string', 'max:2000'],
             'idempotency_key' => ['required', 'string', 'min:8', 'max:120'],
+            'trace_id' => ['nullable', 'uuid'],
             'branch_id' => ['nullable', 'integer'],
             'draft_id' => ['nullable', 'integer', 'exists:operation_drafts,id'],
             'quotation_id' => ['nullable', 'integer'],
@@ -399,6 +416,26 @@ class SaleController extends Controller
             'discount.value.gt' => 'Ingresa un valor de descuento válido.',
             'discount.reason.required_with' => 'El motivo del descuento es obligatorio.',
         ]);
+
+        $posTraceId = $data['trace_id'] ?? null;
+        if ($posTraceId && OperationsLog::enabledForBusiness($business->id)) {
+            OperationsLog::event('pos.sale.trace', $business->id, [
+                'trace_id' => $posTraceId,
+                'phase' => 'post_started',
+                'branch_id' => $data['branch_id'] ?? null,
+                'user_id' => $request->user()?->id,
+                'document_type' => $data['document_type'] ?? 'receipt',
+            ]);
+
+            $traceBusinessId = $business->id;
+            app()->terminating(function () use ($traceBusinessId, $posTraceId, $saleRequestStarted): void {
+                OperationsLog::event('pos.sale.trace', $traceBusinessId, [
+                    'trace_id' => $posTraceId,
+                    'phase' => 'post_finished',
+                    'duration_ms' => round((microtime(true) - $saleRequestStarted) * 1000, 2),
+                ]);
+            });
+        }
 
         $availableDocumentTypes = $this->availableDocumentTypes($business, $tenantSettings, $felSettings, $felModuleEnabled);
         $activeBranch = BranchInventory::activeBranch($business->id);
@@ -994,6 +1031,7 @@ class SaleController extends Controller
                     $invoiceService->recordSaleRequestTiming(
                         $sale,
                         round((microtime(true) - $saleRequestStarted) * 1000, 2),
+                        $posTraceId,
                     );
                 } catch (FelException $exception) {
                     $pendingFelReconciliation = [
@@ -1024,6 +1062,7 @@ class SaleController extends Controller
                     $invoiceService->recordSaleRequestTiming(
                         $sale,
                         round((microtime(true) - $saleRequestStarted) * 1000, 2),
+                        $posTraceId,
                     );
 
                     throw ValidationException::withMessages([
@@ -1140,9 +1179,11 @@ class SaleController extends Controller
             }
 
             if ($intent->status === FiscalDocumentIntent::UNKNOWN) {
-                return redirect()->route('sales.create')
+                $redirect = redirect()->route('sales.create')
                     ->with('warning', 'La certificación FEL está en verificación. Puedes entregar el comprobante provisional no fiscal.')
                     ->with('fiscal_intent_id', $intent->id);
+
+                return $this->withPosTrace($redirect, $posTraceId);
             }
 
             if ($intent->status === FiscalDocumentIntent::REJECTED) {
@@ -1169,11 +1210,13 @@ class SaleController extends Controller
                 $message .= ' Serie '.($document?->series ?: '-').' Número '.($document?->number ?: '-').'.';
             }
 
-            return redirect()->route('sales.create')
+            $redirect = redirect()->route('sales.create')
                 ->with('success', $message)
                 ->with('fel_success_message', $message)
                 ->with('fel_print_sale_id', $sale->id)
                 ->with('fel_print_url', URL::temporarySignedRoute('sales.fel-document', now()->addMinutes(10), ['sale' => $sale->id]));
+
+            return $this->withPosTrace($redirect, $posTraceId);
         }
 
         if ($idempotencyResult->resultType !== 'sale') {
@@ -1218,11 +1261,13 @@ class SaleController extends Controller
                 $invoiceService->recordSaleRequestTiming(
                     $sale,
                     round((microtime(true) - $saleRequestStarted) * 1000, 2),
+                    $posTraceId,
                 );
             } catch (FelException $exception) {
                 $invoiceService->recordSaleRequestTiming(
                     $sale,
                     round((microtime(true) - $saleRequestStarted) * 1000, 2),
+                    $posTraceId,
                 );
 
                 $this->createFelReconciliationRequest([
@@ -1258,6 +1303,7 @@ class SaleController extends Controller
         }
 
         $redirect = redirect()->route('sales.create')->with('success', 'Venta finalizada.');
+        $this->withPosTrace($redirect, $posTraceId);
 
         if (($data['document_type'] ?? null) === 'receipt') {
             $redirect->with('receipt_sale_id', $saleId);
@@ -1518,6 +1564,15 @@ class SaleController extends Controller
                 'document_type' => $exception->getMessage() ?: 'No se pudo certificar la factura.',
             ]);
         }
+    }
+
+    private function withPosTrace(RedirectResponse $redirect, ?string $posTraceId): RedirectResponse
+    {
+        if ($posTraceId !== null) {
+            $redirect->with('pos_trace_id', $posTraceId);
+        }
+
+        return $redirect;
     }
 
     public function cancel(Request $request, Sale $sale): RedirectResponse

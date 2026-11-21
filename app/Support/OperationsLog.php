@@ -29,11 +29,13 @@ final class OperationsLog
         'has_draft',
         'quotation_id',
         'customer_id',
+        'trace_id',
+        'phase',
     ];
 
     public static function event(string $event, ?int $businessId, array $context = []): void
     {
-        if (! self::enabledFor($businessId)) {
+        if (! self::enabledForBusiness($businessId)) {
             return;
         }
 
@@ -47,7 +49,7 @@ final class OperationsLog
         Log::channel(config('logging.operations.channel', 'blunk_operations'))->info($event, $safeContext);
     }
 
-    private static function enabledFor(?int $businessId): bool
+    public static function enabledForBusiness(?int $businessId): bool
     {
         if (! (bool) config('logging.operations.enabled', false)) {
             return false;
