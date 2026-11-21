@@ -85,18 +85,36 @@ type ReservationDetails = {
 };
 
 const typeLabels: Record<string, string> = {
-    initial: 'Inicial',
+    initial: 'Inventario inicial',
     in: 'Entrada',
     out: 'Salida',
     sale: 'Venta',
     sale_cancel: 'Anulación de venta',
-    adjustment: 'Ajuste',
+    adjustment: 'Ajuste de inventario',
+    manual: 'Ajuste manual',
     entry: 'Entrada',
     exit: 'Salida',
     add: 'Entrada',
     remove: 'Salida',
+    increase: 'Entrada',
     purchase: 'Compra',
+    purchase_cancellation: 'Anulación de compra',
+    transfer_in: 'Entrada por traslado',
+    transfer_out: 'Salida por traslado',
+    transfer_cancellation_in: 'Entrada por anulación de traslado',
+    transfer_cancellation_out: 'Salida por anulación de traslado',
+    pre_sale_picking: 'Salida por preparación de preventa',
+    product_import_initial: 'Inventario inicial importado',
+    product_import_increment: 'Entrada por importación',
 };
+
+function formatMovementType(type: string) {
+    return typeLabels[type] ?? type
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/^./, (character) => character.toLocaleUpperCase('es'));
+}
 
 function formatDate(value: string) {
     return new Intl.DateTimeFormat('es', {
@@ -322,7 +340,7 @@ export default function StockHistory({
                                             {formatDate(movement.created_at)}
                                         </td>
                                         <td className="px-3 py-3 font-medium text-gray-900">
-                                            {typeLabels[movement.type] ?? movement.type}
+                                            {formatMovementType(movement.type)}
                                         </td>
                                         <td className="px-3 py-3 text-right text-gray-700">
                                             {movement.previous_stock === null ? '-' : formatQuantity(movement.previous_stock)}
