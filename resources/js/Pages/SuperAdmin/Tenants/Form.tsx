@@ -94,6 +94,8 @@ export default function Form({
         show_other_branches_stock_in_pos?: boolean;
         allow_duplicate_product_codes?: boolean;
         allow_duplicate_product_barcodes?: boolean;
+        show_product_code_on_receipts?: boolean;
+        show_product_barcode_on_receipts?: boolean;
         allow_receipts?: boolean;
         allow_invoices?: boolean;
     };
@@ -137,6 +139,8 @@ export default function Form({
         show_other_branches_stock_in_pos: settings.show_other_branches_stock_in_pos ?? false,
         allow_duplicate_product_codes: settings.allow_duplicate_product_codes ?? false,
         allow_duplicate_product_barcodes: settings.allow_duplicate_product_barcodes ?? false,
+        show_product_code_on_receipts: settings.show_product_code_on_receipts ?? false,
+        show_product_barcode_on_receipts: settings.show_product_barcode_on_receipts ?? false,
         allow_receipts: settings.allow_receipts ?? true,
         allow_invoices: settings.allow_invoices ?? false,
         owner_name: '',
@@ -340,6 +344,29 @@ export default function Form({
                                 )}
                                 <InputError message={(errors as Record<string, string>).logo} />
                             </div>
+                        </div>
+                    </div>
+
+                    <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="mb-4">
+                            <h3 className="text-base font-semibold text-gray-900">Configuración de impresión</h3>
+                            <p className="mt-1 text-sm text-gray-500">
+                                Define los identificadores de producto visibles en comprobantes y facturas impresas.
+                            </p>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <Toggle
+                                checked={data.show_product_code_on_receipts}
+                                onChange={(checked) => setData('show_product_code_on_receipts', checked)}
+                                label="Mostrar código del producto"
+                                description="Incluye el código interno o SKU cuando el producto lo tenga."
+                            />
+                            <Toggle
+                                checked={data.show_product_barcode_on_receipts}
+                                onChange={(checked) => setData('show_product_barcode_on_receipts', checked)}
+                                label="Mostrar código de barras"
+                                description="Incluye el código de barras, conservando sus ceros iniciales."
+                            />
                         </div>
                     </div>
 

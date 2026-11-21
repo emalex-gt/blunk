@@ -33,8 +33,6 @@ class CompanySettingsController extends Controller
                 'receipt_format',
                 'allow_manual_price',
                 'remember_last_customer_product_price',
-                'show_product_code_on_receipts',
-                'show_product_barcode_on_receipts',
             ]),
             'felSettings' => null,
         ]);
@@ -52,8 +50,6 @@ class CompanySettingsController extends Controller
             'receipt_format' => ['required', 'in:ticket,document'],
             'allow_manual_price' => ['nullable', 'boolean'],
             'remember_last_customer_product_price' => ['nullable', 'boolean'],
-            'show_product_code_on_receipts' => ['nullable', 'boolean'],
-            'show_product_barcode_on_receipts' => ['nullable', 'boolean'],
             'logo' => ['nullable', 'image', 'max:5120'],
         ], [
             'logo.max' => 'El logo no debe superar los 5MB.',
@@ -72,8 +68,6 @@ class CompanySettingsController extends Controller
             'receipt_format' => $data['receipt_format'],
             'allow_manual_price' => (bool) ($data['allow_manual_price'] ?? false),
             'remember_last_customer_product_price' => (bool) ($data['remember_last_customer_product_price'] ?? false),
-            'show_product_code_on_receipts' => (bool) ($data['show_product_code_on_receipts'] ?? false),
-            'show_product_barcode_on_receipts' => (bool) ($data['show_product_barcode_on_receipts'] ?? false),
         ];
 
         if ($request->hasFile('logo')) {

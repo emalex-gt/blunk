@@ -80,6 +80,8 @@ class TenantController extends Controller
                 'show_other_branches_stock_in_pos' => false,
                 'allow_duplicate_product_codes' => false,
                 'allow_duplicate_product_barcodes' => false,
+                'show_product_code_on_receipts' => false,
+                'show_product_barcode_on_receipts' => false,
                 'allow_receipts' => true,
                 'allow_invoices' => false,
             ],
@@ -172,6 +174,8 @@ class TenantController extends Controller
                 'show_other_branches_stock_in_pos' => $business->tenantSetting?->show_other_branches_stock_in_pos ?? false,
                 'allow_duplicate_product_codes' => $business->tenantSetting?->allow_duplicate_product_codes ?? false,
                 'allow_duplicate_product_barcodes' => $business->tenantSetting?->allow_duplicate_product_barcodes ?? false,
+                'show_product_code_on_receipts' => $business->tenantSetting?->show_product_code_on_receipts ?? false,
+                'show_product_barcode_on_receipts' => $business->tenantSetting?->show_product_barcode_on_receipts ?? false,
                 'allow_receipts' => $business->tenantSetting?->allow_receipts ?? true,
                 'allow_invoices' => $business->tenantSetting?->allow_invoices ?? false,
             ],
@@ -311,6 +315,8 @@ class TenantController extends Controller
             'show_other_branches_stock_in_pos' => ['nullable', 'boolean'],
             'allow_duplicate_product_codes' => ['nullable', 'boolean'],
             'allow_duplicate_product_barcodes' => ['nullable', 'boolean'],
+            'show_product_code_on_receipts' => ['nullable', 'boolean'],
+            'show_product_barcode_on_receipts' => ['nullable', 'boolean'],
             'allow_receipts' => ['nullable', 'boolean'],
             'allow_invoices' => ['nullable', 'boolean'],
             'owner_name' => ['nullable', 'string', 'max:255'],
@@ -392,6 +398,12 @@ class TenantController extends Controller
                 'show_other_branches_stock_in_pos' => (bool) ($validated['show_other_branches_stock_in_pos'] ?? false),
                 'allow_duplicate_product_codes' => (bool) ($validated['allow_duplicate_product_codes'] ?? false),
                 'allow_duplicate_product_barcodes' => (bool) ($validated['allow_duplicate_product_barcodes'] ?? false),
+                'show_product_code_on_receipts' => $request->has('show_product_code_on_receipts')
+                    ? (bool) ($validated['show_product_code_on_receipts'] ?? false)
+                    : (bool) ($business?->tenantSetting?->show_product_code_on_receipts ?? false),
+                'show_product_barcode_on_receipts' => $request->has('show_product_barcode_on_receipts')
+                    ? (bool) ($validated['show_product_barcode_on_receipts'] ?? false)
+                    : (bool) ($business?->tenantSetting?->show_product_barcode_on_receipts ?? false),
                 'allow_receipts' => (bool) ($validated['allow_receipts'] ?? true),
                 'allow_invoices' => (bool) ($validated['allow_invoices'] ?? false),
             ],
