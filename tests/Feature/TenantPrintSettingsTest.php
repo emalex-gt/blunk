@@ -3,6 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\Business;
+use App\Models\CreditReceipt;
+use App\Models\CreditReceiptLine;
+use App\Models\Customer;
+use App\Models\Product;
 use App\Models\TenantSetting;
 use App\Models\User;
 use App\Support\Permissions;
@@ -149,6 +153,24 @@ class TenantPrintSettingsTest extends TestCase
         $this->assertSame(1, substr_count($printed, 'Barras: 00012345'));
     }
 
+    public function test_credit_receipt_prints_respect_each_tenant_identifier_setting_and_decimal_quantity(): void
+    {
+        $codeOnly = $this->creditReceipt($this->business('Reserva código', true, false));
+        $barcodeOnly = $this->creditReceipt($this->business('Reserva barras', false, true));
+
+        foreach (['ticket', 'document'] as $format) {
+            $codePrint = $this->renderCreditReceipt($codeOnly, $format);
+            $this->assertStringContainsString('Código: SKU-001', $codePrint);
+            $this->assertStringNotContainsString('Barras: 00012345', $codePrint);
+            $this->assertStringContainsString('1.1250', $codePrint);
+
+            $barcodePrint = $this->renderCreditReceipt($barcodeOnly, $format);
+            $this->assertStringNotContainsString('Código: SKU-001', $barcodePrint);
+            $this->assertStringContainsString('Barras: 00012345', $barcodePrint);
+            $this->assertSame(1, substr_count($barcodePrint, 'Barras: 00012345'));
+        }
+    }
+
     private function superAdmin(): User
     {
         return User::factory()->create([
@@ -178,6 +200,72 @@ class TenantPrintSettingsTest extends TestCase
         ]);
 
         return $business;
+    }
+
+    private function creditReceipt(Business $business): CreditReceipt
+    {
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente de reserva',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'country' => 'GT',
+            'is_final_consumer' => true,
+        ]);
+        $product = Product::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Producto decimal',
+            'code' => 'SKU-001',
+            'barcode' => '00012345',
+            'cost_price' => 10,
+            'sale_price' => 20,
+            'stock' => '10.0000',
+            'min_stock' => '0.0000',
+            'allow_decimal_quantity' => true,
+            'is_active' => true,
+        ]);
+        $receipt = CreditReceipt::query()->create([
+            'business_id' => $business->id,
+            'customer_id' => $customer->id,
+            'customer_name' => 'Cliente de reserva',
+            'customer_doc_type' => 'CF',
+            'customer_doc_number' => 'CF',
+            'receipt_number' => 1,
+            'status' => 'pending',
+            'subtotal' => 22.50,
+            'discount_amount' => 0,
+            'total' => 22.50,
+            'pending_total' => 22.50,
+        ]);
+        CreditReceiptLine::query()->create([
+            'business_id' => $business->id,
+            'credit_receipt_id' => $receipt->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'sku' => $product->code,
+            'quantity' => '1.1250',
+            'qty_reserved' => '1.1250',
+            'qty_pending' => '1.1250',
+            'unit_price' => 20,
+            'line_total' => 22.50,
+            'pending_total' => 22.50,
+            'status' => 'pending',
+        ]);
+
+        return $receipt->fresh(['business.tenantSetting', 'lines.product']);
+    }
+
+    private function renderCreditReceipt(CreditReceipt $receipt, string $format): string
+    {
+        return view("credits.receipt-{$format}", [
+            'receipt' => $receipt,
+            'logoUrl' => null,
+            'number' => 'CR-000001',
+            'previousPending' => 0,
+            'newPending' => 22.50,
+            'customerLocation' => ['display' => ''],
+            'delivery' => ['address_reference' => '', 'phone' => ''],
+        ])->render();
     }
 
     private function tenantPayload(string $name, array $overrides = []): array

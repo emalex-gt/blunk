@@ -52,7 +52,7 @@
         <tbody>
             @foreach($receipt->lines as $line)
                 <tr>
-                    <td>{{ $line->product_name }}</td>
+                    <td>{{ $line->product_name }}@include('print.partials.product-identifiers', ['item' => $line, 'settings' => $receipt->business->tenantSetting])</td>
                     <td class="right">{{ $line->quantity }}</td>
                     <td class="right">{{ formatMoney($line->line_total, $receipt->business->country) }}</td>
                 </tr>

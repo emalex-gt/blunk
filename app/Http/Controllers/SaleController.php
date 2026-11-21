@@ -2975,7 +2975,14 @@ class SaleController extends Controller
                 ->find($customerData['id'])
             : null;
 
-        if (! ($allowMissingGuatemalaLocation && $customerCountry === 'GT')) {
+        $submittedLocationChanged = $selectedCustomer === null
+            || $department !== trim((string) $selectedCustomer->department)
+            || $municipality !== trim((string) $selectedCustomer->municipality);
+        $hasSubmittedLocation = $department !== '' || $municipality !== '';
+
+        if (! ($allowMissingGuatemalaLocation && $customerCountry === 'GT')
+            && $hasSubmittedLocation
+            && $submittedLocationChanged) {
             $this->validateCustomerLocation($customerCountry, $department, $municipality);
         }
 

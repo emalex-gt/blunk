@@ -53,7 +53,6 @@
         <thead>
             <tr>
                 <th>Producto</th>
-                <th>SKU</th>
                 <th class="right">Cantidad</th>
                 <th class="right">Precio unitario</th>
                 <th class="right">Total</th>
@@ -62,8 +61,7 @@
         <tbody>
             @foreach($receipt->lines as $line)
                 <tr>
-                    <td>{{ $line->product_name }}</td>
-                    <td>{{ $line->sku ?: '-' }}</td>
+                    <td>{{ $line->product_name }}@include('print.partials.product-identifiers', ['item' => $line, 'settings' => $receipt->business->tenantSetting])</td>
                     <td class="right">{{ $line->quantity }}</td>
                     <td class="right">{{ formatMoney($line->unit_price, $receipt->business->country) }}</td>
                     <td class="right">{{ formatMoney($line->line_total, $receipt->business->country) }}</td>

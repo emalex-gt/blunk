@@ -6930,6 +6930,40 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertNull($sale->fel_uuid);
     }
 
+    public function test_pos_receipt_accepts_a_selected_customer_with_legacy_location_without_relaxing_fel_identity_rules(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register']);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $this->openCashRegister($business, $user);
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente con ubicación histórica',
+            'doc_type' => 'CF',
+            'doc_number' => 'CF',
+            'department' => 'Departamento legado',
+            'municipality' => 'Municipio legado',
+            'country' => 'GT',
+            'is_final_consumer' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->post(route('sales.store'), $this->salePayload($product, quantity: 1, total: 100, customer: [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'doc_type' => 'CF',
+                'doc_number' => 'CF',
+                'department' => $customer->department,
+                'municipality' => $customer->municipality,
+                'country' => 'GT',
+            ]))
+            ->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->where('business_id', $business->id)->sole();
+        $this->assertSame('receipt', $sale->document_type);
+        $this->assertSame('Departamento legado', $sale->customer_department);
+        $this->assertSame('Municipio legado', $sale->customer_municipality);
+    }
+
     public function test_pos_invoice_accepts_a_verified_cui_customer(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'fel_gt'], allowInvoices: true);
