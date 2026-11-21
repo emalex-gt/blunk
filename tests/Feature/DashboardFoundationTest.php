@@ -23,6 +23,7 @@ use App\Models\RouteDeliveryStop;
 use App\Models\RouteVisit;
 use App\Models\RouteWorkDay;
 use App\Models\RouteZone;
+use App\Models\Role;
 use App\Models\TenantModule;
 use App\Models\TenantSetting;
 use App\Models\User;
@@ -250,40 +251,29 @@ class DashboardFoundationTest extends TestCase
         $this->assertSame('generic', $resolver->resolve($incompleteRouteRole));
     }
 
-    public function test_ferrymas_legacy_cashier_seller_uses_warehouse_only_for_the_exact_tenant_and_role_assignment(): void
+    public function test_custom_warehouse_roles_are_tenant_agnostic_and_never_override_owner_or_admin(): void
     {
-        \Illuminate\Support\Facades\DB::table('roles')->insertOrIgnore([
-            'id' => 9,
-            'business_id' => null,
-            'key' => 'cajero-vendedor',
-            'name' => 'Cajero/Vendedor',
-            'is_system' => false,
-            'is_active' => true,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-        \Illuminate\Support\Facades\DB::table('roles')->where('id', 9)->update([
-            'key' => 'cajero-vendedor',
-            'name' => 'Cajero/Vendedor',
-            'is_system' => false,
-        ]);
-        $ferrymas = new Business;
-        $ferrymas->forceFill(['id' => 9, 'name' => 'Ferrymas', 'slug' => 'ferrymas', 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true])->save();
-        $other = new Business;
-        $other->forceFill(['id' => 10, 'name' => 'Otro', 'slug' => 'otro', 'currency' => 'GTQ', 'country' => 'GT', 'is_active' => true])->save();
-        $ferrymasBranch = Branch::query()->create(['business_id' => $ferrymas->id, 'name' => 'Principal', 'code' => 'FER', 'is_active' => true]);
-        $otherBranch = Branch::query()->create(['business_id' => $other->id, 'name' => 'Principal', 'code' => 'OTH', 'is_active' => true]);
-        $seller = User::factory()->create(['business_id' => $ferrymas->id, 'current_branch_id' => $ferrymasBranch->id, 'role' => 'cajero-vendedor', 'is_active' => true]);
-        $otherSeller = User::factory()->create(['business_id' => $other->id, 'current_branch_id' => $otherBranch->id, 'role' => 'cajero-vendedor', 'is_active' => true]);
-        $seller->roles()->attach(9);
-        $otherSeller->roles()->attach(9);
+        $cashierSellerRole = Role::query()->create(['key' => 'cajero-vendedor', 'name' => 'Cajero/Vendedor', 'is_system' => false, 'is_active' => true]);
+        $sellerRole = Role::query()->create(['key' => 'vendedor', 'name' => 'Vendedor', 'is_system' => false, 'is_active' => true]);
+        [$ferrymas, $cashierSeller, $ferrymasBranch] = $this->tenant('cajero-vendedor', modules: ['inventory']);
+        [$other, $seller, $otherBranch] = $this->tenant('vendedor', modules: ['inventory']);
+        [, $limitedSeller, $limitedBranch] = $this->tenant('vendedor', modules: ['inventory']);
+        [$ownerBusiness, $owner, $ownerBranch] = $this->tenant('owner', modules: ['inventory', 'pos', 'reports']);
+        [$adminBusiness, $admin, $adminBranch] = $this->tenant('admin', modules: ['inventory', 'pos', 'reports']);
+        $cashierSeller->roles()->syncWithoutDetaching([$cashierSellerRole->id]);
+        $seller->roles()->syncWithoutDetaching([$sellerRole->id]);
+        $limitedSeller->roles()->syncWithoutDetaching([$sellerRole->id]);
+        $owner->roles()->syncWithoutDetaching([$sellerRole->id]);
+        $admin->roles()->syncWithoutDetaching([$cashierSellerRole->id]);
 
-        $permissions = [Permissions::INVENTORY_VIEW, Permissions::REPORTS_SALES_SUMMARY_VIEW];
-        $modules = ['inventory', 'pos', 'reports'];
+        $warehousePermissions = [Permissions::INVENTORY_VIEW, Permissions::REPORTS_SALES_SUMMARY_VIEW, Permissions::POS_VIEW];
         $resolver = new DashboardProfileResolver();
 
-        $this->assertSame('warehouse', $resolver->resolve(new DashboardContext($ferrymas, $seller, $ferrymasBranch, false, $permissions, $modules, 'America/Guatemala')));
-        $this->assertSame('executive', $resolver->resolve(new DashboardContext($other, $otherSeller, $otherBranch, false, $permissions, $modules, 'America/Guatemala')));
+        $this->assertSame('warehouse', $resolver->resolve(new DashboardContext($ferrymas, $cashierSeller, $ferrymasBranch, false, $warehousePermissions, ['inventory', 'pos', 'reports'], 'America/Guatemala')));
+        $this->assertSame('warehouse', $resolver->resolve(new DashboardContext($other, $seller, $otherBranch, false, $warehousePermissions, ['inventory', 'pos', 'reports'], 'America/Guatemala')));
+        $this->assertSame('generic', $resolver->resolve(new DashboardContext($other, $limitedSeller, $limitedBranch, false, [], ['inventory'], 'America/Guatemala')));
+        $this->assertSame('executive', $resolver->resolve(new DashboardContext($ownerBusiness, $owner, $ownerBranch, false, $warehousePermissions, ['inventory', 'pos', 'reports'], 'America/Guatemala')));
+        $this->assertSame('branch_manager', $resolver->resolve(new DashboardContext($adminBusiness, $admin, $adminBranch, false, $warehousePermissions, ['inventory', 'pos', 'reports'], 'America/Guatemala')));
     }
 
     public function test_standard_role_preferences_apply_only_after_their_capability_sets_validate(): void

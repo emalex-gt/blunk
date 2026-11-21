@@ -8,12 +8,6 @@ final class DashboardProfileResolver
 {
     public function resolve(DashboardContext $context): string
     {
-        // Temporary production compatibility for Ferrymas. Remove once those
-        // users have an explicit dashboard preference.
-        if ($this->isFerrymasLegacyCashierSeller($context)) {
-            return 'warehouse';
-        }
-
         $capabilities = [
             'executive' => $context->hasModule('pos')
                 && $context->hasModule('reports')
@@ -48,13 +42,20 @@ final class DashboardProfileResolver
             'pre_seller' => 'route_seller',
             'delivery_agent' => 'route_delivery',
             'stock_manager' => 'warehouse',
+            'cajero-vendedor' => 'warehouse',
+            'vendedor' => 'warehouse',
             'purchases' => 'purchases',
             'reports' => 'finance',
         ];
-        $roleKeys = $context->user->roles()->pluck('key')->all();
-        $standardRole = array_key_exists((string) $context->user->role, $standardProfiles)
-            ? (string) $context->user->role
-            : collect($roleKeys)->first(fn (string $role) => array_key_exists($role, $standardProfiles));
+        $roleKeys = collect([(string) $context->user->role])
+            ->merge($context->user->roles()->pluck('key'))
+            ->filter()
+            ->unique()
+            ->values();
+        $standardRole = collect(['owner', 'admin'])->first(fn (string $role) => $roleKeys->contains($role))
+            ?? (array_key_exists((string) $context->user->role, $standardProfiles)
+                ? (string) $context->user->role
+                : $roleKeys->first(fn (string $role) => array_key_exists($role, $standardProfiles)));
         $preferred = $standardRole ? $standardProfiles[$standardRole] : null;
 
         if ($preferred && $capabilities[$preferred]) {
@@ -74,18 +75,5 @@ final class DashboardProfileResolver
         }
 
         return 'generic';
-    }
-
-    private function isFerrymasLegacyCashierSeller(DashboardContext $context): bool
-    {
-        return (int) $context->business->id === 9
-            && (string) $context->user->role === 'cajero-vendedor'
-            && $context->hasModule('inventory')
-            && $context->hasPermission(Permissions::INVENTORY_VIEW)
-            && $context->user->roles()
-                ->whereKey(9)
-                ->where('key', 'cajero-vendedor')
-                ->whereNull('business_id')
-                ->exists();
     }
 }
