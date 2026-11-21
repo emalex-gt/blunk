@@ -91,7 +91,7 @@ class ReportController extends Controller
         $documentType = (string) $request->query('document_type', 'all');
         $status = (string) $request->query('status', 'completed');
         $saleNumber = trim((string) $request->query('sale_number', ''));
-        $allowedPaymentMethods = ['all', 'cash', 'card', 'bank_transfer', 'transfer', 'check', 'credit', 'other'];
+        $allowedPaymentMethods = ['all', 'cash', 'card', 'bank_transfer', 'transfer', 'deposit', 'check', 'credit', 'other'];
         $allowedDocumentTypes = ['all', 'receipt', 'invoice', 'credit'];
         $allowedStatuses = ['completed', 'cancelled', 'all'];
         $paymentMethod = in_array($paymentMethod, $allowedPaymentMethods, true) ? $paymentMethod : 'all';
@@ -161,12 +161,24 @@ class ReportController extends Controller
                 ['label' => 'Total efectivo', 'value' => (float) ($paymentTotals['cash'] ?? 0), 'money' => true],
                 ['label' => 'Total tarjeta', 'value' => (float) ($paymentTotals['card'] ?? 0), 'money' => true],
                 ['label' => 'Total transferencia', 'value' => (float) (($paymentTotals['transfer'] ?? 0) + ($paymentTotals['bank_transfer'] ?? 0)), 'money' => true],
+                ['label' => 'Total depósito', 'value' => (float) ($paymentTotals['deposit'] ?? 0), 'money' => true],
                 ['label' => 'Total otros', 'value' => (float) (($paymentTotals['check'] ?? 0) + ($paymentTotals['credit'] ?? 0) + ($paymentTotals['other'] ?? 0)), 'money' => true],
                 ['label' => 'Total reembolsado', 'value' => $refundedTotal, 'money' => true],
                 ['label' => 'Cantidad de facturas', 'value' => $invoiceCount],
                 ['label' => 'Cantidad de comprobantes', 'value' => $receiptCount],
             ];
         }
+
+        $paymentMethodLabels = [
+            'cash' => 'Efectivo',
+            'card' => 'Tarjeta',
+            'transfer' => 'Transferencia',
+            'bank_transfer' => 'Transferencia',
+            'deposit' => 'Depósito',
+            'check' => 'Cheque',
+            'credit' => 'Crédito',
+            'other' => 'Otro',
+        ];
 
         $rows = $query
             ->latest('sales.created_at')
@@ -183,7 +195,10 @@ class ReportController extends Controller
                     'receipt' => 'Comprobante',
                     default => $sale->document_type ?: '-',
                 },
-                'payment_method' => $sale->payments->pluck('method')->unique()->join(', ') ?: $sale->payment_method,
+                'payment_method' => $sale->payments->pluck('method')->unique()
+                    ->map(fn ($method) => $paymentMethodLabels[$method] ?? $method)
+                    ->unique()
+                    ->join(', ') ?: ($paymentMethodLabels[$sale->payment_method] ?? ($sale->payment_method ?: '-')),
                 'total' => (float) $sale->total,
                 'status' => $sale->status === 'cancelled' ? 'Anulada' : 'Completada',
                 'detail_url' => route('sales.show', $sale),

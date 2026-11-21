@@ -104,6 +104,7 @@ const paymentMethods = [
     { value: 'cash', label: 'Efectivo' },
     { value: 'card', label: 'Tarjeta' },
     { value: 'bank_transfer', label: 'Transferencia' },
+    { value: 'deposit', label: 'Depósito' },
     { value: 'check', label: 'Cheque' },
     { value: 'credit', label: 'Crédito' },
     { value: 'other', label: 'Otro' },
@@ -238,7 +239,7 @@ export default function GenericReport({
                             )}
                             {filterKeys.includes('payment_method') && (
                                 <SelectField label="Forma de pago" value={form.payment_method ?? 'all'} onChange={(value) => setField('payment_method', value)}>
-                                    {paymentMethods.map((method) => (
+                                    {paymentMethods.filter((method) => routeName === 'reports.sales' || method.value !== 'deposit').map((method) => (
                                         <option key={method.value} value={method.value}>
                                             {method.label}
                                         </option>
