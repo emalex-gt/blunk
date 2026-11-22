@@ -27,6 +27,7 @@ use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\StockAvailability;
 use App\Support\Inventory\StockPolicy;
 use App\Support\OperationsLog;
+use App\Support\PosFelTrace;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
@@ -48,7 +49,7 @@ class FiscalDocumentIntentService
     ) {
     }
 
-    public function createForDraftSale(Sale $sale, array $operationPayload, string $idempotencyKey, ?int $userId): FiscalDocumentIntent
+    public function createForDraftSale(Sale $sale, array $operationPayload, string $idempotencyKey, ?int $userId, ?string $traceId = null): FiscalDocumentIntent
     {
         try {
             return DB::transaction(function () use ($sale, $operationPayload, $idempotencyKey, $userId) {
@@ -209,7 +210,7 @@ class FiscalDocumentIntentService
         });
     }
 
-    public function certify(FiscalDocumentIntent $intent, bool $allowCommercialFinalization = false): FiscalDocumentIntent
+    public function certify(FiscalDocumentIntent $intent, bool $allowCommercialFinalization = false, ?string $traceId = null): FiscalDocumentIntent
     {
         // The status vocabulary intentionally has no transient "retrying" state.
         // A short distributed lock is therefore the claim that prevents two queue
@@ -239,19 +240,35 @@ class FiscalDocumentIntentService
                 'environment' => $intent->environment,
             ]);
 
+            $certificationStarted = microtime(true);
             try {
-                $certification = $this->invoiceService->certifyIntent($intent);
+                $certification = $this->invoiceService->certifyIntent($intent, $traceId);
             } catch (FelException $exception) {
                 return $this->recordCertificationFailure($intent, $exception);
             } catch (\Throwable $exception) {
                 return $this->markUnknown($intent, 'certification_exception', $exception->getMessage());
             }
 
+            PosFelTrace::record($intent->business_id, $traceId, 'intent_certification_completed', [
+                'branch_id' => $intent->branch_id,
+                'intent_id' => $intent->id,
+                'environment' => $intent->environment,
+                'duration_ms' => round((microtime(true) - $certificationStarted) * 1000, 2),
+            ]);
+
+            $persistenceStarted = microtime(true);
             $intent->update([
                 'status' => FiscalDocumentIntent::CERTIFIED,
                 'provider_response' => $certification['response_payload'],
                 'certified_at' => $certification['identifiers']['certification_date'] ?? now(),
                 'last_reconciliation_error' => null,
+            ]);
+
+            PosFelTrace::record($intent->business_id, $traceId, 'intent_certification_persisted', [
+                'branch_id' => $intent->branch_id,
+                'intent_id' => $intent->id,
+                'environment' => $intent->environment,
+                'duration_ms' => round((microtime(true) - $persistenceStarted) * 1000, 2),
             ]);
 
             OperationsLog::event('fel.certification.certified', $intent->business_id, [
@@ -264,7 +281,7 @@ class FiscalDocumentIntentService
                 'environment' => $intent->environment,
             ]);
 
-            return $this->finalizeSafely($intent->refresh(), $allowCommercialFinalization);
+            return $this->finalizeSafely($intent->refresh(), $allowCommercialFinalization, $traceId);
         } finally {
             $lock->release();
         }
@@ -352,9 +369,10 @@ class FiscalDocumentIntentService
         return $this->certify($reconciled->refresh());
     }
 
-    public function finalize(FiscalDocumentIntent $intent, bool $allowCommercialFinalization = false): FiscalDocumentIntent
+    public function finalize(FiscalDocumentIntent $intent, bool $allowCommercialFinalization = false, ?string $traceId = null): FiscalDocumentIntent
     {
-        return DB::transaction(function () use ($intent, $allowCommercialFinalization) {
+        return DB::transaction(function () use ($intent, $allowCommercialFinalization, $traceId) {
+            $finalizationStarted = microtime(true);
             $intent = FiscalDocumentIntent::query()->lockForUpdate()->findOrFail($intent->id);
             if ($intent->status === FiscalDocumentIntent::FINALIZED) {
                 return $intent;
@@ -416,6 +434,15 @@ class FiscalDocumentIntentService
                 'status' => FiscalDocumentIntent::FINALIZED,
             ]);
 
+            PosFelTrace::record($intent->business_id, $traceId, 'commercial_finalization_completed', [
+                'branch_id' => $intent->branch_id,
+                'intent_id' => $intent->id,
+                'sale_id' => $sale->id,
+                'environment' => $intent->environment,
+                'outcome' => $intent->status,
+                'duration_ms' => round((microtime(true) - $finalizationStarted) * 1000, 2),
+            ]);
+
             return $intent->refresh();
         });
     }
@@ -469,10 +496,10 @@ class FiscalDocumentIntentService
         return $this->finalizeSafely($intent);
     }
 
-    private function finalizeSafely(FiscalDocumentIntent $intent, bool $allowCommercialFinalization = false): FiscalDocumentIntent
+    private function finalizeSafely(FiscalDocumentIntent $intent, bool $allowCommercialFinalization = false, ?string $traceId = null): FiscalDocumentIntent
     {
         try {
-            return $this->finalize($intent, $allowCommercialFinalization);
+            return $this->finalize($intent, $allowCommercialFinalization, $traceId);
         } catch (\Throwable $exception) {
             FiscalDocumentIntent::query()->whereKey($intent->id)->update([
                 'last_finalization_error' => $exception->getMessage(),

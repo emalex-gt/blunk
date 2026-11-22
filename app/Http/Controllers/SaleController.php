@@ -48,6 +48,7 @@ use App\Support\Inventory\ProductQuantityPolicy;
 use App\Support\ManualPricePolicy;
 use App\Support\OperationDrafts;
 use App\Support\OperationsLog;
+use App\Support\PosFelTrace;
 use App\Support\Permissions;
 use App\Support\PriceLists;
 use App\Support\StockAvailability;
@@ -60,6 +61,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -597,8 +599,8 @@ class SaleController extends Controller
                 'pos_sale',
                 $data['idempotency_key'],
                 $idempotencyPayload,
-                function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $creditCustomerId, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
-            return DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $creditCustomerId, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, &$certifiedDocument, &$pendingFelReconciliation) {
+                function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $creditCustomerId, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, $posTraceId, &$certifiedDocument, &$pendingFelReconciliation) {
+            return DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $creditCustomerId, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, $posTraceId, &$certifiedDocument, &$pendingFelReconciliation) {
             $businessId = currentBusinessId();
             $branch = $activeBranch;
             $quotation = filled($data['quotation_id'] ?? null)
@@ -1100,7 +1102,15 @@ class SaleController extends Controller
                     ],
                     $data['idempotency_key'],
                     $request->user()->id,
+                    traceId: $posTraceId,
                 );
+
+                PosFelTrace::record($businessId, $posTraceId, 'fiscal_intent_created', [
+                    'branch_id' => $branch->id,
+                    'intent_id' => $intent->id,
+                    'environment' => $intent->environment,
+                    'duration_ms' => round((microtime(true) - $saleTransactionStarted) * 1000, 2),
+                ]);
 
                 return [
                     'result_id' => $intent->id,
@@ -1164,6 +1174,15 @@ class SaleController extends Controller
             'operation_type' => $idempotencyResult->resultType,
             'replayed' => $idempotencyResult->replayed,
             'duration_ms' => $saleTransactionMs,
+            'trace_id' => $posTraceId,
+        ]);
+
+        PosFelTrace::record($business->id, $posTraceId, 'initial_transaction_completed', [
+            'branch_id' => $activeBranch->id,
+            'intent_id' => $idempotencyResult->resultType === 'fiscal_document_intent' ? $saleId : null,
+            'sale_id' => $idempotencyResult->resultType === 'sale' ? $saleId : null,
+            'environment' => $felSettings?->environment,
+            'duration_ms' => $saleTransactionMs,
         ]);
 
         if ($idempotencyResult->resultType === 'fiscal_document_intent') {
@@ -1173,9 +1192,9 @@ class SaleController extends Controller
             $intentService = app(FiscalDocumentIntentService::class);
 
             if ($intent->status === FiscalDocumentIntent::PENDING && ! $idempotencyResult->replayed) {
-                $intent = $intentService->certify($intent, allowCommercialFinalization: true);
+                $intent = $intentService->certify($intent, allowCommercialFinalization: true, traceId: $posTraceId);
             } elseif ($intent->status === FiscalDocumentIntent::CERTIFIED) {
-                $intent = $intentService->finalize($intent);
+                $intent = $intentService->finalize($intent, traceId: $posTraceId);
             }
 
             if ($intent->status === FiscalDocumentIntent::UNKNOWN) {
@@ -1214,7 +1233,7 @@ class SaleController extends Controller
                 ->with('success', $message)
                 ->with('fel_success_message', $message)
                 ->with('fel_print_sale_id', $sale->id)
-                ->with('fel_print_url', URL::temporarySignedRoute('sales.fel-document', now()->addMinutes(10), ['sale' => $sale->id]));
+                ->with('fel_print_url', URL::temporarySignedRoute('sales.fel-document', now()->addMinutes(10), ['sale' => $sale->id, 'trace_id' => $posTraceId]));
 
             return $this->withPosTrace($redirect, $posTraceId);
         }
@@ -1323,7 +1342,7 @@ class SaleController extends Controller
                 ->with('fel_print_url', URL::temporarySignedRoute(
                     'sales.fel-document',
                     now()->addMinutes(10),
-                    ['sale' => $saleId],
+                    ['sale' => $saleId, 'trace_id' => $posTraceId],
                 ));
         }
 
@@ -1564,6 +1583,33 @@ class SaleController extends Controller
                 'document_type' => $exception->getMessage() ?: 'No se pudo certificar la factura.',
             ]);
         }
+    }
+
+    public function recordTraceTiming(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'trace_id' => ['required', 'uuid'],
+            'phase' => ['required', 'string', 'in:'.implode(',', PosFelTrace::BROWSER_PHASES)],
+            'duration_ms' => ['required', 'numeric', 'min:0', 'max:300000'],
+        ]);
+
+        $businessId = currentBusinessId();
+        if (! OperationsLog::enabledForBusiness($businessId)) {
+            return response()->json([], 204);
+        }
+
+        $userId = (int) ($request->user()?->id ?? 0);
+        $key = "pos-trace:{$businessId}:{$userId}:{$data['trace_id']}";
+
+        if (! RateLimiter::tooManyAttempts($key, 12)) {
+            RateLimiter::hit($key, 60);
+            PosFelTrace::record($businessId, $data['trace_id'], $data['phase'], [
+                'user_id' => $userId ?: null,
+                'duration_ms' => round((float) $data['duration_ms'], 2),
+            ]);
+        }
+
+        return response()->json([], 204);
     }
 
     private function withPosTrace(RedirectResponse $redirect, ?string $posTraceId): RedirectResponse
@@ -1824,6 +1870,7 @@ class SaleController extends Controller
 
     public function felDocument(Request $request, Sale $sale)
     {
+        $documentStarted = microtime(true);
         $this->ensureSaleBelongsToCurrentBusiness($sale);
         $this->authorizeSaleBranch($request, $sale);
         $this->authorizeFelDocumentAccess($request, allowSignedUrl: true);
@@ -1837,6 +1884,18 @@ class SaleController extends Controller
         $settings = $business->tenantSetting;
         $felSettings = $business->tenantFelSetting;
         $timezone = tenantTimezone($business);
+        $posTraceId = $request->query('trace_id');
+
+        if (PosFelTrace::isTraceId($posTraceId) && $request->hasValidSignature()) {
+            app()->terminating(function () use ($businessId, $sale, $felSettings, $posTraceId, $documentStarted): void {
+                PosFelTrace::record($businessId, $posTraceId, 'print_document_get_finished', [
+                    'branch_id' => $sale->branch_id,
+                    'sale_id' => $sale->id,
+                    'environment' => $felSettings?->environment,
+                    'duration_ms' => round((microtime(true) - $documentStarted) * 1000, 2),
+                ]);
+            });
+        }
 
         $sale->load([
             'customer:id,name,doc_type,doc_number,address,municipality,department,phone',
@@ -1958,7 +2017,13 @@ class SaleController extends Controller
         abort_unless(in_array($format, ['XML', 'PDF'], true), 404);
 
         try {
-            $document = app(DigifactInvoiceService::class)->getDocumentContent($sale, $format);
+            $traceId = $request->query('trace_id');
+            $document = app(DigifactInvoiceService::class)->getDocumentContent(
+                $sale,
+                $format,
+                false,
+                PosFelTrace::isTraceId($traceId) ? $traceId : null,
+            );
 
             return response($document['content'], 200, [
                 'Content-Type' => $document['content_type'],

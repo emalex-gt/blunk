@@ -731,15 +731,18 @@ class DigifactClient
     {
         $started = microtime(true);
         $url = $this->buildUrl($endpoint);
+        $requestCount = 1;
         $response = $this->authorizedRequest($timeout)->post($url.'?'.http_build_query($query), $payload);
 
         if ($response->status() === 401) {
             $this->settings->forceFill(['token' => null, 'token_expires_at' => null])->save();
+            $requestCount++;
             $response = $this->authorizedRequest($timeout)->post($url.'?'.http_build_query($query), $payload);
         }
 
         $requestMs = $this->recordTiming($durationKey, $started);
         $this->timings[str_replace('_ms', '_http_status', $durationKey)] = $response->status();
+        $this->timings[str_replace('_ms', '_http_request_count', $durationKey)] = $requestCount;
 
         Log::info('Digifact response received', [
             'business_id' => $this->business->id,

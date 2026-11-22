@@ -7357,6 +7357,9 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringContainsString("'trace_id' => ['nullable', 'uuid']", $controller);
         $this->assertStringContainsString('destination_get_finished', $controller);
         $this->assertStringContainsString("'pos_trace_id' => \$posTraceId", $invoiceService);
+        $this->assertStringContainsString('traceId: $posTraceId', $controller);
+        $this->assertStringContainsString('certification_http_completed', $invoiceService);
+        $this->assertStringContainsString("route('sales.trace.timing')", $source);
         $this->assertStringContainsString("if (effectiveDocumentType === 'invoice' && !felPrintSaleId)", $source);
     }
 

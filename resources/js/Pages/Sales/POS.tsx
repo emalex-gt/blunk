@@ -3536,11 +3536,25 @@ export default function POS({
                 return;
             }
 
+            const durationMs = Number((performance.now() - posTrace.startedAt).toFixed(2));
             console.info('POS timing', {
                 trace_id: traceId,
                 phase,
-                duration_ms: Number((performance.now() - posTrace.startedAt).toFixed(2)),
+                duration_ms: durationMs,
             });
+
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+            void fetch(route('sales.trace.timing'), {
+                method: 'POST',
+                credentials: 'same-origin',
+                keepalive: true,
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                    ...(csrfToken ? { 'X-CSRF-TOKEN': csrfToken } : {}),
+                },
+                body: JSON.stringify({ trace_id: traceId, phase, duration_ms: durationMs }),
+            }).catch(() => undefined);
         };
         tracePosSale('submit_clicked');
         const autoRegisteredCreditCustomer = paymentCondition === 'credit'
@@ -3593,6 +3607,7 @@ export default function POS({
             } : null,
         }));
 
+        tracePosSale('post_started');
         post(route('sales.store'), {
             preserveScroll: true,
             onSuccess: (page) => {
@@ -3663,7 +3678,8 @@ export default function POS({
                     showMessage(completionMessage);
                     toast.success(completionMessage, { persistent: true });
                     tracePosSale('print_open_started', traceId);
-                    window.open(route('sales.receipt', receiptSaleId), '_blank');
+                    const printWindow = window.open(route('sales.receipt', receiptSaleId), '_blank');
+                    printWindow?.addEventListener('load', () => tracePosSale('print_document_loaded', traceId), { once: true });
                     return;
                 }
 
@@ -3673,7 +3689,11 @@ export default function POS({
 
                     window.setTimeout(() => {
                         tracePosSale('print_open_started', traceId);
-                        window.open(flash?.fel_print_url ?? route('sales.fel-document', felPrintSaleId), '_blank');
+                        const printWindow = window.open(
+                            flash?.fel_print_url ?? route('sales.fel-document', { sale: felPrintSaleId, trace_id: traceId }),
+                            '_blank',
+                        );
+                        printWindow?.addEventListener('load', () => tracePosSale('print_document_loaded', traceId), { once: true });
                         setOpeningFelPrint(false);
                         showMessage(completionMessage);
                         toast.success(completionMessage, { persistent: true });
@@ -3685,6 +3705,7 @@ export default function POS({
                 toast.success(completionMessage, { persistent: true });
             },
             onError: (errors) => {
+                tracePosSale('inertia_on_error');
                 handleOperationSubmitError(errors as Record<string, string>, 'No se pudo completar la venta. Revisa los datos.');
             },
             onFinish: () => {

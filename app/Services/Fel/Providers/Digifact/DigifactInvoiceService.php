@@ -8,6 +8,7 @@ use App\Models\FelCertificationAttempt;
 use App\Models\FelIncident;
 use App\Models\FiscalDocumentIntent;
 use App\Models\Sale;
+use App\Support\PosFelTrace;
 use App\Models\TenantFelSetting;
 use App\Services\Fel\FelException;
 use App\Services\Fel\FelCancellationRequestService;
@@ -316,7 +317,7 @@ class DigifactInvoiceService
      *
      * @return array{request_payload: array, response_payload: array, identifiers: array, issued_at: ?Carbon}
      */
-    public function certifyIntent(FiscalDocumentIntent $intent): array
+    public function certifyIntent(FiscalDocumentIntent $intent, ?string $traceId = null): array
     {
         $business = $intent->business()->firstOrFail();
         $settings = $this->settings($business);
@@ -336,7 +337,16 @@ class DigifactInvoiceService
         }
 
         $issuedAt = $this->parseIssuedAt((string) ($payload['Header']['IssuedDateTime'] ?? now('America/Guatemala')->format('Y-m-d\\TH:i:sP')));
-        $response = DigifactClient::forBusiness($business, $settings)->certify($payload, 'XML');
+        $client = DigifactClient::forBusiness($business, $settings);
+        try {
+            $response = $client->certify($payload, 'XML');
+        } catch (\Throwable $exception) {
+            $this->recordIntentProviderTimings($intent, $settings, $traceId, $client->timingSummary());
+
+            throw $exception;
+        }
+        $this->recordIntentProviderTimings($intent, $settings, $traceId, $client->timingSummary());
+        $responseProcessingStarted = microtime(true);
         $identifiers = $this->extractCertificationIdentifiers($response);
 
         if (! filled($identifiers['uuid'])) {
@@ -346,12 +356,37 @@ class DigifactInvoiceService
             );
         }
 
+        PosFelTrace::record($intent->business_id, $traceId, 'digifact_response_processed', [
+            'branch_id' => $intent->branch_id,
+            'intent_id' => $intent->id,
+            'environment' => $settings->environment,
+            'duration_ms' => round((microtime(true) - $responseProcessingStarted) * 1000, 2),
+        ]);
+
         return [
             'request_payload' => $payload,
             'response_payload' => $this->sanitizeProviderResponse($response),
             'identifiers' => $identifiers,
             'issued_at' => $issuedAt,
         ];
+    }
+
+    /** @param array<string, mixed> $timings */
+    private function recordIntentProviderTimings(FiscalDocumentIntent $intent, TenantFelSetting $settings, ?string $traceId, array $timings): void
+    {
+        PosFelTrace::record($intent->business_id, $traceId, 'digifact_token_completed', [
+            'branch_id' => $intent->branch_id,
+            'intent_id' => $intent->id,
+            'environment' => $settings->environment,
+            'duration_ms' => $timings['token_ms'] ?? null,
+        ]);
+        PosFelTrace::record($intent->business_id, $traceId, 'certification_http_completed', [
+            'branch_id' => $intent->branch_id,
+            'intent_id' => $intent->id,
+            'environment' => $settings->environment,
+            'attempt' => $timings['certification_http_request_count'] ?? 0,
+            'duration_ms' => $timings['certification_ms'] ?? null,
+        ]);
     }
 
     public function retryCertification(Sale $sale): ElectronicDocument
@@ -1055,7 +1090,7 @@ class DigifactInvoiceService
         ];
     }
 
-    public function getDocumentContent(Sale $sale, string $format, bool $automaticPrint = false): array
+    public function getDocumentContent(Sale $sale, string $format, bool $automaticPrint = false, ?string $traceId = null): array
     {
         $started = microtime(true);
         $sale->loadMissing(['business', 'electronicDocument']);
@@ -1080,6 +1115,13 @@ class DigifactInvoiceService
                 round((microtime(true) - $started) * 1000, 2),
                 $automaticPrint,
             );
+            $this->recordDocumentTrace(
+                $sale,
+                $format,
+                $traceId,
+                $client->timingSummary(),
+                round((microtime(true) - $started) * 1000, 2),
+            );
 
             throw $exception;
         }
@@ -1096,6 +1138,13 @@ class DigifactInvoiceService
                 round((microtime(true) - $started) * 1000, 2),
                 $automaticPrint,
             );
+            $this->recordDocumentTrace(
+                $sale,
+                $format,
+                $traceId,
+                $client->timingSummary(),
+                round((microtime(true) - $started) * 1000, 2),
+            );
 
             throw new FelException('No se encontro el documento imprimible en Digifact.');
         }
@@ -1107,6 +1156,13 @@ class DigifactInvoiceService
             $decodeMs,
             round((microtime(true) - $started) * 1000, 2),
             $automaticPrint,
+        );
+        $this->recordDocumentTrace(
+            $sale,
+            $format,
+            $traceId,
+            $client->timingSummary(),
+            round((microtime(true) - $started) * 1000, 2),
         );
 
         return $content;
@@ -1258,6 +1314,19 @@ class DigifactInvoiceService
             'format_requested' => $format,
             'automatic_print' => $automaticPrint,
             ...$combinedTimings,
+        ]);
+    }
+
+    /** @param array<string, mixed> $clientTimings */
+    private function recordDocumentTrace(Sale $sale, string $format, ?string $traceId, array $clientTimings, float $documentFlowMs): void
+    {
+        $key = 'get_document_'.mb_strtolower($format).'_ms';
+
+        PosFelTrace::record($sale->business_id, $traceId, 'digifact_get_document_completed', [
+            'sale_id' => $sale->id,
+            'environment' => $sale->electronicDocument?->environment,
+            'format' => $format,
+            'duration_ms' => round((float) ($clientTimings[$key] ?? $documentFlowMs), 2),
         ]);
     }
 

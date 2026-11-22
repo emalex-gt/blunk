@@ -187,6 +187,9 @@ Route::middleware('auth')->group(function () {
         Route::post('/pos/fel/prewarm-token', [SaleController::class, 'prewarmFelToken'])
             ->middleware(['module:pos', 'module:fel_gt', 'permission:pos.view'])
             ->name('sales.fel.prewarm-token');
+        Route::post('/pos/trace/timing', [SaleController::class, 'recordTraceTiming'])
+            ->middleware(['module:pos', 'permission:pos.sell'])
+            ->name('sales.trace.timing');
         Route::post('/sales', [SaleController::class, 'store'])->middleware(['module:pos', 'permission:pos.sell'])->name('sales.store');
         Route::get('/quotations', [QuotationController::class, 'index'])->middleware(['module:pos', 'permission:quotations.view'])->name('quotations.index');
         Route::post('/quotations', [QuotationController::class, 'store'])->middleware(['module:pos', 'permission:quotations.create'])->name('quotations.store');

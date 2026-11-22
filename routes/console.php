@@ -27,6 +27,7 @@ use App\Support\TextEncoding;
 use App\Services\System\OperationalMonitor;
 use App\Services\System\PostgresPreDeployBackupService;
 use App\Services\Fiscal\FiscalDocumentIntentService;
+use App\Services\SuperAdmin\PosFelTraceReport;
 use Illuminate\Support\Facades\Schedule;
 
 Artisan::command('inspire', function () {
@@ -777,3 +778,36 @@ Artisan::command('fel:diagnose-speed {sale_id?}', function (?string $sale_id = n
 
     return self::SUCCESS;
 })->purpose('Show stored performance timings for the latest or selected FEL sale');
+
+Artisan::command('pos:trace-report {trace_id?} {--business_id=} {--days=1}', function (PosFelTraceReport $reporter, ?string $trace_id = null) {
+    $businessId = filter_var($this->option('business_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) ?: null;
+    $days = min(max((int) $this->option('days'), 1), 14);
+    $report = $reporter->report($trace_id ?: null, $businessId, $days);
+
+    if ($report['traces'] === []) {
+        $this->warn('No se encontraron trazas POS/FEL en el intervalo solicitado.');
+
+        return self::SUCCESS;
+    }
+
+    $this->table(['Traza', 'Empresa', 'Ambiente', 'Clic → impresión', 'Estado'], collect($report['traces'])
+        ->map(fn (array $trace) => [
+            $trace['trace_id'],
+            (string) $trace['business_id'],
+            $trace['environment'],
+            $trace['click_to_print_ms'] === null ? '-' : $trace['click_to_print_ms'].' ms',
+            $trace['incomplete'] ? 'incompleta: '.implode(',', $trace['missing_phases']) : 'completa',
+        ])->all());
+
+    $this->table(['Ambiente', 'Etapa', 'N', 'Mediana', 'P90', 'P95'], collect($report['percentiles'])
+        ->map(fn (array $row) => [
+            $row['environment'], $row['phase'], $row['count'],
+            $row['median_ms'].' ms', $row['p90_ms'].' ms', $row['p95_ms'].' ms',
+        ])->all());
+
+    if ($report['partial']) {
+        $this->warn('Lectura parcial: se alcanzó el límite de eventos; reduce el intervalo o usa una traza concreta.');
+    }
+
+    return self::SUCCESS;
+})->purpose('Read opt-in POS/FEL timing traces from operational logs without changing fiscal data');
