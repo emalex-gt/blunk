@@ -1003,6 +1003,9 @@ export default function POS({
         [country],
     );
     const draftKey = useMemo(() => makeDraftKey('pos', businessId, userId, activeBranchId), [activeBranchId, businessId, userId]);
+    // Computed during render: do not autosave an old cart using a new branch key.
+    const initializedDraftScopeRef = useRef(draftKey);
+    const draftScopeIsChanging = initializedDraftScopeRef.current !== draftKey;
     const isQuotationEditMode = Boolean(quotation_edit_source);
     // An incoming reservation or quotation takes priority over any locally recovered POS sale.
     const incomingSourceKey = credit_invoice
@@ -4231,6 +4234,15 @@ export default function POS({
         }
 
         const isBranchChange = draftLoadInitializedRef.current;
+        if (draftScopeIsChanging) {
+            const previousScope = initializedDraftScopeRef.current;
+            const pendingPreviousDraft = latestDraftRef.current;
+            if (pendingPreviousDraft && isMeaningfulPosDraft(pendingPreviousDraft)
+                && makeDraftKey('pos', businessId, userId, pendingPreviousDraft.branch_id) === previousScope) {
+                saveDraft(previousScope, pendingPreviousDraft);
+            }
+            initializedDraftScopeRef.current = draftKey;
+        }
         clearFiscalRecoveryState();
         const recoveryRequestId = ++draftRecoveryRequestRef.current;
         setRestoreDraft(null);
@@ -4245,6 +4257,13 @@ export default function POS({
             && String(inMemoryDraft.branch_id ?? 'default') === String(draftBranchId)
             && isMeaningfulPosDraft(inMemoryDraft)
             ? inMemoryDraft : loadDraft<PosDraft>(draftKey);
+        if (draftScopeIsChanging) {
+            // The target draft is already captured. Remove the previous scope's UI
+            // before starting async verification or restoring target-scope data.
+            latestDraftRef.current = null;
+            cartRef.current = [];
+            clearSaleState();
+        }
         if (incomingSourceKey) {
             if (draft && isMeaningfulPosDraft(draft)) {
                 saveDraft(draftKey, draft);
@@ -4445,7 +4464,7 @@ export default function POS({
     }, [incomingSourceKey, draftKey, draftReady, readySourceKey, restoreDraft]);
 
     useEffect(() => {
-        if (quotation_edit_source || !draftReady || restoreDraft
+        if (draftScopeIsChanging || quotation_edit_source || !draftReady || restoreDraft
             || (incomingSourceKey && readySourceKey !== incomingSourceKey)) {
             return;
         }
@@ -4494,7 +4513,8 @@ export default function POS({
         return () => {
             const draft = latestDraftRef.current;
 
-            if (!quotation_edit_source && draft && isMeaningfulPosDraft(draft)) {
+            if (!quotation_edit_source && draft && isMeaningfulPosDraft(draft)
+                && makeDraftKey('pos', businessId, userId, draft.branch_id) === draftKey) {
                 saveDraft(draftKey, draft);
             }
         };
