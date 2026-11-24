@@ -1068,6 +1068,8 @@ export default function POS({
     const [sourceGateTimedOut, setSourceGateTimedOut] = useState(false);
     const [savingPreviousSale, setSavingPreviousSale] = useState(false);
     const [unsafePreviousSale, setUnsafePreviousSale] = useState(false);
+    const [recheckingPreviousSale, setRecheckingPreviousSale] = useState(false);
+    const [previousSaleVerificationMessage, setPreviousSaleVerificationMessage] = useState<string | null>(null);
     const [showClearSaleModal, setShowClearSaleModal] = useState(false);
     const [activeOperationDraftId, setActiveOperationDraftId] = useState<number | null>(null);
     const [savedDraftsOpen, setSavedDraftsOpen] = useState(false);
@@ -3334,6 +3336,59 @@ export default function POS({
         clearPosDraftAndState();
     }
 
+    async function recheckPreviousSaleForDiscard() {
+        if (!restoreDraft || !incomingSourceKey || savingPreviousSale || recheckingPreviousSale) return;
+
+        const branchId = normalizedDraftBranchId(restoreDraft);
+        if (!hasVerifiableDraftOperation(restoreDraft) || branchId === null) {
+            setUnsafePreviousSale(true);
+            setPreviousSaleVerificationMessage('Este borrador no tiene una clave y sucursal verificables. No se puede autorizar el descarte automáticamente.');
+            return;
+        }
+
+        // Invalidate any previous in-flight recovery check, but leave the draft untouched.
+        const requestId = ++draftRecoveryRequestRef.current;
+        setRecheckingPreviousSale(true);
+        setUnsafePreviousSale(true);
+        setPreviousSaleVerificationMessage('Consultando si esta operación llegó a registrarse en el servidor...');
+        let timeoutId: number | null = null;
+        try {
+            const status = await Promise.race([
+                posSaleStatusForDraft(restoreDraft, branchId),
+                new Promise<PosDraftRecoveryStatus>((_, reject) => {
+                    timeoutId = window.setTimeout(() => reject(new Error('La consulta excedió el tiempo de espera.')), 8000);
+                }),
+            ]);
+            if (requestId !== draftRecoveryRequestRef.current) return;
+
+            if (['not_found', 'failed', 'fiscal_rejected'].includes(status.status)) {
+                setUnsafePreviousSale(false);
+                setPreviousSaleVerificationMessage(
+                    status.status === 'not_found'
+                        ? 'Verificado: no hay ninguna operación registrada con esta clave. Puedes descartar este borrador sin afectar ventas ni FEL.'
+                        : 'Verificado: no existe una operación pendiente de finalizar para esta clave. Puedes descartar el borrador.',
+                );
+            } else {
+                setUnsafePreviousSale(true);
+                setPreviousSaleVerificationMessage(
+                    status.status === 'finalized'
+                        ? 'El servidor confirma que esta venta ya fue registrada. No vuelvas a enviarla.'
+                        : 'El servidor informa el estado "' + status.status + '". No se permite descartar mientras no esté resuelto.',
+                );
+            }
+        } catch (error) {
+            if (requestId !== draftRecoveryRequestRef.current) return;
+            setUnsafePreviousSale(true);
+            setPreviousSaleVerificationMessage(
+                (error instanceof Error ? error.message : 'No se pudo verificar la operación.')
+                + ' Conserva o guarda el borrador y vuelve a comprobar.',
+            );
+        } finally {
+            if (timeoutId !== null) window.clearTimeout(timeoutId);
+            if (requestId === draftRecoveryRequestRef.current) setRecheckingPreviousSale(false);
+        }
+    }
+
     function discardPreviousSaleAndContinue() {
         if (!restoreDraft || !incomingSourceKey || savingPreviousSale) {
             return;
@@ -4170,6 +4225,7 @@ export default function POS({
                 // Show the choice immediately instead of waiting for a continuation
                 // that React may cancel. Discard stays locked until verified.
                 setUnsafePreviousSale(true);
+                setPreviousSaleVerificationMessage('Consultando el estado de este borrador. La clave de operación no significa que exista una factura.');
                 setRestoreDraft(draft);
             }
             // Never let the previous cart block loading the requested source.
@@ -4239,6 +4295,7 @@ export default function POS({
 
                     if (incomingSourceKey && ['not_found', 'failed', 'fiscal_rejected'].includes(status.status)) {
                         setUnsafePreviousSale(false);
+                        setPreviousSaleVerificationMessage('Verificado por el servidor: no hay una venta pendiente de finalizar con esta clave. Puedes descartar o guardar el borrador.');
                     }
 
                     if (status.status === 'finalized') {
@@ -6483,9 +6540,22 @@ export default function POS({
                         </p>
                         {unsafePreviousSale && (
                             <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                                El estado fiscal del trabajo anterior todavía no está confirmado.
-                                Puedes guardarlo como borrador, pero no descartarlo hasta tener una verificación segura.
+                                Este borrador todavía no tiene una comprobación concluyente contra el servidor.
+                                Eso no significa que exista una factura. El descarte requiere confirmar que no hay una venta en curso.
                             </p>
+                        )}
+                        {previousSaleVerificationMessage && (
+                            <p role="status" className="mt-3 text-xs text-slate-600">{previousSaleVerificationMessage}</p>
+                        )}
+                        {unsafePreviousSale && hasVerifiableDraftOperation(restoreDraft) && (
+                            <button
+                                type="button"
+                                disabled={savingPreviousSale || recheckingPreviousSale}
+                                onClick={() => void recheckPreviousSaleForDiscard()}
+                                className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                            >
+                                {recheckingPreviousSale ? 'Verificando...' : 'Volver a comprobar estado'}
+                            </button>
                         )}
                         {!hasVerifiableDraftOperation(restoreDraft) && (
                             <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -6503,7 +6573,7 @@ export default function POS({
                             </button>
                             <button
                                 type="button"
-                                disabled={savingPreviousSale || unsafePreviousSale}
+                                disabled={savingPreviousSale || recheckingPreviousSale || unsafePreviousSale}
                                 onClick={discardPreviousSaleAndContinue}
                                 className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                             >
