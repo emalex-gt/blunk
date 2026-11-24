@@ -154,6 +154,9 @@ export default function Visit({
     const [searchTouched, setSearchTouched] = useState(Boolean(filters.search));
     const [catalogOpen, setCatalogOpen] = useState(false);
     const catalogSearchRef = useRef<HTMLInputElement>(null);
+    const inlineSearchResultsRef = useRef<HTMLDivElement>(null);
+    const presaleFooterRef = useRef<HTMLDivElement>(null);
+    const [inlineResultsMaxHeight, setInlineResultsMaxHeight] = useState<number | null>(null);
     const [quantityMessages, setQuantityMessages] = useState<Record<number, string>>({});
     const [priceMessages, setPriceMessages] = useState<Record<number, string>>({});
     const [draftSyncing, setDraftSyncing] = useState(false);
@@ -197,6 +200,52 @@ export default function Visit({
             window.removeEventListener('keydown', onEscape);
         };
     }, [catalogOpen]);
+
+    useEffect(() => {
+        if (!canModifyPreSale) {
+            setInlineResultsMaxHeight(null);
+            return;
+        }
+
+        const results = inlineSearchResultsRef.current;
+        const footer = presaleFooterRef.current;
+        if (!results || !footer) return;
+
+        const updateAvailableHeight = () => {
+            if (!window.matchMedia('(orientation: landscape)').matches) {
+                setInlineResultsMaxHeight(null);
+                return;
+            }
+
+            const visibleBottom = window.visualViewport
+                ? window.visualViewport.offsetTop + window.visualViewport.height
+                : window.innerHeight;
+            const footerTop = footer.getBoundingClientRect().top;
+            const resultsTop = results.getBoundingClientRect().top;
+            const available = Math.max(0, Math.floor(Math.min(visibleBottom, footerTop) - resultsTop - 8));
+            setInlineResultsMaxHeight((previous) => previous === available ? previous : available);
+        };
+
+        const resizeObserver = typeof ResizeObserver !== 'undefined'
+            ? new ResizeObserver(updateAvailableHeight)
+            : null;
+        if (results.parentElement) resizeObserver?.observe(results.parentElement);
+        resizeObserver?.observe(footer);
+        window.addEventListener('resize', updateAvailableHeight);
+        window.addEventListener('scroll', updateAvailableHeight, { passive: true });
+        window.visualViewport?.addEventListener('resize', updateAvailableHeight);
+        window.visualViewport?.addEventListener('scroll', updateAvailableHeight);
+        const frame = window.requestAnimationFrame(updateAvailableHeight);
+
+        return () => {
+            window.cancelAnimationFrame(frame);
+            resizeObserver?.disconnect();
+            window.removeEventListener('resize', updateAvailableHeight);
+            window.removeEventListener('scroll', updateAvailableHeight);
+            window.visualViewport?.removeEventListener('resize', updateAvailableHeight);
+            window.visualViewport?.removeEventListener('scroll', updateAvailableHeight);
+        };
+    }, [canModifyPreSale, editingCustomer, editingPreSale, searchLoading, searchTouched, productResults.length, preSaleIsDraft]);
 
     const total = useMemo(() => form.data.items.reduce((sum, item) => {
         return sum + (Number(item.unit_price ?? 0) * Number(normalizeQuantity(item.quantity)));
@@ -725,57 +774,62 @@ export default function Visit({
         </div>
     );
 
+    const customerContext = [
+        [visit.customer.department, visit.customer.municipality].filter(Boolean).join(', '),
+        visit.customer.address,
+        visit.customer.doc_number ?? '-',
+        visit.zone?.name,
+        visit.customer.contact_name,
+    ].filter(Boolean).join(' · ');
+
     return (
         <AuthenticatedLayout>
             <Head title={`Visita ${visit.customer.commercial_name || visit.customer.name}`} />
-            <div className="mx-auto max-w-xl space-y-4 px-4 pb-32 pt-5 landscape:max-w-screen-2xl landscape:space-y-3 landscape:px-4 landscape:pb-24 landscape:pt-3">
+            <div className="mx-auto max-w-xl space-y-3 px-4 pb-32 pt-3 landscape:max-w-screen-2xl landscape:space-y-2 landscape:px-4 landscape:pb-20 landscape:pt-2">
                 {!routeCash.is_open && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">No hay caja abierta para operar rutas y registrar comprobantes.</div>}
-                <div>
-                    <Link
-                        href={route('routes.mobile.work-days.show', visit.route_work_day_id)}
-                        preserveState={false}
-                        preserveScroll={false}
-                        className="text-sm font-semibold text-orange-700"
-                    >
-                        Volver
-                    </Link>
-                    <h1 className="mt-2 text-2xl font-semibold text-slate-950">{visit.customer.commercial_name || visit.customer.name}</h1>
-                    <p className="mt-1 text-sm text-slate-600">
-                        {[visit.customer.department, visit.customer.municipality].filter(Boolean).join(', ')}
-                        {visit.customer.address ? ` · ${visit.customer.address}` : ''}
-                    </p>
-                    <button type="button" onClick={() => setEditingCustomer((value) => !value)} className="mt-3 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-200">
-                        Editar cliente
-                    </button>
-                    {preSaleCanBeEdited && !editingPreSale && (
-                        <button type="button" onClick={requestEditPreSale} className="ml-2 mt-3 rounded-xl bg-orange-600 px-3 py-2 text-sm font-semibold text-white shadow-sm">
-                            Editar orden
+                <div className="min-w-0">
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+                        <Link
+                            href={route('routes.mobile.work-days.show', visit.route_work_day_id)}
+                            preserveState={false}
+                            preserveScroll={false}
+                            className="shrink-0 text-xs font-semibold text-orange-700"
+                        >
+                            ← Volver
+                        </Link>
+                        <h1 className="min-w-0 flex-1 truncate text-lg font-semibold leading-6 text-slate-950 landscape:text-xl" title={visit.customer.commercial_name || visit.customer.name}>
+                            {visit.customer.commercial_name || visit.customer.name}
+                        </h1>
+                        <button type="button" onClick={() => setEditingCustomer((value) => !value)} className="shrink-0 rounded-lg bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
+                            Editar cliente
                         </button>
-                    )}
+                        {preSaleCanBeEdited && !editingPreSale && (
+                            <button type="button" onClick={requestEditPreSale} className="shrink-0 rounded-lg bg-orange-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm">
+                                Editar orden
+                            </button>
+                        )}
+                    </div>
+                    <p className="mt-1 truncate text-xs text-slate-600" title={customerContext}>{customerContext}</p>
                     {preSaleIsFrozen && (
-                        <p className="mt-3 rounded-xl bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
+                        <p className="mt-2 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">
                             Preventa enviada. Ya no se puede editar.
                         </p>
                     )}
                     {preSaleIsDraft && (
-                        <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                        <p className="mt-2 rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800">
                             Borrador pendiente: no se incluirá en la ruta hasta pulsar Guardar preventa.
                         </p>
                     )}
                     {visitIsWithoutSale && workDayIsOpen && (
-                        <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                        <p className="mt-2 rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800">
                             Esta visita está marcada como sin venta. Si guardas una preventa, se quitará ese estado.
                         </p>
                     )}
                     {!workDayIsOpen && !preSale && (
-                        <p className="mt-3 rounded-xl bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
+                        <p className="mt-2 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">
                             Jornada cerrada. Ya no se puede editar la visita.
                         </p>
                     )}
-                    <p className="text-sm text-slate-500">
-                        {visit.customer.doc_number ?? '-'} · {visit.zone?.name}
-                        {visit.customer.contact_name ? ` · ${visit.customer.contact_name}` : ''}
-                    </p>
                 </div>
 
                 {editingCustomer && (
@@ -843,7 +897,12 @@ export default function Visit({
                     )}
                 </div>
 
-                <div className="space-y-2 landscape:max-h-[calc(100dvh-17rem)] landscape:overflow-y-auto landscape:pr-1">
+                <div
+                    ref={inlineSearchResultsRef}
+                    className="space-y-2 landscape:overflow-y-auto landscape:overscroll-contain landscape:pr-1"
+                    style={{ maxHeight: inlineResultsMaxHeight === null ? undefined : `${inlineResultsMaxHeight}px` }}
+                    aria-label="Resultados de búsqueda de productos"
+                >
                     {productResults.map((product) => {
                         const disabled = !allowNegativeStock && compareQuantities(product.available_stock, product.allow_decimal_quantity ? '0.0001' : '1') < 0;
                         const reservedStock = Number(product.reserved_stock ?? 0);
@@ -1003,7 +1062,7 @@ export default function Visit({
                 </div>
                 </div>
 
-                <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white p-4 landscape:p-2">
+                <div ref={presaleFooterRef} className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white p-4 landscape:p-2">
                     <div className="mx-auto max-w-xl landscape:flex landscape:max-w-screen-2xl landscape:items-center landscape:justify-end landscape:gap-6">
                         <div className="mb-3 flex items-center justify-between landscape:mb-0 landscape:gap-4">
                             <span className="text-sm font-medium text-slate-500">Total preventa</span>
