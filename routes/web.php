@@ -279,6 +279,12 @@ Route::middleware('auth')->group(function () {
             Route::post('/credits/invoice-selection', [CreditReceiptController::class, 'invoiceSelection'])
                 ->middleware('permission:credits.invoice')
                 ->name('credits.invoice-selection');
+            Route::get('/credits/invoice-lines', [CreditReceiptController::class, 'invoiceLines'])
+                ->middleware('permission:credits.invoice')
+                ->name('credits.invoice-lines');
+            Route::post('/credits/invoice-preview', [CreditReceiptController::class, 'invoicePreview'])
+                ->middleware('permission:credits.invoice')
+                ->name('credits.invoice-preview');
             Route::delete('/credits/lines/{line}', [CreditReceiptController::class, 'cancelLine'])
                 ->middleware('permission:credits.cancel_lines')
                 ->name('credits.lines.cancel');

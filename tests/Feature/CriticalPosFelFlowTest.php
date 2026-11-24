@@ -11,6 +11,7 @@ use App\Models\Category;
 use App\Models\CreditCustomerTransfer;
 use App\Models\CreditReceipt;
 use App\Models\CreditReceiptLine;
+use App\Models\CreditReceiptLineInvoice;
 use App\Models\Customer;
 use App\Models\CustomerAccountMovement;
 use App\Models\CustomerCreditAccount;
@@ -1677,6 +1678,167 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringContainsString('reason: discount.reason.trim() || null,', $creditPayload);
         $this->assertStringContainsString('discountError(discount, subtotalAfterLineDiscount)', $source);
         $this->assertStringContainsString('discountError(nextDiscount, subtotalAfterLineDiscount)', $source);
+    }
+
+    public function test_credit_invoice_read_contract_keeps_discounted_reservations_separate(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits', 'discounts'], role: 'owner', enableCredits: true);
+        $productA = $this->product($business, stock: 10, salePrice: 100);
+        $productB = $this->product($business, stock: 10, salePrice: 200);
+
+        $reservationA = $this->creditPayload($productA, 1);
+        $reservationA['items'][0]['line_discount_amount'] = 10;
+        $reservationA['items'][0]['line_discount_reason'] = 'Promoción A';
+        $reservationA['discount'] = ['type' => 'fixed', 'value' => 5, 'reason' => 'General A'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservationA)->assertSessionHasNoErrors();
+
+        $reservationB = $this->creditPayload($productB, 1);
+        $reservationB['items'][0]['line_discount_amount'] = 20;
+        $reservationB['items'][0]['line_discount_reason'] = 'Promoción B';
+        $reservationB['discount'] = ['type' => 'fixed', 'value' => 15, 'reason' => 'General B'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservationB)->assertSessionHasNoErrors();
+
+        $lines = CreditReceiptLine::query()->orderBy('id')->get();
+
+        $this->actingAs($user)
+            ->getJson('/credits/invoice-lines?line_ids[]='.$lines[0]->id.'&line_ids[]='.$lines[1]->id)
+            ->assertOk()
+            ->assertJsonPath('data.customer_id', $lines[0]->receipt->customer_id)
+            ->assertJsonPath('data.lines.0.credit_receipt_id', $lines[0]->credit_receipt_id)
+            ->assertJsonPath('data.lines.0.quantity.original', '1.0000')
+            ->assertJsonPath('data.lines.0.commercial.original.gross', '100.00')
+            ->assertJsonPath('data.lines.0.commercial.original.line_discount', '10.00')
+            ->assertJsonPath('data.lines.0.commercial.original.general_discount', '5.00')
+            ->assertJsonPath('data.lines.0.commercial.pending.net', '85.00')
+            ->assertJsonPath('data.lines.1.commercial.original.gross', '200.00')
+            ->assertJsonPath('data.lines.1.commercial.original.line_discount', '20.00')
+            ->assertJsonPath('data.lines.1.commercial.original.general_discount', '15.00')
+            ->assertJsonPath('data.lines.1.commercial.pending.net', '165.00');
+    }
+
+    public function test_credit_invoice_preview_is_decimal_exact_and_does_not_modify_the_reservation(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 42.15);
+        $product->update(['allow_decimal_quantity' => true]);
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['items'][0]['quantity'] = '1.0005';
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+        $line = CreditReceiptLine::query()->sole();
+
+        $this->actingAs($user)
+            ->postJson('/credits/invoice-preview', ['line_id' => $line->id, 'quantity' => '0.5000'])
+            ->assertOk()
+            ->assertJsonPath('data.credit_line_id', $line->id)
+            ->assertJsonPath('data.commercial.quantity', '0.5')
+            ->assertJsonPath('data.commercial.gross', '21.07')
+            ->assertJsonPath('data.commercial.net', '21.07');
+
+        $this->assertSame('1.0005', (string) $line->fresh()->qty_pending);
+        $this->assertSame(0, $line->invoices()->count());
+    }
+
+    public function test_credit_invoice_read_contract_uses_only_active_monetary_assignments(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits', 'discounts'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['items'][0]['line_discount_amount'] = 10;
+        $reservation['items'][0]['line_discount_reason'] = 'Promoción';
+        $reservation['discount'] = ['type' => 'fixed', 'value' => 5, 'reason' => 'General'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+        $line = CreditReceiptLine::query()->sole();
+        $sale = $this->invoiceSale($business);
+
+        CreditReceiptLineInvoice::query()->create([
+            'business_id' => $business->id,
+            'credit_receipt_line_id' => $line->id,
+            'sale_id' => $sale->id,
+            'quantity' => '0.5000',
+            'amount' => 42.50,
+            'subtotal_before_discount' => 50,
+            'line_discount_amount' => 5,
+            'general_discount_amount' => 2.50,
+            'total_after_discount' => 42.50,
+        ]);
+        CreditReceiptLineInvoice::query()->create([
+            'business_id' => $business->id,
+            'credit_receipt_line_id' => $line->id,
+            'sale_id' => $sale->id,
+            'quantity' => '0.2500',
+            'amount' => 21.25,
+            'subtotal_before_discount' => 25,
+            'line_discount_amount' => 2.50,
+            'general_discount_amount' => 1.25,
+            'total_after_discount' => 21.25,
+            'reversed_at' => now(),
+        ]);
+        $line->update(['qty_invoiced' => '0.5000', 'qty_pending' => '0.5000', 'status' => 'partially_invoiced']);
+
+        $this->actingAs($user)
+            ->getJson('/credits/invoice-lines?line_ids[]='.$line->id)
+            ->assertOk()
+            ->assertJsonPath('data.lines.0.commercial.monetary_allocation_state', 'complete')
+            ->assertJsonPath('data.lines.0.commercial.pending.gross', '50.00')
+            ->assertJsonPath('data.lines.0.commercial.pending.line_discount', '5.00')
+            ->assertJsonPath('data.lines.0.commercial.pending.general_discount', '2.50')
+            ->assertJsonPath('data.lines.0.commercial.pending.net', '42.50');
+    }
+
+    public function test_credit_invoice_read_contract_marks_historical_reservations_without_inventing_discounts(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['credits'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $line = $this->creditReservation($business, BranchInventory::defaultBranch($business->id), $product, 2);
+        $sale = $this->invoiceSale($business);
+        CreditReceiptLineInvoice::query()->create([
+            'business_id' => $business->id,
+            'credit_receipt_line_id' => $line->id,
+            'sale_id' => $sale->id,
+            'quantity' => 1,
+            'amount' => 100,
+        ]);
+        $line->update(['qty_invoiced' => 1, 'qty_pending' => 1, 'status' => 'partially_invoiced']);
+
+        $this->actingAs($user)
+            ->getJson('/credits/invoice-lines?line_ids[]='.$line->id)
+            ->assertOk()
+            ->assertJsonPath('data.lines.0.snapshot_version', null)
+            ->assertJsonPath('data.lines.0.commercial.monetary_allocation_state', 'historical')
+            ->assertJsonPath('data.lines.0.commercial.original', null)
+            ->assertJsonPath('data.lines.0.commercial.pending', null);
+    }
+
+    public function test_credit_invoice_read_contract_rejects_lines_outside_the_active_tenant_and_branch(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['credits'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $line = $this->creditReservation($business, BranchInventory::defaultBranch($business->id), $product, 1);
+        [$otherBusiness, $otherUser] = $this->tenant(modules: ['credits'], role: 'owner', enableCredits: true);
+
+        $this->actingAs($otherUser)
+            ->getJson('/credits/invoice-lines?line_ids[]='.$line->id)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('line_ids');
+
+        $this->actingAs($otherUser)
+            ->postJson('/credits/invoice-preview', ['line_id' => $line->id, 'quantity' => 1])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('line_id');
+
+        $otherBranch = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Sucursal no activa',
+            'code' => 'NOACTIVA',
+            'is_active' => true,
+        ]);
+        $line->receipt->update(['branch_id' => $otherBranch->id]);
+        $line->update(['branch_id' => $otherBranch->id]);
+
+        $this->actingAs($user)
+            ->getJson('/credits/invoice-lines?line_ids[]='.$line->id)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('line_ids');
     }
 
     public function test_recent_fel_nit_flow_files_do_not_contain_mojibake_markers(): void

@@ -25,6 +25,7 @@ use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\StockAvailability;
 use App\Services\Credits\CreditReservationAllocation;
+use App\Services\Credits\CreditReservationInvoiceReadService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -402,6 +403,57 @@ class CreditReceiptController extends Controller
         return redirect()->route('sales.create')
             ->with('success', 'Selección enviada al POS.')
             ->with('credit_invoice_line_ids', array_values(array_unique($data['line_ids'])));
+    }
+
+    public function invoiceLines(Request $request, CreditReservationInvoiceReadService $readService): JsonResponse
+    {
+        $this->ensureCreditsAvailable($request, Permissions::CREDITS_INVOICE);
+        $data = $request->validate([
+            'line_ids' => ['required', 'array', 'min:1'],
+            'line_ids.*' => ['integer', 'exists:credit_receipt_lines,id'],
+        ]);
+        $lineIds = array_values(array_unique($data['line_ids']));
+        $lines = $readService->linesForInvoice(
+            currentBusinessId(),
+            (int) BranchInventory::activeBranch(currentBusinessId())->id,
+            $lineIds,
+        );
+
+        if ($lines->count() !== count($lineIds)) {
+            throw ValidationException::withMessages(['line_ids' => 'Algunas líneas de crédito ya no están pendientes en la sucursal activa.']);
+        }
+
+        $customerIds = $lines->pluck('receipt.customer_id')->filter()->unique();
+        if ($customerIds->count() !== 1) {
+            throw ValidationException::withMessages(['line_ids' => 'Las líneas seleccionadas deben pertenecer al mismo cliente.']);
+        }
+
+        return response()->json([
+            'data' => [
+                'customer_id' => (int) $customerIds->first(),
+                'lines' => $lines->map(fn (CreditReceiptLine $line) => $readService->lineContract($line))->values(),
+            ],
+        ]);
+    }
+
+    public function invoicePreview(Request $request, CreditReservationInvoiceReadService $readService): JsonResponse
+    {
+        $this->ensureCreditsAvailable($request, Permissions::CREDITS_INVOICE);
+        $data = $request->validate([
+            'line_id' => ['required', 'integer', 'exists:credit_receipt_lines,id'],
+            'quantity' => ['required', 'numeric', 'gt:0'],
+        ]);
+        $lines = $readService->linesForInvoice(
+            currentBusinessId(),
+            (int) BranchInventory::activeBranch(currentBusinessId())->id,
+            [(int) $data['line_id']],
+        );
+
+        if ($lines->count() !== 1) {
+            throw ValidationException::withMessages(['line_id' => 'La línea de crédito ya no está pendiente en la sucursal activa.']);
+        }
+
+        return response()->json(['data' => $readService->preview($lines->first(), $data['quantity'])]);
     }
 
     public function resolveNit(Request $request): JsonResponse
