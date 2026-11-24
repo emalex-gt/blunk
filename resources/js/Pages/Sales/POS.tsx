@@ -1070,6 +1070,7 @@ export default function POS({
     const [unsafePreviousSale, setUnsafePreviousSale] = useState(false);
     const [recheckingPreviousSale, setRecheckingPreviousSale] = useState(false);
     const [previousSaleVerificationMessage, setPreviousSaleVerificationMessage] = useState<string | null>(null);
+    const automaticPreviousSaleVerificationRef = useRef<string | null>(null);
     const [showClearSaleModal, setShowClearSaleModal] = useState(false);
     const [activeOperationDraftId, setActiveOperationDraftId] = useState<number | null>(null);
     const [savedDraftsOpen, setSavedDraftsOpen] = useState(false);
@@ -3388,6 +3389,30 @@ export default function POS({
             if (requestId === draftRecoveryRequestRef.current) setRecheckingPreviousSale(false);
         }
     }
+
+    useEffect(() => {
+        if (!incomingSourceKey || !restoreDraft) {
+            automaticPreviousSaleVerificationRef.current = null;
+            return;
+        }
+        if (!unsafePreviousSale || recheckingPreviousSale) {
+            return;
+        }
+
+        const verificationIdentity = [
+            draftKey,
+            incomingSourceKey,
+            restoreDraft.idempotency_key ?? '',
+            normalizedDraftBranchId(restoreDraft) ?? '',
+        ].join('|');
+
+        if (automaticPreviousSaleVerificationRef.current === verificationIdentity) {
+            return;
+        }
+        automaticPreviousSaleVerificationRef.current = verificationIdentity;
+        // Same safe verification as the manual retry; never discard by itself.
+        void recheckPreviousSaleForDiscard();
+    }, [draftKey, incomingSourceKey, restoreDraft, unsafePreviousSale, recheckingPreviousSale]);
 
     function discardPreviousSaleAndContinue() {
         if (!restoreDraft || !incomingSourceKey || savingPreviousSale) {
@@ -6538,7 +6563,7 @@ export default function POS({
                             ¿quieres guardar el trabajo anterior para recuperarlo después o descartarlo?
                             En ambos casos se cargará la operación que seleccionaste.
                         </p>
-                        {unsafePreviousSale && (
+                        {unsafePreviousSale && !recheckingPreviousSale && (
                             <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                                 Este borrador todavía no tiene una comprobación concluyente contra el servidor.
                                 Eso no significa que exista una factura. El descarte requiere confirmar que no hay una venta en curso.
