@@ -1860,7 +1860,7 @@ class SaleController extends Controller
             AccountsReceivable::cancelSaleCharge($sale, $request->user());
 
             app(SaleStockCancellationService::class)->restore($sale, $request->user());
-            Credits::restoreSaleReservationInvoices($sale);
+            app(CreditReservationInvoiceAllocationService::class)->reverseSale($sale);
 
             if ($cashAmount > 0) {
                 $cashSession = CashRegister::requireOpenSession(

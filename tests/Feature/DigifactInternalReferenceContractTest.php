@@ -215,7 +215,7 @@ class DigifactInternalReferenceContractTest extends TestCase
         $this->assertSame('Guatemala', $payload['Buyer']['AddressInfo']['State']);
     }
 
-    public function test_fel_buyer_without_address_or_confirmed_postal_code_uses_city_without_emitter_fallback(): void
+    public function test_fel_buyer_without_a_confirmed_postal_code_is_rejected_without_an_emitter_fallback(): void
     {
         [, $sale, $settings] = $this->saleFixture();
         $sale->update([
@@ -225,14 +225,8 @@ class DigifactInternalReferenceContractTest extends TestCase
             'customer_municipality' => 'Guatemala',
         ]);
 
-        $payload = app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
-
-        $this->assertSame('Ciudad', $payload['Buyer']['AddressInfo']['Address']);
-        $this->assertNull($payload['Buyer']['AddressInfo']['City']);
-        $this->assertSame('Guatemala', $payload['Buyer']['AddressInfo']['District']);
-        $this->assertSame('Guatemala', $payload['Buyer']['AddressInfo']['State']);
-        $this->assertSame('Ciudad', $payload['Seller']['BranchInfo']['AddressInfo']['Address']);
-        $this->assertSame('01001', $payload['Seller']['BranchInfo']['AddressInfo']['City']);
+        $this->expectException(FelException::class);
+        app(DigifactNucJsonBuilder::class)->buildInvoicePayload($sale->fresh(), $settings->fresh());
     }
 
     public function test_offset_fiscal_issue_time_is_persisted_as_a_utc_derivative(): void
@@ -633,9 +627,9 @@ class DigifactInternalReferenceContractTest extends TestCase
             'fel_establishment_code' => '1',
             'fel_establishment_name' => 'Casa Matriz',
             'fel_address' => 'Ciudad',
-            'fel_postal_code' => '01001',
-            'fel_municipality' => 'Guatemala',
-            'fel_department' => 'Guatemala',
+            'fel_postal_code' => '14006',
+            'fel_municipality' => 'Chichicastenango',
+            'fel_department' => 'Quiché',
             'fel_country' => 'GT',
         ]);
         $settings = TenantFelSetting::query()->create([
@@ -686,9 +680,9 @@ class DigifactInternalReferenceContractTest extends TestCase
             'customer_doc_type' => 'CF',
             'customer_doc_number' => 'CF',
             'customer_address' => 'Ciudad',
-            'customer_postal_code' => '01001',
-            'customer_municipality' => 'Guatemala',
-            'customer_department' => 'Guatemala',
+            'customer_postal_code' => '14006',
+            'customer_municipality' => 'Chichicastenango',
+            'customer_department' => 'Quiché',
             'customer_country' => 'GT',
             'subtotal_before_discount' => 100,
             'total' => 100,

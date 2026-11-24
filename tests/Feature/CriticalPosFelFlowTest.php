@@ -5418,10 +5418,16 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('0.0000', $line->fresh()->qty_invoiced);
         $this->assertSame('3.7500', $line->fresh()->qty_pending);
         $this->assertSame('3.7500', $line->fresh()->qty_reserved);
-        $this->assertDatabaseHas('credit_receipt_line_invoice', [
-            'credit_receipt_line_id' => $line->id,
-            'sale_id' => $sale->id,
-        ]);
+        $allocation = CreditReceiptLineInvoice::query()->sole();
+        $this->assertNotNull($allocation->reversed_at);
+        $this->assertSame('158.06', (string) $line->fresh()->pending_total);
+
+        $this->actingAs($user)->post(route('sales.cancel', $sale), [
+            'idempotency_key' => 'decimal-credit-cancel-repeat-'.uniqid(),
+            'reason' => 'Reintento de prueba',
+        ])->assertSessionHasErrors('reason');
+        $this->assertSame('3.7500', $line->fresh()->qty_pending);
+        $this->assertNotNull($allocation->fresh()->reversed_at);
     }
 
     public function test_credit_reservation_checkout_rejects_a_different_customer_without_side_effects(): void

@@ -8,6 +8,7 @@ use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Support\Credits;
 use App\Support\Inventory\ProductQuantityPolicy;
+use Illuminate\Support\Collection;
 use LogicException;
 
 /** Persists the exact, already-authorized monetary allocation of a snapshot line. */
@@ -64,5 +65,94 @@ final class CreditReservationInvoiceAllocationService
         Credits::refreshReceipt($line->receipt);
 
         return $allocation;
+    }
+
+    /**
+     * Reverses only active snapshot allocations for an already locked ordinary
+     * sale. Rows remain immutable audit evidence; repeated cancellation work is
+     * therefore a no-op once reversed_at is set.
+     */
+    public function reverseSale(Sale $sale): void
+    {
+        $lineIds = CreditReceiptLineInvoice::query()
+            ->where('business_id', $sale->business_id)
+            ->where('sale_id', $sale->id)
+            ->whereNull('reversed_at')
+            ->orderBy('credit_receipt_line_id')
+            ->pluck('credit_receipt_line_id')
+            ->unique()
+            ->values();
+
+        if ($lineIds->isEmpty()) {
+            return;
+        }
+
+        /** @var Collection<int, CreditReceiptLine> $lines */
+        $lines = CreditReceiptLine::query()
+            ->where('business_id', $sale->business_id)
+            ->whereIn('id', $lineIds)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+
+        $allocations = CreditReceiptLineInvoice::query()
+            ->where('business_id', $sale->business_id)
+            ->where('sale_id', $sale->id)
+            ->whereNull('reversed_at')
+            ->orderBy('credit_receipt_line_id')
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($allocations as $allocation) {
+            /** @var CreditReceiptLine|null $line */
+            $line = $lines->get($allocation->credit_receipt_line_id);
+            if (! $line) {
+                throw new LogicException('La asignación de reserva no tiene una línea válida para revertir.');
+            }
+
+            $invoiced = bcsub((string) $line->qty_invoiced, (string) $allocation->quantity, ProductQuantityPolicy::SCALE);
+            if (bccomp($invoiced, '0', ProductQuantityPolicy::SCALE) < 0) {
+                throw new LogicException('La reversa de la reserva excede la cantidad facturada.');
+            }
+
+            $pending = bcsub(
+                bcsub((string) $line->quantity, $invoiced, ProductQuantityPolicy::SCALE),
+                (string) $line->qty_cancelled,
+                ProductQuantityPolicy::SCALE,
+            );
+            $line->update([
+                'qty_invoiced' => $invoiced,
+                'qty_reserved' => ProductQuantityPolicy::minimum(
+                    $pending,
+                    bcadd((string) $line->qty_reserved, (string) $allocation->quantity, ProductQuantityPolicy::SCALE),
+                ),
+            ]);
+            $allocation->update(['reversed_at' => now()]);
+        }
+
+        foreach ($lines as $line) {
+            $line = Credits::refreshLine($line->refresh());
+            $this->refreshSnapshotPendingTotal($line);
+            Credits::refreshReceipt($line->receipt);
+        }
+    }
+
+    private function refreshSnapshotPendingTotal(CreditReceiptLine $line): void
+    {
+        if (bccomp((string) $line->qty_pending, '0', ProductQuantityPolicy::SCALE) === 0) {
+            return;
+        }
+
+        $line->load([
+            'receipt:id,business_id,branch_id,customer_id,receipt_number,snapshot_version',
+            'product:id,business_id,name,allow_decimal_quantity',
+            'invoices' => fn ($query) => $query->whereNull('reversed_at')->orderBy('id'),
+        ]);
+        $contract = $this->reader->lineContract($line);
+        if (($contract['commercial']['monetary_allocation_state'] ?? null) === 'complete') {
+            $line->update(['pending_total' => $contract['commercial']['pending']['net']]);
+        }
     }
 }
