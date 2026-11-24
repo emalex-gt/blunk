@@ -1149,24 +1149,8 @@ class RouteController extends Controller
             $configuredPriceTypeId = $priceProducts->isNotEmpty()
                 ? $this->preSalePriceTypeId((int) $visit->business_id)
                 : null;
-            $stockBreakdown = StockAvailability::getBreakdownForProducts((int) $visit->business_id, (int) $visit->branch_id, $productIds);
-            $reservedByProduct = StockReservation::query()
-                ->join('pre_sales as reserved_pre_sales', function ($join) {
-                    $join->on('reserved_pre_sales.id', '=', 'stock_reservations.source_id')
-                        ->whereColumn('reserved_pre_sales.business_id', 'stock_reservations.business_id')
-                        ->whereColumn('reserved_pre_sales.branch_id', 'stock_reservations.branch_id');
-                })
-                ->where('stock_reservations.business_id', $visit->business_id)
-                ->where('stock_reservations.branch_id', $visit->branch_id)
-                ->where('stock_reservations.source_type', StockReservationService::SOURCE_PRE_SALE)
-                ->where('stock_reservations.source_id', $preSale->id)
-                ->where('stock_reservations.status', 'active')
-                ->tap(fn ($query) => DraftReservationLease::applyEffectivePreSaleReservationLease($query, 'stock_reservations', 'reserved_pre_sales'))
-                ->groupBy('product_id')
-                ->selectRaw('product_id, COALESCE(SUM(quantity), 0) as quantity')
-                ->pluck('quantity', 'product_id');
-
-            $preSale->items->each(function (PreSaleItem $item) use ($stockBreakdown, $reservedByProduct, $priceProducts, $priceSettings, $configuredPriceTypeId, $visit) {
+            $stockBreakdown = StockAvailability::getBreakdownForProducts((int) $visit->business_id, (int) $visit->branch_id, $productIds, (int) $visit->id);
+            $preSale->items->each(function (PreSaleItem $item) use ($stockBreakdown, $priceProducts, $priceSettings, $configuredPriceTypeId, $visit) {
                 $product = $priceProducts->get((int) $item->product_id);
                 if ($product) {
                     $price = PriceLists::priceForProduct($product, $configuredPriceTypeId, (int) $visit->branch_id);
@@ -1178,10 +1162,10 @@ class RouteController extends Controller
                     }
                 }
                 $breakdown = $stockBreakdown->get((int) $item->product_id, []);
-                $item->setAttribute('maximum_quantity', ProductQuantityPolicy::add(
-                    $breakdown['available_stock'] ?? 0,
-                    $reservedByProduct[$item->product_id] ?? 0,
-                ));
+                $item->setAttribute('maximum_quantity', ProductQuantityPolicy::canonical($breakdown['available_stock'] ?? 0));
+                $item->setAttribute('stock', ProductQuantityPolicy::signed($breakdown['physical_stock'] ?? 0));
+                $item->setAttribute('reserved_stock', ProductQuantityPolicy::canonical($breakdown['reserved_total'] ?? 0));
+                $item->setAttribute('available_stock', ProductQuantityPolicy::signed($breakdown['available_stock'] ?? 0));
             });
         }
 
@@ -1358,7 +1342,7 @@ class RouteController extends Controller
         /** @var PreSale $preSale */
         $preSale = $draft['pre_sale'];
         $productIds = $draft['affected_product_ids'];
-        $stockBreakdown = StockAvailability::getBreakdownForProducts((int) $visit->business_id, (int) $visit->branch_id, $productIds);
+        $stockBreakdown = StockAvailability::getBreakdownForProducts((int) $visit->business_id, (int) $visit->branch_id, $productIds, (int) $visit->id);
 
         return response()->json([
             'pre_sale' => [
@@ -1370,7 +1354,7 @@ class RouteController extends Controller
                     return [
                         'product_id' => $item->product_id,
                         'quantity' => ProductQuantityPolicy::canonical($item->quantity),
-                        'maximum_quantity' => ProductQuantityPolicy::add($breakdown['available_stock'] ?? 0, $item->quantity),
+                        'maximum_quantity' => ProductQuantityPolicy::canonical($breakdown['available_stock'] ?? 0),
                     ];
                 })->values(),
             ],
@@ -1379,9 +1363,9 @@ class RouteController extends Controller
 
                 return [
                     'id' => $productId,
-                    'stock' => ProductQuantityPolicy::canonical($breakdown['physical_stock'] ?? 0),
+                    'stock' => ProductQuantityPolicy::signed($breakdown['physical_stock'] ?? 0),
                     'reserved_stock' => ProductQuantityPolicy::canonical($breakdown['reserved_total'] ?? 0),
-                    'available_stock' => ProductQuantityPolicy::canonical($breakdown['available_stock'] ?? 0),
+                    'available_stock' => ProductQuantityPolicy::signed($breakdown['available_stock'] ?? 0),
                 ];
             })->values(),
         ]);
@@ -2090,6 +2074,7 @@ class RouteController extends Controller
             $businessId,
             $visit->branch_id,
             $products->pluck('id')->all(),
+            (int) $visit->id,
         );
 
         return $products->map(function (Product $product) use ($businessId, $visit, $priceTypeId, $stockBreakdown, $manualPriceSettings) {
@@ -2128,7 +2113,7 @@ class RouteController extends Controller
                 'reserved_pre_sales' => ProductQuantityPolicy::canonical($breakdown['reserved_pre_sales'] ?? 0),
                 'reserved_credit_reservations' => ProductQuantityPolicy::canonical($breakdown['reserved_credit_reservations'] ?? 0),
                 'reserved_other' => ProductQuantityPolicy::canonical($breakdown['reserved_other'] ?? 0),
-                'available_stock' => ProductQuantityPolicy::canonical($breakdown['available_stock'] ?? ProductQuantityPolicy::subtract($stock, $reserved)),
+                'available_stock' => ProductQuantityPolicy::signed($breakdown['available_stock'] ?? ProductQuantityPolicy::subtract($stock, $reserved)),
             ];
         });
     }

@@ -28,6 +28,9 @@ type Item = {
     barcode: string | null;
     quantity: string;
     maximum_quantity: string | null;
+    stock: string | null;
+    reserved_stock: string | null;
+    available_stock: string | null;
     allow_decimal_quantity: boolean;
     unit_price: number;
     minimum_price?: number | null;
@@ -42,6 +45,9 @@ type ExistingItem = {
     unit_price: string;
     minimum_price?: number | null;
     maximum_quantity?: string | number | null;
+    stock?: string | number | null;
+    reserved_stock?: string | number | null;
+    available_stock?: string | number | null;
     allow_decimal_quantity?: boolean;
     manual_price?: boolean;
     discount?: string | number;
@@ -104,6 +110,9 @@ export default function Visit({
         barcode: item.product?.barcode ?? null,
         quantity: canonicalStoredQuantity(item.quantity),
         maximum_quantity: item.maximum_quantity === null || item.maximum_quantity === undefined ? null : String(item.maximum_quantity),
+        stock: item.stock === null || item.stock === undefined ? null : String(item.stock),
+        reserved_stock: item.reserved_stock === null || item.reserved_stock === undefined ? null : String(item.reserved_stock),
+        available_stock: item.available_stock === null || item.available_stock === undefined ? null : String(item.available_stock),
         allow_decimal_quantity: Boolean(item.product?.allow_decimal_quantity ?? item.allow_decimal_quantity),
         unit_price: Number(item.unit_price ?? 0),
         minimum_price: item.minimum_price ?? null,
@@ -184,11 +193,30 @@ export default function Visit({
         notes: '',
     });
 
+    const clearProductSearch = () => {
+        // Invalidate an outstanding response as well as both shared search inputs.
+        searchRequestRef.current += 1;
+        setSearchTerm('');
+        setProductResults([]);
+        setSearchTouched(false);
+        setSearchLoading(false);
+    };
+
+    const openCatalog = () => {
+        clearProductSearch();
+        setCatalogOpen(true);
+    };
+
+    const closeCatalog = () => {
+        clearProductSearch();
+        setCatalogOpen(false);
+    };
+
     useEffect(() => {
         if (!catalogOpen) return;
 
         const onEscape = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') setCatalogOpen(false);
+            if (event.key === 'Escape') closeCatalog();
         };
         const previousOverflow = document.body.style.overflow;
         document.body.style.overflow = 'hidden';
@@ -377,17 +405,23 @@ export default function Visit({
                 const maximumByProduct = new Map<number, string>(
                     (payload?.pre_sale?.items ?? []).map((item: { product_id: number; maximum_quantity: string | number }) => [item.product_id, String(item.maximum_quantity)]),
                 );
-                const confirmed = items.map((item) => ({
-                    ...item,
-                    maximum_quantity: allowNegativeStock ? null : maximumByProduct.get(item.product_id) ?? item.maximum_quantity,
-                }));
+                const stockByProduct = new Map<number, Pick<Product, 'stock' | 'reserved_stock' | 'available_stock'>>(
+                    (payload?.products ?? []).map((product: Product) => [product.id, product]),
+                );
+                const confirmed = items.map((item) => {
+                    const currentStock = stockByProduct.get(item.product_id);
+                    return {
+                        ...item,
+                        maximum_quantity: allowNegativeStock ? null : maximumByProduct.get(item.product_id) ?? item.maximum_quantity,
+                        stock: currentStock ? String(currentStock.stock) : item.stock,
+                        reserved_stock: currentStock ? String(currentStock.reserved_stock) : item.reserved_stock,
+                        available_stock: currentStock ? String(currentStock.available_stock) : item.available_stock,
+                    };
+                });
                 confirmedItemsRef.current = confirmed;
                 draftSyncRetryRequiredRef.current = false;
                 setDraftSyncCanRetry(false);
                 form.setData('items', confirmed);
-                const stockByProduct = new Map<number, Pick<Product, 'stock' | 'reserved_stock' | 'available_stock'>>(
-                    (payload?.products ?? []).map((product: Product) => [product.id, product]),
-                );
                 setProductResults((results) => results.map((product) => ({
                     ...product,
                     ...(stockByProduct.get(product.id) ?? {}),
@@ -527,6 +561,9 @@ export default function Visit({
             barcode: product.barcode,
             quantity: '1',
             maximum_quantity: allowNegativeStock ? null : normalizeQuantity(product.available_stock),
+            stock: String(product.stock),
+            reserved_stock: String(product.reserved_stock),
+            available_stock: String(product.available_stock),
             allow_decimal_quantity: Boolean(product.allow_decimal_quantity),
             unit_price: Number(product.sale_price ?? 0),
             minimum_price: product.minimum_price ?? null,
@@ -885,7 +922,7 @@ export default function Visit({
                             placeholder="Buscar producto, código, barra, categoría o marca"
                             className="min-w-0 flex-1 rounded-lg border-slate-200 text-sm"
                         />
-                        <button type="button" onClick={() => setCatalogOpen(true)} className="shrink-0 rounded-lg bg-orange-600 px-3 py-2.5 text-xs font-semibold text-white shadow-sm" title="Buscar y añadir varios productos">
+                        <button type="button" onClick={openCatalog} className="shrink-0 rounded-lg bg-orange-600 px-3 py-2.5 text-xs font-semibold text-white shadow-sm" title="Buscar y añadir varios productos">
                             Catálogo completo
                         </button>
                     </div>
@@ -919,12 +956,12 @@ export default function Visit({
                                     <div className="min-w-0">
                                         <h2 className="line-clamp-2 font-semibold leading-5 text-slate-950" title={product.name}>{product.name}</h2>
                                         <p className="truncate text-xs text-slate-500" title={product.code ?? product.barcode ?? ''}>{product.code ?? product.barcode ?? '-'}</p>
-                                        <p className="mt-1 text-xs text-slate-500">Existencia: {product.stock} · Reservado: {product.reserved_stock} · Disponible: {product.available_stock}</p>
+                                        <p className="mt-1 text-xs text-slate-500">Real: {product.stock} · Reservas ajenas: {product.reserved_stock} · Disponible: {product.available_stock}</p>
                                         {reservedStock > 0 && (
                                             <p className="mt-1 text-xs font-semibold text-amber-700">
                                                 {availableStock <= 0
-                                                    ? `Sin disponibilidad: ${reservedStock} unidades están reservadas temporalmente.`
-                                                    : `${reservedStock} unidades están reservadas temporalmente; quedan ${availableStock} disponibles.`}
+                                                    ? `Sin disponibilidad: ${reservedStock} unidades están reservadas en otras operaciones.`
+                                                    : `${reservedStock} unidades están reservadas en otras operaciones; quedan ${availableStock} disponibles.`}
                                             </p>
                                         )}
                                     </div>
@@ -999,6 +1036,9 @@ export default function Visit({
                                         </button>
                                     )}
                                 </div>
+                                <p className="mt-2 rounded-lg bg-white px-2 py-1.5 text-xs text-slate-600">
+                                    Real: {item.stock ?? '—'} · Reservas ajenas: {item.reserved_stock ?? '—'} · Disponible: <strong className="text-slate-900">{item.available_stock ?? '—'}</strong>
+                                </p>
                                 <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,0.8fr)]">
                                     <div className="min-w-0 space-y-1.5">
                                         <p className="text-xs font-semibold text-slate-500">Cantidad</p>
@@ -1015,7 +1055,7 @@ export default function Visit({
                                             />
                                             <button type="button" disabled={!canModifyPreSale} onClick={() => updateQuantity(index, addQuantity(item.quantity, '1'))} className="px-3 py-2 text-sm font-bold text-slate-700 disabled:opacity-40">+</button>
                                         </div>
-                                        {!allowNegativeStock && item.maximum_quantity !== null && <p className="text-xs font-semibold text-slate-500">Stock disponible: {item.maximum_quantity}</p>}
+                                        {!allowNegativeStock && item.maximum_quantity !== null && <p className="text-xs font-semibold text-slate-500">Máximo para esta preventa: {item.maximum_quantity}</p>}
                                         {quantityMessages[item.product_id] && <p className="text-xs font-semibold text-red-600">{quantityMessages[item.product_id]}</p>}
                                     </div>
 
@@ -1086,7 +1126,7 @@ export default function Visit({
                                 <h2 className="text-lg font-bold text-slate-950">Catálogo de productos</h2>
                                 <p className="text-xs text-slate-500">Añade y edita sin cerrar el catálogo. {form.data.items.length} líneas en la preventa.</p>
                             </div>
-                            <button type="button" onClick={() => setCatalogOpen(false)} className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Cerrar</button>
+                            <button type="button" onClick={closeCatalog} className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">Cerrar</button>
                         </div>
                         <label className="mt-2 block text-xs font-semibold text-slate-600" htmlFor="route-catalog-search">Buscar por nombre, código, barra, categoría o marca</label>
                         <input
@@ -1111,7 +1151,7 @@ export default function Visit({
                                     <article key={product.id} className="min-w-0 rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
                                         <p className="truncate text-[11px] text-slate-500" title={product.code ?? ''}>{product.code || product.barcode || '-'}</p>
                                         <h3 className="min-h-10 text-xs font-semibold leading-5 text-slate-950" title={product.name}>{product.name}</h3>
-                                        <p className="mt-1 text-[11px] text-slate-600">Disponible: {product.available_stock}</p>
+                                        <p className="mt-1 text-[11px] leading-4 text-slate-600">Real: {product.stock} · Reservas ajenas: {product.reserved_stock} · Disponible: <strong>{product.available_stock}</strong></p>
                                         {item ? (
                                             <>
                                                 {catalogItemControls(item, index)}
@@ -1139,7 +1179,7 @@ export default function Visit({
                                         return (
                                             <tr key={product.id} className={item ? 'bg-orange-50/50' : ''}>
                                                 <td className="min-w-0 p-2 align-top"><p className="text-[11px] text-slate-500">{product.code || product.barcode || '-'}</p><p className="font-semibold text-slate-900">{product.name}</p></td>
-                                                <td className="p-2 align-top"><p>Real: {product.stock}</p><p>Reservado: {product.reserved_stock}</p><p className="font-semibold">Disponible: {product.available_stock}</p></td>
+                                                <td className="p-2 align-top"><p>Real: {product.stock}</p><p>Reservas ajenas: {product.reserved_stock}</p><p className="font-semibold">Disponible: {product.available_stock}</p></td>
                                                 <td className="p-2 align-top">{item ? catalogItemControls(item, index) : <p className="pt-4 font-semibold">Q {formatMoneyValue(product.sale_price)}</p>}</td>
                                                 <td className="p-2 text-right align-top font-semibold">{item ? formatCurrency(Number(item.quantity || 0) * item.unit_price) : '-'}</td>
                                                 <td className="p-2 text-center align-top">
@@ -1154,7 +1194,7 @@ export default function Visit({
                     </div>
                     <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-white px-3 py-2 landscape:px-5">
                         <div className="min-w-0 text-xs text-slate-600">{form.data.items.length} productos · <strong className="text-sm text-slate-950">Q {total.toFixed(2)}</strong>{draftSyncing && <span className="ml-2 text-orange-700">Reservando…</span>}{draftSyncError && <p className="text-red-600">{draftSyncError}</p>}</div>
-                        <button type="button" onClick={() => setCatalogOpen(false)} className="shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Volver a la preventa</button>
+                        <button type="button" onClick={closeCatalog} className="shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Volver a la preventa</button>
                     </footer>
                 </div>
             )}

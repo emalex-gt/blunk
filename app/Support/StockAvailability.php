@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\DB;
 
 class StockAvailability
 {
-    public static function getBreakdownForProducts(int $businessId, int $branchId, array $productIds): Collection
+    public static function getBreakdownForProducts(int $businessId, int $branchId, array $productIds, ?int $excludeRouteVisitId = null): Collection
     {
         $productIds = collect($productIds)
             ->map(fn ($id) => (int) $id)
@@ -56,6 +56,12 @@ class StockAvailability
             ->where('stock_reservations.branch_id', $branchId)
             ->whereIn('stock_reservations.product_id', $productIds)
             ->where('stock_reservations.status', 'active')
+            // Exclude only the current visit's own pre-sale hold from the view.
+            // Other users' unsubmitted drafts remain included while their lease is active.
+            ->when($excludeRouteVisitId !== null, fn ($query) => $query->where(
+                fn ($query) => $query->whereNull('pre_sales.route_visit_id')
+                    ->orWhere('pre_sales.route_visit_id', '!=', $excludeRouteVisitId)
+            ))
             ->whereIn('pre_sales.status', ['draft', 'submitted', 'processing', 'picked'])
             ->where(fn ($query) => $query->whereNull('route_visits.id')->orWhere('route_visits.status', '!=', 'without_sale'))
             ->tap(fn ($query) => DraftReservationLease::applyEffectivePreSaleReservationLease($query))

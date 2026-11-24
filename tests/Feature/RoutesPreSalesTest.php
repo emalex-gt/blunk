@@ -1207,6 +1207,78 @@ class RoutesPreSalesTest extends TestCase
         $this->assertSame(1.0, StockAvailability::availableStock($product, null, $branch->id));
     }
 
+    public function test_mobile_visit_search_and_draft_show_other_reservations_but_exclude_current_visits_hold(): void
+    {
+        [$business, , $branch] = $this->tenant(role: 'owner', allowNegativeStock: false);
+        app(RouteBranchCollectionSettingsService::class)->save($business->id, $branch, [
+            'collection_workflow_mode' => 'per_order_collection',
+            'allowed_payment_methods' => ['cash'],
+            'primary_payment_method' => 'cash',
+        ]);
+        $sellerA = $this->user($business, $branch, 'pre_seller');
+        $sellerB = $this->user($business, $branch, 'pre_seller');
+        $product = $this->product($business, $branch, stock: 19, salePrice: 10);
+        $visitA = $this->startedVisit($business, $branch, $sellerA, 'Cliente A');
+        $visitB = $this->startedVisit($business, $branch, $sellerB, 'Cliente B');
+
+        // These PATCH calls create active stock holds before either pre-sale is saved.
+        $this->actingAs($sellerA)
+            ->patchJson(route('routes.mobile.visits.pre-sale.draft', $visitA), [
+                'items' => [['product_id' => $product->id, 'quantity' => 1]],
+            ])
+            ->assertOk()
+            ->assertJsonPath('pre_sale.items.0.maximum_quantity', '19')
+            ->assertJsonPath('products.0.reserved_stock', '0')
+            ->assertJsonPath('products.0.available_stock', '19');
+
+        $this->actingAs($sellerB)
+            ->patchJson(route('routes.mobile.visits.pre-sale.draft', $visitB), [
+                'items' => [['product_id' => $product->id, 'quantity' => 1]],
+            ])
+            ->assertOk()
+            ->assertJsonPath('pre_sale.items.0.maximum_quantity', '18')
+            ->assertJsonPath('products.0.reserved_stock', '1')
+            ->assertJsonPath('products.0.available_stock', '18');
+
+        $this->actingAs($sellerA)
+            ->getJson(route('routes.mobile.visits.products.search', $visitA).'?q='.urlencode($product->code))
+            ->assertOk()
+            ->assertJsonPath('products.0.stock', '19')
+            ->assertJsonPath('products.0.reserved_stock', '1')
+            ->assertJsonPath('products.0.available_stock', '18');
+
+        $this->actingAs($sellerA)
+            ->get(route('routes.mobile.visits.show', $visitA))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Routes/Mobile/Visit')
+                ->where('preSale.items.0.stock', '19')
+                ->where('preSale.items.0.reserved_stock', '1')
+                ->where('preSale.items.0.available_stock', '18')
+                ->where('preSale.items.0.maximum_quantity', '18'));
+
+        // Seller A may grow their current line to 18 (not just the 17 that a
+        // global availability query would show while their first unit is held).
+        $this->actingAs($sellerA)
+            ->patchJson(route('routes.mobile.visits.pre-sale.draft', $visitA), [
+                'items' => [['product_id' => $product->id, 'quantity' => 18]],
+            ])
+            ->assertOk()
+            ->assertJsonPath('pre_sale.items.0.maximum_quantity', '18')
+            ->assertJsonPath('products.0.reserved_stock', '1')
+            ->assertJsonPath('products.0.available_stock', '18');
+
+        // The other visit still sees all 18 units held by seller A.
+        $this->actingAs($sellerB)
+            ->getJson(route('routes.mobile.visits.products.search', $visitB).'?q='.urlencode($product->code))
+            ->assertOk()
+            ->assertJsonPath('products.0.stock', '19')
+            ->assertJsonPath('products.0.reserved_stock', '18')
+            ->assertJsonPath('products.0.available_stock', '1');
+
+        $this->assertSame('0', StockAvailability::availableStockExact($product, null, $branch->id));
+    }
+
     public function test_mobile_cart_draft_rejects_competing_hold_and_releases_stock_when_reduced_or_removed(): void
     {
         [$business, , $branch] = $this->tenant(role: 'owner', allowNegativeStock: false);
@@ -4046,12 +4118,24 @@ class RoutesPreSalesTest extends TestCase
 
         $this->actingAs($seller)
             ->post(route('routes.mobile.zones.work-day.start', $zone))
-            ->assertRedirect();
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
 
-        return RouteVisit::query()
+        $visit = RouteVisit::query()
             ->where('business_id', $business->id)
             ->where('customer_id', $customer->id)
             ->latest('id')
-            ->firstOrFail();
+            ->first();
+
+        $this->assertNotNull($visit, sprintf(
+            'La jornada no creo la visita: negocio=%d, sucursal=%d, vendedor=%d, zona=%d, jornadas=%d.',
+            $business->id,
+            $branch->id,
+            $seller->id,
+            $zone->id,
+            RouteWorkDay::query()->where('route_zone_id', $zone->id)->count(),
+        ));
+
+        return $visit;
     }
 }
