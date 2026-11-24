@@ -986,7 +986,7 @@ export default function Visit({
                     {form.errors.collect_now && <p className="mt-2 text-xs font-semibold text-red-600">{form.errors.collect_now}</p>}
                     {form.data.items.length === 0 && <p className="mt-2 text-sm text-slate-500">Agrega productos para guardar la preventa.</p>}
                     <div className="mt-3 space-y-3">
-                        {form.data.items.map((item, index) => (
+                        {form.data.items.map((item, index) => ({ item, index })).reverse().map(({ item, index }) => (
                             <div key={item.product_id} className="rounded-xl bg-slate-50 p-3">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
