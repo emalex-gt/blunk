@@ -33,11 +33,32 @@ final class CreditReservationInvoiceAllocationService
             ->where('sale_id', $sale->id)
             ->lockForUpdate()
             ->first();
+        $quantity = ProductQuantityPolicy::canonical($planLine['quantity']);
         if ($existing) {
+            // A repeated commercial finalization is idempotent only if it
+            // refers to the exact same active allocation. Never accept a
+            // changed frozen plan or reactivate a previously reversed row.
+            if ($existing->reversed_at !== null
+                || (int) $existing->sale_line_id !== (int) $saleItem->id
+                || ProductQuantityPolicy::compare((string) $existing->quantity, $quantity) !== 0) {
+                throw new LogicException('La asignación comercial existente no coincide con el plan fiscal o fue revertida.');
+            }
+
+            foreach ([
+                'subtotal_before_discount' => 'gross',
+                'line_discount_amount' => 'line_discount',
+                'general_discount_amount' => 'general_discount',
+                'total_after_discount' => 'net',
+                'amount' => 'net',
+            ] as $field => $key) {
+                if ($existing->{$field} === null
+                    || bccomp((string) $existing->{$field}, (string) $planLine[$key], 2) !== 0) {
+                    throw new LogicException('La asignación comercial existente tiene importes distintos del plan original.');
+                }
+            }
+
             return $existing;
         }
-
-        $quantity = ProductQuantityPolicy::canonical($planLine['quantity']);
         $allocation = CreditReceiptLineInvoice::query()->create([
             'business_id' => $sale->business_id,
             'credit_receipt_line_id' => $line->id,

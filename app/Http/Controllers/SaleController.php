@@ -30,6 +30,7 @@ use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Fel\Providers\Digifact\DigifactNit;
 use App\Services\Fiscal\FiscalDocumentIntentService;
+use App\Services\Credits\CreditReservationFiscalHoldService;
 use App\Services\Credits\CreditReservationInvoiceAllocationService;
 use App\Services\Credits\CreditReservationInvoicePlanService;
 use App\Support\CashRegister;
@@ -684,6 +685,18 @@ class SaleController extends Controller
                 }
                 $creditReservationPlanByLine = collect($creditReservationPlan['lines'])->keyBy('credit_line_id');
 
+                // A fiscal intent may still certify after a timeout while its
+                // reservation quantities remain locally pending. Ordinary sales
+                // must respect the same durable holds as new fiscal intents.
+                // Reservation rows are already locked by prepare() above;
+                // check the holds inside this transaction before any sale is written.
+                if (! $usesResilientFiscalIntent) {
+                    app(CreditReservationFiscalHoldService::class)->assertAvailable(
+                        $businessId,
+                        (int) $branch->id,
+                        $creditReservationPlan['lines'],
+                    );
+                }
             }
 
             $saleAttributes = [

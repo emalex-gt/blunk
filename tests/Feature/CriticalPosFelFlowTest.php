@@ -4941,6 +4941,29 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('0.45', (string) $allocation->general_discount_amount);
         $this->assertSame('58.00', (string) $allocation->total_after_discount);
         $this->assertSame('0.0000', (string) $line->fresh()->qty_pending);
+
+        // A replay of exactly the same finalized assignment is harmless.
+        // A mutated plan must never silently reuse the original allocation.
+        $planLine = [
+            'commercial_mode' => 'snapshot',
+            'credit_line_id' => $line->id,
+            'quantity' => '1.0000',
+            'gross' => '58.45',
+            'line_discount' => '0.00',
+            'general_discount' => '0.45',
+            'net' => '58.00',
+        ];
+        $allocator = app(\App\Services\Credits\CreditReservationInvoiceAllocationService::class);
+        $this->assertSame($allocation->id, $allocator->persist($sale, $saleItem, $line->fresh(), $planLine)->id);
+        $this->assertSame('0.0000', (string) $line->fresh()->qty_pending);
+
+        try {
+            $allocator->persist($sale, $saleItem, $line->fresh(), [...$planLine, 'net' => '57.99']);
+            $this->fail('Una asignación repetida con importe diferente debe rechazarse.');
+        } catch (\LogicException $exception) {
+            $this->assertStringContainsString('importes distintos', $exception->getMessage());
+        }
+        $this->assertDatabaseCount('credit_receipt_line_invoice', 1);
     }
 
     public function test_ordinary_credit_reservation_invoice_keeps_partial_decimal_snapshot_allocations_exact(): void
@@ -5276,9 +5299,45 @@ class CriticalPosFelFlowTest extends TestCase
 
         $intent = FiscalDocumentIntent::query()->sole();
         $this->assertSame(FiscalDocumentIntent::UNKNOWN, $intent->status);
-        $this->assertDatabaseCount('sales', 0);
-        $this->assertDatabaseCount('credit_receipt_line_invoice', 0);
-        $this->assertSame('2.2500', (string) $line->fresh()->qty_pending);
+
+        // Regression: durable FEL holds must also block the *ordinary* sale
+        // route, which otherwise sees the unchanged qty_pending after a timeout.
+        foreach ([
+            FiscalDocumentIntent::UNKNOWN,
+            FiscalDocumentIntent::PENDING,
+            FiscalDocumentIntent::CERTIFIED,
+            FiscalDocumentIntent::RETRYABLE,
+        ] as $status) {
+            $intent->update(['status' => $status]);
+            $ordinary = [
+                ...$payload,
+                'document_type' => 'receipt',
+                'idempotency_key' => 'held-credit-ordinary-'.$status.'-'.uniqid(),
+            ];
+            $this->actingAs($user)
+                ->from(route('sales.create'))
+                ->post(route('sales.store'), $ordinary)
+                ->assertSessionHasErrors('items');
+
+            $this->assertDatabaseCount('sales', 0);
+            $this->assertDatabaseCount('credit_receipt_line_invoice', 0);
+            $this->assertSame('2.2500', (string) $line->fresh()->qty_pending);
+        }
+
+        $this->assertDatabaseCount('stock_movements', 0);
+
+        // A definitively rejected intent no longer reserves the line. This
+        // simulates an already-proven fiscal rejection without calling Digifact.
+        $intent->update(['status' => FiscalDocumentIntent::REJECTED]);
+        $ordinary['idempotency_key'] = 'released-credit-ordinary-'.uniqid();
+        $this->actingAs($user)
+            ->from(route('sales.create'))
+            ->post(route('sales.store'), $ordinary)
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseCount('sales', 1);
+        $this->assertDatabaseCount('credit_receipt_line_invoice', 1);
+        $this->assertSame('1.2495', (string) $line->fresh()->qty_pending);
     }
 
     public function test_fel_credit_invoice_keeps_multiple_reservation_discount_snapshots_separate(): void

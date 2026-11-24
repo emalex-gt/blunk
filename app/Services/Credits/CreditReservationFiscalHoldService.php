@@ -50,7 +50,11 @@ final class CreditReservationFiscalHoldService
                 FiscalDocumentIntent::CERTIFIED,
                 FiscalDocumentIntent::RETRYABLE,
             ])
-            ->lockForUpdate()
+            // Do not lock intent rows here: fiscal finalization locks the
+            // intent first and then the reservation lines. Holding reservation
+            // locks while waiting for an intent row creates an inverted lock
+            // order and can deadlock. Committed states are sufficient for this
+            // conservative check because intent creation locks the same lines.
             ->get(['id', 'operation_payload']);
 
         foreach ($active as $intent) {
