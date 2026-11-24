@@ -956,7 +956,7 @@ export default function Visit({
                                     <div className="min-w-0">
                                         <h2 className="line-clamp-2 font-semibold leading-5 text-slate-950" title={product.name}>{product.name}</h2>
                                         <p className="truncate text-xs text-slate-500" title={product.code ?? product.barcode ?? ''}>{product.code ?? product.barcode ?? '-'}</p>
-                                        <p className="mt-1 text-xs text-slate-500">Real: {product.stock} · Reservas ajenas: {product.reserved_stock} · Disponible: {product.available_stock}</p>
+                                        <p className="mt-1 text-xs text-slate-500">Real: {product.stock} · Reservas: {product.reserved_stock} · Disponible: {product.available_stock}</p>
                                         {reservedStock > 0 && (
                                             <p className="mt-1 text-xs font-semibold text-amber-700">
                                                 {availableStock <= 0
@@ -1037,7 +1037,7 @@ export default function Visit({
                                     )}
                                 </div>
                                 <p className="mt-2 rounded-lg bg-white px-2 py-1.5 text-xs text-slate-600">
-                                    Real: {item.stock ?? '—'} · Reservas ajenas: {item.reserved_stock ?? '—'} · Disponible: <strong className="text-slate-900">{item.available_stock ?? '—'}</strong>
+                                    Real: {item.stock ?? '—'} · Reservas: {item.reserved_stock ?? '—'} · Disponible: <strong className="text-slate-900">{item.available_stock ?? '—'}</strong>
                                 </p>
                                 <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,0.8fr)]">
                                     <div className="min-w-0 space-y-1.5">
@@ -1151,7 +1151,7 @@ export default function Visit({
                                     <article key={product.id} className="min-w-0 rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
                                         <p className="truncate text-[11px] text-slate-500" title={product.code ?? ''}>{product.code || product.barcode || '-'}</p>
                                         <h3 className="min-h-10 text-xs font-semibold leading-5 text-slate-950" title={product.name}>{product.name}</h3>
-                                        <p className="mt-1 text-[11px] leading-4 text-slate-600">Real: {product.stock} · Reservas ajenas: {product.reserved_stock} · Disponible: <strong>{product.available_stock}</strong></p>
+                                        <p className="mt-1 text-[11px] leading-4 text-slate-600">Real: {product.stock} · Reservas: {product.reserved_stock} · Disponible: <strong>{product.available_stock}</strong></p>
                                         {item ? (
                                             <>
                                                 {catalogItemControls(item, index)}
@@ -1179,7 +1179,7 @@ export default function Visit({
                                         return (
                                             <tr key={product.id} className={item ? 'bg-orange-50/50' : ''}>
                                                 <td className="min-w-0 p-2 align-top"><p className="text-[11px] text-slate-500">{product.code || product.barcode || '-'}</p><p className="font-semibold text-slate-900">{product.name}</p></td>
-                                                <td className="p-2 align-top"><p>Real: {product.stock}</p><p>Reservas ajenas: {product.reserved_stock}</p><p className="font-semibold">Disponible: {product.available_stock}</p></td>
+                                                <td className="p-2 align-top"><p>Real: {product.stock}</p><p>Reservas: {product.reserved_stock}</p><p className="font-semibold">Disponible: {product.available_stock}</p></td>
                                                 <td className="p-2 align-top">{item ? catalogItemControls(item, index) : <p className="pt-4 font-semibold">Q {formatMoneyValue(product.sale_price)}</p>}</td>
                                                 <td className="p-2 text-right align-top font-semibold">{item ? formatCurrency(Number(item.quantity || 0) * item.unit_price) : '-'}</td>
                                                 <td className="p-2 text-center align-top">
