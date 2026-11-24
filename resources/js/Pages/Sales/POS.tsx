@@ -3338,7 +3338,7 @@ export default function POS({
     }
 
     async function recheckPreviousSaleForDiscard() {
-        if (!restoreDraft || !incomingSourceKey || savingPreviousSale || recheckingPreviousSale) return;
+        if (!restoreDraft || savingPreviousSale || recheckingPreviousSale) return;
 
         const branchId = normalizedDraftBranchId(restoreDraft);
         if (!hasVerifiableDraftOperation(restoreDraft) || branchId === null) {
@@ -4236,6 +4236,7 @@ export default function POS({
         setRestoreDraft(null);
         setReadySourceKey(null);
         setUnsafePreviousSale(false);
+        setPreviousSaleVerificationMessage(null);
         setDraftReady(false);
         // An Inertia visit can reuse this component. Capture the most recent sale before
         // resetting the POS, even if its debounced localStorage write has not run yet.
@@ -4261,6 +4262,7 @@ export default function POS({
             clearSaleState();
         }
         let recoverableDraft = draft;
+        let verifiedSafeForAutomaticBranchRestore = false;
         const finishDraftInitialization = () => {
             draftLoadInitializedRef.current = true;
             focusSearch();
@@ -4269,7 +4271,7 @@ export default function POS({
             if (incomingSourceKey) {
                 // This draft is the old operation: it must never replace the incoming source.
                 setRestoreDraft(recoverableDraft);
-            } else if (isBranchChange) {
+            } else if (isBranchChange && verifiedSafeForAutomaticBranchRestore) {
                 const restored = restorePosDraft(recoverableDraft as PosDraft, productMap);
                 setDraftReady(true);
                 if (restored) {
@@ -4293,10 +4295,9 @@ export default function POS({
                         preservedUnverifiableDraftKeyRef.current = draftKey;
                         showError(message);
                         toast.warning(message, { persistent: true });
-                        if (incomingSourceKey) {
-                            setUnsafePreviousSale(true);
-                            setRestoreDraft(draft);
-                        }
+                        setUnsafePreviousSale(true);
+                        setPreviousSaleVerificationMessage(message);
+                        setRestoreDraft(draft);
                         finishDraftInitialization();
                     }
                     return;
@@ -4318,12 +4319,21 @@ export default function POS({
                         return;
                     }
 
-                    if (incomingSourceKey && ['not_found', 'failed', 'fiscal_rejected'].includes(status.status)) {
+                    if (['not_found', 'failed', 'fiscal_rejected'].includes(status.status)) {
+                        verifiedSafeForAutomaticBranchRestore = true;
                         setUnsafePreviousSale(false);
-                        setPreviousSaleVerificationMessage('Verificado por el servidor: no hay una venta pendiente de finalizar con esta clave. Puedes descartar o guardar el borrador.');
+                        setPreviousSaleVerificationMessage('Verificado por el servidor: no existe una venta pendiente de finalizar con esta clave. Puedes recuperar o descartar el borrador.');
+                    } else {
+                        setUnsafePreviousSale(true);
+                        setPreviousSaleVerificationMessage(
+                            status.status === 'finalized'
+                                ? 'El servidor confirma que esta venta ya se registró. No debe repetirse.'
+                                : 'Estado del servidor: ' + status.status + '. Conserva el borrador y no repitas la operación hasta resolverlo.',
+                        );
                     }
 
                     if (status.status === 'finalized') {
+                        setRestoreDraft(null);
                         clearDraft(draftKey);
                         latestDraftRef.current = null;
                         clearSaleState();
@@ -4357,9 +4367,8 @@ export default function POS({
                 } catch {
                     if (!cancelled && recoveryRequestId === draftRecoveryRequestRef.current) {
                         rememberFiscalStatus({ status: 'verification_unavailable' }, draft.idempotency_key ?? '', draftBranchId);
-                        if (incomingSourceKey) {
-                            setUnsafePreviousSale(true);
-                        }
+                        setUnsafePreviousSale(true);
+                        setPreviousSaleVerificationMessage('No se pudo verificar el estado de esta operación. El borrador se conserva; vuelve a comprobar antes de descartarlo.');
                     }
                 } finally {
                     if (verificationTimeout !== null) {
@@ -6626,10 +6635,39 @@ export default function POS({
                         <p className="mt-2 text-sm text-slate-600">
                             Se encontró una venta en proceso guardada automáticamente.
                         </p>
+                        {previousSaleVerificationMessage && (
+                            <p role="status" className="mt-3 text-xs text-slate-600">{previousSaleVerificationMessage}</p>
+                        )}
+                        {unsafePreviousSale && (
+                            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                                No se ha confirmado que sea seguro descartar. Tener un borrador no significa que exista una factura.
+                            </p>
+                        )}
+                        {unsafePreviousSale && hasVerifiableDraftOperation(restoreDraft) && (
+                            <button
+                                type="button"
+                                disabled={recheckingPreviousSale}
+                                onClick={() => void recheckPreviousSaleForDiscard()}
+                                className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-800 disabled:opacity-50"
+                            >
+                                {recheckingPreviousSale ? 'Comprobando...' : 'Volver a comprobar estado'}
+                            </button>
+                        )}
+                        {!hasVerifiableDraftOperation(restoreDraft) && (
+                            <button
+                                type="button"
+                                onClick={() => window.history.back()}
+                                className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-800"
+                            >
+                                Volver sin modificar
+                            </button>
+                        )}
                         <div className="mt-5 flex justify-end gap-2">
                             <button
                                 type="button"
+                                disabled={unsafePreviousSale || recheckingPreviousSale}
                                 onClick={() => {
+                                    if (unsafePreviousSale || recheckingPreviousSale) return;
                                     clearDraft(draftKey);
                                     if (preservedUnverifiableDraftKeyRef.current === draftKey) {
                                         preservedUnverifiableDraftKeyRef.current = null;
@@ -6645,7 +6683,9 @@ export default function POS({
                             </button>
                             <button
                                 type="button"
+                                disabled={recheckingPreviousSale}
                                 onClick={() => {
+                                    if (recheckingPreviousSale) return;
                                     if (!hasVerifiableDraftOperation(restoreDraft)) {
                                         const message = 'No se puede continuar este borrador sin verificar su identificación de operación.';
                                         showError(message);
