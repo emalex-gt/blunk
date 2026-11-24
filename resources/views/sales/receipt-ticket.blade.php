@@ -122,8 +122,8 @@
     <section>
         @forelse ($items as $item)
             <div class="item">
+                @include('print.partials.product-identifiers', ['item' => $item, 'settings' => $settings, 'presentation' => 'ticket'])
                 <div class="item-name">{{ $item->product_name }}</div>
-                @include('print.partials.product-identifiers', ['item' => $item, 'settings' => $settings])
                 <div class="row">
                     <span>Cant: <span class="ticket-quantity">{{ $formatQuantity($item->quantity) }}</span></span>
                     <span>Precio: {{ formatMoney($item->unit_price, $country) }}</span>

@@ -115,6 +115,8 @@
 
     .item { margin: 5px 0; }
     .item-name { font-weight: 700; }
+    .item-identifiers { font-size: .82em; margin-bottom: 2px; }
+    .item-identifiers > div { overflow-wrap: normal; white-space: nowrap; word-break: normal; }
 
     .logo {
         display: block;
