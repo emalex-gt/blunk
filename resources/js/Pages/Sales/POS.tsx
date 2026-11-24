@@ -2558,7 +2558,7 @@ export default function POS({
         }
 
         return (
-            <div role="listbox" className="absolute z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+            <div role="listbox" className="absolute left-0 z-40 mt-1 max-h-56 w-[min(32rem,calc(100vw-2rem))] overflow-x-hidden overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
                 {customerMatches.map((customer, index) => (
                     <button
                         key={customer.id}
@@ -2567,10 +2567,10 @@ export default function POS({
                         aria-selected={index === activeCustomerSuggestion}
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => selectCustomer(customer)}
-                        className={`block w-full rounded-lg px-3 py-2 text-left text-sm ${index === activeCustomerSuggestion ? 'bg-orange-50 text-orange-800' : 'text-slate-700 hover:bg-slate-50'}`}
+                        className={`block w-full whitespace-normal break-words rounded-lg px-3 py-2 text-left text-sm ${index === activeCustomerSuggestion ? 'bg-orange-50 text-orange-800' : 'text-slate-700 hover:bg-slate-50'}`}
                     >
-                        <span className="block font-semibold">{customer.commercial_name || customer.name}</span>
-                        <span className="block text-xs text-slate-500">{customer.doc_type ?? 'Cliente'}{customer.doc_number ? ` · ${customer.doc_number}` : ''}</span>
+                        <span className="block whitespace-normal break-words font-semibold">{customer.commercial_name || customer.name}</span>
+                        <span className="block whitespace-normal break-words text-xs text-slate-500">{customer.doc_type ?? 'Cliente'}{customer.doc_number ? ` · ${customer.doc_number}` : ''}</span>
                     </button>
                 ))}
             </div>

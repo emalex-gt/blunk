@@ -6166,6 +6166,17 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringNotContainsString("Resultado: {intent.last_reconciliation_result ? JSON.stringify(intent.last_reconciliation_result) : '-'}", $source);
     }
 
+    public function test_pos_customer_suggestions_keep_long_names_visible_without_horizontal_overflow(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+
+        $this->assertStringContainsString('w-[min(32rem,calc(100vw-2rem))]', $source);
+        $this->assertStringContainsString('overflow-x-hidden overflow-y-auto', $source);
+        $this->assertStringContainsString('whitespace-normal break-words', $source);
+        $this->assertStringContainsString('role="listbox"', $source);
+        $this->assertStringContainsString('role="option"', $source);
+    }
+
     public function test_super_admin_fel_intent_dates_are_serialized_as_utc_iso_timestamps(): void
     {
         [$business, $user] = $this->tenant(country: 'GT', modules: ['fel_gt'], role: 'owner', allowInvoices: true);
