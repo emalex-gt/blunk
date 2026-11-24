@@ -5503,11 +5503,15 @@ export default function POS({
                                                             {contract?.commercial.monetary_allocation_state === 'incomplete' && <p className="font-semibold text-amber-700">La reserva no tiene desglose monetario suficiente para vista previa.</p>}
                                                             {preview?.status === 'loading' && <p className="font-semibold text-sky-700">Actualizando vista previa…</p>}
                                                             {preview?.status === 'error' && <p className="font-semibold text-red-700">{preview.error}</p>}
-                                                            {commercial && (
+                                                            {commercial && (Number(commercial.line_discount) > 0 || Number(commercial.general_discount) > 0) && (
                                                                 <div className="rounded-lg border border-orange-100 bg-orange-50/60 px-2 py-1.5 text-slate-600">
                                                                     <div className="flex justify-between gap-2"><span>Bruto</span><strong>{formatCurrency(Number(commercial.gross), country)}</strong></div>
-                                                                    <div className="flex justify-between gap-2 text-orange-700"><span>Desc. línea</span><strong>-{formatCurrency(Number(commercial.line_discount), country)}</strong></div>
-                                                                    <div className="flex justify-between gap-2 text-orange-700"><span>Desc. general reserva</span><strong>-{formatCurrency(Number(commercial.general_discount), country)}</strong></div>
+                                                                    {Number(commercial.line_discount) > 0 && (
+                                                                        <div className="flex justify-between gap-2 text-orange-700"><span>Desc. línea</span><strong>-{formatCurrency(Number(commercial.line_discount), country)}</strong></div>
+                                                                    )}
+                                                                    {Number(commercial.general_discount) > 0 && (
+                                                                        <div className="flex justify-between gap-2 text-orange-700"><span>Desc. general reserva</span><strong>-{formatCurrency(Number(commercial.general_discount), country)}</strong></div>
+                                                                    )}
                                                                     <div className="flex justify-between gap-2 font-semibold text-slate-900"><span>Neto seleccionado</span><strong>{formatCurrency(Number(commercial.net), country)}</strong></div>
                                                                 </div>
                                                             )}
