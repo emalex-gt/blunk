@@ -236,7 +236,7 @@ class DigifactNucJsonBuilder
     /** Rounds a non-negative fiscal amount without cumulative binary floats. */
     private function roundDecimal(string $amount, int $scale): string
     {
-        $increment = '0.'.str_repeat('0', max(0, $scale - 1)).'5';
+        $increment = '0.'.str_repeat('0', $scale).'5';
 
         return bcdiv(bcadd($amount, $increment, $scale + 6), '1', $scale);
     }

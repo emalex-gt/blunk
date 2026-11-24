@@ -14,6 +14,9 @@ use App\Models\Quotation;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\StockReservation;
+use App\Services\Credits\CreditReservationFiscalHoldService;
+use App\Services\Credits\CreditReservationInvoiceAllocationService;
+use App\Services\Credits\CreditReservationInvoicePlanService;
 use App\Services\Fel\FelException;
 use App\Services\Fel\FelProviderRejectedException;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
@@ -64,6 +67,7 @@ class FiscalDocumentIntentService
                     return $existing;
                 }
 
+                $operationPayload = $this->prepareCreditReservationFiscalPlan($sale, $operationPayload);
                 $internalReference = Str::uuid()->toString();
                 $snapshot = $this->snapshotSale($sale, $operationPayload);
                 $operationFingerprint = $this->operationFingerprint($snapshot);
@@ -493,7 +497,12 @@ class FiscalDocumentIntentService
     /** Replays local effects only; it never contacts the fiscal provider. */
     public function retryFinalization(FiscalDocumentIntent $intent): FiscalDocumentIntent
     {
-        return $this->finalizeSafely($intent);
+        $intent->refresh();
+
+        return $this->finalizeSafely(
+            $intent,
+            (bool) data_get($intent->operation_payload, 'commercial_finalization_authorized', false),
+        );
     }
 
     private function finalizeSafely(FiscalDocumentIntent $intent, bool $allowCommercialFinalization = false, ?string $traceId = null): FiscalDocumentIntent
@@ -657,8 +666,109 @@ class FiscalDocumentIntentService
             // remains only for payloads created before positional associations.
             'credit_line_associations' => $operationPayload['credit_line_associations'] ?? null,
             'credit_line_ids' => $operationPayload['credit_line_ids'] ?? [],
+            'credit_reservation_invoice_plan' => $operationPayload['credit_reservation_invoice_plan'] ?? null,
+            'commercial_finalization_authorized' => (bool) ($operationPayload['commercial_finalization_authorized'] ?? false),
             'draft_id' => $operationPayload['draft_id'] ?? null,
         ];
+    }
+
+    /**
+     * Rebuilds a credit-reservation plan under row locks before an external
+     * certification can be started. The plan is then frozen in the intent,
+     * rather than being reconstructed from current prices at finalization.
+     */
+    private function prepareCreditReservationFiscalPlan(Sale $sale, array $operationPayload): array
+    {
+        $byItemIndex = data_get($operationPayload, 'credit_line_associations.by_item_index');
+        if (! is_array($byItemIndex)) {
+            return $operationPayload;
+        }
+
+        $requested = [];
+        foreach ($byItemIndex as $index => $association) {
+            if (! is_array($association) || ! filled($association['credit_line_id'] ?? null)) {
+                continue;
+            }
+
+            $requested[] = [
+                'credit_line_id' => $association['credit_line_id'],
+                'quantity' => $association['quantity'] ?? null,
+                'item_index' => (int) $index,
+            ];
+        }
+
+        if ($requested === []) {
+            return $operationPayload;
+        }
+
+        $plan = app(CreditReservationInvoicePlanService::class)->prepare(
+            (int) $sale->business_id,
+            (int) $sale->branch_id,
+            collect($requested)->map(fn (array $line): array => [
+                'credit_line_id' => $line['credit_line_id'],
+                'quantity' => $line['quantity'],
+            ])->all(),
+            lockForUpdate: true,
+        );
+        $planByLine = collect($plan['lines'])->keyBy('credit_line_id');
+        $items = $sale->items->values();
+        $durableLines = [];
+
+        foreach ($requested as $request) {
+            $item = $items->get($request['item_index']);
+            $line = $planByLine->get((int) $request['credit_line_id']);
+            if (! $item || ! $line
+                || (int) $line['product_id'] !== (int) $item->product_id
+                || ProductQuantityPolicy::compare($line['quantity'], $item->quantity) !== 0) {
+                throw ValidationException::withMessages([
+                    'items' => 'La reserva cambió mientras se preparaba la factura FEL. Vuelve a intentarlo.',
+                ]);
+            }
+
+            if ($line['commercial_mode'] === 'snapshot') {
+                $this->assertSnapshotPlanMatchesSaleItem($line, $item);
+            }
+
+            $durableLines[] = [...$line, 'item_index' => $request['item_index']];
+        }
+
+        app(CreditReservationFiscalHoldService::class)->assertAvailable(
+            (int) $sale->business_id,
+            (int) $sale->branch_id,
+            $durableLines,
+        );
+
+        $operationPayload['credit_reservation_invoice_plan'] = [
+            'version' => 1,
+            'lines' => $durableLines,
+            'totals' => $plan['totals'],
+        ];
+        $operationPayload['credit_line_ids'] = collect($durableLines)
+            ->pluck('credit_line_id')
+            ->map(fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        return $operationPayload;
+    }
+
+    /** @param array<string, mixed> $planLine */
+    private function assertSnapshotPlanMatchesSaleItem(array $planLine, SaleItem $item): void
+    {
+        $amounts = [
+            'gross' => $item->total_before_discount,
+            'line_discount' => $item->line_discount_amount,
+            'general_discount' => $item->general_discount_amount,
+            'net' => $item->total_after_discount,
+        ];
+        foreach ($amounts as $key => $amount) {
+            if (bccomp((string) ($amount ?? 0), (string) $planLine[$key], 2) !== 0) {
+                throw ValidationException::withMessages([
+                    'items' => 'Los importes comerciales de la reserva no coinciden con su snapshot.',
+                ]);
+            }
+        }
     }
 
     private function operationFingerprint(array $snapshot): string
@@ -955,6 +1065,7 @@ class FiscalDocumentIntentService
         $business = Business::query()->findOrFail($sale->business_id);
         $saleItems = $sale->items()->orderBy('id')->get()->values();
         $creditLineAssociations = $this->creditLineAssociationsForItems($payload, $saleItems);
+        $creditReservationPlans = $this->creditReservationPlansForItems($payload, $saleItems, $creditLineAssociations);
         $products = [];
         $creditLines = [];
         $requestedByProduct = [];
@@ -1059,19 +1170,29 @@ class FiscalDocumentIntentService
                 /** @var CreditReceiptLine $creditLine */
                 $creditLine = $creditAssociation['line'];
                 $creditQuantity = ProductQuantityPolicy::canonical($creditAssociation['quantity']);
-                $creditLine->update([
-                    'qty_invoiced' => bcadd((string) $creditLine->qty_invoiced, $creditQuantity, ProductQuantityPolicy::SCALE),
-                ]);
-                $creditLine = Credits::refreshLine($creditLine->refresh());
-                Credits::refreshReceipt($creditLine->receipt);
-                CreditReceiptLineInvoice::query()->create([
-                    'business_id' => $sale->business_id,
-                    'credit_receipt_line_id' => $creditLine->id,
-                    'sale_id' => $sale->id,
-                    'sale_line_id' => $saleItem->id,
-                    'quantity' => $creditQuantity,
-                    'amount' => $this->creditLineInvoiceAmount($saleItem->total, $creditQuantity, $saleItem->quantity),
-                ]);
+                $planLine = $creditReservationPlans[$itemIndex] ?? null;
+                if (($planLine['commercial_mode'] ?? null) === 'snapshot') {
+                    app(CreditReservationInvoiceAllocationService::class)->persist(
+                        $sale,
+                        $saleItem,
+                        $creditLine,
+                        $planLine,
+                    );
+                } else {
+                    $creditLine->update([
+                        'qty_invoiced' => bcadd((string) $creditLine->qty_invoiced, $creditQuantity, ProductQuantityPolicy::SCALE),
+                    ]);
+                    $creditLine = Credits::refreshLine($creditLine->refresh());
+                    Credits::refreshReceipt($creditLine->receipt);
+                    CreditReceiptLineInvoice::query()->create([
+                        'business_id' => $sale->business_id,
+                        'credit_receipt_line_id' => $creditLine->id,
+                        'sale_id' => $sale->id,
+                        'sale_line_id' => $saleItem->id,
+                        'quantity' => $creditQuantity,
+                        'amount' => $this->creditLineInvoiceAmount($saleItem->total, $creditQuantity, $saleItem->quantity),
+                    ]);
+                }
             }
         }
 
@@ -1105,6 +1226,49 @@ class FiscalDocumentIntentService
 
         $this->markQuotationConverted($sale);
         $this->consumeStockReservations($intent);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>> keyed by frozen sale item index
+     */
+    private function creditReservationPlansForItems(array $payload, $saleItems, array $associations): array
+    {
+        $contract = $payload['credit_reservation_invoice_plan'] ?? null;
+        if ($contract === null) {
+            return [];
+        }
+        if (! is_array($contract) || ($contract['version'] ?? null) !== 1 || ! is_array($contract['lines'] ?? null)) {
+            throw new \LogicException('La intención fiscal contiene un plan comercial de reserva inválido.');
+        }
+
+        $plans = [];
+        foreach ($contract['lines'] as $line) {
+            $index = $line['item_index'] ?? null;
+            if (! is_array($line) || ! is_int($index) || isset($plans[$index])) {
+                throw new \LogicException('La intención fiscal contiene un plan comercial de reserva inconsistente.');
+            }
+            $plans[$index] = $line;
+        }
+
+        foreach ($associations as $index => $association) {
+            $creditLineId = $association['credit_line_id'] ?? null;
+            if (! filled($creditLineId)) {
+                continue;
+            }
+            $plan = $plans[$index] ?? null;
+            $item = $saleItems[$index] ?? null;
+            if (! $plan || ! $item
+                || (int) ($plan['credit_line_id'] ?? 0) !== (int) $creditLineId
+                || ProductQuantityPolicy::compare($plan['quantity'] ?? null, $association['quantity'] ?? null) !== 0
+                || (int) ($plan['product_id'] ?? 0) !== (int) $item->product_id) {
+                throw new \LogicException('El plan comercial fiscal no coincide con las líneas de reserva.');
+            }
+            if (($plan['commercial_mode'] ?? null) === 'snapshot') {
+                $this->assertSnapshotPlanMatchesSaleItem($plan, $item);
+            }
+        }
+
+        return $plans;
     }
 
     private function createFinalSale(FiscalDocumentIntent $intent, array $payload, string $certificationStatus = 'certified'): Sale

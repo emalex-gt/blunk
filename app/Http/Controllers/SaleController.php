@@ -684,13 +684,6 @@ class SaleController extends Controller
                 }
                 $creditReservationPlanByLine = collect($creditReservationPlan['lines'])->keyBy('credit_line_id');
 
-                if ($usesResilientFiscalIntent && $creditReservationPlanByLine->contains(
-                    fn (array $line): bool => $line['commercial_mode'] === 'snapshot'
-                )) {
-                    throw ValidationException::withMessages([
-                        'document_type' => 'La facturación FEL de reservas con snapshots comerciales todavía no está habilitada.',
-                    ]);
-                }
             }
 
             $saleAttributes = [
@@ -1176,6 +1169,10 @@ class SaleController extends Controller
                         'payments' => $data['payments'] ?? [],
                         'cash_register_session_id' => $openSession?->id,
                         'draft_id' => $data['draft_id'] ?? null,
+                        // This is internal operation context, not user input:
+                        // a certified POS intent may retry only its own local
+                        // completion after a recoverable local failure.
+                        'commercial_finalization_authorized' => true,
                         'environment' => $felSettings?->environment ?? 'test',
                         // Versioned, positional associations preserve duplicate products from
                         // distinct reservations and the portion actually applied to each one.
@@ -1194,6 +1191,25 @@ class SaleController extends Controller
                                 ->values()
                                 ->all(),
                         ],
+                        // The fiscal service revalidates this exact plan under
+                        // the reservation locks before it becomes durable.
+                        'credit_reservation_invoice_plan' => [
+                            'version' => 1,
+                            'lines' => collect($saleLines)
+                                ->map(fn (array $line, int $index) => $line['credit_plan_line'] ? [
+                                    ...$line['credit_plan_line'],
+                                    'item_index' => $index,
+                                ] : null)
+                                ->filter()
+                                ->values()
+                                ->all(),
+                        ],
+                        'credit_line_ids' => collect($saleLines)
+                            ->filter(fn (array $line): bool => $line['credit_line'] !== null)
+                            ->map(fn (array $line): int => (int) $line['credit_line']->id)
+                            ->unique()
+                            ->values()
+                            ->all(),
                     ],
                     $data['idempotency_key'],
                     $request->user()->id,
