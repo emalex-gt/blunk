@@ -3074,7 +3074,20 @@ class SaleController extends Controller
 
     private function creditInvoicePayload(Request $request, int $businessId): ?array
     {
-        $lineIds = array_values(array_filter(array_map('intval', (array) $request->session()->pull('credit_invoice_line_ids', []))));
+        $inertiaVersionMismatch = $request->isMethod('GET')
+            && $request->header('X-Inertia') === 'true'
+            && $request->headers->has('X-Inertia-Version')
+            && (string) $request->header('X-Inertia-Version') !== (string) Inertia::getVersion();
+
+        if ($inertiaVersionMismatch) {
+            // Preserve flash data for the full-page reload after Inertia 409.
+            $request->session()->keep(['credit_invoice_line_ids']);
+            $selectedLineIds = $request->session()->get('credit_invoice_line_ids', []);
+        } else {
+            $selectedLineIds = $request->session()->pull('credit_invoice_line_ids', []);
+        }
+
+        $lineIds = array_values(array_filter(array_map('intval', (array) $selectedLineIds)));
 
         if ($lineIds === []) {
             return null;
