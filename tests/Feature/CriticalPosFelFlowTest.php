@@ -1631,6 +1631,54 @@ class CriticalPosFelFlowTest extends TestCase
         ]);
     }
 
+    public function test_credit_reservation_persists_a_general_discount_snapshot(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits', 'discounts'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 58.45);
+        $payload = $this->creditPayload($product, 1);
+        $payload['discount'] = [
+            'type' => 'fixed',
+            'value' => 0.45,
+            'reason' => 'Promoción de reserva',
+        ];
+
+        $response = $this->actingAs($user)
+            ->post(route('credits.receipts.store'), $payload)
+            ->assertRedirect();
+        $response->assertSessionHasNoErrors();
+
+        $receipt = CreditReceipt::query()->sole();
+        $line = CreditReceiptLine::query()->sole();
+
+        $this->assertSame(1, $receipt->snapshot_version);
+        $this->assertSame('fixed', $receipt->discount_type);
+        $this->assertSame('0.45', (string) $receipt->discount_amount);
+        $this->assertSame('58.00', (string) $receipt->total);
+        $this->assertSame('58.45', (string) $line->subtotal_before_discount);
+        $this->assertSame('0.00', (string) $line->line_discount_amount);
+        $this->assertSame('0.45', (string) $line->general_discount_amount);
+        $this->assertSame('58.00', (string) $line->total_after_discount);
+    }
+
+    public function test_pos_credit_reservation_submission_preserves_existing_discounts(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+        $creditPayload = Str::before(
+            Str::after($source, "router.post(route('credits.receipts.store'), {"),
+            '}, {',
+        );
+
+        $this->assertStringNotContainsString('El crédito no admite descuentos.', $source);
+        $this->assertStringContainsString('line_discount_amount: lineDiscountAmount(item),', $creditPayload);
+        $this->assertStringContainsString('line_discount_reason: item.line_discount_reason?.trim() || null,', $creditPayload);
+        $this->assertStringContainsString('discount: discount ? {', $creditPayload);
+        $this->assertStringContainsString('type: discount.type,', $creditPayload);
+        $this->assertStringContainsString('value: Number(discount.value),', $creditPayload);
+        $this->assertStringContainsString('reason: discount.reason.trim() || null,', $creditPayload);
+        $this->assertStringContainsString('discountError(discount, subtotalAfterLineDiscount)', $source);
+        $this->assertStringContainsString('discountError(nextDiscount, subtotalAfterLineDiscount)', $source);
+    }
+
     public function test_recent_fel_nit_flow_files_do_not_contain_mojibake_markers(): void
     {
         $files = [

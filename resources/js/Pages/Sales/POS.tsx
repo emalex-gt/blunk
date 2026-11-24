@@ -1805,7 +1805,7 @@ export default function POS({
             return true;
         }
 
-        const error = discountError(discount, subtotalBeforeDiscount);
+        const error = discountError(discount, subtotalAfterLineDiscount);
 
         if (!error) {
             return true;
@@ -2283,7 +2283,7 @@ export default function POS({
             value: limitDecimalPlaces(discountForm.value.trim(), 2),
             reason: discountForm.reason.trim(),
         };
-        const error = discountError(nextDiscount, subtotalBeforeDiscount);
+        const error = discountError(nextDiscount, subtotalAfterLineDiscount);
 
         if (error) {
             setDiscountFormError(error);
@@ -3376,13 +3376,6 @@ export default function POS({
         }
 
         if (effectiveCheckoutType === 'credit') {
-            if (discount || lineDiscountTotal > 0) {
-                const message = 'El crédito no admite descuentos. Ajusta los precios antes de registrar el crédito.';
-                showError(message);
-                toast.error(message);
-                return;
-            }
-
             const docType = data.customer.doc_type.trim().toUpperCase();
             const docNumber = data.customer.doc_number.trim().toUpperCase();
             const normalizedCui = docNumber.replace(/[\s\-/]+/g, '');
@@ -3433,7 +3426,14 @@ export default function POS({
                     product_id: item.product.id,
                     quantity: normalizedQuantityForSubmission(item.quantity),
                     unit_price: Number(item.unit_price),
+                    line_discount_amount: lineDiscountAmount(item),
+                    line_discount_reason: item.line_discount_reason?.trim() || null,
                 })),
+                discount: discount ? {
+                    type: discount.type,
+                    value: Number(discount.value),
+                    reason: discount.reason.trim() || null,
+                } : null,
             }, {
                 preserveScroll: true,
                 onSuccess: (page) => {

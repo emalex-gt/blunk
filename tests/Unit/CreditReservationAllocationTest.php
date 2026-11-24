@@ -24,4 +24,16 @@ class CreditReservationAllocationTest extends TestCase {
   $this->expectException(\InvalidArgumentException::class);
   (new CreditReservationAllocation)->allocate(['quantity'=>'1.0000','gross'=>'1.00','line_discount'=>'0.00','general_discount'=>'0.00','net'=>'1.00'],'1.0001');
  }
+ public function test_snapshot_distributes_general_discount_after_line_discounts(): void {
+  $snapshot=(new CreditReservationAllocation)->snapshot([
+   ['quantity'=>'1.0000','unit_price'=>'42.15','line_discount_amount'=>'0.05'],
+   ['quantity'=>'1.0005','unit_price'=>'16.30','line_discount_amount'=>'0.00'],
+  ],'0.45');
+  $this->assertSame('58.46',$snapshot['subtotal']);
+  $this->assertSame('0.05',$snapshot['line_discount_amount']);
+  $this->assertSame('0.45',$snapshot['general_discount_amount']);
+  $this->assertSame('57.96',$snapshot['total']);
+  $this->assertSame('0.45',bcadd($snapshot['lines'][0]['general_discount_amount'],$snapshot['lines'][1]['general_discount_amount'],2));
+  foreach ($snapshot['lines'] as $line) $this->assertSame($line['subtotal'],bcadd($line['line_discount_amount'],bcadd($line['general_discount_amount'],$line['net_amount'],2),2));
+ }
 }

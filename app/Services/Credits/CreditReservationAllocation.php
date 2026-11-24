@@ -7,6 +7,78 @@ use InvalidArgumentException;
 /** Pure BCMath allocation engine; callers persist its immutable results. */
 final class CreditReservationAllocation
 {
+    /**
+     * Build the immutable commercial snapshot for a newly created reservation.
+     * Monetary components are kept in cents; the general discount is allocated
+     * over the post-line-discount eligible amount without changing unit prices.
+     */
+    public function snapshot(array $lines, string $generalDiscount = '0.00'): array
+    {
+        if ($lines === []) {
+            throw new InvalidArgumentException('La reserva requiere al menos una línea.');
+        }
+
+        $prepared = [];
+        $subtotal = '0.00';
+        $eligible = '0.00';
+
+        foreach ($lines as $line) {
+            $quantity = (string) ($line['quantity'] ?? '0');
+            $unitPrice = (string) ($line['unit_price'] ?? '0');
+            $gross = $this->round(bcmul($quantity, $unitPrice, 12));
+            $lineDiscount = $this->round((string) ($line['line_discount_amount'] ?? '0'));
+
+            if (bccomp($quantity, '0', 4) <= 0 || bccomp($unitPrice, '0', 2) < 0 || bccomp($lineDiscount, '0', 2) < 0 || bccomp($lineDiscount, $gross, 2) > 0) {
+                throw new InvalidArgumentException('Línea de reserva inválida.');
+            }
+
+            $lineEligible = bcsub($gross, $lineDiscount, 2);
+            $prepared[] = compact('quantity', 'unitPrice', 'gross', 'lineDiscount', 'lineEligible');
+            $subtotal = bcadd($subtotal, $gross, 2);
+            $eligible = bcadd($eligible, $lineEligible, 2);
+        }
+
+        $generalDiscount = $this->round($generalDiscount);
+        if (bccomp($generalDiscount, '0', 2) < 0 || bccomp($generalDiscount, $eligible, 2) > 0) {
+            throw new InvalidArgumentException('El descuento general excede el importe elegible.');
+        }
+
+        $remainingDiscount = $generalDiscount;
+        $remainingEligible = $eligible;
+        $snapshots = [];
+
+        foreach ($prepared as $index => $line) {
+            $isLast = $index === array_key_last($prepared);
+            $minimum = $this->maximum('0.00', bcsub($remainingDiscount, bcsub($remainingEligible, $line['lineEligible'], 2), 2));
+            $maximum = $this->minimum($remainingDiscount, $line['lineEligible']);
+            $lineGeneralDiscount = $isLast
+                ? $remainingDiscount
+                : (bccomp($remainingEligible, '0', 2) === 0
+                    ? '0.00'
+                    : $this->clamp($this->proportion($remainingDiscount, $line['lineEligible'], $remainingEligible), $minimum, $maximum));
+            $netAmount = bcsub($line['lineEligible'], $lineGeneralDiscount, 2);
+
+            $snapshots[] = [
+                'quantity' => $line['quantity'],
+                'unit_price' => $line['unitPrice'],
+                'subtotal' => $line['gross'],
+                'line_discount_amount' => $line['lineDiscount'],
+                'general_discount_amount' => $lineGeneralDiscount,
+                'net_amount' => $netAmount,
+            ];
+            $remainingDiscount = bcsub($remainingDiscount, $lineGeneralDiscount, 2);
+            $remainingEligible = bcsub($remainingEligible, $line['lineEligible'], 2);
+        }
+
+        return [
+            'subtotal' => $subtotal,
+            'line_discount_amount' => array_reduce($snapshots, fn (string $total, array $line): string => bcadd($total, $line['line_discount_amount'], 2), '0.00'),
+            'general_discount_amount' => $generalDiscount,
+            'total' => array_reduce($snapshots, fn (string $total, array $line): string => bcadd($total, $line['net_amount'], 2), '0.00'),
+            'lines' => $snapshots,
+        ];
+    }
+
     public function allocate(array $snapshot, string $quantity, array $active = []): array
     {
         $this->valid($snapshot);
