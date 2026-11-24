@@ -205,7 +205,7 @@ export default function Show({ sale }: { sale: SaleDetail; canCancel?: boolean }
                 toast.success('Venta anulada correctamente.');
             },
             onError: (errors) => {
-                toast.error(errors.reason ?? 'No tienes permisos para anular esta venta.');
+                toast.error(errors.sale ?? errors.reason ?? Object.values(errors)[0] ?? 'No se pudo anular la venta.');
             },
             onFinish: () => {
                 cancelLockedRef.current = false;
