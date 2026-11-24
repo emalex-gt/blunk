@@ -3346,6 +3346,7 @@ export default function POS({
             return;
         }
 
+        draftRecoveryRequestRef.current += 1;
         clearDraft(draftKey);
         preservedUnverifiableDraftKeyRef.current = null;
         latestDraftRef.current = null;
@@ -3378,6 +3379,7 @@ export default function POS({
                 payload_version: 1,
             });
             // Do not delete the local copy until the server has confirmed persistence.
+            draftRecoveryRequestRef.current += 1;
             clearDraft(draftKey);
             preservedUnverifiableDraftKeyRef.current = null;
             latestDraftRef.current = null;
@@ -4165,6 +4167,10 @@ export default function POS({
         if (incomingSourceKey) {
             if (draft && isMeaningfulPosDraft(draft)) {
                 saveDraft(draftKey, draft);
+                // Show the choice immediately instead of waiting for a continuation
+                // that React may cancel. Discard stays locked until verified.
+                setUnsafePreviousSale(true);
+                setRestoreDraft(draft);
             }
             // Never let the previous cart block loading the requested source.
             latestDraftRef.current = null;
@@ -4229,6 +4235,10 @@ export default function POS({
 
                     if (cancelled || recoveryRequestId !== draftRecoveryRequestRef.current) {
                         return;
+                    }
+
+                    if (incomingSourceKey && ['not_found', 'failed', 'fiscal_rejected'].includes(status.status)) {
+                        setUnsafePreviousSale(false);
                     }
 
                     if (status.status === 'finalized') {
@@ -6473,8 +6483,8 @@ export default function POS({
                         </p>
                         {unsafePreviousSale && (
                             <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                                No se pudo descartar con seguridad el trabajo anterior porque su estado fiscal no está verificado.
-                                Guárdalo como borrador para continuar.
+                                El estado fiscal del trabajo anterior todavía no está confirmado.
+                                Puedes guardarlo como borrador, pero no descartarlo hasta tener una verificación segura.
                             </p>
                         )}
                         {!hasVerifiableDraftOperation(restoreDraft) && (
