@@ -1065,6 +1065,7 @@ export default function POS({
     const [failedSubmission, setFailedSubmission] = useState(false);
     const [draftReady, setDraftReady] = useState(false);
     const [readySourceKey, setReadySourceKey] = useState<string | null>(null);
+    const [sourceGateTimedOut, setSourceGateTimedOut] = useState(false);
     const [savingPreviousSale, setSavingPreviousSale] = useState(false);
     const [unsafePreviousSale, setUnsafePreviousSale] = useState(false);
     const [showClearSaleModal, setShowClearSaleModal] = useState(false);
@@ -4214,8 +4215,17 @@ export default function POS({
                     return;
                 }
 
+                let verificationTimeout: number | null = null;
                 try {
-                    const status = await posSaleStatusForDraft(draft, draftBranchId);
+                    const status = await Promise.race([
+                        posSaleStatusForDraft(draft, draftBranchId),
+                        new Promise<PosDraftRecoveryStatus>((_, reject) => {
+                            verificationTimeout = window.setTimeout(
+                                () => reject(new Error('POS draft verification timeout')),
+                                10000,
+                            );
+                        }),
+                    ]);
 
                     if (cancelled || recoveryRequestId !== draftRecoveryRequestRef.current) {
                         return;
@@ -4253,11 +4263,15 @@ export default function POS({
                         }
                     }
                 } catch {
-                    if (recoveryRequestId === draftRecoveryRequestRef.current) {
+                    if (!cancelled && recoveryRequestId === draftRecoveryRequestRef.current) {
                         rememberFiscalStatus({ status: 'verification_unavailable' }, draft.idempotency_key ?? '', draftBranchId);
                         if (incomingSourceKey) {
                             setUnsafePreviousSale(true);
                         }
+                    }
+                } finally {
+                    if (verificationTimeout !== null) {
+                        window.clearTimeout(verificationTimeout);
                     }
                 }
 
@@ -4318,6 +4332,16 @@ export default function POS({
         draftLoadInitializedRef.current = true;
         focusSearch();
     }, [activeBranchId, draftKey, fetchPosProducts, incomingSourceKey, quotation_edit_source]);
+
+    useEffect(() => {
+        if (!incomingSourceKey || restoreDraft || (draftReady && readySourceKey === incomingSourceKey)) {
+            setSourceGateTimedOut(false);
+            return;
+        }
+        setSourceGateTimedOut(false);
+        const timer = window.setTimeout(() => setSourceGateTimedOut(true), 15000);
+        return () => window.clearTimeout(timer);
+    }, [incomingSourceKey, draftKey, draftReady, readySourceKey, restoreDraft]);
 
     useEffect(() => {
         if (quotation_edit_source || !draftReady || restoreDraft
@@ -6416,8 +6440,24 @@ export default function POS({
 
             {incomingSourceKey && !restoreDraft && (!draftReady || readySourceKey !== incomingSourceKey) && (
                 <div className="fixed inset-0 z-[89] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
-                    <div className="rounded-2xl bg-white px-6 py-5 text-sm font-semibold text-slate-800 shadow-2xl" role="status">
-                        Verificando el trabajo pendiente antes de abrir la operación seleccionada…
+                    <div className="rounded-2xl bg-white px-6 py-5 text-sm font-semibold text-slate-800 shadow-2xl" role={sourceGateTimedOut ? 'alert' : 'status'}>
+                        {sourceGateTimedOut ? (
+                            <div className="max-w-md space-y-3 text-left">
+                                <p>No se ha podido terminar la comprobación del trabajo pendiente.</p>
+                                <p className="text-xs font-normal text-slate-600">
+                                    Por seguridad, no se ha descartado ni confirmado ninguna venta. Vuelve y revisa el borrador antes de intentarlo otra vez.
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={() => window.history.back()}
+                                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+                                >
+                                    Volver sin modificar
+                                </button>
+                            </div>
+                        ) : (
+                            'Verificando el trabajo pendiente antes de abrir la operación seleccionada…'
+                        )}
                     </div>
                 </div>
             )}
@@ -6443,6 +6483,14 @@ export default function POS({
                             </p>
                         )}
                         <div className="mt-5 flex flex-wrap justify-end gap-2">
+                            <button
+                                type="button"
+                                disabled={savingPreviousSale}
+                                onClick={() => window.history.back()}
+                                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                Volver sin modificar
+                            </button>
                             <button
                                 type="button"
                                 disabled={savingPreviousSale || unsafePreviousSale}
