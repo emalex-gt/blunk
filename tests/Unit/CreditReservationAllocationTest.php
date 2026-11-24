@@ -14,4 +14,14 @@ class CreditReservationAllocationTest extends TestCase {
   $a=$e->allocate($s,'1.0000');$b=$e->allocate($s,'1.0000',[$a]);$c=$e->allocate($s,'1.0000',[$a,$b]);
   $this->assertSame('3.33',$a['net']);$this->assertSame('3.33',$b['net']);$this->assertSame('3.34',$c['net']);
  }
+ public function test_handles_decimal_quantities_and_full_discount(): void {
+  $e=new CreditReservationAllocation; $s=['quantity'=>'1.0005','gross'=>'0.02','line_discount'=>'0.01','general_discount'=>'0.01','net'=>'0.00'];
+  $a=$e->allocate($s,'0.5000'); $b=$e->allocate($s,'0.5005',[$a]);
+  $this->assertSame('0.00',$a['net']); $this->assertSame('0.00',$b['net']);
+  $this->assertGreaterThanOrEqual(0,(float)$a['gross']);
+ }
+ public function test_rejects_partial_quantity_above_available(): void {
+  $this->expectException(\InvalidArgumentException::class);
+  (new CreditReservationAllocation)->allocate(['quantity'=>'1.0000','gross'=>'1.00','line_discount'=>'0.00','general_discount'=>'0.00','net'=>'1.00'],'1.0001');
+ }
 }
