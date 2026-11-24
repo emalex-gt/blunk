@@ -15,19 +15,23 @@ final class CreditReservationInvoiceReadService
     }
 
     /** @return Collection<int, CreditReceiptLine> */
-    public function linesForInvoice(int $businessId, int $branchId, array $lineIds): Collection
+    public function linesForInvoice(int $businessId, int $branchId, array $lineIds, bool $lockForUpdate = false): Collection
     {
         return CreditReceiptLine::query()
             ->with([
                 'receipt:id,business_id,branch_id,customer_id,receipt_number,snapshot_version',
                 'product:id,business_id,name,allow_decimal_quantity',
-                'invoices' => fn ($query) => $query->whereNull('reversed_at')->orderBy('id'),
+                'invoices' => fn ($query) => $query
+                    ->whereNull('reversed_at')
+                    ->when($lockForUpdate, fn ($invoices) => $invoices->lockForUpdate())
+                    ->orderBy('id'),
             ])
             ->where('business_id', $businessId)
             ->where('branch_id', $branchId)
             ->whereIn('id', $lineIds)
             ->whereIn('status', ['pending', 'partially_invoiced'])
             ->where('qty_pending', '>', 0)
+            ->when($lockForUpdate, fn ($lines) => $lines->lockForUpdate())
             ->orderBy('id')
             ->get();
     }

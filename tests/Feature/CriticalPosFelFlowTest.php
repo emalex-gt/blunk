@@ -45,6 +45,7 @@ use App\Services\Fel\FelProviderRejectedException;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Fel\Providers\Digifact\DigifactReconciliationService;
 use App\Services\Fel\Providers\Digifact\DigifactNucJsonBuilder;
+use App\Services\Credits\CreditReservationInvoicePlanService;
 use App\Services\Fiscal\FiscalDocumentIntentService;
 use App\Support\BranchInventory;
 use App\Support\Credits;
@@ -1850,6 +1851,164 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringContainsString('creditInvoiceContractStatus', $source);
         $this->assertStringContainsString('creditInvoicePreviews', $source);
         $this->assertStringContainsString('Esta reserva utiliza el nuevo sistema de descuentos y su facturación todavía no está habilitada.', $source);
+    }
+
+    public function test_credit_reservation_invoice_plan_keeps_multiple_reservation_snapshots_separate(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['credits', 'discounts'], role: 'owner', enableCredits: true);
+        $branch = BranchInventory::defaultBranch($business->id);
+        $productA = $this->product($business, stock: 10, salePrice: 100);
+        $productB = $this->product($business, stock: 10, salePrice: 200);
+
+        $reservationA = $this->creditPayload($productA, 1);
+        $reservationA['items'][0]['line_discount_amount'] = 10;
+        $reservationA['items'][0]['line_discount_reason'] = 'Promoción A';
+        $reservationA['discount'] = ['type' => 'fixed', 'value' => 5, 'reason' => 'General A'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservationA)->assertSessionHasNoErrors();
+
+        $reservationB = $this->creditPayload($productB, 1);
+        $reservationB['items'][0]['line_discount_amount'] = 20;
+        $reservationB['items'][0]['line_discount_reason'] = 'Promoción B';
+        $reservationB['discount'] = ['type' => 'fixed', 'value' => 15, 'reason' => 'General B'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservationB)->assertSessionHasNoErrors();
+
+        $lines = CreditReceiptLine::query()->orderBy('id')->get();
+        $plan = app(CreditReservationInvoicePlanService::class)->prepare($business->id, $branch->id, [
+            ['credit_line_id' => $lines[0]->id, 'quantity' => '1.0000', 'unit_price' => '0.01'],
+            ['credit_line_id' => $lines[1]->id, 'quantity' => '1.0000', 'total' => '0.01'],
+        ]);
+
+        $this->assertSame('snapshot', $plan['lines'][0]['commercial_mode']);
+        $this->assertSame((int) $lines[0]->credit_receipt_id, $plan['lines'][0]['credit_receipt_id']);
+        $this->assertSame('100.00', $plan['lines'][0]['gross']);
+        $this->assertSame('10.00', $plan['lines'][0]['line_discount']);
+        $this->assertSame('5.00', $plan['lines'][0]['general_discount']);
+        $this->assertSame('85.00', $plan['lines'][0]['net']);
+        $this->assertSame((int) $lines[1]->credit_receipt_id, $plan['lines'][1]['credit_receipt_id']);
+        $this->assertSame('165.00', $plan['lines'][1]['net']);
+        $this->assertSame('300.00', $plan['totals']['gross']);
+        $this->assertSame('30.00', $plan['totals']['line_discount']);
+        $this->assertSame('20.00', $plan['totals']['general_discount']);
+        $this->assertSame('250.00', $plan['totals']['net']);
+        $this->assertSame('250.00', bcsub($plan['totals']['gross'], bcadd($plan['totals']['line_discount'], $plan['totals']['general_discount'], 2), 2));
+        $this->assertSame(0, CreditReceiptLineInvoice::query()->count());
+    }
+
+    public function test_credit_reservation_invoice_plan_is_decimal_exact_and_rejects_unavailable_snapshot_quantities(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['credits'], role: 'owner', enableCredits: true);
+        $branch = BranchInventory::defaultBranch($business->id);
+        $product = $this->product($business, stock: 10, salePrice: 42.15);
+        $product->update(['allow_decimal_quantity' => true]);
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['items'][0]['quantity'] = '1.0005';
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+        $line = CreditReceiptLine::query()->sole();
+
+        $plan = app(CreditReservationInvoicePlanService::class)->prepare($business->id, $branch->id, [
+            ['credit_line_id' => $line->id, 'quantity' => '0.5000'],
+        ]);
+        $this->assertSame('0.5', $plan['lines'][0]['quantity']);
+        $this->assertSame('21.07', $plan['lines'][0]['gross']);
+        $this->assertSame('21.07', $plan['lines'][0]['net']);
+
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        app(CreditReservationInvoicePlanService::class)->prepare($business->id, $branch->id, [
+            ['credit_line_id' => $line->id, 'quantity' => '1.0006'],
+        ]);
+    }
+
+    public function test_credit_reservation_invoice_plan_keeps_historical_lines_explicit_and_rejects_incomplete_snapshots(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['credits'], role: 'owner', enableCredits: true);
+        $branch = BranchInventory::defaultBranch($business->id);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $historical = $this->creditReservation($business, $branch, $product, 1);
+
+        $historicalPlan = app(CreditReservationInvoicePlanService::class)->prepare($business->id, $branch->id, [
+            ['credit_line_id' => $historical->id, 'quantity' => '1'],
+        ]);
+        $this->assertSame('historical', $historicalPlan['lines'][0]['commercial_mode']);
+        $this->assertNull($historicalPlan['lines'][0]['gross']);
+        $this->assertNull($historicalPlan['totals']);
+
+        $snapshot = $this->creditPayload($product, 1);
+        $this->actingAs($user)->post(route('credits.receipts.store'), $snapshot)->assertSessionHasNoErrors();
+        $line = CreditReceiptLine::query()->orderByDesc('id')->firstOrFail();
+        $sale = $this->invoiceSale($business);
+        CreditReceiptLineInvoice::query()->create([
+            'business_id' => $business->id,
+            'credit_receipt_line_id' => $line->id,
+            'sale_id' => $sale->id,
+            'quantity' => '0.5000',
+            'amount' => 50,
+        ]);
+        $line->update(['qty_invoiced' => '0.5000', 'qty_pending' => '0.5000', 'status' => 'partially_invoiced']);
+
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        app(CreditReservationInvoicePlanService::class)->prepare($business->id, $branch->id, [
+            ['credit_line_id' => $line->id, 'quantity' => '0.5000'],
+        ]);
+    }
+
+    public function test_credit_reservation_invoice_plan_uses_only_active_assignments_and_rejects_other_tenants_or_branches(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['credits', 'discounts'], role: 'owner', enableCredits: true);
+        $branch = BranchInventory::defaultBranch($business->id);
+        $product = $this->product($business, stock: 10, salePrice: 100);
+        $product->update(['allow_decimal_quantity' => true]);
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['items'][0]['line_discount_amount'] = 10;
+        $reservation['items'][0]['line_discount_reason'] = 'Promoción';
+        $reservation['discount'] = ['type' => 'fixed', 'value' => 5, 'reason' => 'General'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+        $line = CreditReceiptLine::query()->sole();
+        $sale = $this->invoiceSale($business);
+        CreditReceiptLineInvoice::query()->create([
+            'business_id' => $business->id,
+            'credit_receipt_line_id' => $line->id,
+            'sale_id' => $sale->id,
+            'quantity' => '0.5000',
+            'amount' => 42.50,
+            'subtotal_before_discount' => 50,
+            'line_discount_amount' => 5,
+            'general_discount_amount' => 2.50,
+            'total_after_discount' => 42.50,
+        ]);
+        $line->update(['qty_invoiced' => '0.5000', 'qty_pending' => '0.5000', 'status' => 'partially_invoiced']);
+
+        $plan = app(CreditReservationInvoicePlanService::class)->prepare($business->id, $branch->id, [
+            ['credit_line_id' => $line->id, 'quantity' => '0.5'],
+        ]);
+        $this->assertSame('50.00', $plan['lines'][0]['gross']);
+        $this->assertSame('5.00', $plan['lines'][0]['line_discount']);
+        $this->assertSame('2.50', $plan['lines'][0]['general_discount']);
+        $this->assertSame('42.50', $plan['lines'][0]['net']);
+
+        [$otherBusiness] = $this->tenant(modules: ['credits'], role: 'owner', enableCredits: true);
+        try {
+            app(CreditReservationInvoicePlanService::class)->prepare($otherBusiness->id, BranchInventory::defaultBranch($otherBusiness->id)->id, [
+                ['credit_line_id' => $line->id, 'quantity' => '0.5'],
+            ]);
+            $this->fail('A line from another tenant must not be available to the invoice plan.');
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $this->assertArrayHasKey('lines', $exception->errors());
+        }
+
+        $otherBranch = Branch::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Otra sucursal',
+            'code' => 'OTRA-'.uniqid(),
+            'is_active' => true,
+        ]);
+        try {
+            app(CreditReservationInvoicePlanService::class)->prepare($business->id, $otherBranch->id, [
+                ['credit_line_id' => $line->id, 'quantity' => '0.5'],
+            ]);
+            $this->fail('A line from another branch must not be available to the invoice plan.');
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $this->assertArrayHasKey('lines', $exception->errors());
+        }
     }
 
     public function test_recent_fel_nit_flow_files_do_not_contain_mojibake_markers(): void
