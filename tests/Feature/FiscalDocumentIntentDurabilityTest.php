@@ -5,6 +5,10 @@ namespace Tests\Feature;
 use App\Models\Business;
 use App\Models\CashMovement;
 use App\Models\CashRegisterSession;
+use App\Models\CreditReceipt;
+use App\Models\CreditReceiptLine;
+use App\Models\CreditReceiptLineInvoice;
+use App\Models\Customer;
 use App\Models\FelIncident;
 use App\Models\FiscalDocumentIntent;
 use App\Models\OperationIdempotencyKey;
@@ -20,6 +24,8 @@ use App\Models\TenantFelSetting;
 use App\Models\TenantModule;
 use App\Models\TenantSetting;
 use App\Models\User;
+use App\Services\Credits\CreditReservationInvoiceAllocationService;
+use App\Services\Credits\CreditReservationInvoicePlanService;
 use App\Services\Fel\FelProviderRejectedException;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Fel\Providers\Digifact\DigifactReconciliationService;
@@ -27,6 +33,8 @@ use App\Services\Fiscal\FiscalDocumentIntentService;
 use App\Support\BranchInventory;
 use App\Support\Permissions;
 use Illuminate\Foundation\Testing\DatabaseTruncation;
+use Illuminate\Database\QueryException;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -55,6 +63,145 @@ class FiscalDocumentIntentDurabilityTest extends TestCase
         Mockery::close();
 
         parent::tearDown();
+    }
+
+    /**
+     * Two independent PostgreSQL sessions exercise the same snapshot line.
+     * The second session cannot lock it while the first allocation is open;
+     * after commit it must revalidate and reject the exhausted quantity.
+     * This tests the services and row-lock boundary, not an HTTP/worker race.
+     */
+    public function test_independent_postgresql_sessions_serialize_discounted_reservation_consumption(): void
+    {
+        [$business, $user, $product, $branch] = $this->context();
+        $customer = Customer::query()->create([
+            'business_id' => $business->id,
+            'name' => 'Cliente concurrencia',
+            'country' => 'GT',
+            'doc_type' => 'NIT',
+            'doc_number' => '1234567',
+        ]);
+        $receipt = CreditReceipt::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'customer_name' => $customer->name,
+            'customer_doc_type' => $customer->doc_type,
+            'customer_doc_number' => $customer->doc_number,
+            'receipt_number' => 1,
+            'status' => 'pending',
+            'subtotal' => '58.45',
+            'discount_amount' => '0.45',
+            'discount_type' => 'fixed',
+            'discount_value' => '0.45',
+            'snapshot_version' => 1,
+            'total' => '58.00',
+            'pending_total' => '58.00',
+            'created_by' => $user->id,
+        ]);
+        $line = CreditReceiptLine::query()->create([
+            'business_id' => $business->id,
+            'branch_id' => $branch->id,
+            'credit_receipt_id' => $receipt->id,
+            'product_id' => $product->id,
+            'product_name' => $product->name,
+            'quantity' => '1.0000',
+            'qty_reserved' => '1.0000',
+            'qty_invoiced' => '0.0000',
+            'qty_cancelled' => '0.0000',
+            'qty_pending' => '1.0000',
+            'unit_price' => '58.45',
+            'discount_amount' => '0.45',
+            'subtotal_before_discount' => '58.45',
+            'line_discount_amount' => '0.00',
+            'general_discount_amount' => '0.45',
+            'total_after_discount' => '58.00',
+            'line_total' => '58.00',
+            'pending_total' => '58.00',
+            'status' => 'pending',
+        ]);
+        $observer = $this->independentObserverConnection();
+        $this->assertNotSame(DB::connection()->getPdo(), $observer->getPdo());
+
+        DB::transaction(function () use ($business, $user, $product, $branch, $line, $observer): void {
+            $plan = app(CreditReservationInvoicePlanService::class)->prepare(
+                $business->id,
+                $branch->id,
+                [['credit_line_id' => $line->id, 'quantity' => '1.0000']],
+                lockForUpdate: true,
+            );
+            $this->assertSame('58.00', $plan['totals']['net']);
+
+            // An independent checkout cannot obtain the locked reservation
+            // line before the first transaction has committed its allocation.
+            try {
+                $observer->transaction(function () use ($observer, $line): void {
+                    $observer->select('SELECT id FROM credit_receipt_lines WHERE id = ? FOR UPDATE NOWAIT', [$line->id]);
+                });
+                $this->fail('La segunda conexión adquirió la reserva mientras estaba bloqueada.');
+            } catch (QueryException $exception) {
+                $this->assertSame('55P03', (string) ($exception->errorInfo[0] ?? $exception->getCode()));
+            }
+
+            $sale = Sale::query()->create([
+                'business_id' => $business->id,
+                'branch_id' => $branch->id,
+                'customer_id' => $line->receipt->customer_id,
+                'customer_name' => $line->receipt->customer_name,
+                'total' => '58.00',
+                'payment_method' => 'cash',
+                'payment_status' => 'paid',
+                'amount_paid' => '58.00',
+                'is_credit_sale' => false,
+                'document_type' => 'receipt',
+                'status' => 'completed',
+                'created_by' => $user->id,
+            ]);
+            $item = SaleItem::query()->create([
+                'business_id' => $business->id,
+                'sale_id' => $sale->id,
+                'product_id' => $product->id,
+                'product_name' => $product->name,
+                'quantity' => '1.0000',
+                'unit_price' => '58.45',
+                'unit_cost' => '0.00',
+                'total' => '58.00',
+                'total_before_discount' => '58.45',
+                'line_discount_amount' => '0.00',
+                'general_discount_amount' => '0.45',
+                'total_after_discount' => '58.00',
+            ]);
+            app(CreditReservationInvoiceAllocationService::class)->persist($sale, $item, $line, $plan['lines'][0]);
+        });
+
+        // The second connection now sees committed quantities, not a stale
+        // preview or an uncommitted allocation from the first connection.
+        $this->assertSame('0.0000', (string) $observer->table('credit_receipt_lines')->where('id', $line->id)->value('qty_pending'));
+        $this->assertSame(1, $observer->table('credit_receipt_line_invoice')->where('credit_receipt_line_id', $line->id)->whereNull('reversed_at')->count());
+
+        $defaultConnection = DB::getDefaultConnection();
+        DB::setDefaultConnection('pgsql_fel_observer');
+        try {
+            try {
+                $observer->transaction(fn () => app(CreditReservationInvoicePlanService::class)->prepare(
+                    $business->id,
+                    $branch->id,
+                    [['credit_line_id' => $line->id, 'quantity' => '1.0000']],
+                    lockForUpdate: true,
+                ));
+                $this->fail('La segunda conexión volvió a consumir una reserva agotada.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('lines', $exception->errors());
+            }
+        } finally {
+            DB::setDefaultConnection($defaultConnection);
+        }
+
+        $this->assertDatabaseCount('sales', 1);
+        $this->assertDatabaseCount('sale_items', 1);
+        $this->assertDatabaseCount('credit_receipt_line_invoice', 1);
+        $this->assertSame('58.00', (string) CreditReceiptLineInvoice::query()->sole()->total_after_discount);
+        $this->assertSame('0.0000', (string) $line->fresh()->qty_pending);
     }
 
     public function test_pending_intent_is_visible_to_an_independent_postgresql_connection_before_digifact_returns(): void
