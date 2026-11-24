@@ -23,6 +23,7 @@ class CreditReceiptLine extends Model
         'qty_pending',
         'unit_price',
         'discount_amount',
+        'subtotal_before_discount','line_discount_amount','general_discount_amount','total_after_discount','line_discount_reason',
         'line_total',
         'pending_total',
         'status',
@@ -36,6 +37,7 @@ class CreditReceiptLine extends Model
         'qty_pending' => 'decimal:4',
         'unit_price' => 'decimal:2',
         'discount_amount' => 'decimal:2',
+        'subtotal_before_discount' => 'decimal:2','line_discount_amount' => 'decimal:2','general_discount_amount' => 'decimal:2','total_after_discount' => 'decimal:2',
         'line_total' => 'decimal:2',
         'pending_total' => 'decimal:2',
     ];

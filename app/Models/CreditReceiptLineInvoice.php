@@ -16,12 +16,14 @@ class CreditReceiptLineInvoice extends Model
         'sale_line_id',
         'quantity',
         'amount',
+        'subtotal_before_discount','line_discount_amount','general_discount_amount','total_after_discount',
         'reversed_at',
     ];
 
     protected $casts = [
         'quantity' => 'decimal:4',
         'amount' => 'decimal:2',
+        'subtotal_before_discount' => 'decimal:2','line_discount_amount' => 'decimal:2','general_discount_amount' => 'decimal:2','total_after_discount' => 'decimal:2',
         'reversed_at' => 'datetime',
     ];
 
