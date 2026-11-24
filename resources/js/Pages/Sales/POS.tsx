@@ -537,6 +537,25 @@ async function readJsonResponse(response: globalThis.Response) {
     }
 }
 
+// Inertia navigation may retain an older HTML CSRF meta tag. Prefer Laravel's
+// current XSRF-TOKEN cookie for POS JSON POST requests, as Axios already does.
+function posCsrfHeaders(): Record<string, string> {
+    const cookie = document.cookie.split(';').map((part) => part.trim())
+        .find((part) => part.startsWith('XSRF-TOKEN='));
+
+    if (cookie) {
+        const value = cookie.slice('XSRF-TOKEN='.length);
+        try {
+            return { 'X-XSRF-TOKEN': decodeURIComponent(value) };
+        } catch {
+            return { 'X-XSRF-TOKEN': value };
+        }
+    }
+
+    const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content;
+    return token ? { 'X-CSRF-TOKEN': token } : {};
+}
+
 function cleanPaymentDetails(method: string, details: PaymentDetails): Partial<PaymentDetails> {
     const allowed: Record<string, (keyof PaymentDetails)[]> = {
         card: ['authorization'],
@@ -1484,7 +1503,6 @@ export default function POS({
             timers.push(window.setTimeout(() => {
                 const controller = new AbortController();
                 controllers.push(controller);
-                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
                 void fetch(route('credits.invoice-preview'), {
                     method: 'POST',
                     credentials: 'same-origin',
@@ -1492,7 +1510,7 @@ export default function POS({
                     headers: {
                         Accept: 'application/json',
                         'Content-Type': 'application/json',
-                        ...(csrfToken ? { 'X-CSRF-TOKEN': csrfToken } : {}),
+                        ...posCsrfHeaders(),
                     },
                     body: JSON.stringify({ line_id: creditLineId, quantity }),
                 })
