@@ -4892,8 +4892,8 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertSessionHasNoErrors();
 
         $line->refresh();
-        $this->assertSame(2, $line->qty_invoiced);
-        $this->assertSame(0, $line->qty_pending);
+        $this->assertSame('2.0000', (string) $line->qty_invoiced);
+        $this->assertSame('0.0000', (string) $line->qty_pending);
         $this->assertSame('invoiced', $line->status);
         $this->assertDatabaseHas('credit_receipt_line_invoice', [
             'credit_receipt_line_id' => $line->id,
@@ -4901,6 +4901,156 @@ class CriticalPosFelFlowTest extends TestCase
             'amount' => 200,
         ]);
         $this->assertSame(8.0, (float) ProductBranchStock::query()->where('product_id', $product->id)->value('stock'));
+    }
+
+    public function test_ordinary_credit_reservation_invoice_uses_the_discount_snapshot_and_persists_its_allocation(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits', 'discounts'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 58.45);
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['discount'] = ['type' => 'fixed', 'value' => 0.45, 'reason' => 'Ajuste comercial'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+
+        $line = CreditReceiptLine::query()->sole();
+        $customer = $line->receipt()->firstOrFail()->customer()->firstOrFail();
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $product,
+            quantity: 1,
+            total: 58.00,
+            customer: [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'doc_type' => $customer->doc_type,
+                'doc_number' => $customer->doc_number,
+                'country' => $customer->country,
+            ],
+            itemOverrides: ['credit_line_id' => $line->id],
+        ))->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->sole();
+        $saleItem = $sale->items()->sole();
+        $allocation = CreditReceiptLineInvoice::query()->sole();
+        $this->assertSame('58.00', (string) $sale->total);
+        $this->assertSame('58.45', (string) $saleItem->total_before_discount);
+        $this->assertSame('0.00', (string) $saleItem->line_discount_amount);
+        $this->assertSame('0.45', (string) $saleItem->general_discount_amount);
+        $this->assertSame('58.00', (string) $saleItem->total_after_discount);
+        $this->assertSame('58.45', (string) $allocation->subtotal_before_discount);
+        $this->assertSame('0.45', (string) $allocation->general_discount_amount);
+        $this->assertSame('58.00', (string) $allocation->total_after_discount);
+        $this->assertSame('0.0000', (string) $line->fresh()->qty_pending);
+    }
+
+    public function test_ordinary_credit_reservation_invoice_keeps_partial_decimal_snapshot_allocations_exact(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits'], role: 'owner', enableCredits: true);
+        $product = $this->product($business, stock: 10, salePrice: 42.15);
+        $product->update(['allow_decimal_quantity' => true]);
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['items'][0]['quantity'] = '1.0005';
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+
+        $line = CreditReceiptLine::query()->sole();
+        $customer = $line->receipt()->firstOrFail()->customer()->firstOrFail();
+        $this->openCashRegister($business, $user);
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $product,
+            quantity: '0.5000',
+            total: 21.07,
+            customer: [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'doc_type' => $customer->doc_type,
+                'doc_number' => $customer->doc_number,
+                'country' => $customer->country,
+            ],
+            itemOverrides: ['credit_line_id' => $line->id],
+        ))->assertSessionHasNoErrors();
+
+        $allocation = CreditReceiptLineInvoice::query()->sole();
+        $this->assertSame('0.5000', (string) $allocation->quantity);
+        $this->assertSame('21.07', (string) $allocation->subtotal_before_discount);
+        $this->assertSame('21.07', (string) $allocation->total_after_discount);
+        $this->assertSame('0.5005', (string) $line->fresh()->qty_pending);
+        $this->assertSame('21.10', (string) $line->fresh()->pending_total);
+    }
+
+    public function test_ordinary_credit_reservation_invoice_keeps_multiple_discounted_reservations_separate(): void
+    {
+        [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits', 'discounts'], role: 'owner', enableCredits: true);
+        $productA = $this->product($business, stock: 10, salePrice: 100);
+        $productB = $this->product($business, stock: 10, salePrice: 200);
+        $reservationA = $this->creditPayload($productA, 1);
+        $reservationA['items'][0]['line_discount_amount'] = 10;
+        $reservationA['items'][0]['line_discount_reason'] = 'Promoción A';
+        $reservationA['discount'] = ['type' => 'fixed', 'value' => 5, 'reason' => 'General A'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservationA)->assertSessionHasNoErrors();
+        $reservationB = $this->creditPayload($productB, 1);
+        $reservationB['items'][0]['line_discount_amount'] = 20;
+        $reservationB['items'][0]['line_discount_reason'] = 'Promoción B';
+        $reservationB['discount'] = ['type' => 'fixed', 'value' => 15, 'reason' => 'General B'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservationB)->assertSessionHasNoErrors();
+
+        $lines = CreditReceiptLine::query()->orderBy('id')->get();
+        $customer = $lines->first()->receipt()->firstOrFail()->customer()->firstOrFail();
+        $this->openCashRegister($business, $user);
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $productA,
+            quantity: 1,
+            total: 250,
+            customer: [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'doc_type' => $customer->doc_type,
+                'doc_number' => $customer->doc_number,
+                'country' => $customer->country,
+            ],
+            items: [
+                ['product' => $productA, 'quantity' => 1, 'credit_line_id' => $lines[0]->id],
+                ['product' => $productB, 'quantity' => 1, 'credit_line_id' => $lines[1]->id],
+            ],
+        ))->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->sole();
+        $this->assertSame('250.00', (string) $sale->total);
+        $this->assertCount(2, $sale->items);
+        $this->assertDatabaseHas('credit_receipt_line_invoice', ['credit_receipt_line_id' => $lines[0]->id, 'sale_id' => $sale->id, 'total_after_discount' => 85]);
+        $this->assertDatabaseHas('credit_receipt_line_invoice', ['credit_receipt_line_id' => $lines[1]->id, 'sale_id' => $sale->id, 'total_after_discount' => 165]);
+    }
+
+    public function test_discounted_credit_reservation_snapshot_is_rejected_before_a_fel_intent_is_created(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'cash_register', 'credits', 'discounts', 'fel_gt'], role: 'owner', allowInvoices: true, enableCredits: true);
+        $this->felSettings($business);
+        $this->setConfirmedFelBranchLocation($business);
+        $product = $this->product($business, stock: 10, salePrice: 58.45);
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['discount'] = ['type' => 'fixed', 'value' => 0.45, 'reason' => 'Ajuste comercial'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+        $line = CreditReceiptLine::query()->sole();
+        $customer = $line->receipt()->firstOrFail()->customer()->firstOrFail();
+        $this->openCashRegister($business, $user);
+
+        $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $this->salePayload(
+            $product,
+            quantity: 1,
+            total: 58,
+            documentType: 'invoice',
+            customer: [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'doc_type' => $customer->doc_type,
+                'doc_number' => $customer->doc_number,
+                'country' => $customer->country,
+            ],
+            itemOverrides: ['credit_line_id' => $line->id],
+        ))->assertSessionHasErrors('document_type');
+
+        $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('fiscal_document_intents', 0);
+        $this->assertSame('1.0000', (string) $line->fresh()->qty_pending);
     }
 
     public function test_decimal_credit_reservation_is_billed_partially_without_losing_pending_stock(): void
@@ -5014,7 +5164,7 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('2.6250', $line->fresh()->qty_pending);
     }
 
-    public function test_unknown_decimal_credit_reservation_fel_intent_keeps_the_reservation_pending(): void
+    public function test_new_decimal_credit_reservation_snapshot_is_rejected_before_fel_intent_creation(): void
     {
         [$business, $user] = $this->tenant(
             country: 'GT',
@@ -5034,11 +5184,6 @@ class CriticalPosFelFlowTest extends TestCase
         $line = CreditReceiptLine::query()->sole();
         $customer = CreditReceipt::query()->findOrFail($line->credit_receipt_id)->customer()->firstOrFail();
         $this->openCashRegister($business, $user);
-        $digifact = Mockery::mock(DigifactInvoiceService::class);
-        $digifact->shouldReceive('buildIntentPayload')->once()->andReturn(['Header' => ['IssuedDateTime' => now('America/Guatemala')->format('Y-m-d\\TH:i:sP')]]);
-        $digifact->shouldReceive('certifyIntent')->once()->andThrow(new FelException('Tiempo de espera de Digifact.'));
-        $this->app->instance(DigifactInvoiceService::class, $digifact);
-
         $this->actingAs($user)->from(route('sales.create'))->post(route('sales.store'), $this->salePayload(
             $product,
             quantity: '1.1250',
@@ -5052,13 +5197,10 @@ class CriticalPosFelFlowTest extends TestCase
                 'country' => $customer->country,
             ],
             itemOverrides: ['credit_line_id' => $line->id],
-        ))->assertSessionHasNoErrors()->assertSessionHas('warning');
+        ))->assertSessionHasErrors('document_type');
 
-        $intent = FiscalDocumentIntent::query()->sole();
-        $this->assertSame(FiscalDocumentIntent::UNKNOWN, $intent->status);
-        $this->assertSame(4, $intent->operation_payload['credit_line_associations']['version']);
-        $this->assertSame('1.125', $intent->operation_payload['credit_line_associations']['by_item_index'][0]['quantity']);
         $this->assertDatabaseCount('sales', 0);
+        $this->assertDatabaseCount('fiscal_document_intents', 0);
         $this->assertSame('3.7500', $line->fresh()->qty_pending);
         $this->assertSame('3.7500', $line->fresh()->qty_reserved);
     }

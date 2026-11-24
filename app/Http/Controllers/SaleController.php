@@ -30,6 +30,8 @@ use App\Services\Fel\Providers\Digifact\DigifactClient;
 use App\Services\Fel\Providers\Digifact\DigifactInvoiceService;
 use App\Services\Fel\Providers\Digifact\DigifactNit;
 use App\Services\Fiscal\FiscalDocumentIntentService;
+use App\Services\Credits\CreditReservationInvoiceAllocationService;
+use App\Services\Credits\CreditReservationInvoicePlanService;
 use App\Support\CashRegister;
 use App\Support\CashRegisterClosingCorrections;
 use App\Support\AccountsReceivable;
@@ -599,8 +601,8 @@ class SaleController extends Controller
                 'pos_sale',
                 $data['idempotency_key'],
                 $idempotencyPayload,
-                function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $creditCustomerId, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, $posTraceId, &$certifiedDocument, &$pendingFelReconciliation) {
-            return DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $creditCustomerId, $usesResilientFiscalIntent, $saleRequestStarted, $saleTransactionStarted, $posTraceId, &$certifiedDocument, &$pendingFelReconciliation) {
+                function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $creditCustomerId, $usesResilientFiscalIntent, $hasCreditReservationLine, $saleRequestStarted, $saleTransactionStarted, $posTraceId, &$certifiedDocument, &$pendingFelReconciliation) {
+            return DB::transaction(function () use ($request, $data, $business, $felSettings, $activeBranch, $isCreditSale, $creditCustomerId, $usesResilientFiscalIntent, $hasCreditReservationLine, $saleRequestStarted, $saleTransactionStarted, $posTraceId, &$certifiedDocument, &$pendingFelReconciliation) {
             $businessId = currentBusinessId();
             $branch = $activeBranch;
             $quotation = filled($data['quotation_id'] ?? null)
@@ -659,6 +661,38 @@ class SaleController extends Controller
                 }
             }
 
+            $creditReservationPlanByLine = collect();
+            if ($hasCreditReservationLine) {
+                try {
+                    $creditReservationPlan = app(CreditReservationInvoicePlanService::class)->prepare(
+                        $businessId,
+                        $branch->id,
+                        collect($data['items'])
+                            ->filter(fn (array $item): bool => filled($item['credit_line_id'] ?? null))
+                            ->map(fn (array $item): array => [
+                                'credit_line_id' => $item['credit_line_id'],
+                                'quantity' => $item['quantity'],
+                            ])
+                            ->values()
+                            ->all(),
+                        lockForUpdate: true,
+                    );
+                } catch (ValidationException $exception) {
+                    $message = collect($exception->errors())->flatten()->first()
+                        ?? 'Una línea de reserva no está disponible para facturar.';
+                    throw ValidationException::withMessages(['items' => $message]);
+                }
+                $creditReservationPlanByLine = collect($creditReservationPlan['lines'])->keyBy('credit_line_id');
+
+                if ($usesResilientFiscalIntent && $creditReservationPlanByLine->contains(
+                    fn (array $line): bool => $line['commercial_mode'] === 'snapshot'
+                )) {
+                    throw ValidationException::withMessages([
+                        'document_type' => 'La facturación FEL de reservas con snapshots comerciales todavía no está habilitada.',
+                    ]);
+                }
+            }
+
             $saleAttributes = [
                 'business_id' => $businessId,
                 'business_number' => $usesResilientFiscalIntent ? null : BusinessCounter::next($businessId, 'sales'),
@@ -694,6 +728,7 @@ class SaleController extends Controller
 
             foreach ($data['items'] as $itemIndex => $item) {
                 $creditLine = null;
+                $creditPlanLine = null;
                 $product = Product::query()
                     ->where('business_id', $businessId)
                     ->where('is_active', true)
@@ -742,6 +777,15 @@ class SaleController extends Controller
                         ]);
                     }
 
+                    $creditPlanLine = $creditReservationPlanByLine->get((int) $creditLine->id);
+                    if ($creditPlanLine
+                        && ((int) $creditPlanLine['product_id'] !== (int) $product->id
+                            || ProductQuantityPolicy::compare($creditPlanLine['quantity'], $quantity) !== 0)) {
+                        throw ValidationException::withMessages([
+                            'items' => 'La reserva cambió mientras se preparaba la venta. Vuelve a intentarlo.',
+                        ]);
+                    }
+
                     $creditLineId = (int) $creditLine->id;
                     $creditQuantity = $quantity;
                     $requestedByCreditLine[$creditLineId] = bcadd(
@@ -769,13 +813,25 @@ class SaleController extends Controller
                 $trustedQuotationLine = $quotation
                     ? $this->trustedQuotationLine($quotation, $item, $usedQuotationItemIds)
                     : null;
-                $resolvedPrice = $trustedQuotationLine
-                    ? $this->quotedLinePrice($trustedQuotationLine)
-                    : $this->resolveLinePrice($request, $product, $item, $customer, $branch->id, $creditLine);
+                $resolvedPrice = $creditPlanLine && $creditPlanLine['commercial_mode'] === 'snapshot'
+                    ? [
+                        'unit_price' => (float) $creditPlanLine['unit_price'],
+                        'original_price' => (float) $creditPlanLine['unit_price'],
+                        'price_type_id' => null,
+                        'price_source' => 'credit_reservation',
+                        'manual_price' => false,
+                    ]
+                    : ($trustedQuotationLine
+                        ? $this->quotedLinePrice($trustedQuotationLine)
+                        : $this->resolveLinePrice($request, $product, $item, $customer, $branch->id, $creditLine));
 
                 $unitPrice = $resolvedPrice['unit_price'];
-                $lineTotal = $this->quantityLineAmount($unitPrice, $quantity);
-                $lineDiscount = $this->resolveLineDiscount($item, $lineTotal);
+                $lineTotal = $creditPlanLine && $creditPlanLine['commercial_mode'] === 'snapshot'
+                    ? (float) $creditPlanLine['gross']
+                    : $this->quantityLineAmount($unitPrice, $quantity);
+                $lineDiscount = $creditPlanLine && $creditPlanLine['commercial_mode'] === 'snapshot'
+                    ? ['amount' => (float) $creditPlanLine['line_discount'], 'reason' => null]
+                    : $this->resolveLineDiscount($item, $lineTotal);
 
                 if ($resolvedPrice['manual_price'] && $lineDiscount['amount'] > 0) {
                     $effectiveUnitPrice = round(($lineTotal - $lineDiscount['amount']) / (float) $quantity, 2);
@@ -801,6 +857,7 @@ class SaleController extends Controller
                     'line_total_after_line_discount' => round($lineTotal - $lineDiscount['amount'], 2),
                     'credit_line' => $creditLine,
                     'credit_quantity' => $creditQuantity,
+                    'credit_plan_line' => $creditPlanLine,
                 ];
             }
 
@@ -821,11 +878,21 @@ class SaleController extends Controller
             }
 
             $subtotalAfterLineDiscount = round(collect($saleLines)->sum('line_total_after_line_discount'), 2);
+            $snapshotGeneralDiscount = round(collect($saleLines)->sum(
+                fn (array $line): float => $line['credit_plan_line'] && $line['credit_plan_line']['commercial_mode'] === 'snapshot'
+                    ? (float) $line['credit_plan_line']['general_discount']
+                    : 0,
+            ), 2);
+            $discountEligibleLines = array_values(array_filter(
+                $saleLines,
+                fn (array $line): bool => ! $line['credit_plan_line'] || $line['credit_plan_line']['commercial_mode'] !== 'snapshot',
+            ));
+            $discountEligibleSubtotal = round(collect($discountEligibleLines)->sum('line_total_after_line_discount'), 2);
 
             $trustedDiscount = $this->trustedQuotationDiscount(
                 $quotation,
                 $data,
-                $subtotalAfterLineDiscount
+                $discountEligibleSubtotal
             );
 
             if ($quotationHasLineDiscounts && $trustedDiscount === null) {
@@ -838,11 +905,18 @@ class SaleController extends Controller
                 ?? $this->resolveSaleDiscount(
                     $request,
                     $data['discount'] ?? null,
-                    $subtotalAfterLineDiscount
+                    $discountEligibleSubtotal
                 );
 
-            $generalLineDiscounts = $this->distributeDiscount($saleLines, $discount['amount'], $subtotalAfterLineDiscount);
-            $total = round($subtotalAfterLineDiscount - $discount['amount'], 2);
+            $generalLineDiscounts = array_fill(0, count($saleLines), 0.0);
+            $eligibleGeneralDiscounts = $this->distributeDiscount($discountEligibleLines, $discount['amount'], $discountEligibleSubtotal);
+            $eligibleIndex = 0;
+            foreach ($saleLines as $index => $line) {
+                if (! $line['credit_plan_line'] || $line['credit_plan_line']['commercial_mode'] !== 'snapshot') {
+                    $generalLineDiscounts[$index] = $eligibleGeneralDiscounts[$eligibleIndex++] ?? 0.0;
+                }
+            }
+            $total = round($subtotalAfterLineDiscount - $snapshotGeneralDiscount - $discount['amount'], 2);
             $isCfInvoice = $this->isFinalConsumerSaleData($data['customer'] ?? null, $customer, $customerSnapshot);
             $shouldBlockCfLimit = $business->country === 'GT'
                 && ($data['document_type'] ?? null) === 'invoice'
@@ -897,9 +971,19 @@ class SaleController extends Controller
             foreach ($saleLines as $index => $line) {
                 /** @var Product $product */
                 $product = $line['product'];
-                $generalLineDiscount = $generalLineDiscounts[$index] ?? 0.0;
-                $lineDiscount = round($line['line_discount']['amount'] + $generalLineDiscount, 2);
-                $lineTotalAfterDiscount = round($line['line_total'] - $lineDiscount, 2);
+                $snapshotPlanLine = $line['credit_plan_line']
+                    && $line['credit_plan_line']['commercial_mode'] === 'snapshot'
+                    ? $line['credit_plan_line']
+                    : null;
+                $generalLineDiscount = $snapshotPlanLine
+                    ? (float) $snapshotPlanLine['general_discount']
+                    : ($generalLineDiscounts[$index] ?? 0.0);
+                $lineDiscount = $snapshotPlanLine
+                    ? (float) bcadd($snapshotPlanLine['line_discount'], $snapshotPlanLine['general_discount'], 2)
+                    : round($line['line_discount']['amount'] + $generalLineDiscount, 2);
+                $lineTotalAfterDiscount = $snapshotPlanLine
+                    ? (float) $snapshotPlanLine['net']
+                    : round($line['line_total'] - $lineDiscount, 2);
                 $unitCost = round((float) $product->cost_price, 4);
                 $totalCost = $this->quantityLineAmount($unitCost, $line['quantity']);
 
@@ -918,7 +1002,9 @@ class SaleController extends Controller
                     'profit_amount' => round($lineTotalAfterDiscount - $totalCost, 2),
                     'total' => $lineTotalAfterDiscount,
                     'discount_amount' => $lineDiscount,
-                    'line_discount_amount' => $line['line_discount']['amount'],
+                    'line_discount_amount' => $snapshotPlanLine
+                        ? (float) $snapshotPlanLine['line_discount']
+                        : $line['line_discount']['amount'],
                     'line_discount_reason' => $line['line_discount']['reason'],
                     'general_discount_amount' => $generalLineDiscount,
                     'total_before_discount' => $line['line_total'],
@@ -950,21 +1036,30 @@ class SaleController extends Controller
                 if ($line['credit_line']) {
                     /** @var CreditReceiptLine $creditLine */
                     $creditLine = $line['credit_line'];
-                    $creditQuantity = ProductQuantityPolicy::canonical($line['credit_quantity']);
-                    $creditLine->update([
-                        'qty_invoiced' => bcadd((string) $creditLine->qty_invoiced, $creditQuantity, ProductQuantityPolicy::SCALE),
-                    ]);
-                    $creditLine = Credits::refreshLine($creditLine->refresh());
-                    Credits::refreshReceipt($creditLine->receipt);
+                    if ($snapshotPlanLine) {
+                        app(CreditReservationInvoiceAllocationService::class)->persist(
+                            $sale,
+                            $saleItem,
+                            $creditLine,
+                            $snapshotPlanLine,
+                        );
+                    } else {
+                        $creditQuantity = ProductQuantityPolicy::canonical($line['credit_quantity']);
+                        $creditLine->update([
+                            'qty_invoiced' => bcadd((string) $creditLine->qty_invoiced, $creditQuantity, ProductQuantityPolicy::SCALE),
+                        ]);
+                        $creditLine = Credits::refreshLine($creditLine->refresh());
+                        Credits::refreshReceipt($creditLine->receipt);
 
-                    CreditReceiptLineInvoice::query()->create([
-                        'business_id' => $businessId,
-                        'credit_receipt_line_id' => $creditLine->id,
-                        'sale_id' => $sale->id,
-                        'sale_line_id' => $saleItem->id,
-                        'quantity' => $creditQuantity,
-                        'amount' => $this->creditLineInvoiceAmount($lineTotalAfterDiscount, $creditQuantity, $line['quantity']),
-                    ]);
+                        CreditReceiptLineInvoice::query()->create([
+                            'business_id' => $businessId,
+                            'credit_receipt_line_id' => $creditLine->id,
+                            'sale_id' => $sale->id,
+                            'sale_line_id' => $saleItem->id,
+                            'quantity' => $creditQuantity,
+                            'amount' => $this->creditLineInvoiceAmount($lineTotalAfterDiscount, $creditQuantity, $line['quantity']),
+                        ]);
+                    }
                 }
                 }
             }
