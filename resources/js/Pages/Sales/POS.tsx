@@ -1883,19 +1883,6 @@ export default function POS({
 
     const subtotalBeforeDiscount = useMemo(() => cartSubtotal(cart), [cart]);
     const lineDiscountTotal = useMemo(() => cartLineDiscountTotal(cart), [cart]);
-    const subtotalAfterLineDiscount = useMemo(() => cartSubtotalAfterLineDiscount(cart), [cart]);
-    const activeDiscountError = useMemo(
-        () => discountError(discount, subtotalAfterLineDiscount),
-        [discount, subtotalAfterLineDiscount],
-    );
-    const discountAmount = useMemo(
-        () => activeDiscountError ? 0 : calculateDiscountAmount(discount, subtotalAfterLineDiscount),
-        [activeDiscountError, discount, subtotalAfterLineDiscount],
-    );
-    const total = useMemo(
-        () => roundMoney(Math.max(0, subtotalAfterLineDiscount - discountAmount)),
-        [discountAmount, subtotalAfterLineDiscount],
-    );
     const creditInvoiceCommercialFor = useCallback((item: CartItem): CreditReservationCommercial | null => {
         const creditLineId = item.credit_line_id;
         if (creditLineId === null || creditLineId === undefined) {
@@ -1919,31 +1906,45 @@ export default function POS({
         const preview = creditInvoicePreviews[creditLineId];
         return preview?.status === 'ready' && preview.quantity === quantity ? preview.commercial : null;
     }, [creditInvoiceContracts, creditInvoicePreviews]);
+    const snapshotCreditItems = useMemo(
+        () => cart.filter((item) => item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1),
+        [cart, creditInvoiceContracts],
+    );
+    const hasNewCreditReservationSnapshot = snapshotCreditItems.length > 0;
     const creditInvoiceTotals = useMemo(() => {
-        const snapshotLines = cart.filter((item) => {
-            const contract = item.credit_line_id ? creditInvoiceContracts[item.credit_line_id] : null;
-            return contract?.snapshot_version === 1 && contract.commercial.monetary_allocation_state === 'complete';
-        });
-        if (snapshotLines.length === 0) {
+        if (snapshotCreditItems.length === 0) {
             return null;
         }
 
-        const commercialLines = snapshotLines.map(creditInvoiceCommercialFor);
+        // A pending preview or an incomplete snapshot never supplies authoritative money.
+        const commercialLines = snapshotCreditItems.map(creditInvoiceCommercialFor);
         if (commercialLines.some((line) => line === null)) {
             return null;
         }
 
         return commercialLines.reduce((totals, line) => ({
-            gross: totals.gross + Number(line!.gross),
-            lineDiscount: totals.lineDiscount + Number(line!.line_discount),
-            generalDiscount: totals.generalDiscount + Number(line!.general_discount),
-            net: totals.net + Number(line!.net),
+            gross: roundMoney(totals.gross + Number(line!.gross)),
+            lineDiscount: roundMoney(totals.lineDiscount + Number(line!.line_discount)),
+            generalDiscount: roundMoney(totals.generalDiscount + Number(line!.general_discount)),
+            net: roundMoney(totals.net + Number(line!.net)),
         }), { gross: 0, lineDiscount: 0, generalDiscount: 0, net: 0 });
-    }, [cart, creditInvoiceCommercialFor, creditInvoiceContracts]);
-    const hasNewCreditReservationSnapshot = useMemo(
-        () => cart.some((item) => item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1),
-        [cart, creditInvoiceContracts],
+    }, [snapshotCreditItems, creditInvoiceCommercialFor]);
+    const snapshotCommercialUnavailable = hasNewCreditReservationSnapshot && creditInvoiceTotals === null;
+    // The backend excludes commercial snapshot lines from any new POS discount.
+    const discountEligibleSubtotal = useMemo(() => cartSubtotalAfterLineDiscount(cart.filter((item) =>
+        item.credit_line_id == null || creditInvoiceContracts[item.credit_line_id]?.snapshot_version !== 1,
+    )), [cart, creditInvoiceContracts]);
+    const activeDiscountError = useMemo(
+        () => discountError(discount, discountEligibleSubtotal),
+        [discount, discountEligibleSubtotal],
     );
+    const discountAmount = useMemo(
+        () => activeDiscountError ? 0 : calculateDiscountAmount(discount, discountEligibleSubtotal),
+        [activeDiscountError, discount, discountEligibleSubtotal],
+    );
+    const total = useMemo(() => roundMoney(Math.max(0,
+        discountEligibleSubtotal - discountAmount + (creditInvoiceTotals?.net ?? 0),
+    )), [discountAmount, discountEligibleSubtotal, creditInvoiceTotals]);
     const requiresCreditInvoiceContractVerification = cart.some((item) => item.credit_line_id != null)
         && creditInvoiceContractStatus !== 'ready';
     const assistantPricingAlerts = useMemo(() => {
@@ -1956,11 +1957,13 @@ export default function POS({
             const unitPrice = Number(item.unit_price);
             const rawLineSubtotal = unitPrice * quantity;
             const discountedLineSubtotal = Math.max(0, rawLineSubtotal - lineDiscountAmount(item));
-            const allocatedDiscount = subtotalAfterLineDiscount > 0
-                ? discountAmount * (discountedLineSubtotal / subtotalAfterLineDiscount)
+            const contract = item.credit_line_id != null ? creditInvoiceContracts[item.credit_line_id] : null;
+            const snapshotCommercial = contract?.snapshot_version === 1 ? creditInvoiceCommercialFor(item) : null;
+            const allocatedDiscount = contract?.snapshot_version !== 1 && discountEligibleSubtotal > 0
+                ? discountAmount * (discountedLineSubtotal / discountEligibleSubtotal)
                 : 0;
             const effectiveUnitPrice = quantity > 0
-                ? (discountedLineSubtotal - allocatedDiscount) / quantity
+                ? (snapshotCommercial ? Number(snapshotCommercial.net) : discountedLineSubtotal - allocatedDiscount) / quantity
                 : unitPrice;
             const priceType = price_types.find((type) => type.id === item.price_type_id);
             const label = item.manual_price
@@ -1976,7 +1979,7 @@ export default function POS({
                 label,
             }]);
         });
-    }, [canViewAssistantCosts, cart, discountAmount, price_types, subtotalAfterLineDiscount]);
+    }, [canViewAssistantCosts, cart, creditInvoiceCommercialFor, creditInvoiceContracts, discountAmount, discountEligibleSubtotal, price_types]);
 
     const paidTotal = useMemo(
         () =>
@@ -2073,7 +2076,7 @@ export default function POS({
             return true;
         }
 
-        const error = discountError(discount, subtotalAfterLineDiscount);
+        const error = discountError(discount, discountEligibleSubtotal);
 
         if (!error) {
             return true;
@@ -2551,7 +2554,7 @@ export default function POS({
             value: limitDecimalPlaces(discountForm.value.trim(), 2),
             reason: discountForm.reason.trim(),
         };
-        const error = discountError(nextDiscount, subtotalAfterLineDiscount);
+        const error = discountError(nextDiscount, discountEligibleSubtotal);
 
         if (error) {
             setDiscountFormError(error);
@@ -3546,6 +3549,13 @@ export default function POS({
             return;
         }
 
+        if (requiresCreditInvoiceContractVerification || snapshotCommercialUnavailable) {
+            const message = 'Espera a que se verifiquen las cantidades y los importes de las reservas antes de cobrar.';
+            showError(message);
+            toast.warning(message);
+            return;
+        }
+
         if (!validateCartQuantities()) {
             return;
         }
@@ -3636,8 +3646,8 @@ export default function POS({
             return;
         }
 
-        if (hasNewCreditReservationSnapshot) {
-            const message = 'Esta reserva utiliza el nuevo sistema de descuentos y su facturación todavía no está habilitada.';
+        if (snapshotCommercialUnavailable) {
+            const message = 'La reserva todavía no tiene un importe confirmado para esta cantidad. Espera la vista previa o revisa sus datos antes de facturar.';
             showError(message);
             toast.warning(message);
             return;
@@ -4470,6 +4480,10 @@ export default function POS({
             reasons.push(checkoutProcessingReason);
         }
 
+        if (requiresCreditInvoiceContractVerification || snapshotCommercialUnavailable) {
+            reasons.push('Espera a que se verifique el importe neto de las reservas antes de confirmar.');
+        }
+
         if (effectiveCheckoutType !== 'credit' && paymentCondition === 'paid' && !paymentIsBalanced) {
             reasons.push('El total pagado debe coincidir con el total de la venta.');
         }
@@ -4512,6 +4526,8 @@ export default function POS({
         paymentCondition,
         paymentIsBalanced,
         processing,
+        requiresCreditInvoiceContractVerification,
+        snapshotCommercialUnavailable,
         checkoutProcessingReason,
     ]);
     const checkoutConfirmDisabled = checkoutDisabledReasons.length > 0;
@@ -4574,9 +4590,9 @@ export default function POS({
                                     {creditInvoiceContractError || 'No se pudo cargar el detalle monetario de las reservas.'}
                                 </div>
                             )}
-                            {credit_invoice && hasNewCreditReservationSnapshot && (
+                            {credit_invoice && snapshotCommercialUnavailable && creditInvoiceContractStatus === 'ready' && (
                                 <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
-                                    Esta reserva utiliza el nuevo sistema de descuentos y su facturación todavía no está habilitada.
+                                    Calculando el importe neto de la reserva. No confirmes la venta hasta que esté disponible el desglose de todas las líneas.
                                 </div>
                             )}
                             {quotation_source && (
@@ -5319,7 +5335,7 @@ export default function POS({
                                     )}
                                 </div>
                                 <div className="flex flex-wrap justify-end gap-2">
-                                    {canApplyDiscount && (
+                                    {canApplyDiscount && discountEligibleSubtotal > 0 && (
                                         <button
                                             type="button"
                                             onClick={openDiscountModal}
@@ -5419,7 +5435,7 @@ export default function POS({
                                             </div>
 
                                             <div className="flex min-w-0 flex-col gap-0.5">
-                                                {price_types.length > 1 && (
+                                                {price_types.length > 1 && !(item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1) && (
                                                     <select
                                                         value={item.price_type_id ?? ''}
                                                         onChange={(event) => changeLinePriceType(cartLineId(item), Number(event.target.value))}
@@ -5485,7 +5501,7 @@ export default function POS({
                                                         {manualPriceError(item, manualPricePolicy)}
                                                     </p>
                                                 )}
-                                                {canUseManualPrice && (
+                                                {canUseManualPrice && !(item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1) && (
                                                     <button
                                                         type="button"
                                                         onClick={() => openManualPriceModal(cartLineId(item))}
@@ -5503,7 +5519,7 @@ export default function POS({
                                                         Restablecer
                                                     </button>
                                                 )}
-                                                {canApplyDiscount && (
+                                                {canApplyDiscount && !(item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1) && (
                                                     <button
                                                         type="button"
                                                         onClick={() => openLineDiscountModal(cartLineId(item))}
@@ -5527,7 +5543,11 @@ export default function POS({
                                                     {lineDiscountAmount(item) > 0 && (
                                                         <div className="text-[11px] font-medium text-slate-500">{formatCurrency(lineSubtotal(item), country)} - {formatCurrency(lineDiscountAmount(item), country)}</div>
                                                     )}
-                                                    <div className="whitespace-nowrap">{formatCurrency(lineSubtotal(item) - lineDiscountAmount(item), country)}</div>
+                                                    <div className="whitespace-nowrap">{item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1
+                                                        ? (creditInvoiceCommercialFor(item)
+                                                            ? formatCurrency(Number(creditInvoiceCommercialFor(item)!.net), country)
+                                                            : 'Calculando…')
+                                                        : formatCurrency(lineSubtotal(item) - lineDiscountAmount(item), country)}</div>
                                                 </div>
 
                                                 <button
@@ -5576,7 +5596,8 @@ export default function POS({
                                     {discount ? 'Total final' : t('common.total')}
                                 </span>
                                 <span className="whitespace-nowrap text-4xl font-bold tracking-normal text-slate-900">
-                                    {formatCurrency(total, country)}
+                                    {requiresCreditInvoiceContractVerification || snapshotCommercialUnavailable
+                                        ? 'Calculando…' : formatCurrency(total, country)}
                                 </span>
                             </div>
                             {discount && (
@@ -5623,7 +5644,7 @@ export default function POS({
                             {!isQuotationEditMode && <button
                                 type="button"
                                 onClick={openCheckout}
-                                disabled={cart.length === 0 || processing || (!hasOpenCashRegister && !credit_available && !credit_sales_available) || hasInvalidCartQuantities || noAvailableDocumentTypes}
+                                disabled={cart.length === 0 || processing || requiresCreditInvoiceContractVerification || snapshotCommercialUnavailable || (!hasOpenCashRegister && !credit_available && !credit_sales_available) || hasInvalidCartQuantities || noAvailableDocumentTypes}
                                 className="mt-4 h-14 w-full rounded-xl bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 text-lg font-semibold text-white shadow-lg shadow-orange-200 transition-all duration-200 hover:-translate-y-0.5 hover:from-orange-700 hover:via-orange-600 hover:to-amber-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-none disabled:bg-slate-300 disabled:shadow-none"
                             >
                                 {isFelProcessing ? 'Certificando FEL...' : (processing ? t('pos.finalizing') : t('pos.finalize_sale'))}
@@ -5804,7 +5825,8 @@ export default function POS({
                                     <p className="mt-1 text-sm text-slate-500">Total a cobrar</p>
                                 </div>
                                 <div className="whitespace-nowrap text-right text-3xl font-bold text-slate-950">
-                                    {formatCurrency(total, country)}
+                                    {requiresCreditInvoiceContractVerification || snapshotCommercialUnavailable
+                                        ? 'Calculando…' : formatCurrency(total, country)}
                                 </div>
                             </div>
                         </div>
@@ -6163,7 +6185,8 @@ export default function POS({
                                         <Summary label="Neto reservas" value={formatCurrency(creditInvoiceTotals.net, country)} />
                                     </>
                                 )}
-                                <Summary label="Total venta" value={formatCurrency(total, country)} />
+                                <Summary label="Total venta" value={requiresCreditInvoiceContractVerification || snapshotCommercialUnavailable
+                                    ? 'Calculando…' : formatCurrency(total, country)} />
                                 <Summary label={paymentCondition === 'credit' ? 'Saldo a crédito' : 'Total pagado'} value={formatCurrency(paymentCondition === 'credit' ? total : paidTotal, country)} />
                                 <Summary
                                     label={paymentCondition === 'credit' ? 'Condición' : (pendingAmount < 0 ? 'Excedente' : 'Pendiente')}
@@ -6469,15 +6492,15 @@ export default function POS({
 
                             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
                                 <div className="flex justify-between gap-3 text-slate-600">
-                                    <span>Total antes</span>
+                                    <span>Base para descuento adicional</span>
                                     <strong className="whitespace-nowrap text-slate-900">
-                                        {formatCurrency(subtotalBeforeDiscount, country)}
+                                        {formatCurrency(discountEligibleSubtotal, country)}
                                     </strong>
                                 </div>
                                 <div className="mt-1 flex justify-between gap-3 text-orange-700">
                                     <span>Descuento</span>
                                     <strong className="whitespace-nowrap">
-                                        -{formatCurrency(calculateDiscountAmount(discountForm, subtotalBeforeDiscount), country)}
+                                        -{formatCurrency(calculateDiscountAmount(discountForm, discountEligibleSubtotal), country)}
                                     </strong>
                                 </div>
                             </div>
