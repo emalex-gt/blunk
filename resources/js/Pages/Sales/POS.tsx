@@ -4281,26 +4281,15 @@ export default function POS({
             clearSaleState();
         }
         let recoverableDraft = draft;
-        let verifiedSafeForAutomaticBranchRestore = false;
         const finishDraftInitialization = () => {
             draftLoadInitializedRef.current = true;
             focusSearch();
         };
-        const restoreDraftWithProducts = (productMap = productsByIdRef.current) => {
-            if (incomingSourceKey) {
-                // This draft is the old operation: it must never replace the incoming source.
-                setRestoreDraft(recoverableDraft);
-            } else if (isBranchChange && verifiedSafeForAutomaticBranchRestore) {
-                const restored = restorePosDraft(recoverableDraft as PosDraft, productMap);
-                setDraftReady(true);
-                if (restored) {
-                    showMessage('Sucursal cambiada. Se cargó el borrador de esta sucursal.');
-                    toast.success('Sucursal cambiada. Se cargó el borrador de esta sucursal.');
-                }
-            } else {
-                setRestoreDraft(recoverableDraft);
-            }
-
+        const restoreDraftWithProducts = (_productMap = productsByIdRef.current) => {
+            // A saved draft belongs only to its branch. On branch navigation, behave
+            // exactly like a full POS reload: offer Recover / Discard explicitly.
+            // The operation-status check still decides whether Discard is safe.
+            setRestoreDraft(recoverableDraft);
             finishDraftInitialization();
         };
 
@@ -4339,7 +4328,6 @@ export default function POS({
                     }
 
                     if (['not_found', 'failed', 'fiscal_rejected'].includes(status.status)) {
-                        verifiedSafeForAutomaticBranchRestore = true;
                         setUnsafePreviousSale(false);
                         setPreviousSaleVerificationMessage('Verificado por el servidor: no existe una venta pendiente de finalizar con esta clave. Puedes recuperar o descartar el borrador.');
                     } else {
