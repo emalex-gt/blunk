@@ -24,6 +24,7 @@ use App\Support\Inventory\StockPolicy;
 use App\Support\OperationDrafts;
 use App\Support\Permissions;
 use App\Support\StockAvailability;
+use App\Services\Credits\CreditReservationAllocation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -118,6 +119,12 @@ class CreditReceiptController extends Controller
             'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
             'items.*.quantity' => ['required', 'numeric', 'gt:0'],
             'items.*.unit_price' => ['nullable', 'numeric', 'decimal:0,2', 'gt:0'],
+            'items.*.line_discount_amount' => ['nullable', 'numeric', 'decimal:0,2', 'min:0'],
+            'items.*.line_discount_reason' => ['nullable', 'string', 'max:1000'],
+            'discount' => ['nullable', 'array'],
+            'discount.type' => ['required_with:discount', 'in:fixed,percent'],
+            'discount.value' => ['required_with:discount', 'numeric', 'decimal:0,2', 'min:0'],
+            'discount.reason' => ['nullable', 'string', 'max:1000'],
         ]);
 
         $docType = CustomerIdentity::normalizeGuatemalaDocType($data['customer']['doc_type']) ?? '';
@@ -197,9 +204,20 @@ class CreditReceiptController extends Controller
 
                 $unitPrice = $this->roundMoney((string) ($item['unit_price'] ?? $product->sale_price));
                 $lineTotal = $this->quantityLineAmount($unitPrice, $quantity);
+                $lineDiscount = $this->roundMoney((string) ($item['line_discount_amount'] ?? 0));
+                if (bccomp($lineDiscount, $lineTotal, 2) > 0) throw ValidationException::withMessages(["items.{$itemIndex}.line_discount_amount" => 'El descuento de línea excede el subtotal.']);
                 $subtotal = bcadd($subtotal, $lineTotal, 2);
-                $preparedLines[] = compact('product', 'quantity', 'unitPrice', 'lineTotal');
+                $preparedLines[] = compact('product', 'quantity', 'unitPrice', 'lineTotal', 'lineDiscount', 'item');
             }
+
+            $hasDiscounts = bccomp((string) ($data['discount']['value'] ?? 0), '0', 2) > 0 || collect($preparedLines)->contains(fn ($line) => bccomp($line['lineDiscount'], '0', 2) > 0);
+            if ($hasDiscounts && (!module_enabled('discounts') || !Permissions::canApplyDiscounts($request->user()))) abort(403, 'No tienes permiso para aplicar descuentos.');
+            $eligible = array_reduce($preparedLines, fn ($total, $line) => bcadd($total, bcsub($line['lineTotal'], $line['lineDiscount'], 2), 2), '0.00');
+            $discountType = $data['discount']['type'] ?? null;
+            $discountValue = $this->roundMoney((string) ($data['discount']['value'] ?? 0));
+            $generalDiscount = $discountType === 'percent' ? $this->roundMoney(bcdiv(bcmul($eligible, $discountValue, 8), '100', 8)) : $discountValue;
+            if (bccomp($generalDiscount, $eligible, 2) > 0) throw ValidationException::withMessages(['discount.value' => 'El descuento general excede el importe elegible.']);
+            $snapshot = app(CreditReservationAllocation::class)->snapshot(array_map(fn ($line) => ['quantity'=>$line['quantity'], 'unit_price'=>$line['unitPrice'], 'line_discount_amount'=>$line['lineDiscount']], $preparedLines), $generalDiscount);
 
             if ($shouldReserveStock && ! StockPolicy::allowsNegativeStockForBusinessId($businessId)) {
                 foreach ($requestedByProduct as $productId => $requestedQuantity) {
@@ -232,14 +250,13 @@ class CreditReceiptController extends Controller
                 ),
                 'status' => 'pending',
                 'subtotal' => $subtotal,
-                'discount_amount' => 0,
-                'total' => $subtotal,
-                'pending_total' => $subtotal,
+                'snapshot_version' => 1, 'discount_type' => $discountType, 'discount_value' => $discountValue, 'discount_amount' => $generalDiscount, 'discount_reason' => $data['discount']['reason'] ?? null,
+                'total' => $snapshot['total'], 'pending_total' => $snapshot['total'],
                 'notes' => $data['note'] ?? null,
                 'created_by' => $request->user()?->id,
             ]);
 
-            foreach ($preparedLines as $line) {
+            foreach ($preparedLines as $index => $line) {
                 /** @var Product $product */
                 $product = $line['product'];
                 CreditReceiptLine::query()->create([
@@ -253,8 +270,8 @@ class CreditReceiptController extends Controller
                     'qty_reserved' => $shouldReserveStock ? $line['quantity'] : 0,
                     'qty_pending' => $line['quantity'],
                     'unit_price' => $line['unitPrice'],
-                    'line_total' => $line['lineTotal'],
-                    'pending_total' => $line['lineTotal'],
+                    'subtotal_before_discount' => $snapshot['lines'][$index]['subtotal'], 'line_discount_amount' => $snapshot['lines'][$index]['line_discount_amount'], 'general_discount_amount' => $snapshot['lines'][$index]['general_discount_amount'], 'total_after_discount' => $snapshot['lines'][$index]['net_amount'], 'line_discount_reason' => $line['item']['line_discount_reason'] ?? null,
+                    'discount_amount' => bcadd($snapshot['lines'][$index]['line_discount_amount'], $snapshot['lines'][$index]['general_discount_amount'], 2), 'line_total' => $snapshot['lines'][$index]['net_amount'], 'pending_total' => $snapshot['lines'][$index]['net_amount'],
                     'status' => 'pending',
                 ]);
             }
