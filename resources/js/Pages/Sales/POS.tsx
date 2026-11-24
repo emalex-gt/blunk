@@ -1097,6 +1097,22 @@ export default function POS({
     const [creditInvoiceContractStatus, setCreditInvoiceContractStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
     const [creditInvoiceContractError, setCreditInvoiceContractError] = useState('');
     const [creditInvoicePreviews, setCreditInvoicePreviews] = useState<Record<number, CreditInvoicePreview>>({});
+    const [creditInvoiceContractRefresh, setCreditInvoiceContractRefresh] = useState(0);
+    const [creditInvoiceContractsLoadedFor, setCreditInvoiceContractsLoadedFor] = useState('');
+    const hasReservationCartLines = cart.some((item) => item.credit_line_id != null);
+    // A saved POS draft restores credit_line_id without the Inertia credit_invoice prop.
+    // Fetch contracts for the active cart too; quantity edits must not refetch them.
+    const creditInvoiceLineIdsKey = useMemo(() => {
+        const cartLineIds = cart.filter((item) => item.credit_line_id != null)
+            .map((item) => item.credit_line_id!);
+        const lineIds = cartLineIds.length > 0 || cart.length > 0
+            ? cartLineIds
+            : (credit_invoice?.lines ?? []).map((line) => line.credit_line_id);
+        return [...new Set(lineIds)].sort((a, b) => a - b).join(',');
+    }, [cart, credit_invoice]);
+    const creditInvoiceContractRequestKey = `${creditInvoiceLineIdsKey}:${creditInvoiceContractRefresh}`;
+    const creditInvoiceContractsVerified = creditInvoiceContractStatus === 'ready'
+        && creditInvoiceContractsLoadedFor === creditInvoiceContractRequestKey;
     const toast = useToast();
     const searchInputRef = useRef<HTMLInputElement>(null);
     const cartRef = useRef<CartItem[]>([]);
@@ -1393,21 +1409,23 @@ export default function POS({
     }, [credit_invoice, fetchPosProducts, productsById]);
 
     useEffect(() => {
-        if (!credit_invoice) {
+        const requestId = ++creditInvoiceContractRequestRef.current;
+        if (!creditInvoiceLineIdsKey) {
             setCreditInvoiceContracts({});
             setCreditInvoicePreviews({});
+            setCreditInvoiceContractsLoadedFor('');
             setCreditInvoiceContractStatus('idle');
             setCreditInvoiceContractError('');
             return;
         }
 
-        const lineIds = [...new Set(credit_invoice.lines.map((line) => line.credit_line_id))];
-        const requestId = ++creditInvoiceContractRequestRef.current;
+        const lineIds = creditInvoiceLineIdsKey.split(',').map(Number);
         const controller = new AbortController();
         const query = new URLSearchParams();
         lineIds.forEach((lineId) => query.append('line_ids[]', String(lineId)));
         setCreditInvoiceContracts({});
         setCreditInvoicePreviews({});
+        setCreditInvoiceContractsLoadedFor('');
         setCreditInvoiceContractStatus('loading');
         setCreditInvoiceContractError('');
 
@@ -1441,6 +1459,7 @@ export default function POS({
                 }
 
                 setCreditInvoiceContracts(contracts);
+                setCreditInvoiceContractsLoadedFor(creditInvoiceContractRequestKey);
                 setCreditInvoiceContractStatus('ready');
             })
             .catch((error: unknown) => {
@@ -1453,10 +1472,10 @@ export default function POS({
             });
 
         return () => controller.abort();
-    }, [credit_invoice]);
+    }, [creditInvoiceContractRequestKey]);
 
     useEffect(() => {
-        if (creditInvoiceContractStatus !== 'ready') {
+        if (!creditInvoiceContractsVerified) {
             return;
         }
 
@@ -1563,7 +1582,7 @@ export default function POS({
             timers.forEach((timer) => window.clearTimeout(timer));
             controllers.forEach((controller) => controller.abort());
         };
-    }, [cart, creditInvoiceContractStatus, creditInvoiceContracts]);
+    }, [cart, creditInvoiceContractsVerified, creditInvoiceContracts]);
 
     useEffect(() => {
         if (!quotation_source || quotationLoadedRef.current) {
@@ -1902,6 +1921,9 @@ export default function POS({
     const subtotalBeforeDiscount = useMemo(() => cartSubtotal(cart), [cart]);
     const lineDiscountTotal = useMemo(() => cartLineDiscountTotal(cart), [cart]);
     const creditInvoiceCommercialFor = useCallback((item: CartItem): CreditReservationCommercial | null => {
+        if (!creditInvoiceContractsVerified) {
+            return null;
+        }
         const creditLineId = item.credit_line_id;
         if (creditLineId === null || creditLineId === undefined) {
             return null;
@@ -1923,10 +1945,12 @@ export default function POS({
 
         const preview = creditInvoicePreviews[creditLineId];
         return preview?.status === 'ready' && preview.quantity === quantity ? preview.commercial : null;
-    }, [creditInvoiceContracts, creditInvoicePreviews]);
+    }, [creditInvoiceContracts, creditInvoiceContractsVerified, creditInvoicePreviews]);
     const snapshotCreditItems = useMemo(
-        () => cart.filter((item) => item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1),
-        [cart, creditInvoiceContracts],
+        () => creditInvoiceContractsVerified
+            ? cart.filter((item) => item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1)
+            : [],
+        [cart, creditInvoiceContracts, creditInvoiceContractsVerified],
     );
     const hasNewCreditReservationSnapshot = snapshotCreditItems.length > 0;
     const creditInvoiceTotals = useMemo(() => {
@@ -1950,8 +1974,9 @@ export default function POS({
     const snapshotCommercialUnavailable = hasNewCreditReservationSnapshot && creditInvoiceTotals === null;
     // The backend excludes commercial snapshot lines from any new POS discount.
     const discountEligibleSubtotal = useMemo(() => cartSubtotalAfterLineDiscount(cart.filter((item) =>
-        item.credit_line_id == null || creditInvoiceContracts[item.credit_line_id]?.snapshot_version !== 1,
-    )), [cart, creditInvoiceContracts]);
+        item.credit_line_id == null || (creditInvoiceContractsVerified
+            && creditInvoiceContracts[item.credit_line_id]?.snapshot_version !== 1),
+    )), [cart, creditInvoiceContracts, creditInvoiceContractsVerified]);
     const activeDiscountError = useMemo(
         () => discountError(discount, discountEligibleSubtotal),
         [discount, discountEligibleSubtotal],
@@ -1963,8 +1988,8 @@ export default function POS({
     const total = useMemo(() => roundMoney(Math.max(0,
         discountEligibleSubtotal - discountAmount + (creditInvoiceTotals?.net ?? 0),
     )), [discountAmount, discountEligibleSubtotal, creditInvoiceTotals]);
-    const requiresCreditInvoiceContractVerification = cart.some((item) => item.credit_line_id != null)
-        && creditInvoiceContractStatus !== 'ready';
+    const requiresCreditInvoiceContractVerification = hasReservationCartLines
+        && !creditInvoiceContractsVerified;
     const assistantPricingAlerts = useMemo(() => {
         if (!canViewAssistantCosts || cart.length === 0) {
             return [];
@@ -2253,6 +2278,9 @@ export default function POS({
 
         cartRef.current = prepared.cart;
         setCart(prepared.cart);
+        // Every draft recovery must revalidate current reservation balances, even
+        // when the same credit line was already loaded in the previous cart.
+        setCreditInvoiceContractRefresh((version) => version + 1);
         setDiscount(restoredDiscount && !discountError(restoredDiscount, cartSubtotal(prepared.cart)) ? restoredDiscount : null);
         setData('customer', prepared.customer);
         setData('note', draft.note ?? '');
@@ -4598,17 +4626,21 @@ export default function POS({
                                     Facturando productos a crédito.
                                 </div>
                             )}
-                            {credit_invoice && creditInvoiceContractStatus === 'loading' && (
+                            {(credit_invoice || hasReservationCartLines) && creditInvoiceContractStatus === 'loading' && (
                                 <div className="mb-4 rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-700">
                                     Cargando el detalle monetario de las reservas…
                                 </div>
                             )}
-                            {credit_invoice && creditInvoiceContractStatus === 'error' && (
-                                <div className="mb-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-                                    {creditInvoiceContractError || 'No se pudo cargar el detalle monetario de las reservas.'}
+                            {(credit_invoice || hasReservationCartLines) && creditInvoiceContractStatus === 'error' && (
+                                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                                    <span>{creditInvoiceContractError || 'No se pudo cargar el detalle monetario de las reservas.'}</span>
+                                    <button type="button" onClick={() => setCreditInvoiceContractRefresh((version) => version + 1)}
+                                        className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-red-700 hover:bg-red-100">
+                                        Reintentar consulta
+                                    </button>
                                 </div>
                             )}
-                            {credit_invoice && snapshotCommercialUnavailable && creditInvoiceContractStatus === 'ready' && (
+                            {(credit_invoice || hasReservationCartLines) && snapshotCommercialUnavailable && creditInvoiceContractsVerified && (
                                 <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
                                     Calculando el importe neto de la reserva. No confirmes la venta hasta que esté disponible el desglose de todas las líneas.
                                 </div>
@@ -5453,7 +5485,7 @@ export default function POS({
                                             </div>
 
                                             <div className="flex min-w-0 flex-col gap-0.5">
-                                                {price_types.length > 1 && !(item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1) && (
+                                                {price_types.length > 1 && (item.credit_line_id == null || (creditInvoiceContractsVerified && creditInvoiceContracts[item.credit_line_id]?.snapshot_version !== 1)) && (
                                                     <select
                                                         value={item.price_type_id ?? ''}
                                                         onChange={(event) => changeLinePriceType(cartLineId(item), Number(event.target.value))}
@@ -5467,7 +5499,7 @@ export default function POS({
                                                     </select>
                                                 )}
                                                 <div className="flex items-center gap-1.5">
-                                                    {item.manual_price ? (
+                                                    {item.manual_price && (item.credit_line_id == null || (creditInvoiceContractsVerified && creditInvoiceContracts[item.credit_line_id]?.snapshot_version !== 1)) ? (
                                                         <input
                                                             type="number"
                                                             min="0.01"
@@ -5498,7 +5530,7 @@ export default function POS({
                                                             <p>
                                                                 Reserva {item.credit_receipt_number ?? `#${item.credit_line_id}`} · Precio original {formatCurrency(Number(item.original_price), country)}
                                                             </p>
-                                                            {creditInvoiceContractStatus === 'loading' && <p className="font-semibold text-sky-700">Cargando desglose de la reserva…</p>}
+                                                            {!creditInvoiceContractsVerified && creditInvoiceContractStatus !== 'error' && <p className="font-semibold text-sky-700">Cargando desglose de la reserva…</p>}
                                                             {contract?.commercial.monetary_allocation_state === 'historical' && <p>Reserva histórica: se conserva el cálculo comercial anterior.</p>}
                                                             {contract?.commercial.monetary_allocation_state === 'incomplete' && <p className="font-semibold text-amber-700">La reserva no tiene desglose monetario suficiente para vista previa.</p>}
                                                             {preview?.status === 'loading' && <p className="font-semibold text-sky-700">Actualizando vista previa…</p>}
@@ -5523,7 +5555,7 @@ export default function POS({
                                                         {manualPriceError(item, manualPricePolicy)}
                                                     </p>
                                                 )}
-                                                {canUseManualPrice && !(item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1) && (
+                                                {canUseManualPrice && (item.credit_line_id == null || (creditInvoiceContractsVerified && creditInvoiceContracts[item.credit_line_id]?.snapshot_version !== 1)) && (
                                                     <button
                                                         type="button"
                                                         onClick={() => openManualPriceModal(cartLineId(item))}
@@ -5532,7 +5564,7 @@ export default function POS({
                                                         {item.manual_price ? 'Editar precio manual' : 'Cambiar precio'}
                                                     </button>
                                                 )}
-                                                {item.manual_price && (
+                                                {item.manual_price && (item.credit_line_id == null || (creditInvoiceContractsVerified && creditInvoiceContracts[item.credit_line_id]?.snapshot_version !== 1)) && (
                                                     <button
                                                         type="button"
                                                         onClick={() => resetLinePrice(cartLineId(item))}
@@ -5541,7 +5573,7 @@ export default function POS({
                                                         Restablecer
                                                     </button>
                                                 )}
-                                                {canApplyDiscount && !(item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1) && (
+                                                {canApplyDiscount && (item.credit_line_id == null || (creditInvoiceContractsVerified && creditInvoiceContracts[item.credit_line_id]?.snapshot_version !== 1)) && (
                                                     <button
                                                         type="button"
                                                         onClick={() => openLineDiscountModal(cartLineId(item))}
@@ -5553,7 +5585,7 @@ export default function POS({
                                                 {lineDiscountAmount(item) > 0 && (
                                                     <div className="flex flex-wrap gap-x-2 text-[11px] font-semibold text-orange-700">
                                                         <span>Descuento: -{formatCurrency(lineDiscountAmount(item), country)}</span>
-                                                        {canApplyDiscount && (
+                                                        {canApplyDiscount && (item.credit_line_id == null || (creditInvoiceContractsVerified && creditInvoiceContracts[item.credit_line_id]?.snapshot_version !== 1)) && (
                                                             <button type="button" onClick={() => clearLineDiscount(cartLineId(item))} className="text-slate-500 hover:text-slate-700">Quitar</button>
                                                         )}
                                                     </div>
@@ -5565,11 +5597,13 @@ export default function POS({
                                                     {lineDiscountAmount(item) > 0 && (
                                                         <div className="text-[11px] font-medium text-slate-500">{formatCurrency(lineSubtotal(item), country)} - {formatCurrency(lineDiscountAmount(item), country)}</div>
                                                     )}
-                                                    <div className="whitespace-nowrap">{item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1
-                                                        ? (creditInvoiceCommercialFor(item)
-                                                            ? formatCurrency(Number(creditInvoiceCommercialFor(item)!.net), country)
-                                                            : 'Calculando…')
-                                                        : formatCurrency(lineSubtotal(item) - lineDiscountAmount(item), country)}</div>
+                                                    <div className="whitespace-nowrap">{item.credit_line_id != null && !creditInvoiceContractsVerified
+                                                        ? (creditInvoiceContractStatus === 'error' ? 'No disponible' : 'Calculando…')
+                                                        : item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1
+                                                            ? (creditInvoiceCommercialFor(item)
+                                                                ? formatCurrency(Number(creditInvoiceCommercialFor(item)!.net), country)
+                                                                : 'Calculando…')
+                                                            : formatCurrency(lineSubtotal(item) - lineDiscountAmount(item), country)}</div>
                                                 </div>
 
                                                 <button
@@ -5619,7 +5653,8 @@ export default function POS({
                                 </span>
                                 <span className="whitespace-nowrap text-4xl font-bold tracking-normal text-slate-900">
                                     {requiresCreditInvoiceContractVerification || snapshotCommercialUnavailable
-                                        ? 'Calculando…' : formatCurrency(total, country)}
+                                        ? (creditInvoiceContractStatus === 'error' ? 'No disponible' : 'Calculando…')
+                                        : formatCurrency(total, country)}
                                 </span>
                             </div>
                             {discount && (
@@ -5848,7 +5883,8 @@ export default function POS({
                                 </div>
                                 <div className="whitespace-nowrap text-right text-3xl font-bold text-slate-950">
                                     {requiresCreditInvoiceContractVerification || snapshotCommercialUnavailable
-                                        ? 'Calculando…' : formatCurrency(total, country)}
+                                        ? (creditInvoiceContractStatus === 'error' ? 'No disponible' : 'Calculando…')
+                                        : formatCurrency(total, country)}
                                 </div>
                             </div>
                         </div>
@@ -6208,7 +6244,8 @@ export default function POS({
                                     </>
                                 )}
                                 <Summary label="Total venta" value={requiresCreditInvoiceContractVerification || snapshotCommercialUnavailable
-                                    ? 'Calculando…' : formatCurrency(total, country)} />
+                                    ? (creditInvoiceContractStatus === 'error' ? 'No disponible' : 'Calculando…')
+                                    : formatCurrency(total, country)} />
                                 <Summary label={paymentCondition === 'credit' ? 'Saldo a crédito' : 'Total pagado'} value={formatCurrency(paymentCondition === 'credit' ? total : paidTotal, country)} />
                                 <Summary
                                     label={paymentCondition === 'credit' ? 'Condición' : (pendingAmount < 0 ? 'Excedente' : 'Pendiente')}
