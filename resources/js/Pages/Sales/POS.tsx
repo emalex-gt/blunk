@@ -1004,6 +1004,10 @@ export default function POS({
     );
     const draftKey = useMemo(() => makeDraftKey('pos', businessId, userId, activeBranchId), [activeBranchId, businessId, userId]);
     const isQuotationEditMode = Boolean(quotation_edit_source);
+    // An incoming reservation or quotation takes priority over any locally recovered POS sale.
+    const incomingSourceKey = credit_invoice
+        ? `credit:${credit_invoice.lines.map((line) => `${line.credit_line_id}:${line.quantity}`).join('|')}`
+        : quotation_source ? `quotation:${quotation_source.id}` : null;
     const recentProductsKey = useMemo(
         () => `pos_recent_products:${businessId ?? 'unknown'}:${userId ?? 'unknown'}:${activeBranchId ?? 'default'}`,
         [activeBranchId, businessId, userId],
@@ -1060,6 +1064,9 @@ export default function POS({
     const [idempotencyKey, setIdempotencyKey] = useState(makeOperationKey);
     const [failedSubmission, setFailedSubmission] = useState(false);
     const [draftReady, setDraftReady] = useState(false);
+    const [readySourceKey, setReadySourceKey] = useState<string | null>(null);
+    const [savingPreviousSale, setSavingPreviousSale] = useState(false);
+    const [unsafePreviousSale, setUnsafePreviousSale] = useState(false);
     const [showClearSaleModal, setShowClearSaleModal] = useState(false);
     const [activeOperationDraftId, setActiveOperationDraftId] = useState<number | null>(null);
     const [savedDraftsOpen, setSavedDraftsOpen] = useState(false);
@@ -1613,7 +1620,7 @@ export default function POS({
     }, [fetchPosProducts, productsById, quotation_edit_source]);
 
     useEffect(() => {
-        if (!credit_invoice || creditInvoiceLoadedRef.current) {
+        if (!credit_invoice || creditInvoiceLoadedRef.current || !draftReady || restoreDraft || readySourceKey !== incomingSourceKey) {
             return;
         }
 
@@ -1685,10 +1692,11 @@ export default function POS({
         setDiscount(null);
         setDocumentType(singleDocumentType ?? (available_document_types[0] ?? 'receipt'));
         showMessage('Productos de reserva cargados con su precio histórico. Puedes ajustar la venta según tus permisos.');
-    }, [available_document_types, country, credit_invoice, productsById, setData, singleDocumentType]);
+    }, [available_document_types, country, credit_invoice, draftReady, incomingSourceKey, productsById, readySourceKey, restoreDraft, setData, singleDocumentType]);
 
     useEffect(() => {
-        if (!quotation_source || quotationLoadedRef.current || productsById.size === 0) {
+        if (!quotation_source || quotationLoadedRef.current || productsById.size === 0
+            || !draftReady || restoreDraft || readySourceKey !== incomingSourceKey) {
             return;
         }
 
@@ -1749,7 +1757,7 @@ export default function POS({
         setErrorMessage('');
         setMessage(`Carrito cargado desde ${quotation_source.number}. Revisa la venta antes de confirmar.`);
         toast.info(`Carrito cargado desde ${quotation_source.number}.`);
-    }, [country, data.customer, defaultCustomer, productsById, quotation_source, setData, toast]);
+    }, [country, data.customer, defaultCustomer, draftReady, incomingSourceKey, productsById, quotation_source, readySourceKey, restoreDraft, setData, toast]);
 
     useEffect(() => {
         if (!quotation_edit_source || quotationEditLoadedRef.current || productsById.size === 0) {
@@ -3325,6 +3333,68 @@ export default function POS({
         clearPosDraftAndState();
     }
 
+    function discardPreviousSaleAndContinue() {
+        if (!restoreDraft || !incomingSourceKey || savingPreviousSale) {
+            return;
+        }
+
+        if (unsafePreviousSale) {
+            const error = 'No es seguro descartar esta venta: su estado anterior no se pudo verificar. Guárdala como borrador para continuar.';
+            showError(error);
+            toast.warning(error);
+            return;
+        }
+
+        clearDraft(draftKey);
+        preservedUnverifiableDraftKeyRef.current = null;
+        latestDraftRef.current = null;
+        clearFiscalRecoveryState();
+        setRestoreDraft(null);
+        setReadySourceKey(incomingSourceKey);
+        setDraftReady(true);
+    }
+
+    async function savePreviousSaleAndContinue() {
+        if (!restoreDraft || !incomingSourceKey || savingPreviousSale) {
+            return;
+        }
+
+        if (!hasVerifiableDraftOperation(restoreDraft)) {
+            const error = 'Este trabajo no tiene una identificación verificable; no puede guardarse como borrador recuperable.';
+            showError(error);
+            toast.error(error);
+            return;
+        }
+
+        setSavingPreviousSale(true);
+        try {
+            await saveOperationDraft({
+                type: 'pos_sale',
+                title: restoreDraft.customer?.name?.trim() || `Venta pendiente ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+                branch_id: activeBranchId,
+                customer_id: restoreDraft.customer?.id ?? null,
+                payload: restoreDraft,
+                payload_version: 1,
+            });
+            // Do not delete the local copy until the server has confirmed persistence.
+            clearDraft(draftKey);
+            preservedUnverifiableDraftKeyRef.current = null;
+            latestDraftRef.current = null;
+            clearFiscalRecoveryState();
+            setRestoreDraft(null);
+            setReadySourceKey(incomingSourceKey);
+            setDraftReady(true);
+            setHasHeldSale(true);
+            toast.success('Trabajo anterior guardado. Ahora puedes continuar con la operación seleccionada.');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'No se pudo guardar el trabajo anterior.';
+            showError(message);
+            toast.error(message);
+        } finally {
+            setSavingPreviousSale(false);
+        }
+    }
+
     async function holdSale() {
         if (!validateCartQuantities()) {
             return;
@@ -4072,6 +4142,7 @@ export default function POS({
     useEffect(() => {
         if (quotation_edit_source) {
             setRestoreDraft(null);
+            setReadySourceKey(null);
             setDraftReady(true);
             return;
         }
@@ -4080,15 +4151,37 @@ export default function POS({
         clearFiscalRecoveryState();
         const recoveryRequestId = ++draftRecoveryRequestRef.current;
         setRestoreDraft(null);
+        setReadySourceKey(null);
+        setUnsafePreviousSale(false);
         setDraftReady(false);
-        const draft = loadDraft<PosDraft>(draftKey);
+        // An Inertia visit can reuse this component. Capture the most recent sale before
+        // resetting the POS, even if its debounced localStorage write has not run yet.
+        const inMemoryDraft = latestDraftRef.current;
+        const draft = incomingSourceKey && inMemoryDraft
+            && String(inMemoryDraft.branch_id ?? 'default') === String(draftBranchId)
+            && isMeaningfulPosDraft(inMemoryDraft)
+            ? inMemoryDraft : loadDraft<PosDraft>(draftKey);
+        if (incomingSourceKey) {
+            if (draft && isMeaningfulPosDraft(draft)) {
+                saveDraft(draftKey, draft);
+            }
+            // Never let the previous cart block loading the requested source.
+            latestDraftRef.current = null;
+            cartRef.current = [];
+            creditInvoiceLoadedRef.current = false;
+            quotationLoadedRef.current = false;
+            clearSaleState();
+        }
         let recoverableDraft = draft;
         const finishDraftInitialization = () => {
             draftLoadInitializedRef.current = true;
             focusSearch();
         };
         const restoreDraftWithProducts = (productMap = productsByIdRef.current) => {
-            if (isBranchChange) {
+            if (incomingSourceKey) {
+                // This draft is the old operation: it must never replace the incoming source.
+                setRestoreDraft(recoverableDraft);
+            } else if (isBranchChange) {
                 const restored = restorePosDraft(recoverableDraft as PosDraft, productMap);
                 setDraftReady(true);
                 if (restored) {
@@ -4112,6 +4205,10 @@ export default function POS({
                         preservedUnverifiableDraftKeyRef.current = draftKey;
                         showError(message);
                         toast.warning(message, { persistent: true });
+                        if (incomingSourceKey) {
+                            setUnsafePreviousSale(true);
+                            setRestoreDraft(draft);
+                        }
                         finishDraftInitialization();
                     }
                     return;
@@ -4128,10 +4225,15 @@ export default function POS({
                         clearDraft(draftKey);
                         latestDraftRef.current = null;
                         clearSaleState();
-                        setRecoveredCompletedSale(status);
+                        setReadySourceKey(incomingSourceKey);
                         setDraftReady(true);
-                        showMessage('La operación ya fue registrada. No se recuperó el carrito.');
-                        toast.success('La operación ya fue registrada. No se recuperó el carrito.', { persistent: true });
+                        if (incomingSourceKey) {
+                            showMessage('El trabajo anterior ya estaba registrado. Se abrirá la operación seleccionada.');
+                        } else {
+                            setRecoveredCompletedSale(status);
+                            showMessage('La operación ya fue registrada. No se recuperó el carrito.');
+                            toast.success('La operación ya fue registrada. No se recuperó el carrito.', { persistent: true });
+                        }
                         finishDraftInitialization();
                         return;
                     }
@@ -4146,14 +4248,25 @@ export default function POS({
                         };
                     } else if (!['not_found', 'fiscal_rejected'].includes(status.status)) {
                         rememberFiscalStatus(status, draft.idempotency_key ?? '', draftBranchId);
+                        if (incomingSourceKey) {
+                            setUnsafePreviousSale(true);
+                        }
                     }
                 } catch {
                     if (recoveryRequestId === draftRecoveryRequestRef.current) {
                         rememberFiscalStatus({ status: 'verification_unavailable' }, draft.idempotency_key ?? '', draftBranchId);
+                        if (incomingSourceKey) {
+                            setUnsafePreviousSale(true);
+                        }
                     }
                 }
 
                 if (cancelled || recoveryRequestId !== draftRecoveryRequestRef.current) {
+                    return;
+                }
+
+                if (incomingSourceKey) {
+                    restoreDraftWithProducts();
                     return;
                 }
 
@@ -4194,8 +4307,9 @@ export default function POS({
             };
         } else {
             clearSaleState();
+            setReadySourceKey(incomingSourceKey);
             setDraftReady(true);
-            if (isBranchChange) {
+            if (isBranchChange && !incomingSourceKey) {
                 showMessage('Sucursal cambiada. Nueva venta iniciada.');
                 toast.success('Sucursal cambiada. Nueva venta iniciada.');
             }
@@ -4203,10 +4317,11 @@ export default function POS({
 
         draftLoadInitializedRef.current = true;
         focusSearch();
-    }, [activeBranchId, draftKey, fetchPosProducts, quotation_edit_source]);
+    }, [activeBranchId, draftKey, fetchPosProducts, incomingSourceKey, quotation_edit_source]);
 
     useEffect(() => {
-        if (quotation_edit_source || !draftReady || restoreDraft) {
+        if (quotation_edit_source || !draftReady || restoreDraft
+            || (incomingSourceKey && readySourceKey !== incomingSourceKey)) {
             return;
         }
 
@@ -4242,6 +4357,8 @@ export default function POS({
         paymentCondition,
         payments,
         restoreDraft,
+        incomingSourceKey,
+        readySourceKey,
         selectedCategoryId,
         splitPayment,
         userId,
@@ -6297,7 +6414,57 @@ export default function POS({
 
             {showQuotationModal && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 p-4"><div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl"><h2 className="text-xl font-semibold">{quotation_edit_source ? `Editar ${quotation_edit_source.number}` : 'Guardar cotización'}</h2><p className="mt-1 text-sm text-slate-600">{customerDisplayName} · {formatCurrency(total, country)}</p>{quotationError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">{quotationError}</p>}<label className="mt-4 block text-sm font-medium">Válida hasta<input type="date" min={new Date().toISOString().slice(0, 10)} value={quotationValidUntil} onChange={e => setQuotationValidUntil(e.target.value)} className="mt-1 block w-full rounded-xl border-slate-200" /></label><label className="mt-3 block text-sm font-medium">Observaciones<textarea value={quotationNote} onChange={e => setQuotationNote(e.target.value)} rows={3} className="mt-1 block w-full rounded-xl border-slate-200" /></label><div className="mt-5 flex justify-end gap-2"><button onClick={() => { setShowQuotationModal(false); setQuotationError(''); }} className="rounded-xl px-4 py-2">Cancelar</button><button disabled={!quotationValidUntil || quotationSaving} onClick={saveQuotation} className="rounded-xl bg-orange-600 px-4 py-2 font-semibold text-white">{quotationSaving ? 'Guardando...' : (quotation_edit_source ? 'Guardar cambios' : 'Guardar cotización')}</button></div></div></div>}
 
-            {restoreDraft && (
+            {incomingSourceKey && !restoreDraft && (!draftReady || readySourceKey !== incomingSourceKey) && (
+                <div className="fixed inset-0 z-[89] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+                    <div className="rounded-2xl bg-white px-6 py-5 text-sm font-semibold text-slate-800 shadow-2xl" role="status">
+                        Verificando el trabajo pendiente antes de abrir la operación seleccionada…
+                    </div>
+                </div>
+            )}
+
+            {restoreDraft && incomingSourceKey && (
+                <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+                    <section className="w-full max-w-md rounded-2xl border border-amber-100 bg-white p-6 shadow-2xl">
+                        <h2 className="text-lg font-semibold text-slate-950">Hay una venta pendiente en el POS</h2>
+                        <p className="mt-2 text-sm text-slate-600">
+                            Para {credit_invoice ? 'facturar esta reserva' : 'convertir esta cotización'},
+                            ¿quieres guardar el trabajo anterior para recuperarlo después o descartarlo?
+                            En ambos casos se cargará la operación que seleccionaste.
+                        </p>
+                        {unsafePreviousSale && (
+                            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                                No se pudo descartar con seguridad el trabajo anterior porque su estado fiscal no está verificado.
+                                Guárdalo como borrador para continuar.
+                            </p>
+                        )}
+                        {!hasVerifiableDraftOperation(restoreDraft) && (
+                            <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                                El borrador anterior no tiene una identificación de operación válida y necesita revisión antes de continuar.
+                            </p>
+                        )}
+                        <div className="mt-5 flex flex-wrap justify-end gap-2">
+                            <button
+                                type="button"
+                                disabled={savingPreviousSale || unsafePreviousSale}
+                                onClick={discardPreviousSaleAndContinue}
+                                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                Descartar y continuar
+                            </button>
+                            <button
+                                type="button"
+                                disabled={savingPreviousSale || !hasVerifiableDraftOperation(restoreDraft)}
+                                onClick={() => void savePreviousSaleAndContinue()}
+                                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                {savingPreviousSale ? 'Guardando…' : 'Guardar y continuar'}
+                            </button>
+                        </div>
+                    </section>
+                </div>
+            )}
+
+            {restoreDraft && !incomingSourceKey && (
                 <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
                     <section className="w-full max-w-md rounded-2xl border border-amber-100 bg-white p-6 shadow-2xl">
                         <h2 className="text-lg font-semibold text-slate-950">
