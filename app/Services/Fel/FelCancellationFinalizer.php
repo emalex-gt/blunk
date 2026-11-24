@@ -6,12 +6,12 @@ use App\Models\ElectronicDocument;
 use App\Models\FelCancellationRequest;
 use App\Models\Sale;
 use App\Models\User;
+use App\Services\Credits\CreditReservationInvoiceAllocationService;
 use App\Services\SaleStockCancellationService;
 use App\Support\AccountsReceivable;
 use App\Support\BranchInventory;
 use App\Support\CashRegister;
 use App\Support\CashRegisterClosingCorrections;
-use App\Support\Credits;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -20,8 +20,10 @@ use Illuminate\Support\Facades\DB;
  */
 class FelCancellationFinalizer
 {
-    public function __construct(private readonly SaleStockCancellationService $stockCancellation)
-    {
+    public function __construct(
+        private readonly SaleStockCancellationService $stockCancellation,
+        private readonly CreditReservationInvoiceAllocationService $creditAllocations,
+    ) {
     }
 
     public function finalize(FelCancellationRequest $request, User $actor, int $businessId): Sale
@@ -80,7 +82,10 @@ class FelCancellationFinalizer
 
                 AccountsReceivable::cancelSaleCharge($sale, $actor);
                 $this->stockCancellation->restore($sale, $actor);
-                Credits::restoreSaleReservationInvoices($sale);
+                // The same snapshot-aware, idempotent reversal used by ordinary sales.
+                // This runs only after CONFIRMED fiscal cancellation, atomically
+                // with the other commercial cancellation effects.
+                $this->creditAllocations->reverseSale($sale);
 
                 if ($cashAmount > 0) {
                     $cashSession = CashRegister::requireOpenSession(

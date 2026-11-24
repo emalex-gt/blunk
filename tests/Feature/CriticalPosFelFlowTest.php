@@ -5382,6 +5382,273 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertSame('0.0000', (string) $line->fresh()->qty_pending);
     }
 
+    public function test_confirmed_fel_cancellation_restores_discounted_reservation_snapshot_exactly_once(): void
+    {
+        [$business, $user, $line, $sale, $cancellation] = $this->discountedFelCancellationFixture();
+        $this->assertSame('0.0000', (string) $line->fresh()->qty_pending);
+        $this->assertSame('58.00', (string) CreditReceiptLineInvoice::query()->sole()->total_after_discount);
+
+        Http::fake(); // Finalization is local; it must never send another Digifact request.
+        $finalizer = app(\App\Services\Fel\FelCancellationFinalizer::class);
+        $finalizer->finalize($cancellation, $user, $business->id);
+        $firstReversal = CreditReceiptLineInvoice::query()->sole()->reversed_at;
+        $finalizer->finalize($cancellation->refresh(), $user, $business->id);
+
+        $this->assertSame('cancelled', $sale->fresh()->status);
+        $this->assertNotNull($cancellation->fresh()->finalized_at);
+        $this->assertSame('cancelled', $sale->electronicDocument()->firstOrFail()->status);
+        $this->assertSame('0.0000', (string) $line->fresh()->qty_invoiced);
+        $this->assertSame('1.0000', (string) $line->fresh()->qty_pending);
+        $this->assertSame('1.0000', (string) $line->fresh()->qty_reserved);
+        $this->assertSame('58.00', (string) $line->fresh()->pending_total);
+        $this->assertSame('58.00', (string) $line->receipt()->firstOrFail()->pending_total);
+        $this->assertSame($firstReversal?->toDateTimeString(), CreditReceiptLineInvoice::query()->sole()->reversed_at?->toDateTimeString());
+        $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+        $this->assertSame(1, CashMovement::query()->where('business_id', $business->id)->where('type', 'sale_cash_cancel')->count());
+        Http::assertNothingSent();
+    }
+
+    public function test_unconfirmed_fel_cancellation_never_reverses_snapshot_allocations(): void
+    {
+        [$business, $user, $line, $sale, $cancellation] = $this->discountedFelCancellationFixture();
+        Http::fake();
+
+        foreach ([
+            FelCancellationRequest::PENDING,
+            FelCancellationRequest::UNKNOWN,
+            FelCancellationRequest::REJECTED,
+            FelCancellationRequest::MANUAL_RESOLUTION_REQUIRED,
+        ] as $status) {
+            $cancellation->update(['status' => $status]);
+
+            try {
+                app(\App\Services\Fel\FelCancellationFinalizer::class)->finalize($cancellation->refresh(), $user, $business->id);
+                $this->fail("An unconfirmed {$status} cancellation must not reverse a reservation.");
+            } catch (FelException) {
+                $this->assertSame('completed', $sale->fresh()->status);
+                $this->assertNull(CreditReceiptLineInvoice::query()->sole()->reversed_at);
+                $this->assertSame('0.0000', (string) $line->fresh()->qty_pending);
+                $this->assertSame('0.00', (string) $line->fresh()->pending_total);
+                $this->assertNull($cancellation->fresh()->finalized_at);
+            }
+        }
+
+        $this->assertSame(0, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+        Http::assertNothingSent();
+    }
+
+    public function test_confirmed_fel_cancellation_with_failed_local_finalization_remains_recoverable_without_reversal(): void
+    {
+        [$business, $user, $line, $sale, $cancellation] = $this->discountedFelCancellationFixture();
+        $session = CashRegisterSession::query()->where('business_id', $business->id)->sole();
+        $session->update(['status' => 'closed']);
+        Http::fake();
+
+        try {
+            app(\App\Services\Fel\FelCancellationFinalizer::class)->finalize($cancellation, $user, $business->id);
+            $this->fail('Cancellation with cash must not finalize without an open cash session.');
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $this->assertSame(FelCancellationRequest::CONFIRMED, $cancellation->fresh()->status);
+            $this->assertNull($cancellation->fresh()->finalized_at);
+            $this->assertNotEmpty($cancellation->fresh()->finalization_error);
+            $this->assertSame('completed', $sale->fresh()->status);
+            $this->assertNull(CreditReceiptLineInvoice::query()->sole()->reversed_at);
+            $this->assertSame('0.0000', (string) $line->fresh()->qty_pending);
+        }
+
+        $session->update(['status' => 'open']);
+        $finalizer = app(\App\Services\Fel\FelCancellationFinalizer::class);
+        $finalizer->finalize($cancellation->refresh(), $user, $business->id);
+        $finalizer->finalize($cancellation->refresh(), $user, $business->id);
+
+        $this->assertNotNull(CreditReceiptLineInvoice::query()->sole()->reversed_at);
+        $this->assertSame('58.00', (string) $line->fresh()->pending_total);
+        $this->assertSame('1.0000', (string) $line->fresh()->qty_pending);
+        $this->assertNull($cancellation->fresh()->finalization_error);
+        $this->assertSame(1, StockMovement::query()->where('business_id', $business->id)->where('type', 'sale_cancel')->count());
+        Http::assertNothingSent();
+    }
+
+    public function test_confirmed_fel_cancellation_restores_each_reservation_discount_independently(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'cash_register', 'credits', 'discounts', 'fel_gt'], role: 'owner', allowInvoices: true, enableCredits: true);
+        $this->felSettings($business);
+        $this->setConfirmedFelBranchLocation($business);
+        $productA = $this->product($business, stock: 10, salePrice: 100);
+        $productB = $this->product($business, stock: 10, salePrice: 200);
+        $reservationA = $this->creditPayload($productA, 1);
+        $reservationA['items'][0]['line_discount_amount'] = 10;
+        $reservationA['items'][0]['line_discount_reason'] = 'Promoción A';
+        $reservationA['discount'] = ['type' => 'fixed', 'value' => 5, 'reason' => 'General A'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservationA)->assertSessionHasNoErrors();
+        $reservationB = $this->creditPayload($productB, 1);
+        $reservationB['items'][0]['line_discount_amount'] = 20;
+        $reservationB['items'][0]['line_discount_reason'] = 'Promoción B';
+        $reservationB['discount'] = ['type' => 'fixed', 'value' => 15, 'reason' => 'General B'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservationB)->assertSessionHasNoErrors();
+
+        $lines = CreditReceiptLine::query()->orderBy('id')->get();
+        $customer = $lines->first()->receipt()->firstOrFail()->customer()->firstOrFail();
+        $this->openCashRegister($business, $user);
+        $this->mockRealIntentPayload($this->successfulIntentCertification('UUID-CREDIT-CANCEL-MULTIPLE'));
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $productA,
+            quantity: 1,
+            total: 250,
+            documentType: 'invoice',
+            customer: [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'doc_type' => $customer->doc_type,
+                'doc_number' => $customer->doc_number,
+                'country' => $customer->country,
+            ],
+            items: [
+                ['product' => $productA, 'quantity' => 1, 'credit_line_id' => $lines[0]->id],
+                ['product' => $productB, 'quantity' => 1, 'credit_line_id' => $lines[1]->id],
+            ],
+        ))->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->sole();
+        $cancellation = $this->confirmedCreditFelCancellation($sale, $user);
+        Http::fake();
+        app(\App\Services\Fel\FelCancellationFinalizer::class)->finalize($cancellation, $user, $business->id);
+
+        $this->assertSame('85.00', (string) $lines[0]->fresh()->pending_total);
+        $this->assertSame('165.00', (string) $lines[1]->fresh()->pending_total);
+        $this->assertSame('1.0000', (string) $lines[0]->fresh()->qty_pending);
+        $this->assertSame('1.0000', (string) $lines[1]->fresh()->qty_pending);
+        $this->assertSame(2, CreditReceiptLineInvoice::query()->whereNotNull('reversed_at')->count());
+        $this->assertSame(0, CreditReceiptLineInvoice::query()->whereNull('reversed_at')->count());
+        Http::assertNothingSent();
+    }
+
+    public function test_cancelling_an_intermediate_fel_partial_leaves_other_invoice_unchanged_and_allows_exact_refacturation(): void
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'cash_register', 'credits', 'discounts', 'fel_gt'], role: 'owner', allowInvoices: true, enableCredits: true);
+        $this->felSettings($business);
+        $this->setConfirmedFelBranchLocation($business);
+        $product = $this->product($business, stock: 10, salePrice: 25.98);
+        $product->update(['allow_decimal_quantity' => true]);
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['items'][0]['quantity'] = '2.2500';
+        $reservation['discount'] = ['type' => 'fixed', 'value' => 0.46, 'reason' => 'Descuento de prueba'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+
+        $line = CreditReceiptLine::query()->sole();
+        $customer = $line->receipt()->firstOrFail()->customer()->firstOrFail();
+        $customerPayload = [
+            'id' => $customer->id,
+            'name' => $customer->name,
+            'doc_type' => $customer->doc_type,
+            'doc_number' => $customer->doc_number,
+            'country' => $customer->country,
+        ];
+        $branch = BranchInventory::defaultBranchForBusiness($business);
+        $planService = app(CreditReservationInvoicePlanService::class);
+        $firstPlan = $planService->prepare($business->id, $branch->id, [
+            ['credit_line_id' => $line->id, 'quantity' => '1.2500'],
+        ]);
+        $firstNet = (string) $firstPlan['totals']['net'];
+        $this->openCashRegister($business, $user);
+        $this->mockRealIntentPayload($this->successfulIntentCertification('UUID-CREDIT-PARTIAL-CANCEL'));
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $product, '1.2500', (float) $firstNet, 'invoice', $customerPayload,
+            itemOverrides: ['credit_line_id' => $line->id],
+        ))->assertSessionHasNoErrors();
+
+        $fiscalSale = Sale::query()->sole();
+        $fiscalAllocation = CreditReceiptLineInvoice::query()->where('sale_id', $fiscalSale->id)->sole();
+        $remainingPlan = $planService->prepare($business->id, $branch->id, [
+            ['credit_line_id' => $line->id, 'quantity' => '1.0000'],
+        ]);
+        $secondNet = (string) $remainingPlan['totals']['net'];
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $product, '1.0000', (float) $secondNet, 'receipt', $customerPayload,
+            itemOverrides: ['credit_line_id' => $line->id],
+        ))->assertSessionHasNoErrors();
+
+        $ordinarySale = Sale::query()->where('id', '!=', $fiscalSale->id)->sole();
+        $ordinaryAllocation = CreditReceiptLineInvoice::query()->where('sale_id', $ordinarySale->id)->sole();
+        $ordinaryNet = (string) $ordinaryAllocation->total_after_discount;
+        $ordinaryReversal = $ordinaryAllocation->reversed_at;
+        $cancellation = $this->confirmedCreditFelCancellation($fiscalSale, $user);
+        Http::fake();
+        app(\App\Services\Fel\FelCancellationFinalizer::class)->finalize($cancellation, $user, $business->id);
+
+        $this->assertNotNull($fiscalAllocation->fresh()->reversed_at);
+        $this->assertSame($ordinaryNet, (string) $ordinaryAllocation->fresh()->total_after_discount);
+        $this->assertSame($ordinaryReversal, $ordinaryAllocation->fresh()->reversed_at);
+        $this->assertSame('completed', $ordinarySale->fresh()->status);
+        $this->assertSame('1.2500', (string) $line->fresh()->qty_pending);
+        $this->assertSame($firstNet, (string) $line->fresh()->pending_total);
+        Http::assertNothingSent();
+
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $product, '1.2500', (float) $firstNet, 'receipt', $customerPayload,
+            itemOverrides: ['credit_line_id' => $line->id],
+        ))->assertSessionHasNoErrors();
+
+        $replacement = CreditReceiptLineInvoice::query()
+            ->where('sale_id', '!=', $fiscalSale->id)
+            ->where('sale_id', '!=', $ordinarySale->id)
+            ->sole();
+        $this->assertSame($firstNet, (string) $replacement->total_after_discount);
+        $this->assertSame('0.0000', (string) $line->fresh()->qty_pending);
+        $this->assertSame('58.00', bcadd($ordinaryNet, (string) $replacement->total_after_discount, 2));
+    }
+
+    /** @return array{Business, User, CreditReceiptLine, Sale, FelCancellationRequest} */
+    private function discountedFelCancellationFixture(): array
+    {
+        [$business, $user] = $this->tenant(country: 'GT', modules: ['pos', 'cash_register', 'credits', 'discounts', 'fel_gt'], role: 'owner', allowInvoices: true, enableCredits: true);
+        $this->felSettings($business);
+        $this->setConfirmedFelBranchLocation($business);
+        $product = $this->product($business, stock: 10, salePrice: 58.45);
+        $reservation = $this->creditPayload($product, 1);
+        $reservation['discount'] = ['type' => 'fixed', 'value' => 0.45, 'reason' => 'Ajuste comercial'];
+        $this->actingAs($user)->post(route('credits.receipts.store'), $reservation)->assertSessionHasNoErrors();
+        $line = CreditReceiptLine::query()->sole();
+        $customer = $line->receipt()->firstOrFail()->customer()->firstOrFail();
+        $this->openCashRegister($business, $user);
+        $this->mockRealIntentPayload($this->successfulIntentCertification('UUID-CREDIT-CANCEL'));
+        $this->actingAs($user)->post(route('sales.store'), $this->salePayload(
+            $product,
+            quantity: 1,
+            total: 58,
+            documentType: 'invoice',
+            customer: [
+                'id' => $customer->id,
+                'name' => $customer->name,
+                'doc_type' => $customer->doc_type,
+                'doc_number' => $customer->doc_number,
+                'country' => $customer->country,
+            ],
+            itemOverrides: ['credit_line_id' => $line->id],
+        ))->assertSessionHasNoErrors();
+
+        $sale = Sale::query()->sole();
+        return [$business, $user, $line, $sale, $this->confirmedCreditFelCancellation($sale, $user)];
+    }
+
+    private function confirmedCreditFelCancellation(Sale $sale, User $user): FelCancellationRequest
+    {
+        $document = $sale->electronicDocument()->firstOrFail();
+        return FelCancellationRequest::query()->create([
+            'business_id' => $sale->business_id,
+            'sale_id' => $sale->id,
+            'electronic_document_id' => $document->id,
+            'requested_by' => $user->id,
+            'provider' => $document->provider,
+            'environment' => $document->environment,
+            'uuid' => $document->uuid,
+            'reason' => 'Corrección fiscal confirmada de prueba',
+            'status' => FelCancellationRequest::CONFIRMED,
+            'confirmed_at' => now(),
+            'response_payload' => ['Codigo' => '1', 'Autorizacion' => $document->uuid],
+        ]);
+    }
+
     public function test_cancelling_a_decimal_credit_reservation_sale_restores_the_exact_pending_quantity_once(): void
     {
         [$business, $user] = $this->tenant(modules: ['pos', 'cash_register', 'credits'], role: 'owner', enableCredits: true);
