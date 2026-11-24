@@ -6159,6 +6159,11 @@ class CriticalPosFelFlowTest extends TestCase
         $this->assertStringContainsString('function formatLocalDateTime', $source);
         $this->assertStringContainsString('Intl.DateTimeFormat', $source);
         $this->assertStringContainsString('formatLocalDateTime(intent.next_reconciliation_at)', $source);
+        $this->assertStringContainsString("found: 'Documento encontrado en Digifact'", $source);
+        $this->assertStringContainsString('function reconciliationSummary', $source);
+        $this->assertStringContainsString('Ver detalle técnico', $source);
+        $this->assertStringContainsString("intent.status !== 'finalized' && intent.next_reconciliation_at", $source);
+        $this->assertStringNotContainsString("Resultado: {intent.last_reconciliation_result ? JSON.stringify(intent.last_reconciliation_result) : '-'}", $source);
     }
 
     public function test_super_admin_fel_intent_dates_are_serialized_as_utc_iso_timestamps(): void
