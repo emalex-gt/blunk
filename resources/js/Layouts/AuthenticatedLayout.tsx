@@ -285,7 +285,7 @@ export default function Authenticated({
                                             router.post(
                                                 route('branches.active'),
                                                 { branch_id: Number(event.target.value) },
-                                                { preserveScroll: true },
+                                                { preserveScroll: true, preserveState: false },
                                             )
                                         }
                                         className="h-10 max-w-36 rounded-xl border-slate-700 bg-slate-900 text-sm font-semibold text-slate-100 shadow-sm focus:border-orange-500 focus:ring-4 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-500 xl:max-w-40 2xl:max-w-48"
@@ -415,7 +415,7 @@ export default function Authenticated({
                                         router.post(
                                             route('branches.active'),
                                             { branch_id: Number(event.target.value) },
-                                            { preserveScroll: true },
+                                            { preserveScroll: true, preserveState: false },
                                         );
                                     }}
                                     className="mt-1 h-10 w-full rounded-xl border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm focus:border-orange-400 focus:ring-4 focus:ring-orange-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
