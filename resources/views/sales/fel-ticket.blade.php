@@ -111,7 +111,7 @@
     <table>
         <thead>
             <tr>
-                <th style="width: 10%;">Cant</th>
+                <th class="ticket-quantity">Cant</th>
                 <th>Descripción</th>
                 <th class="money">Precio</th>
                 <th class="money">Desc.</th>
@@ -121,7 +121,7 @@
         <tbody>
         @foreach ($items as $item)
             <tr>
-                <td>{{ $formatQuantity($item->quantity) }}</td>
+                <td class="ticket-quantity">{{ $formatQuantity($item->quantity) }}</td>
                 <td class="break">{{ $item->product_name }}@include('print.partials.product-identifiers', ['item' => $item, 'settings' => $settings])</td>
                 <td class="money">{{ number_format((float) $item->unit_price, 2) }}</td>
                 <td class="money">{{ number_format((float) ($item->discount_amount ?? 0), 2) }}</td>

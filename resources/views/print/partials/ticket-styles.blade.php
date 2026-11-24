@@ -88,6 +88,18 @@
     .right,
     .money { text-align: right; }
 
+    .ticket-quantity {
+        overflow-wrap: normal !important;
+        white-space: nowrap;
+        word-break: normal;
+    }
+
+    td.ticket-quantity,
+    th.ticket-quantity {
+        min-width: 14mm;
+        width: 14mm;
+    }
+
     .row {
         display: flex;
         justify-content: space-between;

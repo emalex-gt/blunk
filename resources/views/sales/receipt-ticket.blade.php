@@ -125,7 +125,7 @@
                 <div class="item-name">{{ $item->product_name }}</div>
                 @include('print.partials.product-identifiers', ['item' => $item, 'settings' => $settings])
                 <div class="row">
-                    <span>Cant: {{ $formatQuantity($item->quantity) }}</span>
+                    <span>Cant: <span class="ticket-quantity">{{ $formatQuantity($item->quantity) }}</span></span>
                     <span>Precio: {{ formatMoney($item->unit_price, $country) }}</span>
                 </div>
                 <div class="row muted">
