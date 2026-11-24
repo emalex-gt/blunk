@@ -1841,6 +1841,17 @@ class CriticalPosFelFlowTest extends TestCase
             ->assertJsonValidationErrors('line_ids');
     }
 
+    public function test_pos_uses_the_credit_invoice_read_contract_and_blocks_new_snapshots_temporarily(): void
+    {
+        $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
+
+        $this->assertStringContainsString("route('credits.invoice-lines')", $source);
+        $this->assertStringContainsString("route('credits.invoice-preview')", $source);
+        $this->assertStringContainsString('creditInvoiceContractStatus', $source);
+        $this->assertStringContainsString('creditInvoicePreviews', $source);
+        $this->assertStringContainsString('Esta reserva utiliza el nuevo sistema de descuentos y su facturación todavía no está habilitada.', $source);
+    }
+
     public function test_recent_fel_nit_flow_files_do_not_contain_mojibake_markers(): void
     {
         $files = [

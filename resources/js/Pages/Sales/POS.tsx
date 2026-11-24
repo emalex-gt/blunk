@@ -214,6 +214,44 @@ type CreditInvoicePayload = {
     }[];
 };
 
+type CreditReservationCommercial = {
+    quantity: string;
+    gross: string;
+    line_discount: string;
+    general_discount: string;
+    net: string;
+};
+
+type CreditInvoiceContractLine = {
+    credit_receipt_id: number;
+    credit_line_id: number;
+    branch_id: number;
+    product: {
+        id: number;
+        name: string;
+        allow_decimal_quantity: boolean;
+    };
+    snapshot_version: number | null;
+    quantity: {
+        original: string;
+        pending: string;
+        invoiced: string;
+    };
+    unit_price: string;
+    commercial: {
+        monetary_allocation_state: 'complete' | 'incomplete' | 'historical';
+        original: CreditReservationCommercial | null;
+        pending: CreditReservationCommercial | null;
+    };
+};
+
+type CreditInvoicePreview = {
+    quantity: string;
+    status: 'loading' | 'ready' | 'error';
+    commercial: CreditReservationCommercial | null;
+    error?: string;
+};
+
 type QuotationSource = {
     id: number;
     number: string;
@@ -1036,6 +1074,10 @@ export default function POS({
         reason: '',
     });
     const [discountFormError, setDiscountFormError] = useState('');
+    const [creditInvoiceContracts, setCreditInvoiceContracts] = useState<Record<number, CreditInvoiceContractLine>>({});
+    const [creditInvoiceContractStatus, setCreditInvoiceContractStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+    const [creditInvoiceContractError, setCreditInvoiceContractError] = useState('');
+    const [creditInvoicePreviews, setCreditInvoicePreviews] = useState<Record<number, CreditInvoicePreview>>({});
     const toast = useToast();
     const searchInputRef = useRef<HTMLInputElement>(null);
     const cartRef = useRef<CartItem[]>([]);
@@ -1045,6 +1087,8 @@ export default function POS({
     const latestSubmitSucceededRef = useRef(false);
     const latestSubmitFailureHandledRef = useRef(false);
     const creditInvoiceLoadedRef = useRef(false);
+    const creditInvoiceContractRequestRef = useRef(0);
+    const creditInvoicePreviewRequestRef = useRef<Record<number, number>>({});
     const creditReservationCustomerLocked = cart.some((item) => item.credit_line_id != null)
         || Boolean(credit_invoice && !creditInvoiceLoadedRef.current);
     const quotationLoadedRef = useRef(false);
@@ -1328,6 +1372,180 @@ export default function POS({
             })
             .catch(() => showError('No se pudieron cargar todos los productos seleccionados de la reserva. No se cargó ninguna línea al POS.'));
     }, [credit_invoice, fetchPosProducts, productsById]);
+
+    useEffect(() => {
+        if (!credit_invoice) {
+            setCreditInvoiceContracts({});
+            setCreditInvoicePreviews({});
+            setCreditInvoiceContractStatus('idle');
+            setCreditInvoiceContractError('');
+            return;
+        }
+
+        const lineIds = [...new Set(credit_invoice.lines.map((line) => line.credit_line_id))];
+        const requestId = ++creditInvoiceContractRequestRef.current;
+        const controller = new AbortController();
+        const query = new URLSearchParams();
+        lineIds.forEach((lineId) => query.append('line_ids[]', String(lineId)));
+        setCreditInvoiceContracts({});
+        setCreditInvoicePreviews({});
+        setCreditInvoiceContractStatus('loading');
+        setCreditInvoiceContractError('');
+
+        void fetch(`${route('credits.invoice-lines')}?${query.toString()}`, {
+            headers: { Accept: 'application/json' },
+            credentials: 'same-origin',
+            signal: controller.signal,
+        })
+            .then(async (response) => {
+                const payload = await readJsonResponse(response) as {
+                    data?: { lines?: CreditInvoiceContractLine[] };
+                    message?: string;
+                } | null;
+                if (!response.ok || !payload?.data?.lines) {
+                    throw new Error(payload?.message ?? 'No se pudo cargar el detalle monetario de la reserva.');
+                }
+
+                return payload.data.lines;
+            })
+            .then((lines) => {
+                if (requestId !== creditInvoiceContractRequestRef.current) {
+                    return;
+                }
+
+                const contracts = lines.reduce<Record<number, CreditInvoiceContractLine>>((current, line) => {
+                    current[line.credit_line_id] = line;
+                    return current;
+                }, {});
+                if (Object.keys(contracts).length !== lineIds.length) {
+                    throw new Error('No se pudo cargar el detalle completo de la reserva.');
+                }
+
+                setCreditInvoiceContracts(contracts);
+                setCreditInvoiceContractStatus('ready');
+            })
+            .catch((error: unknown) => {
+                if (controller.signal.aborted || requestId !== creditInvoiceContractRequestRef.current) {
+                    return;
+                }
+
+                setCreditInvoiceContractStatus('error');
+                setCreditInvoiceContractError(error instanceof Error ? error.message : 'No se pudo cargar el detalle monetario de la reserva.');
+            });
+
+        return () => controller.abort();
+    }, [credit_invoice]);
+
+    useEffect(() => {
+        if (creditInvoiceContractStatus !== 'ready') {
+            return;
+        }
+
+        const timers: number[] = [];
+        const controllers: AbortController[] = [];
+        const activeLineIds = new Set<number>();
+
+        cart.forEach((item) => {
+            const creditLineId = item.credit_line_id ?? null;
+            const contract = creditLineId ? creditInvoiceContracts[creditLineId] : null;
+            if (!creditLineId || !contract || contract.snapshot_version !== 1 || contract.commercial.monetary_allocation_state !== 'complete') {
+                return;
+            }
+
+            activeLineIds.add(creditLineId);
+            const quantity = canonicalQuantity(item.quantity);
+            if (quantity === null || compareQuantity(quantity, '0') !== 1) {
+                setCreditInvoicePreviews((current) => ({
+                    ...current,
+                    [creditLineId]: { quantity: item.quantity, status: 'error', commercial: null, error: 'Ingresa una cantidad válida para obtener la vista previa.' },
+                }));
+                return;
+            }
+
+            if (compareQuantity(quantity, contract.quantity.pending) === 0) {
+                setCreditInvoicePreviews((current) => {
+                    if (!(creditLineId in current)) {
+                        return current;
+                    }
+                    const next = { ...current };
+                    delete next[creditLineId];
+                    return next;
+                });
+                return;
+            }
+
+            const requestId = (creditInvoicePreviewRequestRef.current[creditLineId] ?? 0) + 1;
+            creditInvoicePreviewRequestRef.current[creditLineId] = requestId;
+            setCreditInvoicePreviews((current) => ({
+                ...current,
+                [creditLineId]: { quantity, status: 'loading', commercial: null },
+            }));
+
+            timers.push(window.setTimeout(() => {
+                const controller = new AbortController();
+                controllers.push(controller);
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+                void fetch(route('credits.invoice-preview'), {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    signal: controller.signal,
+                    headers: {
+                        Accept: 'application/json',
+                        'Content-Type': 'application/json',
+                        ...(csrfToken ? { 'X-CSRF-TOKEN': csrfToken } : {}),
+                    },
+                    body: JSON.stringify({ line_id: creditLineId, quantity }),
+                })
+                    .then(async (response) => {
+                        const payload = await readJsonResponse(response) as {
+                            data?: { commercial?: CreditReservationCommercial };
+                            message?: string;
+                            errors?: Record<string, string[]>;
+                        } | null;
+                        if (!response.ok || !payload?.data?.commercial) {
+                            const errorMessage = payload?.errors?.quantity?.[0]
+                                ?? payload?.errors?.line_id?.[0]
+                                ?? payload?.message
+                                ?? 'No se pudo calcular la vista previa de la reserva.';
+                            throw new Error(errorMessage);
+                        }
+                        return payload.data.commercial;
+                    })
+                    .then((commercial) => {
+                        if (creditInvoicePreviewRequestRef.current[creditLineId] !== requestId) {
+                            return;
+                        }
+                        setCreditInvoicePreviews((current) => ({
+                            ...current,
+                            [creditLineId]: { quantity, status: 'ready', commercial },
+                        }));
+                    })
+                    .catch((error: unknown) => {
+                        if (controller.signal.aborted || creditInvoicePreviewRequestRef.current[creditLineId] !== requestId) {
+                            return;
+                        }
+                        setCreditInvoicePreviews((current) => ({
+                            ...current,
+                            [creditLineId]: {
+                                quantity,
+                                status: 'error',
+                                commercial: null,
+                                error: error instanceof Error ? error.message : 'No se pudo calcular la vista previa de la reserva.',
+                            },
+                        }));
+                    });
+            }, 300));
+        });
+
+        setCreditInvoicePreviews((current) => Object.fromEntries(
+            Object.entries(current).filter(([lineId]) => activeLineIds.has(Number(lineId))),
+        ));
+
+        return () => {
+            timers.forEach((timer) => window.clearTimeout(timer));
+            controllers.forEach((controller) => controller.abort());
+        };
+    }, [cart, creditInvoiceContractStatus, creditInvoiceContracts]);
 
     useEffect(() => {
         if (!quotation_source || quotationLoadedRef.current) {
@@ -1678,6 +1896,56 @@ export default function POS({
         () => roundMoney(Math.max(0, subtotalAfterLineDiscount - discountAmount)),
         [discountAmount, subtotalAfterLineDiscount],
     );
+    const creditInvoiceCommercialFor = useCallback((item: CartItem): CreditReservationCommercial | null => {
+        const creditLineId = item.credit_line_id;
+        if (creditLineId === null || creditLineId === undefined) {
+            return null;
+        }
+
+        const contract = creditInvoiceContracts[creditLineId];
+        if (!contract || contract.snapshot_version !== 1 || contract.commercial.monetary_allocation_state !== 'complete') {
+            return null;
+        }
+
+        const quantity = canonicalQuantity(item.quantity);
+        if (quantity === null) {
+            return null;
+        }
+
+        if (compareQuantity(quantity, contract.quantity.pending) === 0) {
+            return contract.commercial.pending;
+        }
+
+        const preview = creditInvoicePreviews[creditLineId];
+        return preview?.status === 'ready' && preview.quantity === quantity ? preview.commercial : null;
+    }, [creditInvoiceContracts, creditInvoicePreviews]);
+    const creditInvoiceTotals = useMemo(() => {
+        const snapshotLines = cart.filter((item) => {
+            const contract = item.credit_line_id ? creditInvoiceContracts[item.credit_line_id] : null;
+            return contract?.snapshot_version === 1 && contract.commercial.monetary_allocation_state === 'complete';
+        });
+        if (snapshotLines.length === 0) {
+            return null;
+        }
+
+        const commercialLines = snapshotLines.map(creditInvoiceCommercialFor);
+        if (commercialLines.some((line) => line === null)) {
+            return null;
+        }
+
+        return commercialLines.reduce((totals, line) => ({
+            gross: totals.gross + Number(line!.gross),
+            lineDiscount: totals.lineDiscount + Number(line!.line_discount),
+            generalDiscount: totals.generalDiscount + Number(line!.general_discount),
+            net: totals.net + Number(line!.net),
+        }), { gross: 0, lineDiscount: 0, generalDiscount: 0, net: 0 });
+    }, [cart, creditInvoiceCommercialFor, creditInvoiceContracts]);
+    const hasNewCreditReservationSnapshot = useMemo(
+        () => cart.some((item) => item.credit_line_id != null && creditInvoiceContracts[item.credit_line_id]?.snapshot_version === 1),
+        [cart, creditInvoiceContracts],
+    );
+    const requiresCreditInvoiceContractVerification = cart.some((item) => item.credit_line_id != null)
+        && creditInvoiceContractStatus !== 'ready';
     const assistantPricingAlerts = useMemo(() => {
         if (!canViewAssistantCosts || cart.length === 0) {
             return [];
@@ -3359,6 +3627,22 @@ export default function POS({
             return;
         }
 
+        if (requiresCreditInvoiceContractVerification) {
+            const message = creditInvoiceContractStatus === 'loading'
+                ? 'Estamos verificando el detalle monetario de la reserva. Espera antes de finalizar.'
+                : creditInvoiceContractError || 'No se pudo verificar el detalle monetario de la reserva. Intenta nuevamente antes de finalizar.';
+            showError(message);
+            toast.warning(message);
+            return;
+        }
+
+        if (hasNewCreditReservationSnapshot) {
+            const message = 'Esta reserva utiliza el nuevo sistema de descuentos y su facturación todavía no está habilitada.';
+            showError(message);
+            toast.warning(message);
+            return;
+        }
+
         if (!validateCartQuantities()) {
             return;
         }
@@ -4280,6 +4564,21 @@ export default function POS({
                                     Facturando productos a crédito.
                                 </div>
                             )}
+                            {credit_invoice && creditInvoiceContractStatus === 'loading' && (
+                                <div className="mb-4 rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-700">
+                                    Cargando el detalle monetario de las reservas…
+                                </div>
+                            )}
+                            {credit_invoice && creditInvoiceContractStatus === 'error' && (
+                                <div className="mb-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                                    {creditInvoiceContractError || 'No se pudo cargar el detalle monetario de las reservas.'}
+                                </div>
+                            )}
+                            {credit_invoice && hasNewCreditReservationSnapshot && (
+                                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+                                    Esta reserva utiliza el nuevo sistema de descuentos y su facturación todavía no está habilitada.
+                                </div>
+                            )}
                             {quotation_source && (
                                 <div className={`mb-4 rounded-xl border px-4 py-3 text-sm font-semibold ${quotation_source.expired ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-orange-100 bg-orange-50 text-orange-700'}`}>
                                     Carrito cargado desde {quotation_source.number}.
@@ -5155,11 +5454,32 @@ export default function POS({
                                                 {item.price_warning && (
                                                     <p className="text-[11px] font-semibold text-amber-600">{item.price_warning}</p>
                                                 )}
-                                                {item.credit_line_id && (
-                                                    <p className="text-[11px] text-slate-500">
-                                                        Reserva {item.credit_receipt_number ?? `#${item.credit_line_id}`} · Precio original {formatCurrency(Number(item.original_price), country)}
-                                                    </p>
-                                                )}
+                                                {item.credit_line_id && (() => {
+                                                    const contract = creditInvoiceContracts[item.credit_line_id];
+                                                    const preview = creditInvoicePreviews[item.credit_line_id];
+                                                    const commercial = creditInvoiceCommercialFor(item);
+
+                                                    return (
+                                                        <div className="space-y-1 text-[11px] text-slate-500">
+                                                            <p>
+                                                                Reserva {item.credit_receipt_number ?? `#${item.credit_line_id}`} · Precio original {formatCurrency(Number(item.original_price), country)}
+                                                            </p>
+                                                            {creditInvoiceContractStatus === 'loading' && <p className="font-semibold text-sky-700">Cargando desglose de la reserva…</p>}
+                                                            {contract?.commercial.monetary_allocation_state === 'historical' && <p>Reserva histórica: se conserva el cálculo comercial anterior.</p>}
+                                                            {contract?.commercial.monetary_allocation_state === 'incomplete' && <p className="font-semibold text-amber-700">La reserva no tiene desglose monetario suficiente para vista previa.</p>}
+                                                            {preview?.status === 'loading' && <p className="font-semibold text-sky-700">Actualizando vista previa…</p>}
+                                                            {preview?.status === 'error' && <p className="font-semibold text-red-700">{preview.error}</p>}
+                                                            {commercial && (
+                                                                <div className="rounded-lg border border-orange-100 bg-orange-50/60 px-2 py-1.5 text-slate-600">
+                                                                    <div className="flex justify-between gap-2"><span>Bruto</span><strong>{formatCurrency(Number(commercial.gross), country)}</strong></div>
+                                                                    <div className="flex justify-between gap-2 text-orange-700"><span>Desc. línea</span><strong>-{formatCurrency(Number(commercial.line_discount), country)}</strong></div>
+                                                                    <div className="flex justify-between gap-2 text-orange-700"><span>Desc. general reserva</span><strong>-{formatCurrency(Number(commercial.general_discount), country)}</strong></div>
+                                                                    <div className="flex justify-between gap-2 font-semibold text-slate-900"><span>Neto seleccionado</span><strong>{formatCurrency(Number(commercial.net), country)}</strong></div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()}
                                                 {item.manual_price && manualPriceError(item, manualPricePolicy) && (
                                                     <p className="text-[11px] font-semibold text-red-600">
                                                         {manualPriceError(item, manualPricePolicy)}
@@ -5833,6 +6153,14 @@ export default function POS({
                                         <Summary label="Total antes" value={formatCurrency(subtotalBeforeDiscount, country)} />
                                         {lineDiscountTotal > 0 && <Summary label="Descuento líneas" value={`-${formatCurrency(lineDiscountTotal, country)}`} />}
                                         {discount && <Summary label="Descuento general" value={`-${formatCurrency(discountAmount, country)}`} />}
+                                    </>
+                                )}
+                                {creditInvoiceTotals && (
+                                    <>
+                                        <Summary label="Bruto reservas" value={formatCurrency(creditInvoiceTotals.gross, country)} />
+                                        <Summary label="Desc. líneas reserva" value={`-${formatCurrency(creditInvoiceTotals.lineDiscount, country)}`} />
+                                        <Summary label="Desc. general reserva" value={`-${formatCurrency(creditInvoiceTotals.generalDiscount, country)}`} />
+                                        <Summary label="Neto reservas" value={formatCurrency(creditInvoiceTotals.net, country)} />
                                     </>
                                 )}
                                 <Summary label="Total venta" value={formatCurrency(total, country)} />
