@@ -668,10 +668,13 @@ class CriticalPosFelFlowTest extends TestCase
     {
         $source = file_get_contents(resource_path('js/Pages/Sales/POS.tsx'));
 
-        $this->assertStringContainsString("!['not_found', 'finalized', 'fiscal_rejected'].includes(draftRecoveryStatus.status)", $source);
-        $this->assertStringContainsString('No se puede confirmar esta venta mientras la certificación FEL está en verificación.', $source);
-        $this->assertStringContainsString("draftRecoveryStatus?.status === 'verification_unavailable'", $source);
+        $this->assertStringContainsString("!['not_found', 'finalized', 'fiscal_rejected', 'failed'].includes(activeDraftRecoveryStatus.status)", $source);
+        $this->assertStringContainsString('La operación anterior requiere verificación fiscal antes de confirmar una nueva venta.', $source);
+        $this->assertStringContainsString("activeDraftRecoveryStatus?.status === 'verification_unavailable'", $source);
         $this->assertStringContainsString('|| fiscalDraftRecoveryBlocked', $source);
+        $this->assertStringNotContainsString('hasPendingFiscalOperation', $source);
+        $this->assertStringNotContainsString('pending-pos-fiscal-operations', $source);
+        $this->assertStringNotContainsString('Hay una operación FEL anterior en verificación.', $source);
     }
 
     public function test_pos_draft_recovery_status_does_not_expose_another_users_operation(): void

@@ -1000,7 +1000,6 @@ export default function POS({
     const [restoreDraft, setRestoreDraft] = useState<PosDraft | null>(null);
     const [recoveredCompletedSale, setRecoveredCompletedSale] = useState<PosDraftRecoveryStatus | null>(null);
     const [fiscalRecoveryState, setFiscalRecoveryState] = useState<PosFiscalRecoveryState | null>(null);
-    const [hasPendingFiscalOperation, setHasPendingFiscalOperation] = useState(false);
     const [idempotencyKey, setIdempotencyKey] = useState(makeOperationKey);
     const [failedSubmission, setFailedSubmission] = useState(false);
     const [draftReady, setDraftReady] = useState(false);
@@ -4249,31 +4248,6 @@ export default function POS({
         .join(' · ');
 
     useEffect(() => {
-        let cancelled = false;
-
-        fetch(route('operation-drafts.pending-pos-fiscal-operations'), {
-            headers: { Accept: 'application/json' },
-            credentials: 'same-origin',
-        })
-            .then(async (response) => response.ok ? response.json() as Promise<{ has_pending_fiscal_operation?: boolean }> : null)
-            .then((payload) => {
-                if (!cancelled && payload) {
-                    setHasPendingFiscalOperation(Boolean(payload.has_pending_fiscal_operation));
-                }
-            })
-            .catch(() => {
-                // A failed advisory check must not classify a new sale as safe.
-                if (!cancelled) {
-                    setHasPendingFiscalOperation(false);
-                }
-            });
-
-        return () => {
-            cancelled = true;
-        };
-    }, []);
-
-    useEffect(() => {
         if (!creditReservationCustomerLocked && (hasCustomerFieldErrors || nitLookupLoading)) {
             setCustomerEditing(true);
         }
@@ -4339,11 +4313,6 @@ export default function POS({
                                     {draftVerificationUnavailable
                                         ? 'No se pudo verificar el estado del trabajo pendiente. Se conserva el carrito, pero no confirmes una nueva venta hasta verificar la operación anterior.'
                                         : 'Este trabajo requiere verificación. Se conserva el carrito, pero no se puede confirmar ni reenviar la factura.'}
-                                </div>
-                            )}
-                            {hasPendingFiscalOperation && !fiscalDraftRecoveryBlocked && (
-                                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="status">
-                                    Hay una operación FEL anterior en verificación. No se reenviará automáticamente; esta venta nueva puede continuar si es independiente.
                                 </div>
                             )}
                             <div className="flex flex-wrap items-center justify-between gap-3">
