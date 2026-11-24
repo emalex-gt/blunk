@@ -1140,6 +1140,15 @@ class RouteController extends Controller
 
         if ($preSale) {
             $productIds = $preSale->items->pluck('product_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
+            $priceProducts = $this->preSaleManualPriceEnabled((int) $visit->business_id)
+                ? Product::query()->where('business_id', $visit->business_id)->whereIn('id', $productIds)->get()->keyBy('id')
+                : collect();
+            $priceSettings = $priceProducts->isNotEmpty()
+                ? TenantSetting::query()->where('business_id', $visit->business_id)->first()
+                : null;
+            $configuredPriceTypeId = $priceProducts->isNotEmpty()
+                ? $this->preSalePriceTypeId((int) $visit->business_id)
+                : null;
             $stockBreakdown = StockAvailability::getBreakdownForProducts((int) $visit->business_id, (int) $visit->branch_id, $productIds);
             $reservedByProduct = StockReservation::query()
                 ->join('pre_sales as reserved_pre_sales', function ($join) {
@@ -1157,7 +1166,17 @@ class RouteController extends Controller
                 ->selectRaw('product_id, COALESCE(SUM(quantity), 0) as quantity')
                 ->pluck('quantity', 'product_id');
 
-            $preSale->items->each(function (PreSaleItem $item) use ($stockBreakdown, $reservedByProduct) {
+            $preSale->items->each(function (PreSaleItem $item) use ($stockBreakdown, $reservedByProduct, $priceProducts, $priceSettings, $configuredPriceTypeId, $visit) {
+                $product = $priceProducts->get((int) $item->product_id);
+                if ($product) {
+                    $price = PriceLists::priceForProduct($product, $configuredPriceTypeId, (int) $visit->branch_id);
+                    try {
+                        $item->setAttribute('minimum_price', ManualPricePolicy::minimumAllowedPrice($priceSettings, $product, (float) $price['price']));
+                    } catch (ValidationException $exception) {
+                        // The server still rejects manual prices when required commercial data is missing.
+                        $item->setAttribute('minimum_price', null);
+                    }
+                }
                 $breakdown = $stockBreakdown->get((int) $item->product_id, []);
                 $item->setAttribute('maximum_quantity', ProductQuantityPolicy::add(
                     $breakdown['available_stock'] ?? 0,
@@ -2064,18 +2083,29 @@ class RouteController extends Controller
             ->get(['id', 'business_id', 'category_id', 'brand_id', 'name', 'code', 'barcode', 'sale_price', 'image_url', 'allow_decimal_quantity']);
 
         $priceTypeId = $this->preSalePriceTypeId($businessId);
+        $manualPriceSettings = $this->preSaleManualPriceEnabled($businessId)
+            ? TenantSetting::query()->where('business_id', $businessId)->first()
+            : null;
         $stockBreakdown = StockAvailability::getBreakdownForProducts(
             $businessId,
             $visit->branch_id,
             $products->pluck('id')->all(),
         );
 
-        return $products->map(function (Product $product) use ($businessId, $visit, $priceTypeId, $stockBreakdown) {
+        return $products->map(function (Product $product) use ($businessId, $visit, $priceTypeId, $stockBreakdown, $manualPriceSettings) {
             BranchInventory::ensureProductInBranch($product, $visit->branch_id);
             $breakdown = $stockBreakdown->get((int) $product->id, []);
             $stock = ProductQuantityPolicy::canonical($breakdown['physical_stock'] ?? 0);
             $reserved = ProductQuantityPolicy::canonical($breakdown['reserved_total'] ?? 0);
             $price = PriceLists::priceForProduct($product, $priceTypeId, $visit->branch_id);
+            $minimumPrice = null;
+            if ($manualPriceSettings !== null) {
+                try {
+                    $minimumPrice = ManualPricePolicy::minimumAllowedPrice($manualPriceSettings, $product, (float) $price['price']);
+                } catch (ValidationException $exception) {
+                    // Keep the existing server-side validation as the authority when price configuration is incomplete.
+                }
+            }
 
             return [
                 'id' => $product->id,
@@ -2088,6 +2118,7 @@ class RouteController extends Controller
                 'code' => $product->code,
                 'barcode' => $product->barcode,
                 'sale_price' => $price['price'],
+                'minimum_price' => $minimumPrice,
                 'allow_decimal_quantity' => (bool) $product->allow_decimal_quantity,
                 'price_type_id' => $price['price_type_id'],
                 'image_url' => $product->image_url,
