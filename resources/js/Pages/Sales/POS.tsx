@@ -4337,7 +4337,7 @@ export default function POS({
                         return;
                     }
 
-                    if (isDraftOfCurrentCheckout && status.status === 'not_found') {
+                    if (isDraftOfCurrentCheckout && ['not_found', 'failed'].includes(status.status)) {
                         // Same checkout, verified as not registered on the server.
                         // Preserve the cart and validation error without a recovery modal.
                         setUnsafePreviousSale(false);
