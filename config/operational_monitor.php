@@ -13,6 +13,10 @@ return [
     'failed_jobs_threshold' => max(1, (int) env('OPERATIONAL_MONITOR_FAILED_JOBS_THRESHOLD', 1)),
     'failed_jobs_window_hours' => max(1, (int) env('OPERATIONAL_MONITOR_FAILED_JOBS_WINDOW_HOURS', 24)),
     'fel_stale_minutes' => max(5, (int) env('OPERATIONAL_MONITOR_FEL_STALE_MINUTES', 30)),
+    'ignored_test_business_ids' => array_values(array_filter(
+        array_map('intval', explode(',', (string) env('OPERATIONAL_MONITOR_IGNORED_TEST_BUSINESS_IDS', ''))),
+        fn (int $id): bool => $id > 0,
+    )),
     // The console scheduler is configured every five minutes below. These values
     // only describe when the UI should regard a persisted run as overdue.
     'schedule_interval_minutes' => 5,

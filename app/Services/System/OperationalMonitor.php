@@ -130,7 +130,17 @@ class OperationalMonitor
     {
         $active = [];
         $cutoff = now()->subMinutes((int) config('operational_monitor.fel_stale_minutes'));
+        $ignoredTestBusinessIds = config('operational_monitor.ignored_test_business_ids', []);
+
         $intentRows = FiscalDocumentIntent::query()
+            ->when($ignoredTestBusinessIds !== [], function ($query) use ($ignoredTestBusinessIds): void {
+                $query->where(function ($query) use ($ignoredTestBusinessIds): void {
+                    $query->whereNotIn('business_id', $ignoredTestBusinessIds)
+                        ->orWhere('environment', '!=', 'test')
+                        ->orWhereNull('environment')
+                        ->orWhereNull('business_id');
+                });
+            })
             ->whereIn('status', [FiscalDocumentIntent::PENDING, FiscalDocumentIntent::UNKNOWN, FiscalDocumentIntent::CERTIFIED, FiscalDocumentIntent::RETRYABLE])
             ->where('updated_at', '<=', $cutoff)
             ->orderBy('updated_at')

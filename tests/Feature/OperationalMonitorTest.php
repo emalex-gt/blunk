@@ -144,6 +144,106 @@ class OperationalMonitorTest extends TestCase
         $this->assertSame(OperationalIncident::OPEN, $stale->fresh()->status);
     }
 
+    public function test_ignored_test_tenant_preserves_production_monitoring(): void
+    {
+        config([
+            'operational_monitor.enabled' => true,
+            'operational_monitor.fel_stale_minutes' => 5,
+            'operational_monitor.ignored_test_business_ids' => [],
+            'operational_monitor.telegram.token' => null,
+            'operational_monitor.telegram.chat_id' => null,
+            'operational_monitor.mail_to' => [],
+        ]);
+
+        $ignored = $this->business('Ignored test tenant');
+        $other = $this->business('Other tenant');
+
+        $createIntent = function ($business, $environment, $reference) {
+            $intent = FiscalDocumentIntent::query()->create([
+                'business_id' => $business->id,
+                'country' => 'GT',
+                'provider' => 'digifact',
+                'environment' => $environment,
+                'document_type' => 'invoice',
+                'operation_type' => 'sale',
+                'internal_reference' => $reference,
+                'idempotency_key' => $reference,
+                'status' => FiscalDocumentIntent::UNKNOWN,
+                'operation_payload' => [],
+                'fiscal_payload' => [],
+            ]);
+
+            FiscalDocumentIntent::query()
+                ->whereKey($intent->id)
+                ->update(['updated_at' => now()->subHour()]);
+
+            return $intent;
+        };
+
+        $intent = $createIntent($ignored, 'test', 'MON-IGNORE-TEST');
+
+        app(OperationalMonitor::class)->run();
+
+        $fingerprint = 'monitor:fel_stale:'.$ignored->id;
+
+        $this->assertDatabaseHas('operational_incidents', [
+            'fingerprint' => $fingerprint.':test',
+            'status' => OperationalIncident::OPEN,
+        ]);
+
+        OperationalIncident::query()->create([
+            'fingerprint' => $fingerprint,
+            'business_id' => $ignored->id,
+            'type' => 'fel_stale_intents',
+            'severity' => 'P0',
+            'status' => OperationalIncident::OPEN,
+            'message' => 'Legacy alert.',
+            'detected_at' => now(),
+            'last_occurred_at' => now(),
+        ]);
+
+        config([
+            'operational_monitor.ignored_test_business_ids' => [
+                $ignored->id,
+            ],
+        ]);
+
+        app(OperationalMonitor::class)->run();
+
+        foreach ([$fingerprint, $fingerprint.':test'] as $key) {
+            $this->assertDatabaseHas('operational_incidents', [
+                'fingerprint' => $key,
+                'status' => OperationalIncident::RESOLVED,
+            ]);
+        }
+
+        $this->assertSame(
+            FiscalDocumentIntent::UNKNOWN,
+            $intent->fresh()->status
+        );
+
+        $createIntent($ignored, 'production', 'MON-IGNORE-PROD');
+        $createIntent($other, 'test', 'MON-OTHER-TEST');
+
+        app(OperationalMonitor::class)->run();
+
+        $this->assertDatabaseHas('operational_incidents', [
+            'fingerprint' => $fingerprint.':production',
+            'status' => OperationalIncident::OPEN,
+            'severity' => 'P0',
+        ]);
+
+        $this->assertDatabaseHas('operational_incidents', [
+            'fingerprint' => 'monitor:fel_stale:'.$other->id.':test',
+            'status' => OperationalIncident::OPEN,
+        ]);
+
+        $this->assertDatabaseHas('operational_incidents', [
+            'fingerprint' => $fingerprint.':test',
+            'status' => OperationalIncident::RESOLVED,
+        ]);
+    }
+
     private function business(string $name): Business
     {
         return Business::query()->create([
