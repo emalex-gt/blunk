@@ -13,6 +13,9 @@ class Permissions
     public const POS_SELL = 'pos.sell';
     public const POS_APPLY_DISCOUNT = 'pos.apply_discount';
     public const POS_MANUAL_PRICE = 'pos.manual_price';
+    public const FUEL_VIEW = 'fuel.view';
+    public const FUEL_RECORD_MANUAL = 'fuel.record_manual';
+    public const FUEL_RECORD_AUTO = 'fuel.record_automatic';
 
     public const SALES_VIEW = 'sales.view';
     public const SALES_CANCEL = 'sales.cancel';
@@ -170,6 +173,9 @@ class Permissions
             self::POS_SELL => ['name' => 'Vender en POS', 'group' => 'POS'],
             self::POS_APPLY_DISCOUNT => ['name' => 'Aplicar descuentos POS', 'group' => 'POS'],
             self::POS_MANUAL_PRICE => ['name' => 'Aplicar precio manual', 'group' => 'POS'],
+            self::FUEL_VIEW => ['name' => 'Ver consumos de Blunk Fuel', 'group' => 'Fuel'],
+            self::FUEL_RECORD_MANUAL => ['name' => 'Registrar consumos manuales', 'group' => 'Fuel'],
+            self::FUEL_RECORD_AUTO => ['name' => 'Registrar consumos automáticos', 'group' => 'Fuel'],
             self::SALES_VIEW => ['name' => 'Ver ventas', 'group' => 'Ventas'],
             self::SALES_CANCEL => ['name' => 'Anular ventas', 'group' => 'Ventas'],
             self::SALES_PRINT => ['name' => 'Imprimir ventas', 'group' => 'Ventas'],

@@ -54,6 +54,7 @@ use App\Support\OperationsLog;
 use App\Support\PosFelTrace;
 use App\Support\Permissions;
 use App\Support\PriceLists;
+use App\Support\CheckoutPaymentMethods;
 use App\Support\StockAvailability;
 use App\Support\GuatemalaLocations;
 use App\Support\IdempotencyService;
@@ -350,11 +351,7 @@ class SaleController extends Controller
             ? TenantFelSetting::query()->where('business_id', $business->id)->first()
             : null;
         $felModuleEnabled = $country === 'GT' && module_enabled('fel_gt', $business->id);
-        $paymentMethods = ['cash', 'card', 'transfer', 'deposit', 'check'];
-
-        if ($country === 'AR') {
-            $paymentMethods[] = 'mercadopago';
-        }
+        $paymentMethods = CheckoutPaymentMethods::codesForCountry($country);
 
         $data = $request->validate([
             'note' => ['nullable', 'string', 'max:2000'],
