@@ -11,6 +11,7 @@ import { discardOperationDraft, formatOperationDraftUpdatedAt, listOperationDraf
 import { formatCurrency } from '@/utils/currency';
 import { limitDecimalPlaces } from '@/utils/decimalInput';
 import { addQuantity, canonicalQuantity, compareQuantity, formatQuantity, subtractQuantity } from '@/utils/quantity';
+import { multiplyMoney, percentageMoney } from '@/utils/money';
 import type { Errors } from '@inertiajs/core';
 import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import {
@@ -676,13 +677,22 @@ function roundMoney(value: number) {
 
 function cartSubtotal(items: CartItem[]) {
     return roundMoney(items.reduce(
-        (sum, item) => sum + Number(item.unit_price || item.product.sale_price) * quantityForMoney(item.quantity, Boolean(item.product.allow_decimal_quantity)),
+        (sum, item) => sum + lineSubtotal(item),
         0,
     ));
 }
 
 function lineSubtotal(item: CartItem) {
-    return roundMoney(Number(item.unit_price || item.product.sale_price) * quantityForMoney(item.quantity, Boolean(item.product.allow_decimal_quantity)));
+    const allowDecimal = Boolean(item.product.allow_decimal_quantity);
+
+    if (quantityError(item.quantity, allowDecimal)) {
+        return 0;
+    }
+
+    return multiplyMoney(
+        item.unit_price ?? item.product.sale_price,
+        normalizeQuantity(item.quantity),
+    );
 }
 
 function lineDiscountAmount(item: CartItem) {
@@ -839,7 +849,9 @@ function calculateDiscountAmount(discount: SaleDiscount | null, subtotal: number
         return 0;
     }
 
-    return roundMoney(discount.type === 'percent' ? subtotal * (value / 100) : value);
+    return discount.type === 'percent'
+        ? percentageMoney(subtotal, value)
+        : multiplyMoney(value, 1);
 }
 
 function discountError(discount: SaleDiscount | null, subtotal: number) {
@@ -4020,7 +4032,13 @@ export default function POS({
 
         const finalPayments = splitPayment
             ? payments
-            : [payments[0] ?? paymentLine(mainPaymentMethod, total.toFixed(2))];
+            : [{
+                ...(payments[0]?.method === mainPaymentMethod
+                    ? payments[0]
+                    : paymentLine(mainPaymentMethod, total.toFixed(2))),
+                method: mainPaymentMethod,
+                amount: total.toFixed(2),
+            }];
 
         const submittedBranchId = activeBranchId;
         const posTrace = diagnostics.pos_trace_enabled
