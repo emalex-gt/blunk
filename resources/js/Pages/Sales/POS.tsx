@@ -4294,6 +4294,16 @@ export default function POS({
         };
 
         if (draft && isMeaningfulPosDraft(draft)) {
+            // A rejected checkout can lose its one-shot reservation prop.
+            // Do not mistake the active cart for an earlier operation.
+            const isDraftOfCurrentCheckout = !incomingSourceKey
+                && !draftScopeIsChanging
+                && typeof draft.idempotency_key === 'string'
+                && draft.idempotency_key === idempotencyKey
+                && latestDraftRef.current?.idempotency_key === idempotencyKey
+                && String(draft.branch_id ?? 'default') === String(draftBranchId)
+                && cartRef.current.length > 0;
+
             let cancelled = false;
             const recoverAfterVerification = async () => {
                 const draftBranchId = normalizedDraftBranchId(draft);
@@ -4324,6 +4334,17 @@ export default function POS({
                     ]);
 
                     if (cancelled || recoveryRequestId !== draftRecoveryRequestRef.current) {
+                        return;
+                    }
+
+                    if (isDraftOfCurrentCheckout && status.status === 'not_found') {
+                        // Same checkout, verified as not registered on the server.
+                        // Preserve the cart and validation error without a recovery modal.
+                        setUnsafePreviousSale(false);
+                        setPreviousSaleVerificationMessage(null);
+                        setRestoreDraft(null);
+                        setDraftReady(true);
+                        finishDraftInitialization();
                         return;
                     }
 
