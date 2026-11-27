@@ -61,6 +61,7 @@ class Permissions
     public const REPORTS_LOW_STOCK_VIEW = 'reports.low_stock.view';
     public const REPORTS_TOP_PRODUCTS_VIEW = 'reports.top_products.view';
     public const REPORTS_INVENTORY_VIEW = 'reports.inventory.view';
+    public const REPORTS_INVENTORY_ADJUSTMENTS_VIEW = 'reports.inventory_adjustments.view';
     public const REPORTS_PRODUCTS_WITHOUT_SALES_VIEW = 'reports.products_without_sales.view';
     public const REPORTS_DAILY_VIEW = 'reports.daily.view';
     public const REPORTS_PROFIT_VIEW = 'reports.profit.view';
@@ -215,6 +216,7 @@ class Permissions
             self::REPORTS_LOW_STOCK_VIEW => ['name' => 'Ver reporte de stock bajo', 'group' => 'Reportes'],
             self::REPORTS_TOP_PRODUCTS_VIEW => ['name' => 'Ver productos más vendidos', 'group' => 'Reportes'],
             self::REPORTS_INVENTORY_VIEW => ['name' => 'Ver reporte de inventario', 'group' => 'Reportes'],
+            self::REPORTS_INVENTORY_ADJUSTMENTS_VIEW => ['name' => 'Ver reporte de ajustes de inventario', 'group' => 'Reportes'],
             self::REPORTS_PRODUCTS_WITHOUT_SALES_VIEW => ['name' => 'Ver productos sin ventas', 'group' => 'Reportes', 'description' => 'Permite identificar productos con existencias y sin ventas en el período seleccionado.'],
             self::REPORTS_DAILY_VIEW => ['name' => 'Ver reporte diario', 'group' => 'Reportes'],
             self::REPORTS_PROFIT_VIEW => [
@@ -396,6 +398,7 @@ class Permissions
                 self::REPORTS_LOW_STOCK_VIEW,
                 self::REPORTS_TOP_PRODUCTS_VIEW,
                 self::REPORTS_INVENTORY_VIEW,
+                self::REPORTS_INVENTORY_ADJUSTMENTS_VIEW,
                 self::REPORTS_PRODUCTS_WITHOUT_SALES_VIEW,
                 self::REPORTS_DAILY_VIEW,
                 self::REPORTS_PROFIT_VIEW,
@@ -445,6 +448,7 @@ class Permissions
 
         $permissionIds = [];
         $summaryPermissionWasCreated = false;
+        $inventoryAdjustmentsPermissionWasCreated = false;
         foreach (self::catalog() as $key => $meta) {
             $permissionPayload = [
                 'name' => $meta['name'],
@@ -464,6 +468,10 @@ class Permissions
 
             if ($key === self::REPORTS_SALES_SUMMARY_VIEW && $permission->wasRecentlyCreated) {
                 $summaryPermissionWasCreated = true;
+            }
+
+            if ($key === self::REPORTS_INVENTORY_ADJUSTMENTS_VIEW && $permission->wasRecentlyCreated) {
+                $inventoryAdjustmentsPermissionWasCreated = true;
             }
         }
 
@@ -490,6 +498,12 @@ class Permissions
                 // Backfill only the newly introduced permission for existing system roles.
                 $role->permissions()->syncWithoutDetaching([
                     $permissionIds[self::REPORTS_SALES_SUMMARY_VIEW],
+                ]);
+            }
+
+            if ($inventoryAdjustmentsPermissionWasCreated && ! $role->wasRecentlyCreated && in_array($key, ['owner', 'admin', 'reports'], true)) {
+                $role->permissions()->syncWithoutDetaching([
+                    $permissionIds[self::REPORTS_INVENTORY_ADJUSTMENTS_VIEW],
                 ]);
             }
         }

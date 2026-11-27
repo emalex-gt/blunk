@@ -12,6 +12,7 @@ use App\Models\Product;
 use App\Models\PriceType;
 use App\Models\Purchase;
 use App\Models\Sale;
+use App\Models\StockMovement;
 use App\Models\User;
 use App\Support\CashRegister;
 use App\Support\BranchInventory;
@@ -43,9 +44,13 @@ class ReportController extends Controller
 {
     private const EXPORT_LIMIT = 5000;
 
+    private const INVENTORY_ADJUSTMENT_TYPES = ['entry', 'exit', 'add', 'remove', 'adjustment', 'manual', 'in', 'out'];
+
     private const REPORT_EXPORTS = [
         'sales' => ['method' => 'sales', 'permission' => Permissions::REPORTS_SALES_VIEW, 'title' => 'Ventas'],
         'inventory' => ['method' => 'inventory', 'permission' => Permissions::REPORTS_INVENTORY_VIEW, 'title' => 'Inventario'],
+        'inventory-adjustments' => ['method' => 'inventoryAdjustments', 'permission' => Permissions::REPORTS_INVENTORY_ADJUSTMENTS_VIEW, 'title' => 'Ajustes de inventario'],
+        'inventory-adjustments-detail' => ['method' => 'inventoryAdjustmentsDetail', 'permission' => Permissions::REPORTS_INVENTORY_ADJUSTMENTS_VIEW, 'title' => 'Detalle de ajustes de inventario'],
         'daily' => ['method' => 'daily', 'permission' => Permissions::REPORTS_DAILY_VIEW, 'title' => 'Diario'],
         'profit' => ['method' => 'profit', 'permission' => Permissions::REPORTS_PROFIT_VIEW, 'title' => 'Utilidades'],
         'warehouse-money' => ['method' => 'warehouseMoney', 'permission' => Permissions::REPORTS_WAREHOUSE_MONEY_VIEW, 'title' => 'Dinero en bodega'],
@@ -828,6 +833,212 @@ class ReportController extends Controller
         ]);
     }
 
+    public function inventoryAdjustments(Request $request): Response
+    {
+        $businessId = currentBusinessId();
+        $business = Business::query()->findOrFail($businessId);
+        $scope = BranchReportScope::current($businessId);
+        $range = $this->inventoryAdjustmentRange($request, $business);
+        $validated = $request->validate([
+            'product_search' => ['nullable', 'string', 'max:150'],
+            'category_id' => ['nullable', 'integer', 'min:1'],
+            'sort_by' => ['nullable', 'in:product,most_adjustments,most_added,most_removed'],
+        ]);
+        $search = trim($validated['product_search'] ?? '');
+        $categoryId = isset($validated['category_id']) ? (int) $validated['category_id'] : null;
+        $sort = $validated['sort_by'] ?? 'product';
+
+        $matchingProducts = Product::query()
+            ->where('products.business_id', $businessId)
+            ->when($categoryId, fn ($query) => $query->where('products.category_id', $categoryId))
+            ->when($search !== '', function ($query) use ($search) {
+                $query->where(function ($query) use ($search) {
+                    $query->where('products.name', 'ilike', "%{$search}%")
+                        ->orWhere('products.code', 'ilike', "%{$search}%")
+                        ->orWhere('products.barcode', 'ilike', "%{$search}%");
+                });
+            });
+
+        $aggregates = $this->inventoryAdjustmentMovements($businessId, $scope, $range)
+            ->selectRaw('product_id, COUNT(*) as adjustment_count, SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END) as added, SUM(CASE WHEN quantity < 0 THEN -quantity ELSE 0 END) as removed')
+            ->groupBy('product_id');
+
+        // One row per adjusted product; an exact branch-scoped physical stock join.
+        // Historical adjustment rows remain visible even if a product is now inactive.
+        $query = (clone $matchingProducts)
+            ->joinSub($aggregates, 'adjustments', fn ($join) => $join->on('adjustments.product_id', '=', 'products.id'))
+            ->leftJoin('product_branch_stocks as pbs', function ($join) use ($businessId, $scope) {
+                $join->on('pbs.product_id', '=', 'products.id')
+                    ->where('pbs.business_id', '=', $businessId)
+                    ->where('pbs.branch_id', '=', $scope->branch->id);
+            })
+            ->select('products.id', 'products.name', 'products.code', 'products.barcode', 'adjustments.adjustment_count', 'adjustments.added', 'adjustments.removed')
+            ->selectRaw('COALESCE(pbs.stock, 0) as current_stock');
+
+        if ($sort !== 'product') {
+            $query->orderByDesc(match ($sort) {
+                'most_adjustments' => 'adjustments.adjustment_count',
+                'most_added' => 'adjustments.added',
+                'most_removed' => 'adjustments.removed',
+            });
+        }
+
+        $rows = $query->orderBy('products.name')->orderBy('products.id')
+            ->paginate($this->reportPerPage($request))->withQueryString()
+            ->through(function ($row) use ($range) {
+                $stock = $this->physicalQuantity($row->current_stock);
+                $added = $this->physicalQuantity($row->added);
+                $removed = $this->physicalQuantity($row->removed);
+
+                return [
+                    'id' => $row->id,
+                    'code' => $row->code ?: $row->barcode ?: '-',
+                    'product' => $row->name,
+                    'stock_without_adjustments' => ProductQuantityPolicy::add(ProductQuantityPolicy::subtract($stock, $added), $removed),
+                    'added' => $added,
+                    'removed' => $removed,
+                    'current_stock' => $stock,
+                    'adjustment_count' => (int) $row->adjustment_count,
+                    'detail_url' => route('reports.inventory-adjustments-detail', [
+                        'product_id' => $row->id,
+                        'date_from' => $range->dateFrom,
+                        'date_to' => $range->dateTo,
+                    ]),
+                ];
+            });
+
+        $emptyMessage = 'No se registraron ajustes de inventario en el período seleccionado.';
+        if ($rows->total() === 0 && $search !== '') {
+            BranchInventory::restrictProductsToBranch($matchingProducts, $businessId, $scope->branch->id);
+            $emptyMessage = $matchingProducts->exists()
+                ? 'Existen productos coincidentes con tu búsqueda, pero no tienen ajustes de inventario registrados en el período seleccionado.'
+                : 'No se encontraron productos que coincidan con tu búsqueda y los filtros seleccionados.';
+        }
+
+        return $this->report('Ajustes de inventario', 'reports.inventory-adjustments', [
+            ['key' => 'code', 'label' => 'Código/SKU'],
+            ['key' => 'product', 'label' => 'Producto'],
+            ['key' => 'stock_without_adjustments', 'label' => 'Inventario sin ajustes', 'type' => 'quantity'],
+            ['key' => 'added', 'label' => 'Suma', 'type' => 'quantity'],
+            ['key' => 'removed', 'label' => 'Resta', 'type' => 'quantity'],
+            ['key' => 'current_stock', 'label' => 'Inventario actual', 'type' => 'quantity'],
+            ['key' => 'adjustment_count', 'label' => 'Ajustes', 'type' => 'number'],
+            ['key' => 'detail_url', 'label' => 'Acción', 'type' => 'link', 'link_label' => 'Ver detalle'],
+        ], $rows, [
+            'filters' => [
+                'date_from' => $range->dateFrom,
+                'date_to' => $range->dateTo,
+                'product_search' => $search,
+                'category_id' => $categoryId,
+                'sort_by' => $sort,
+            ],
+            'categories' => $this->reportCategories($businessId),
+            'sortOptions' => [
+                ['value' => 'product', 'label' => 'Producto (A-Z)'],
+                ['value' => 'most_adjustments', 'label' => 'Mayor número de ajustes'],
+                ['value' => 'most_added', 'label' => 'Mayor cantidad sumada'],
+                ['value' => 'most_removed', 'label' => 'Mayor cantidad restada'],
+            ],
+            'branch' => $scope->payload(),
+            'notice' => 'Inventario sin ajustes = inventario físico actual - suma + resta del período. No representa el inventario histórico al inicio del período. Se excluyen ventas, compras, traslados y sus anulaciones.',
+            'emptyMessage' => $emptyMessage,
+        ]);
+    }
+
+    public function inventoryAdjustmentsDetail(Request $request): Response
+    {
+        $businessId = currentBusinessId();
+        $business = Business::query()->findOrFail($businessId);
+        $scope = BranchReportScope::current($businessId);
+        $range = $this->inventoryAdjustmentRange($request, $business);
+        $validated = $request->validate(['product_id' => ['required', 'integer', 'min:1']]);
+        $productId = (int) $validated['product_id'];
+
+        // Do not expose another tenant or a product without a movement in this branch.
+        $product = Product::query()
+            ->where('business_id', $businessId)
+            ->whereExists(function ($query) use ($businessId, $scope) {
+                $query->selectRaw('1')->from('stock_movements')
+                    ->whereColumn('stock_movements.product_id', 'products.id')
+                    ->where('stock_movements.business_id', $businessId)
+                    ->where('stock_movements.branch_id', $scope->branch->id)
+                    ->whereIn('stock_movements.type', self::INVENTORY_ADJUSTMENT_TYPES)
+                    ->where('stock_movements.quantity', '!=', 0);
+            })
+            ->findOrFail($productId);
+
+        $movements = $this->inventoryAdjustmentMovements($businessId, $scope, $range)->where('product_id', $productId);
+        $totals = (clone $movements)->selectRaw('COUNT(*) as adjustment_count, COALESCE(SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END), 0) as added, COALESCE(SUM(CASE WHEN quantity < 0 THEN -quantity ELSE 0 END), 0) as removed')->first();
+        $timezone = tenantTimezone($business);
+        $rows = $movements->with(['createdBy:id,name', 'user:id,name'])
+            ->orderByDesc('created_at')->orderByDesc('id')
+            ->paginate($this->reportPerPage($request))->withQueryString()
+            ->through(function (StockMovement $movement) use ($timezone) {
+                $quantity = $this->physicalQuantity($movement->quantity);
+                $positive = ProductQuantityPolicy::compare($quantity, '0') > 0;
+
+                return [
+                    'id' => $movement->id,
+                    'date' => $movement->created_at?->copy()->timezone($timezone)->format('Y-m-d H:i:s'),
+                    'type' => stockMovementNote($movement->type),
+                    'added' => $positive ? $quantity : '0',
+                    'removed' => $positive ? '0' : ltrim($quantity, '-'),
+                    'previous_stock' => $movement->previous_stock === null ? null : $this->physicalQuantity($movement->previous_stock),
+                    'new_stock' => $movement->new_stock === null ? null : $this->physicalQuantity($movement->new_stock),
+                    'user' => $movement->createdBy?->name ?? $movement->user?->name ?? '-',
+                    'note' => $movement->note ?: '-',
+                ];
+            });
+
+        return $this->report('Detalle de ajustes de inventario', 'reports.inventory-adjustments-detail', [
+            ['key' => 'date', 'label' => 'Fecha y hora'],
+            ['key' => 'type', 'label' => 'Tipo'],
+            ['key' => 'previous_stock', 'label' => 'Inventario anterior', 'type' => 'quantity'],
+            ['key' => 'added', 'label' => 'Suma', 'type' => 'quantity'],
+            ['key' => 'removed', 'label' => 'Resta', 'type' => 'quantity'],
+            ['key' => 'new_stock', 'label' => 'Inventario posterior', 'type' => 'quantity'],
+            ['key' => 'user', 'label' => 'Usuario'],
+            ['key' => 'note', 'label' => 'Observación'],
+        ], $rows, [
+            'summary' => [
+                ['label' => 'Suma', 'value' => $this->physicalQuantity($totals->added)],
+                ['label' => 'Resta', 'value' => $this->physicalQuantity($totals->removed)],
+                ['label' => 'Ajustes', 'value' => (int) $totals->adjustment_count],
+            ],
+            'filters' => ['date_from' => $range->dateFrom, 'date_to' => $range->dateTo],
+            'fixedFilters' => ['product_id' => $productId],
+            'productContext' => ['id' => $product->id, 'name' => $product->name, 'code' => $product->code ?: $product->barcode],
+            'branch' => $scope->payload(),
+            'backUrl' => route('reports.inventory-adjustments', ['date_from' => $range->dateFrom, 'date_to' => $range->dateTo]),
+            'emptyMessage' => 'Este producto no tiene ajustes de inventario registrados en el período seleccionado.',
+        ]);
+    }
+
+    private function inventoryAdjustmentMovements(int $businessId, BranchReportScope $scope, ReportDateRange $range): \Illuminate\Database\Eloquent\Builder
+    {
+        return StockMovement::query()
+            ->where('business_id', $businessId)
+            ->where('branch_id', $scope->branch->id)
+            ->whereIn('type', self::INVENTORY_ADJUSTMENT_TYPES)
+            ->where('quantity', '!=', 0)
+            ->whereBetween('created_at', [$range->start, $range->end]);
+    }
+
+    private function inventoryAdjustmentRange(Request $request, Business $business): ReportDateRange
+    {
+        $request->validate([
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_to' => ['nullable', 'date_format:Y-m-d'],
+        ]);
+        $today = now(tenantTimezone($business));
+        $from = $today->copy()->subMonthNoOverflow()->toDateString();
+        $to = $today->toDateString();
+        if (! $request->filled('date_from')) $request->query->set('date_from', $from);
+        if (! $request->filled('date_to')) $request->query->set('date_to', $to);
+
+        return ReportDateRange::fromRequest($request, $business, $from, $to);
+    }
+
     public function inventory(Request $request): Response
     {
         $businessId = currentBusinessId();
@@ -1453,6 +1664,8 @@ class ReportController extends Controller
             'branch' => $extra['branch'] ?? null,
             'exportBranchName' => $extra['exportBranchName'] ?? null,
             'notice' => $extra['notice'] ?? null,
+            'emptyMessage' => $extra['emptyMessage'] ?? 'No hay datos para los filtros seleccionados.',
+            'backUrl' => $extra['backUrl'] ?? null,
             'maxRangeLabel' => $extra['maxRangeLabel'] ?? 'Rango máximo: 3 meses',
         ]);
     }

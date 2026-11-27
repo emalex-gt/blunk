@@ -612,6 +612,8 @@ Route::middleware('auth')->group(function () {
 
         Route::middleware('module:reports')->group(function () {
             Route::get('/reports/inventory', [ReportController::class, 'inventory'])->middleware('permission:reports.inventory.view')->name('reports.inventory');
+            Route::get('/reports/inventory-adjustments', [ReportController::class, 'inventoryAdjustments'])->middleware('permission:reports.inventory_adjustments.view')->name('reports.inventory-adjustments');
+            Route::get('/reports/inventory-adjustments/detail', [ReportController::class, 'inventoryAdjustmentsDetail'])->middleware('permission:reports.inventory_adjustments.view')->name('reports.inventory-adjustments-detail');
             Route::get('/reports/daily', [ReportController::class, 'daily'])->middleware('permission:reports.daily.view')->name('reports.daily');
             Route::get('/reports/profit', [ReportController::class, 'profit'])->middleware('permission:reports.profit.view')->name('reports.profit');
             Route::get('/reports/warehouse-money', [ReportController::class, 'warehouseMoney'])->middleware('permission:reports.warehouse_money.view')->name('reports.warehouse-money');

@@ -64,6 +64,91 @@ class TenantReportsTest extends TestCase
             ]);
     }
 
+    public function test_inventory_adjustments_report_uses_manual_movements_and_current_branch_stock(): void
+    {
+        [$business, $user, $main, $other] = $this->tenant();
+        $adjusted = $this->product($business, $main, 'Ajuste principal', stock: 100);
+        $adjusted->update(['allow_decimal_quantity' => true]);
+        $offset = $this->product($business, $main, 'Compensado', stock: 50);
+        $unadjusted = $this->product($business, $main, 'Sin ajustes', stock: 20);
+        $date = now()->subDays(2);
+        $record = function (Product $product, Branch $branch, string $type, string $quantity, ?string $previous = null, ?string $new = null, $at = null) use ($business, $user, $date) {
+            $movement = StockMovement::query()->create([
+                'business_id' => $business->id, 'branch_id' => $branch->id, 'product_id' => $product->id,
+                'type' => $type, 'quantity' => $quantity, 'previous_stock' => $previous, 'new_stock' => $new,
+                'note' => 'Conteo de prueba', 'created_by' => $user->id,
+            ]);
+            DB::table('stock_movements')->where('id', $movement->id)->update(['created_at' => $at ?? $date]);
+        };
+        $record($adjusted, $main, 'entry', '25.125', '60', '85.125');
+        $record($adjusted, $main, 'remove', '-5.125', '85.125', '80');
+        $record($adjusted, $main, 'purchase', '100');
+        $record($adjusted, $main, 'sale', '-40');
+        $record($adjusted, $main, 'transfer_in', '100');
+        $record($adjusted, $main, 'manual', '999', null, null, now()->subMonthsNoOverflow(4));
+        $record($adjusted, $other, 'entry', '200');
+        $record($offset, $main, 'manual', '10');
+        $record($offset, $main, 'adjustment', '-10');
+        $record($unadjusted, $main, 'purchase', '20');
+        $record($unadjusted, $main, 'adjustment', '0');
+        $record($unadjusted, $other, 'exit', '-2');
+        ProductBranchStock::query()->updateOrCreate([
+            'business_id' => $business->id, 'branch_id' => $other->id, 'product_id' => $adjusted->id,
+        ], ['stock' => 500]);
+
+        $this->actingAs($user)->get(route('reports.inventory-adjustments'))
+            ->assertOk()->assertInertia(fn (Assert $page) => $page
+                ->component('Reports/Generic')
+                ->where('branch.id', $main->id)
+                ->where('filters.date_from', now(tenantTimezone($business))->subMonthNoOverflow()->toDateString())
+                ->where('filters.date_to', now(tenantTimezone($business))->toDateString())
+                ->where('rows.total', 2)
+                ->where('rows.data.0.product', 'Ajuste principal')
+                ->where('rows.data.0.added', '25.125')
+                ->where('rows.data.0.removed', '5.125')
+                ->where('rows.data.0.current_stock', '100')
+                ->where('rows.data.0.stock_without_adjustments', '80')
+                ->where('rows.data.0.adjustment_count', 2)
+                ->where('rows.data.1.stock_without_adjustments', '50')
+                ->where('rows.data.1.adjustment_count', 2));
+
+        $this->get(route('reports.inventory-adjustments', ['product_search' => $unadjusted->code]))
+            ->assertOk()->assertInertia(fn (Assert $page) => $page
+                ->where('rows.total', 0)
+                ->where('emptyMessage', 'Existen productos coincidentes con tu búsqueda, pero no tienen ajustes de inventario registrados en el período seleccionado.'));
+        $this->get(route('reports.inventory-adjustments', ['product_search' => 'NO-EXISTE-XYZ']))
+            ->assertOk()->assertInertia(fn (Assert $page) => $page
+                ->where('rows.total', 0)
+                ->where('emptyMessage', 'No se encontraron productos que coincidan con tu búsqueda y los filtros seleccionados.'));
+
+        $this->get(route('reports.inventory-adjustments-detail', ['product_id' => $adjusted->id]))
+            ->assertOk()->assertInertia(fn (Assert $page) => $page
+                ->where('rows.total', 2)
+                ->where('rows.data.0.removed', '5.125')
+                ->where('rows.data.0.previous_stock', '85.125')
+                ->where('rows.data.0.new_stock', '80')
+                ->where('rows.data.0.user', $user->name)
+                ->where('rows.data.0.note', 'Conteo de prueba')
+                ->where('summary.0.value', '25.125')
+                ->where('summary.1.value', '5.125'));
+
+        $this->get(route('reports.inventory-adjustments-detail', ['product_id' => $offset->id]))
+            ->assertOk()->assertInertia(fn (Assert $page) => $page
+                ->where('rows.total', 2)
+                ->where('rows.data.0.previous_stock', null)
+                ->where('rows.data.0.new_stock', null));
+
+        $this->from(route('reports.inventory-adjustments'))->get(route('reports.inventory-adjustments', [
+            'date_from' => '2026-01-01', 'date_to' => '2026-05-01',
+        ]))->assertRedirect(route('reports.inventory-adjustments'))->assertSessionHasErrors('date_from');
+
+        [$foreignBusiness, $foreignUser, $foreignBranch] = $this->tenant();
+        $foreign = $this->product($foreignBusiness, $foreignBranch, 'Producto ajeno');
+        $this->get(route('reports.inventory-adjustments-detail', ['product_id' => $foreign->id]))->assertNotFound();
+        [$deniedBusiness, $deniedUser] = $this->tenant('cashier');
+        $this->actingAs($deniedUser)->get(route('reports.inventory-adjustments'))->assertForbidden();
+    }
+
     public function test_inventory_report_is_branch_scoped(): void
     {
         [$business, $user, $main, $other] = $this->tenant();

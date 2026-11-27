@@ -67,6 +67,8 @@ type Props = {
     productContext?: ProductContext | null;
     branch?: Branch | null;
     notice?: string | null;
+    emptyMessage?: string;
+    backUrl?: string | null;
     maxRangeLabel?: string;
 };
 
@@ -127,6 +129,8 @@ export default function GenericReport({
     productContext = null,
     branch = null,
     notice = null,
+    emptyMessage = 'No hay datos para los filtros seleccionados.',
+    backUrl = null,
     maxRangeLabel = 'Rango máximo: 3 meses',
 }: Props) {
     const page = usePage();
@@ -196,6 +200,9 @@ export default function GenericReport({
 
             <div className="py-5">
                 <div className="mx-auto max-w-[1800px] space-y-5 px-5 sm:px-6">
+                    {backUrl && (
+                        <Link href={backUrl} className="inline-flex text-sm font-semibold text-orange-600 hover:text-orange-800">Volver al reporte de ajustes</Link>
+                    )}
                     {productContext && (
                         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                             <h3 className="text-base font-semibold text-slate-950">{productContext.name}</h3>
@@ -420,7 +427,7 @@ export default function GenericReport({
                                     {data.length === 0 ? (
                                         <tr>
                                             <td colSpan={columns.length} className="px-4 py-10 text-center text-sm text-slate-500">
-                                                No hay datos para los filtros seleccionados.
+                                                {emptyMessage}
                                             </td>
                                         </tr>
                                     ) : (

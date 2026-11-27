@@ -111,6 +111,7 @@ export default function Authenticated({
     const reportItems: NavItem[] = [
         hasModule('reports') && can('reports.sales.view') ? { label: 'Ventas', href: route('reports.sales'), active: route().current('reports.sales') } : null,
         hasModule('reports') && can('reports.inventory.view') ? { label: 'Inventario', href: route('reports.inventory'), active: route().current('reports.inventory') } : null,
+        hasModule('reports') && can('reports.inventory_adjustments.view') ? { label: 'Ajustes de inventario', href: route('reports.inventory-adjustments'), active: route().current('reports.inventory-adjustments*') } : null,
         hasModule('reports') && can('reports.products_without_sales.view') ? { label: 'Productos sin ventas', href: route('reports.products-without-sales'), active: route().current('reports.products-without-sales') } : null,
         hasModule('reports') && can('reports.products_without_cost.view') ? { label: 'Productos sin costo', href: route('reports.products-without-cost'), active: route().current('reports.products-without-cost') } : null,
         hasModule('reports') && can('reports.anomalous_prices.view') ? { label: 'Precios anómalos', href: route('reports.anomalous-prices'), active: route().current('reports.anomalous-prices') } : null,
